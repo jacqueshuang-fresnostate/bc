@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { AppShell, type NavigationItem } from './components/AppShell';
 import { useDashboard } from './hooks/useDashboard';
 import { DashboardPage } from './pages/DashboardPage';
+import { DrawManagementPage } from './pages/DrawManagementPage';
 import { LotteryManagementPage } from './pages/LotteryManagementPage';
 import { OrderManagementPage } from './pages/OrderManagementPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
@@ -47,6 +48,8 @@ export function App() {
         />
       ) : activeKey === 'lotteries' ? (
         <LotteryManagementPage onDashboardRefresh={refresh} />
+      ) : activeKey === 'draw-modes' || activeKey === 'schedules' ? (
+        <DrawManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'orders' ? (
         <OrderManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'play-rules' ? (

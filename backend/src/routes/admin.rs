@@ -8,14 +8,15 @@ use serde::Deserialize;
 use crate::{
     app::AppState,
     domain::{
-        lottery::LotteryKind,
+        draw::{CreateDrawIssueRequest, DrawIssue, DrawIssueResultRequest},
+        lottery::{DrawSource, LotteryKind},
         order::{CreateOrderRequest, OrderDetail},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
     },
     error::ApiResult,
     response::ApiEnvelope,
     services::{
-        dashboard::{dashboard_summary_with_orders, DashboardSummary},
+        dashboard::{dashboard_summary_with_orders, draw_sources, DashboardSummary},
         play_rules::{evaluate_play_rule, play_rule_summaries},
     },
 };
@@ -23,6 +24,15 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/dashboard", get(get_dashboard_summary))
+        .route("/draw-sources", get(list_draw_sources))
+        .route(
+            "/draw-issues",
+            get(list_draw_issues).post(create_draw_issue),
+        )
+        .route("/draw-issues/{id}", get(get_draw_issue))
+        .route("/draw-issues/{id}/close", patch(close_draw_issue))
+        .route("/draw-issues/{id}/draw", patch(draw_issue_result))
+        .route("/draw-issues/{id}/cancel", patch(cancel_draw_issue))
         .route("/play-rules", get(list_play_rules))
         .route("/play-rules/evaluate", post(evaluate_play_rule_request))
         .route("/orders", get(list_orders).post(create_order))
@@ -34,6 +44,65 @@ pub fn router() -> Router<AppState> {
             get(get_lottery).put(update_lottery).delete(delete_lottery),
         )
         .route("/lotteries/{id}/sale", patch(set_lottery_sale))
+}
+
+async fn list_draw_sources() -> ApiResult<Json<ApiEnvelope<Vec<DrawSource>>>> {
+    Ok(Json(ApiEnvelope::success(draw_sources())))
+}
+
+async fn list_draw_issues(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<DrawIssue>>>> {
+    let issues = state.draws.list().await?;
+
+    Ok(Json(ApiEnvelope::success(issues)))
+}
+
+async fn get_draw_issue(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
+    let issue = state.draws.get(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(issue)))
+}
+
+async fn create_draw_issue(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateDrawIssueRequest>,
+) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
+    let lottery = state.lotteries.get(&payload.lottery_id).await?;
+    let issue = state.draws.create(&lottery, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(issue)))
+}
+
+async fn close_draw_issue(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
+    let issue = state.draws.close(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(issue)))
+}
+
+async fn draw_issue_result(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<DrawIssueResultRequest>,
+) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
+    let issue = state.draws.draw(&id, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(issue)))
+}
+
+async fn cancel_draw_issue(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
+    let issue = state.draws.cancel(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(issue)))
 }
 
 async fn list_play_rules() -> ApiResult<Json<ApiEnvelope<Vec<PlayRuleSummary>>>> {

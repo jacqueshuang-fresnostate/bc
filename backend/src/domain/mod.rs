@@ -1,3 +1,4 @@
+pub mod draw;
 pub mod finance;
 pub mod lottery;
 pub mod order;

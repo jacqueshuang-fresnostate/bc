@@ -283,7 +283,7 @@ fn module(
     }
 }
 
-fn draw_sources() -> Vec<DrawSource> {
+pub fn draw_sources() -> Vec<DrawSource> {
     vec![
         DrawSource {
             id: "fc3d-api".to_string(),

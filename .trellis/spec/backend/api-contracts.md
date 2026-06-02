@@ -490,3 +490,132 @@ await createOrder({
 ```
 
 后端读取彩种配置，调用玩法规则引擎计算 `stakeCount` 和 `amountMinor`，再保存订单。
+
+---
+
+## 场景：开奖期号与开奖源接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改开奖源列表、开奖期号创建、封盘、开奖、取消，以及管理后台开奖期号页面。
+- 范围：后端开奖领域模型、内存开奖仓储、开奖 API、彩种开奖模式复用、前端 draw API client、`useDraws` hook 和“开奖期号与开奖源”页面。
+
+### 2. 签名
+
+- `GET /api/admin/draw-sources`
+- `GET /api/admin/draw-issues`
+- `GET /api/admin/draw-issues/{id}`
+- `POST /api/admin/draw-issues`
+- `PATCH /api/admin/draw-issues/{id}/close`
+- `PATCH /api/admin/draw-issues/{id}/draw`
+- `PATCH /api/admin/draw-issues/{id}/cancel`
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封，字段命名必须使用 `camelCase`。
+
+创建期号请求：
+
+```json
+{
+  "lotteryId": "fc3d",
+  "issue": "2026156",
+  "scheduledAt": "2026-06-02 21:00:15",
+  "saleClosedAt": "2026-06-02 20:59:45"
+}
+```
+
+执行开奖请求：
+
+```json
+{
+  "drawNumber": "247"
+}
+```
+
+`platform` 和 `api` 开奖模式可以传空对象 `{}`，后端本地生成号码。`manual` 开奖模式必须传 `drawNumber`。
+
+开奖期号响应：
+
+```json
+{
+  "id": "D000000000001",
+  "lotteryId": "fc3d",
+  "lotteryName": "福彩 3D",
+  "issue": "2026156",
+  "numberType": "threeDigit",
+  "drawMode": "api",
+  "scheduledAt": "2026-06-02 21:00:15",
+  "saleClosedAt": "2026-06-02 20:59:45",
+  "status": "open",
+  "drawNumber": null,
+  "drawnAt": null,
+  "createdAt": "unix:1780387757"
+}
+```
+
+期号状态当前支持：
+
+- `open`
+- `closed`
+- `drawn`
+- `cancelled`
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 彩种 ID 为空 | HTTP 400，返回 `lottery id is required` |
+| 彩种不存在 | HTTP 404，返回彩种不存在 |
+| 请求彩种 ID 与读取的彩种不一致 | HTTP 400，返回 `request lottery id does not match lottery` |
+| 期号为空 | HTTP 400，返回 `issue is required` |
+| 开奖时间为空 | HTTP 400，返回 `scheduled time is required` |
+| 封盘时间为空 | HTTP 400，返回 `sale close time is required` |
+| 同一彩种重复创建同一期号 | HTTP 409，返回期号重复 |
+| 关闭非 `open` 期号 | HTTP 400，返回 `only open draw issues can be closed` |
+| 手动开奖缺少号码 | HTTP 400，返回 `manual draw requires draw number` |
+| 3 位彩种号码不是 3 位数字 | HTTP 400，返回号码长度或数字错误 |
+| 5 位彩种号码不是 5 位数字 | HTTP 400，返回号码长度或数字错误 |
+| 已开奖或已取消期号再次开奖 | HTTP 400，返回 `draw issue cannot be drawn in current status` |
+| 已开奖期号取消 | HTTP 400，返回 `drawn draw issue cannot be cancelled` |
+| 已取消期号重复取消 | HTTP 400，返回 `draw issue is already cancelled` |
+| 查询或操作不存在期号 | HTTP 404，返回期号不存在 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`fc3d` 创建期号后调用 `PATCH /draw` 传 `{}`，后端按 `threeDigit` 生成 3 位数字并返回 `status="drawn"`。
+- Good：`manual-test` 创建期号后传 `{"drawNumber":"78942"}`，后端按 `fiveDigit` 校验并保存开奖结果。
+- Base：开奖期号仓储当前是内存模式，服务重启后期号清空；这适合当前后台流程验证。
+- Bad：前端为 `manual` 期号传空对象执行开奖；后端必须拒绝，不能静默生成号码。
+- Bad：开奖后直接改订单状态或资金余额；本阶段还没有计奖、派奖和资金流水，开奖只记录结果事实。
+
+### 6. 必要测试
+
+- 后端需要覆盖期号创建、关闭销售、平台/API 生成号码、手动开奖号码必填、号码长度和数字校验。
+- 后端需要覆盖已开奖期号不能重复开奖或取消。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`。
+- 跨层联调需要请求开奖源、创建期号、封盘、API 开奖、手动开奖，并在管理后台页面确认结果回显。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```tsx
+await drawIssueResult(issue.id, {
+  drawNumber: issue.drawNumber ?? '000',
+});
+```
+
+这个写法让前端为平台/API 开奖制造兜底号码，后端无法区分真实开奖结果和前端临时值。
+
+#### 正确
+
+```tsx
+await drawIssueResult(issue.id, issue.drawMode === 'manual'
+  ? { drawNumber: form.drawNumber.trim() }
+  : {}
+);
+```
+
+后端根据彩种开奖模式决定是校验管理员录入号码，还是由平台/API 本地生成器生成号码。

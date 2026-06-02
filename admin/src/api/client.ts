@@ -1,4 +1,10 @@
 import type { ApiEnvelope, DashboardSummary, LotteryKind } from '../types/dashboard';
+import type { DrawSource } from '../types/dashboard';
+import type {
+  CreateDrawIssueRequest,
+  DrawIssue,
+  DrawIssueResultRequest,
+} from '../types/draws';
 import type {
   PlayRuleEvaluateRequest,
   PlayRuleEvaluation,
@@ -66,6 +72,49 @@ export function setLotterySaleStatus(id: string, saleEnabled: boolean) {
     `/api/admin/lotteries/${encodeURIComponent(id)}/sale`,
     {
       body: { saleEnabled },
+      method: 'PATCH',
+    },
+  );
+}
+
+export function fetchDrawSources(signal?: AbortSignal) {
+  return requestJson<DrawSource[]>('/api/admin/draw-sources', { signal });
+}
+
+export function fetchDrawIssues(signal?: AbortSignal) {
+  return requestJson<DrawIssue[]>('/api/admin/draw-issues', { signal });
+}
+
+export function createDrawIssue(payload: CreateDrawIssueRequest) {
+  return requestJson<DrawIssue>('/api/admin/draw-issues', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function closeDrawIssue(id: string) {
+  return requestJson<DrawIssue>(
+    `/api/admin/draw-issues/${encodeURIComponent(id)}/close`,
+    {
+      method: 'PATCH',
+    },
+  );
+}
+
+export function drawIssueResult(id: string, payload: DrawIssueResultRequest) {
+  return requestJson<DrawIssue>(
+    `/api/admin/draw-issues/${encodeURIComponent(id)}/draw`,
+    {
+      body: payload,
+      method: 'PATCH',
+    },
+  );
+}
+
+export function cancelDrawIssue(id: string) {
+  return requestJson<DrawIssue>(
+    `/api/admin/draw-issues/${encodeURIComponent(id)}/cancel`,
+    {
       method: 'PATCH',
     },
   );

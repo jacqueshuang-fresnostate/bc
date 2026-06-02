@@ -5,11 +5,12 @@ use tower_http::cors::CorsLayer;
 
 use crate::{
     routes,
-    services::{lottery::LotteryRepository, order::OrderRepository},
+    services::{draw::DrawRepository, lottery::LotteryRepository, order::OrderRepository},
 };
 
 #[derive(Clone)]
 pub struct AppState {
+    pub draws: DrawRepository,
     pub lotteries: LotteryRepository,
     pub orders: OrderRepository,
 }
@@ -17,6 +18,7 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
+            draws: DrawRepository::memory(),
             lotteries: LotteryRepository::memory_seeded(),
             orders: OrderRepository::memory(),
         }
@@ -32,6 +34,7 @@ impl AppState {
 
         tracing::info!("DATABASE_URL configured; using PostgreSQL lottery repository");
         Ok(Self {
+            draws: DrawRepository::memory(),
             lotteries,
             orders: OrderRepository::memory(),
         })
