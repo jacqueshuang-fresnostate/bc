@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchDrawSchedulerStatus } from '../api/client';
-import type { DrawSchedulerStatus } from '../types/scheduler';
+import { fetchDrawSchedulerStatus, updateDrawSchedulerConfig } from '../api/client';
+import type { DrawSchedulerConfig, DrawSchedulerStatus } from '../types/scheduler';
 
 export function useDrawScheduler() {
   const [status, setStatus] = useState<DrawSchedulerStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -38,10 +39,27 @@ export function useDrawScheduler() {
     };
   }, [refreshToken]);
 
+  const saveConfig = useCallback(async (payload: DrawSchedulerConfig) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const nextStatus = await updateDrawSchedulerConfig(payload);
+      setStatus(nextStatus);
+      return nextStatus;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
   return {
     error,
     loading,
     refresh,
+    saveConfig,
+    saving,
     status,
   };
 }

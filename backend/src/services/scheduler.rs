@@ -7,7 +7,7 @@ use std::{
 };
 
 use chrono::Local;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::{
@@ -35,7 +35,7 @@ const MAX_SCHEDULER_HISTORY: usize = 20;
 const MAX_FUTURE_ISSUE_COUNT: u32 = 50;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DrawSchedulerConfig {
     pub enabled: bool,
@@ -142,6 +142,20 @@ impl DrawSchedulerRepository {
             .map(|store| store.status())
     }
 
+    pub fn config(&self) -> ApiResult<DrawSchedulerConfig> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw scheduler store lock poisoned".to_string()))
+            .map(|store| store.config.clone())
+    }
+
+    pub fn update_config(&self, config: DrawSchedulerConfig) -> ApiResult<DrawSchedulerStatus> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("draw scheduler store lock poisoned".to_string()))?
+            .update_config(config)
+    }
+
     pub fn record_success(
         &self,
         trigger: DrawSchedulerRunTrigger,
@@ -180,6 +194,12 @@ impl DrawSchedulerStore {
             last_run: recent_runs.first().cloned(),
             recent_runs,
         }
+    }
+
+    fn update_config(&mut self, config: DrawSchedulerConfig) -> ApiResult<DrawSchedulerStatus> {
+        config.validate()?;
+        self.config = config;
+        Ok(self.status())
     }
 
     fn record_success(
@@ -330,19 +350,40 @@ pub fn spawn_draw_scheduler(
     );
 
     Some(tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(config.interval_seconds));
+        let mut active_interval_seconds = config.interval_seconds;
+        let mut interval = tokio::time::interval(Duration::from_secs(active_interval_seconds));
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
             interval.tick().await;
             let started_at = current_scheduler_timestamp();
             let now = started_at.clone();
+            let current_config = match scheduler.config() {
+                Ok(current_config) => current_config,
+                Err(error) => {
+                    tracing::error!(%error, "draw scheduler config read failed");
+                    config.clone()
+                }
+            };
+            if !current_config.enabled {
+                tracing::debug!("draw scheduler skipped because config is disabled");
+                continue;
+            }
+            if current_config.interval_seconds != active_interval_seconds {
+                active_interval_seconds = current_config.interval_seconds;
+                interval = tokio::time::interval(Duration::from_secs(active_interval_seconds));
+                interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                tracing::info!(
+                    interval_seconds = active_interval_seconds,
+                    "draw scheduler interval updated"
+                );
+            }
             match run_draw_scheduler_once(
                 &draws,
                 &lotteries,
                 &orders,
                 &finance,
-                &config,
+                &current_config,
                 now.clone(),
             )
             .await
@@ -744,6 +785,36 @@ mod tests {
         assert_eq!(record.error.as_deref(), Some("boom"));
         assert_eq!(status.run_count, 1);
         assert_eq!(status.recent_runs[0].status, DrawSchedulerRunStatus::Failed);
+    }
+
+    #[test]
+    fn scheduler_repository_updates_config_with_validation() {
+        let scheduler = DrawSchedulerRepository::new(DrawSchedulerConfig::default());
+
+        let updated = scheduler
+            .update_config(DrawSchedulerConfig {
+                enabled: true,
+                interval_seconds: 5,
+                future_issue_count: 3,
+                sale_close_lead_seconds: 20,
+            })
+            .expect("valid scheduler config can be saved");
+
+        assert_eq!(updated.enabled, true);
+        assert_eq!(updated.config.interval_seconds, 5);
+        assert_eq!(updated.config.future_issue_count, 3);
+        assert_eq!(updated.config.sale_close_lead_seconds, 20);
+
+        let error = scheduler
+            .update_config(DrawSchedulerConfig {
+                enabled: true,
+                interval_seconds: 0,
+                future_issue_count: 3,
+                sale_close_lead_seconds: 20,
+            })
+            .expect_err("invalid interval must be rejected");
+
+        assert!(error.to_string().contains("interval seconds"));
     }
 
     #[test]

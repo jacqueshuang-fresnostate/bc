@@ -9,6 +9,7 @@ import {
   Play,
   Plus,
   RefreshCcw,
+  Save,
   Search,
   XCircle,
 } from 'lucide-react';
@@ -35,6 +36,7 @@ import type {
   DrawSchedulerRunRecord,
   DrawSchedulerRunStatus,
   DrawSchedulerStatus,
+  DrawSchedulerConfig,
 } from '../types/scheduler';
 
 interface DrawManagementPageProps {
@@ -47,6 +49,13 @@ interface DrawIssueFormState {
   lotteryId: string;
   saleClosedAt: string;
   scheduledAt: string;
+}
+
+interface SchedulerConfigFormState {
+  enabled: boolean;
+  futureIssueCount: string;
+  intervalSeconds: string;
+  saleCloseLeadSeconds: string;
 }
 
 export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPageProps) {
@@ -76,6 +85,8 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     error: schedulerError,
     loading: schedulerLoading,
     refresh: refreshScheduler,
+    saveConfig: saveSchedulerConfigRequest,
+    saving: schedulerSaving,
     status: schedulerStatus,
   } = useDrawScheduler();
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
@@ -87,6 +98,8 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     DrawIssueGenerationPreview[]
   >([]);
   const [form, setForm] = useState<DrawIssueFormState>(() => emptyForm());
+  const [schedulerConfigForm, setSchedulerConfigForm] =
+    useState<SchedulerConfigFormState>(() => emptySchedulerConfigForm());
 
   const selectedLottery = useMemo(
     () => lotteries.find((lottery) => lottery.id === form.lotteryId) ?? lotteries[0] ?? null,
@@ -108,6 +121,12 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
       setSelectedIssueId(null);
     }
   }, [issues, selectedIssueId]);
+
+  useEffect(() => {
+    if (schedulerStatus) {
+      setSchedulerConfigForm(configFormFromStatus(schedulerStatus));
+    }
+  }, [schedulerStatus]);
 
   const refreshAll = () => {
     refreshDraws();
@@ -213,6 +232,12 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     if (focusIssue) {
       setSelectedIssueId(focusIssue.id);
     }
+    refreshScheduler();
+    onDashboardRefresh();
+  };
+
+  const saveSchedulerConfig = async () => {
+    await saveSchedulerConfigRequest(schedulerConfigPayload(schedulerConfigForm));
     refreshScheduler();
     onDashboardRefresh();
   };
@@ -398,6 +423,13 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
             </div>
 
             <SchedulerStatusSummary loading={schedulerLoading} status={schedulerStatus} />
+
+            <SchedulerConfigForm
+              form={schedulerConfigForm}
+              saving={schedulerSaving}
+              onChange={setSchedulerConfigForm}
+              onSubmit={() => void saveSchedulerConfig()}
+            />
           </Card>
 
           <Card className="rounded-md border border-line">
@@ -739,6 +771,101 @@ function SchedulerStatusSummary({
   );
 }
 
+function SchedulerConfigForm({
+  form,
+  onChange,
+  onSubmit,
+  saving,
+}: {
+  form: SchedulerConfigFormState;
+  onChange: Dispatch<SetStateAction<SchedulerConfigFormState>>;
+  onSubmit: () => void;
+  saving: boolean;
+}) {
+  return (
+    <div className="border-t border-line pt-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="text-sm font-medium text-ink">调度配置</div>
+        <Button
+          disabled={saving}
+          icon={<Save size={15} />}
+          loading={saving}
+          size="small"
+          theme="solid"
+          onClick={onSubmit}
+        >
+          保存配置
+        </Button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="启用调度">
+          <label className="inline-flex h-10 items-center gap-2 text-sm text-slate-700">
+            <input
+              checked={form.enabled}
+              className="h-4 w-4 rounded border-line text-teal-600"
+              type="checkbox"
+              onChange={(event) =>
+                setSchedulerConfigFormValue(
+                  onChange,
+                  'enabled',
+                  event.currentTarget.checked,
+                )
+              }
+            />
+            {form.enabled ? '已启用' : '已关闭'}
+          </label>
+        </Field>
+        <Field label="执行周期（秒）">
+          <input
+            className="form-input"
+            min="1"
+            type="number"
+            value={form.intervalSeconds}
+            onChange={(event) =>
+              setSchedulerConfigFormValue(
+                onChange,
+                'intervalSeconds',
+                event.target.value,
+              )
+            }
+          />
+        </Field>
+        <Field label="未来期号缓冲">
+          <input
+            className="form-input"
+            max="50"
+            min="1"
+            type="number"
+            value={form.futureIssueCount}
+            onChange={(event) =>
+              setSchedulerConfigFormValue(
+                onChange,
+                'futureIssueCount',
+                event.target.value,
+              )
+            }
+          />
+        </Field>
+        <Field label="封盘提前（秒）">
+          <input
+            className="form-input"
+            min="1"
+            type="number"
+            value={form.saleCloseLeadSeconds}
+            onChange={(event) =>
+              setSchedulerConfigFormValue(
+                onChange,
+                'saleCloseLeadSeconds',
+                event.target.value,
+              )
+            }
+          />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
 function SchedulerLastRunSummary({ run }: { run: DrawSchedulerRunRecord }) {
   return (
     <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
@@ -870,6 +997,35 @@ function emptyForm(): DrawIssueFormState {
   };
 }
 
+function emptySchedulerConfigForm(): SchedulerConfigFormState {
+  return {
+    enabled: false,
+    futureIssueCount: '1',
+    intervalSeconds: '60',
+    saleCloseLeadSeconds: '30',
+  };
+}
+
+function configFormFromStatus(status: DrawSchedulerStatus): SchedulerConfigFormState {
+  return {
+    enabled: status.config.enabled,
+    futureIssueCount: String(status.config.futureIssueCount),
+    intervalSeconds: String(status.config.intervalSeconds),
+    saleCloseLeadSeconds: String(status.config.saleCloseLeadSeconds),
+  };
+}
+
+function schedulerConfigPayload(
+  form: SchedulerConfigFormState,
+): DrawSchedulerConfig {
+  return {
+    enabled: form.enabled,
+    futureIssueCount: numberField(form.futureIssueCount),
+    intervalSeconds: numberField(form.intervalSeconds),
+    saleCloseLeadSeconds: numberField(form.saleCloseLeadSeconds),
+  };
+}
+
 function currentDateTimeLabel() {
   const now = new Date();
   const pad = (value: number) => value.toString().padStart(2, '0');
@@ -888,10 +1044,23 @@ function parseGenerationCount(value: string) {
   return count;
 }
 
+function numberField(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function setFormValue<K extends keyof DrawIssueFormState>(
   setForm: Dispatch<SetStateAction<DrawIssueFormState>>,
   key: K,
   value: DrawIssueFormState[K],
+) {
+  setForm((current) => ({ ...current, [key]: value }));
+}
+
+function setSchedulerConfigFormValue<K extends keyof SchedulerConfigFormState>(
+  setForm: Dispatch<SetStateAction<SchedulerConfigFormState>>,
+  key: K,
+  value: SchedulerConfigFormState[K],
 ) {
   setForm((current) => ({ ...current, [key]: value }));
 }

@@ -42,7 +42,7 @@ import type {
   PlayRuleSummary,
 } from '../types/playRules';
 import type { CreateOrderRequest, OrderDetail } from '../types/orders';
-import type { DrawSchedulerStatus } from '../types/scheduler';
+import type { DrawSchedulerConfig, DrawSchedulerStatus } from '../types/scheduler';
 import type {
   RobotConfigSummary,
   RobotStatusUpdateRequest,
@@ -470,6 +470,13 @@ export function runDrawAutomation(payload: DrawAutomationRunRequest) {
 export function fetchDrawSchedulerStatus(signal?: AbortSignal) {
   return requestJson<DrawSchedulerStatus>('/api/admin/draw-scheduler/status', {
     signal,
+  });
+}
+
+export function updateDrawSchedulerConfig(payload: DrawSchedulerConfig) {
+  return requestJson<DrawSchedulerStatus>('/api/admin/draw-scheduler/config', {
+    body: payload,
+    method: 'PUT',
   });
 }
 

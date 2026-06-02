@@ -2369,3 +2369,123 @@ await addGroupBuyParticipant(id, {
 ```
 
 前端只提交参与金额和绑定 ID，份额数量由后端按彩种合买配置计算。
+
+---
+
+## 场景：常驻调度配置编辑接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增调度配置更新 API、前端 API client、`useDrawScheduler` 保存能力和“常驻调度”配置表单。
+- 范围：本进程内调度配置查看、更新、状态回显，以及已启动后台循环每轮读取最新配置。
+- 本阶段只做内存配置编辑；服务重启后仍从环境变量初始化，不做数据库持久化、发布审批、回滚或分布式锁。
+
+### 2. 签名
+
+- `GET /api/admin/draw-scheduler/status`
+- `PUT /api/admin/draw-scheduler/config`
+
+### 3. 契约
+
+配置请求体与状态响应中的 `config` 字段一致：
+
+```json
+{
+  "enabled": true,
+  "intervalSeconds": 30,
+  "futureIssueCount": 3,
+  "saleCloseLeadSeconds": 20
+}
+```
+
+`PUT /api/admin/draw-scheduler/config` 成功后返回完整 `DrawSchedulerStatus`：
+
+```json
+{
+  "enabled": true,
+  "config": {
+    "enabled": true,
+    "intervalSeconds": 30,
+    "futureIssueCount": 3,
+    "saleCloseLeadSeconds": 20
+  },
+  "runCount": 0,
+  "lastRun": null,
+  "recentRuns": []
+}
+```
+
+字段契约：
+
+1. `enabled` 表示仓储配置是否启用；状态顶层 `enabled` 必须与 `config.enabled` 保持一致。
+2. `intervalSeconds` 控制后台循环下一轮等待间隔；已启动循环会在下一轮切换到新间隔。
+3. `futureIssueCount` 控制每个销售开启彩种需要保留的未来期号数量。
+4. `saleCloseLeadSeconds` 控制自动生成期号时开奖前多少秒封盘。
+5. 如果服务启动时调度为关闭，本阶段保存 `enabled=true` 只更新状态，不动态启动新的后台循环。
+6. 如果已启动循环后保存 `enabled=false`，下一轮 tick 会跳过自动任务且不写运行历史。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 有效配置 | HTTP 200，返回最新 `DrawSchedulerStatus` |
+| `intervalSeconds=0` | HTTP 400，返回执行周期必须大于 0 |
+| `futureIssueCount=0` | HTTP 400，返回未来期号数量必须在 1 到 50 |
+| `futureIssueCount>50` | HTTP 400，返回未来期号数量必须在 1 到 50 |
+| `saleCloseLeadSeconds=0` | HTTP 400，返回封盘提前秒数必须大于 0 |
+| 调度仓储锁异常 | HTTP 500，返回内部错误，不暴露运行时细节 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：后台保存 `enabled=true, intervalSeconds=5, futureIssueCount=3, saleCloseLeadSeconds=20`，状态接口立即回显新配置。
+- Good：已启动调度循环每轮读取 `DrawSchedulerRepository::config()`，所以 `futureIssueCount` 和 `saleCloseLeadSeconds` 不需要重启进程即可生效。
+- Base：服务重启后仍从环境变量读取初始配置，内存修改不会持久保存。
+- Bad：前端只改本地表单状态，不调用 `PUT /draw-scheduler/config`，刷新后状态丢失且后端不生效。
+- Bad：后台循环继续使用启动时捕获的 `DrawSchedulerConfig`，配置页面虽然保存成功，但自动补期仍按旧配置运行。
+
+### 6. 必要测试
+
+- 后端需要覆盖有效配置更新成功并回显。
+- 后端需要覆盖无效 `intervalSeconds` 被拒绝。
+- 后端需要覆盖环境变量解析旧测试不回退。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`，确认配置字段和 API client 类型一致。
+- API 冒烟需要保存有效配置、查询状态回显，并验证无效配置返回业务错误。
+- 浏览器验证需要进入“开奖期号与开奖源”的“常驻调度”卡片，保存配置无接口错误且控制台无错误。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+spawn_draw_scheduler(..., config.clone(), scheduler);
+// loop 内一直使用启动时的 config
+```
+
+这个写法会让后台页面保存配置后看起来成功，但实际自动任务仍按旧配置运行。
+
+```ts
+setForm(nextConfig);
+refreshScheduler();
+```
+
+这个写法只改前端状态，没有把配置提交到后端。
+
+#### 正确
+
+```rust
+let current_config = scheduler.config()?;
+if !current_config.enabled {
+    continue;
+}
+run_draw_scheduler_once(..., &current_config, now).await?;
+```
+
+后台循环每轮读取最新配置，关闭时跳过执行。
+
+```ts
+const nextStatus = await updateDrawSchedulerConfig(payload);
+setStatus(nextStatus);
+```
+
+前端保存后以服务端返回状态作为事实来源。

@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, State},
-    routing::{get, patch, post},
+    routing::{get, patch, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -44,6 +44,7 @@ use crate::{
         },
         order::validate_draw_issue_accepts_order,
         play_rules::{evaluate_play_rule, play_rule_summaries},
+        scheduler::DrawSchedulerConfig,
         scheduler::DrawSchedulerStatus,
     },
 };
@@ -135,6 +136,7 @@ pub fn router() -> Router<AppState> {
         .route("/draw-issues/{id}/draw", patch(draw_issue_result))
         .route("/draw-issues/{id}/cancel", patch(cancel_draw_issue))
         .route("/draw-scheduler/status", get(get_draw_scheduler_status))
+        .route("/draw-scheduler/config", put(update_draw_scheduler_config))
         .route("/draw-automation/run", post(run_draw_automation_request))
         .route("/settlements", get(list_settlements))
         .route("/settlements/{id}", get(get_settlement))
@@ -168,6 +170,15 @@ async fn get_draw_scheduler_status(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<DrawSchedulerStatus>>> {
     let status = state.scheduler.status()?;
+
+    Ok(Json(ApiEnvelope::success(status)))
+}
+
+async fn update_draw_scheduler_config(
+    State(state): State<AppState>,
+    Json(payload): Json<DrawSchedulerConfig>,
+) -> ApiResult<Json<ApiEnvelope<DrawSchedulerStatus>>> {
+    let status = state.scheduler.update_config(payload)?;
 
     Ok(Json(ApiEnvelope::success(status)))
 }

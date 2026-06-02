@@ -183,3 +183,10 @@
 - 解决问题：此前“合买配置”入口仍走占位页，dashboard 的 `groupBuyPlans` 也是静态假数据；本次让 dashboard 和页面共用合买仓储，创建计划时校验彩种存在且开启合买、发起人存在、金额能按最小份额拆分、发起人认购满足彩种最低比例，添加参与记录时校验用户存在、金额满足参与最低金额且不能超额，满额后自动进入 `filled`。本阶段只做后台计划与参与记录管理，不做真实投注订单、资金冻结/扣款、撤单退款或中奖分账；用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 82 个，覆盖创建计划、禁用合买彩种拒绝、发起人认购不足拒绝、添加参与记录后满单和超额参与拒绝。API 冒烟使用 `PORT=18093` 创建 `G-API-001`，更新备注，添加 `G-API-001-P002` 后自动满单，`manual-test` 禁用合买返回业务错误，超额参与返回业务错误，dashboard 能返回新计划。浏览器验证 `http://127.0.0.1:5186/` 的“合买配置”页面显示真实计划、可保存计划状态、可添加参与记录 `G202606020001-P003`，控制台无错误；截图保存到 `/tmp/bc-group-buy-smoke.png`。
 - 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议继续推进合买真实投注订单、资金冻结扣款、撤单退款、中奖分账、手机端参与入口或合买机器人真实执行。
+
+## 2026-06-02 20:25:03 HKT
+
+- 完成任务：实现 `06-02-scheduler-configuration-editing` 调度配置后台编辑阶段，新增 `PUT /api/admin/draw-scheduler/config`，让后台可保存常驻调度启用状态、执行周期、未来期号缓冲和封盘提前秒数；“开奖期号与开奖源”页面的“常驻调度”卡片新增配置表单和保存按钮。
+- 解决问题：此前常驻调度配置只能通过环境变量初始化，后台只能查看不能修改；本次让 `DrawSchedulerRepository` 支持读取和更新配置，并让已启动的后台循环每轮读取最新配置，`enabled=false` 会跳过自动任务，`futureIssueCount`、`saleCloseLeadSeconds` 和下一轮 `intervalSeconds` 可在当前进程内热生效。本阶段仍不做配置持久化、发布审批、回滚、动态启动/停止后台循环或分布式锁；用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 83 个，覆盖有效配置更新和无效执行周期拒绝。API 冒烟使用 `PORT=18094` 保存 `enabled=true`、`intervalSeconds=5`、`futureIssueCount=3`、`saleCloseLeadSeconds=20` 后状态接口立即回显，无效 `intervalSeconds=0` 返回业务错误。浏览器验证 `http://127.0.0.1:5187/` 的“常驻调度”配置表单显示最新配置，点击“保存配置”无接口错误，控制台无错误；截图保存到 `/tmp/bc-scheduler-config-smoke.png`。
+- 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议继续推进调度配置持久化、管理员审计、动态启动/停止、失败告警、分布式锁，或转入真实登录鉴权和权限拦截。
