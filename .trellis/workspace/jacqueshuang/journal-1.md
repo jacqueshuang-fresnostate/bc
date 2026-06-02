@@ -764,3 +764,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: 客服会话使用 Semi Chat
+
+**Date**: 2026-06-02
+**Task**: 客服会话使用 Semi Chat
+**Branch**: `main`
+
+### Summary
+
+将在线客服消息记录从手写列表改为 Semi UI Chat 组件展示，保留原有后台回复表单，关闭 Chat 默认输入区和上传能力，补充架构设计、TODO 与前端组件规范，并完成构建和浏览器验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf87370` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
