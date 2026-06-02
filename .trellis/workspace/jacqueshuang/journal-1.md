@@ -731,3 +731,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: 用户权限维护侧边栏
+
+**Date**: 2026-06-02
+**Task**: 用户权限维护侧边栏
+**Branch**: `main`
+
+### Summary
+
+将用户维护、账号维护、角色维护从用户权限管理页面常驻表单改为 SideSheet 打开，补充架构设计、TODO 和前端组件规范，并完成构建与浏览器验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3b93fd3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
