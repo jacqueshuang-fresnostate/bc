@@ -225,3 +225,10 @@
 - 解决问题：此前管理后台所有 `/api/admin/**` 接口和前端页面都可以直接访问，角色权限只停留在维护数据里，没有参与登录态、菜单入口或 API 拦截；本次让登录成功后前端保存 token 并自动附加到 API 请求，后端中间件按路径映射 `PermissionScope`，缺 token 返回 401、权限不足返回 403，应用外壳显示当前管理员和角色并支持登出。当前仍使用无数据库阶段的演示密码 `admin123`，后续需要替换为密码哈希和持久化凭据；用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 87 个，覆盖登录成功、锁定管理员拒绝、登出 token 失效和路由权限映射。API 冒烟使用 `PORT=18096` 确认无 token 请求 `/api/admin/dashboard` 返回 401，`admin/admin123` 登录成功并可访问 `/api/admin/auth/me`，`locked_admin/admin123` 返回 403，临时 `role-ops` 管理员可访问 `/api/admin/users` 但访问 `/api/admin/admins` 返回 403。浏览器验证 `http://127.0.0.1:5193/` 未登录显示“管理员登录”，登录后进入系统概览并显示 `admin/超级管理员/登出`，点击登出回到登录页，控制台无 warning/error；截图保存到 `/tmp/bc-auth-login-smoke.png`。
 - 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议推进密码哈希与密码重置、权限数据持久化、按钮级权限、管理员操作审计和 dashboard 敏感数据裁剪。
+
+## 2026-06-03 01:03:51 HKT
+
+- 完成任务：实现 `06-03-dashboard-permission-filtering` dashboard 数据按权限裁剪阶段，新增后端 `dashboard_summary_for_scopes`，让 `/api/admin/dashboard` 根据当前管理员登录会话的 `PermissionScope` 返回允许看到的模块、指标和摘要数据。
+- 解决问题：此前 dashboard 虽然需要登录，但为了作为系统概览入口没有绑定单一业务权限，低权限管理员仍可能通过 dashboard 响应看到管理员、角色、财务、机器人、返利等无权限领域摘要；本次保持 `DashboardSummary` 顶层字段不变，对无权限数组返回空数组，对财务、注册配置、邀请返利等对象返回置零或关闭状态，并在模块组和指标层同步过滤。用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 89 个，覆盖运营 scopes 裁剪和超级管理员全量保留。API 冒烟使用 `PORT=18097` 创建临时 `role-ops` 管理员后确认运营 dashboard 只返回 `users`、`orders`、`lotteries` 指标和用户/订单/彩票模块，管理员、角色、系统设置、财务、客服、机器人、邀请返利模块均不返回，财务金额为 `0`。
+- 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议推进密码哈希、权限持久化、按钮级权限、管理员操作审计，或继续补齐后台剩余真实业务流程。

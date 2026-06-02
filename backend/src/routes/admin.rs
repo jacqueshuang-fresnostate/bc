@@ -42,7 +42,10 @@ use crate::{
     response::ApiEnvelope,
     services::{
         automation::run_draw_automation,
-        dashboard::{dashboard_summary_with_orders, draw_sources, DashboardSummary},
+        dashboard::{
+            dashboard_summary_for_scopes, dashboard_summary_with_orders, draw_sources,
+            DashboardSummary,
+        },
         draw_generation::{
             generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
         },
@@ -434,6 +437,7 @@ async fn evaluate_play_rule_request(
 
 async fn get_dashboard_summary(
     State(state): State<AppState>,
+    Extension(session): Extension<AdminAuthSession>,
 ) -> ApiResult<Json<ApiEnvelope<DashboardSummary>>> {
     let lotteries = state.lotteries.list().await?;
     let recent_orders = state.orders.recent_summaries(8).await?;
@@ -444,7 +448,7 @@ async fn get_dashboard_summary(
     let robots = state.robots.list().await?;
     let group_buy_plans = state.group_buys.list().await?;
 
-    Ok(Json(ApiEnvelope::success(dashboard_summary_with_orders(
+    let summary = dashboard_summary_with_orders(
         lotteries,
         recent_orders,
         group_buy_plans,
@@ -453,7 +457,10 @@ async fn get_dashboard_summary(
         access,
         invite_policy,
         robots,
-    ))))
+    );
+    let summary = dashboard_summary_for_scopes(summary, &session.scopes);
+
+    Ok(Json(ApiEnvelope::success(summary)))
 }
 
 async fn list_group_buy_plans(

@@ -5,8 +5,8 @@ use crate::domain::{
     group_buy::GroupBuyPlanSummary,
     lottery::{DrawMode, DrawSource, LotteryKind},
     order::OrderSummary,
-    permission::{AdminRole, SystemSetting},
-    rebate::InvitePolicySummary,
+    permission::{AdminRole, PermissionScope, SystemSetting},
+    rebate::{InvitePolicySummary, RebateMode},
     robot::RobotConfigSummary,
     user::{AdminSummary, RegistrationConfig, UserSummary},
 };
@@ -112,6 +112,129 @@ pub fn dashboard_summary_with_orders(
         settings: access.settings,
         registration: access.registration,
         invite_policy,
+    }
+}
+
+pub fn dashboard_summary_for_scopes(
+    mut summary: DashboardSummary,
+    scopes: &[PermissionScope],
+) -> DashboardSummary {
+    summary
+        .metrics
+        .retain(|metric| is_allowed(metric_scope(&metric.key), scopes));
+    summary.module_groups = summary
+        .module_groups
+        .into_iter()
+        .filter_map(|mut group| {
+            group
+                .modules
+                .retain(|module| is_allowed(module_scope(&module.key), scopes));
+
+            if group.modules.is_empty() {
+                None
+            } else {
+                Some(group)
+            }
+        })
+        .collect();
+
+    if !has_scope(scopes, &PermissionScope::Users) {
+        summary.users.clear();
+        summary.registration = redacted_registration_config();
+    }
+    if !has_scope(scopes, &PermissionScope::Orders) {
+        summary.recent_orders.clear();
+    }
+    if !has_scope(scopes, &PermissionScope::Finance) {
+        summary.finance = redacted_finance_overview();
+        summary.financial_accounts.clear();
+    }
+    if !has_scope(scopes, &PermissionScope::Admins) {
+        summary.admins.clear();
+    }
+    if !has_scope(scopes, &PermissionScope::Roles) {
+        summary.roles.clear();
+    }
+    if !has_scope(scopes, &PermissionScope::SystemSettings) {
+        summary.settings.clear();
+    }
+    if !has_scope(scopes, &PermissionScope::Lotteries) {
+        summary.lotteries.clear();
+        summary.draw_sources.clear();
+        summary.group_buy_plans.clear();
+    }
+    if !has_scope(scopes, &PermissionScope::Robots) {
+        summary.robots.clear();
+    }
+    if !has_scope(scopes, &PermissionScope::Rebates) {
+        summary.invite_policy = redacted_invite_policy();
+    }
+
+    summary
+}
+
+fn is_allowed(scope: Option<PermissionScope>, scopes: &[PermissionScope]) -> bool {
+    match scope {
+        Some(scope) => has_scope(scopes, &scope),
+        None => true,
+    }
+}
+
+fn has_scope(scopes: &[PermissionScope], scope: &PermissionScope) -> bool {
+    scopes.contains(scope)
+}
+
+fn metric_scope(key: &str) -> Option<PermissionScope> {
+    match key {
+        "users" => Some(PermissionScope::Users),
+        "orders" => Some(PermissionScope::Orders),
+        "lotteries" => Some(PermissionScope::Lotteries),
+        "finance" => Some(PermissionScope::Finance),
+        _ => None,
+    }
+}
+
+fn module_scope(key: &str) -> Option<PermissionScope> {
+    match key {
+        "users" | "registration" => Some(PermissionScope::Users),
+        "orders" | "settlements" => Some(PermissionScope::Orders),
+        "finance" => Some(PermissionScope::Finance),
+        "support" => Some(PermissionScope::CustomerService),
+        "admins" => Some(PermissionScope::Admins),
+        "roles" => Some(PermissionScope::Roles),
+        "settings" => Some(PermissionScope::SystemSettings),
+        "lottery-console" | "lotteries" | "draw-modes" | "schedules" | "group-buy"
+        | "play-rules" => Some(PermissionScope::Lotteries),
+        "group-buy-robot" | "purchase-robot" => Some(PermissionScope::Robots),
+        "invite" | "rebate" => Some(PermissionScope::Rebates),
+        _ => None,
+    }
+}
+
+fn redacted_finance_overview() -> FinanceOverview {
+    FinanceOverview {
+        total_balance_minor: 0,
+        pending_withdraw_minor: 0,
+        today_recharge_minor: 0,
+        today_payout_minor: 0,
+    }
+}
+
+fn redacted_registration_config() -> RegistrationConfig {
+    RegistrationConfig {
+        username_enabled: false,
+        email_enabled: false,
+        agent_invite_required: false,
+    }
+}
+
+fn redacted_invite_policy() -> InvitePolicySummary {
+    InvitePolicySummary {
+        agents_can_invite: false,
+        regular_users_can_invite: false,
+        rebate_mode: RebateMode::Immediate,
+        supported_rebate_modes: Vec::new(),
+        default_recharge_rebate_basis_points: 0,
     }
 }
 
@@ -315,12 +438,14 @@ pub fn draw_sources() -> Vec<DrawSource> {
 
 #[cfg(test)]
 mod tests {
-    use super::dashboard_summary_with_orders;
+    use super::{dashboard_summary_for_scopes, dashboard_summary_with_orders, DashboardSummary};
     use crate::{
         domain::finance::{FinanceOverview, FinancialAccountSummary},
         domain::group_buy::{GroupBuyPlanStatus, GroupBuyPlanSummary},
+        domain::permission::PermissionScope,
         domain::rebate::{InvitePolicySummary, RebateMode},
-        services::access::AccessRepository,
+        domain::robot::{RobotConfigSummary, RobotKind, RobotStatus},
+        services::access::{AccessRepository, AccessSnapshot},
         services::lottery::seed_lotteries,
     };
 
@@ -330,7 +455,128 @@ mod tests {
             .snapshot()
             .await
             .expect("access snapshot can load");
-        let summary = dashboard_summary_with_orders(
+        let summary = sample_summary(access);
+        let keys = summary
+            .module_groups
+            .iter()
+            .map(|group| group.key.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(keys.contains(&"common"));
+        assert!(keys.contains(&"lottery"));
+        assert!(keys.contains(&"automation"));
+        assert!(keys.contains(&"growth"));
+
+        let lottery_modules = summary
+            .module_groups
+            .iter()
+            .find(|group| group.key == "lottery")
+            .expect("lottery module group exists")
+            .modules
+            .iter()
+            .map(|module| module.key.as_str())
+            .collect::<Vec<_>>();
+        assert!(lottery_modules.contains(&"lottery-console"));
+    }
+
+    #[tokio::test]
+    async fn dashboard_filters_sensitive_fields_for_ops_scopes() {
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let summary = dashboard_summary_for_scopes(
+            sample_summary(access),
+            &[
+                PermissionScope::Users,
+                PermissionScope::Orders,
+                PermissionScope::Lotteries,
+            ],
+        );
+
+        let metric_keys = summary
+            .metrics
+            .iter()
+            .map(|metric| metric.key.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(metric_keys, vec!["users", "orders", "lotteries"]);
+
+        let module_keys = summary
+            .module_groups
+            .iter()
+            .flat_map(|group| group.modules.iter())
+            .map(|module| module.key.as_str())
+            .collect::<Vec<_>>();
+        assert!(module_keys.contains(&"users"));
+        assert!(module_keys.contains(&"orders"));
+        assert!(module_keys.contains(&"registration"));
+        assert!(module_keys.contains(&"lottery-console"));
+        assert!(module_keys.contains(&"play-rules"));
+        assert!(module_keys.contains(&"settlements"));
+        assert!(!module_keys.contains(&"admins"));
+        assert!(!module_keys.contains(&"roles"));
+        assert!(!module_keys.contains(&"settings"));
+        assert!(!module_keys.contains(&"finance"));
+        assert!(!module_keys.contains(&"support"));
+        assert!(!module_keys.contains(&"group-buy-robot"));
+        assert!(!module_keys.contains(&"invite"));
+        assert!(!module_keys.contains(&"rebate"));
+
+        assert!(!summary.users.is_empty());
+        assert!(!summary.lotteries.is_empty());
+        assert!(!summary.group_buy_plans.is_empty());
+        assert!(summary.admins.is_empty());
+        assert!(summary.roles.is_empty());
+        assert!(summary.settings.is_empty());
+        assert_eq!(summary.finance.total_balance_minor, 0);
+        assert!(summary.financial_accounts.is_empty());
+        assert!(summary.robots.is_empty());
+        assert!(summary.registration.username_enabled);
+        assert!(!summary.invite_policy.agents_can_invite);
+        assert_eq!(
+            summary.invite_policy.default_recharge_rebate_basis_points,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn dashboard_keeps_full_summary_for_super_scopes() {
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let scopes = access
+            .roles
+            .iter()
+            .find(|role| role.id == "role-super")
+            .expect("super role exists")
+            .scopes
+            .clone();
+        let summary = dashboard_summary_for_scopes(sample_summary(access), &scopes);
+
+        let module_keys = summary
+            .module_groups
+            .iter()
+            .flat_map(|group| group.modules.iter())
+            .map(|module| module.key.as_str())
+            .collect::<Vec<_>>();
+        assert!(module_keys.contains(&"admins"));
+        assert!(module_keys.contains(&"roles"));
+        assert!(module_keys.contains(&"finance"));
+        assert!(module_keys.contains(&"group-buy-robot"));
+        assert!(module_keys.contains(&"invite"));
+        assert!(module_keys.contains(&"rebate"));
+        assert!(!summary.admins.is_empty());
+        assert!(!summary.roles.is_empty());
+        assert!(!summary.settings.is_empty());
+        assert_eq!(summary.finance.total_balance_minor, 684_000);
+        assert!(!summary.financial_accounts.is_empty());
+        assert!(!summary.robots.is_empty());
+        assert!(summary.invite_policy.agents_can_invite);
+    }
+
+    fn sample_summary(access: AccessSnapshot) -> DashboardSummary {
+        dashboard_summary_with_orders(
             seed_lotteries(),
             Vec::new(),
             vec![GroupBuyPlanSummary {
@@ -363,28 +609,14 @@ mod tests {
                 supported_rebate_modes: vec![RebateMode::Immediate, RebateMode::RechargeTiered],
                 default_recharge_rebate_basis_points: 350,
             },
-            Vec::new(),
-        );
-        let keys = summary
-            .module_groups
-            .iter()
-            .map(|group| group.key.as_str())
-            .collect::<Vec<_>>();
-
-        assert!(keys.contains(&"common"));
-        assert!(keys.contains(&"lottery"));
-        assert!(keys.contains(&"automation"));
-        assert!(keys.contains(&"growth"));
-
-        let lottery_modules = summary
-            .module_groups
-            .iter()
-            .find(|group| group.key == "lottery")
-            .expect("lottery module group exists")
-            .modules
-            .iter()
-            .map(|module| module.key.as_str())
-            .collect::<Vec<_>>();
-        assert!(lottery_modules.contains(&"lottery-console"));
+            vec![RobotConfigSummary {
+                id: "RB-1".to_string(),
+                name: "合买机器人".to_string(),
+                kind: RobotKind::GroupBuy,
+                lottery_ids: vec!["fc3d".to_string()],
+                status: RobotStatus::Enabled,
+                description: "测试机器人".to_string(),
+            }],
+        )
     }
 }

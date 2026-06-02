@@ -2619,3 +2619,128 @@ if !session.scopes.contains(&required_scope) {
 ```
 
 后端按 token 的角色权限做最终拦截。
+
+---
+
+## 场景：dashboard 数据按角色权限裁剪
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改 `/api/admin/dashboard` 摘要字段、模块入口、权限 scopes 或登录会话处理。
+- 范围：后端 `DashboardSummary` 构造、当前管理员 `AdminAuthSession.scopes`、dashboard 指标/模块过滤、无权限摘要脱敏、前端 dashboard 与侧边栏菜单二次过滤。
+
+### 2. 签名
+
+- `GET /api/admin/dashboard`
+- 认证头：`Authorization: Bearer <token>`
+- 后端裁剪函数：`dashboard_summary_for_scopes(summary: DashboardSummary, scopes: &[PermissionScope]) -> DashboardSummary`
+
+### 3. 契约
+
+`GET /api/admin/dashboard` 仍返回完整顶层字段结构，字段名必须保持 `camelCase`：
+
+```json
+{
+  "metrics": [],
+  "moduleGroups": [],
+  "lotteries": [],
+  "drawSources": [],
+  "recentOrders": [],
+  "groupBuyPlans": [],
+  "finance": {},
+  "financialAccounts": [],
+  "robots": [],
+  "users": [],
+  "admins": [],
+  "roles": [],
+  "settings": [],
+  "registration": {},
+  "invitePolicy": {}
+}
+```
+
+dashboard 路由需要登录，但不要求单一业务 scope。响应数据必须按当前 token 对应的 `scopes` 做后端裁剪：
+
+- `users`：保留 `users`、`registration`、用户管理模块、用户注册模块和“用户总数”指标；无权限时 `users=[]`，`registration` 返回关闭状态。
+- `orders`：保留 `recentOrders`、订单管理模块、计奖派奖模块和“今日订单”指标；无权限时 `recentOrders=[]`。
+- `finance`：保留 `finance`、`financialAccounts`、财务管理模块和“平台余额”指标；无权限时所有金额置 `0`，账户列表清空。
+- `admins`：保留 `admins` 和管理员管理模块；无权限时 `admins=[]`。
+- `roles`：保留 `roles` 和角色权限模块；无权限时 `roles=[]`。
+- `systemSettings`：保留 `settings` 和系统设置模块；无权限时 `settings=[]`。
+- `lotteries`：保留 `lotteries`、`drawSources`、`groupBuyPlans`、彩种控制台、彩种管理、开奖模式、开奖时间、合买配置、玩法配置模块和“已配置彩种”指标；无权限时这些数组清空。
+- `customerService`：保留在线客服模块；dashboard 当前没有客服摘要字段。
+- `robots`：保留机器人模块和 `robots`；无权限时 `robots=[]`。
+- `rebates`：保留邀请管理、返利配置模块和 `invitePolicy`；无权限时邀请开关关闭，默认返利比例为 `0`。
+
+前端菜单过滤只是二次防护，不能替代后端裁剪。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 缺少 Authorization | HTTP 401，统一错误信封 |
+| token 无效或已登出 | HTTP 401，统一错误信封 |
+| token 有效但 scopes 较少 | HTTP 200，顶层字段结构不变，只返回允许领域摘要 |
+| 无某领域权限的数组字段 | 返回空数组，不返回真实明细 |
+| 无 `finance` 权限 | `finance` 所有金额为 `0`，`financialAccounts=[]` |
+| 无 `users` 权限 | `registration` 返回关闭状态，`users=[]` |
+| 无 `rebates` 权限 | `invitePolicy` 返回关闭邀请和 `0` 返利比例 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`role-super` 请求 dashboard 时看到完整模块、管理员、角色、财务、机器人和返利摘要。
+- Good：只拥有 `users`、`orders`、`lotteries` 的运营角色请求 dashboard 时，只看到用户、订单、彩票相关指标和模块，财务/管理员/角色/机器人/返利摘要为空或置零。
+- Base：低权限管理员仍可以打开系统概览，但只能看到自己有权限的摘要。
+- Bad：只在前端隐藏菜单，后端 dashboard 仍返回完整 `admins`、`roles`、`finance` 等数据。
+- Bad：无权限时删除顶层字段；这会破坏 `admin/src/types/dashboard.ts` 和页面消费契约。
+
+### 6. 必要测试
+
+- 后端需要覆盖超级管理员 scopes 下 dashboard 全量保留。
+- 后端需要覆盖运营 scopes 下敏感数组清空、财务置零、返利关闭和模块/指标过滤。
+- API 冒烟需要用低权限 token 请求 `/api/admin/dashboard`，确认不返回管理员、角色、系统设置、财务、机器人、邀请返利模块和摘要。
+- 前端需要运行 `npm run build`，确认顶层字段结构保持兼容。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+async fn get_dashboard_summary(State(state): State<AppState>) -> ApiResult<_> {
+    Ok(Json(ApiEnvelope::success(dashboard_summary_with_orders(...))))
+}
+```
+
+这个写法没有使用当前登录会话的 scopes，低权限管理员仍能读取完整概览摘要。
+
+```rust
+if !has_scope(scopes, &PermissionScope::Finance) {
+    summary.finance = None;
+}
+```
+
+这个写法改变了顶层字段类型，会破坏前端契约。
+
+#### 正确
+
+```rust
+async fn get_dashboard_summary(
+    State(state): State<AppState>,
+    Extension(session): Extension<AdminAuthSession>,
+) -> ApiResult<_> {
+    let summary = dashboard_summary_with_orders(...);
+    let summary = dashboard_summary_for_scopes(summary, &session.scopes);
+    Ok(Json(ApiEnvelope::success(summary)))
+}
+```
+
+路由从登录中间件读取当前会话，服务层负责统一裁剪。
+
+```rust
+if !has_scope(scopes, &PermissionScope::Finance) {
+    summary.finance = redacted_finance_overview();
+    summary.financial_accounts.clear();
+}
+```
+
+无权限时保持顶层字段结构，但不暴露真实财务数据。
