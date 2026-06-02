@@ -220,8 +220,8 @@ fn module_groups() -> Vec<ModuleGroup> {
                 ),
                 module(
                     "play-rules",
-                    "玩法规则",
-                    "注数计算、投注展开、中奖判断验证",
+                    "玩法配置",
+                    "查看玩法规则、启停玩法、配置彩种赔率",
                     ModuleStatus::Scaffolded,
                 ),
                 module(

@@ -203,9 +203,9 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
     <div className="space-y-5">
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-ink">玩法规则与赔率</h1>
+          <h1 className="text-xl font-semibold text-ink">玩法配置与赔率</h1>
           <p className="mt-1 text-sm text-slate-500">
-            按 3 位和 5 位号码区分玩法，支持查看规则、试算注数并维护每个彩种的独立赔率。
+            这里是玩法配置入口，可按 3 位和 5 位区分玩法，维护每个彩种的玩法启用状态和独立赔率。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -303,7 +303,7 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
             <Card className="min-w-0 rounded-md border border-line">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-base font-semibold text-ink">彩种玩法赔率</h2>
+                  <h2 className="text-base font-semibold text-ink">彩种玩法配置与赔率</h2>
                   <p className="mt-1 text-sm text-slate-500">
                     当前只展示 {numberTypeText(numberType)}，每个彩种可单独设置玩法启用状态和赔率。
                   </p>
@@ -349,7 +349,7 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
                   theme="solid"
                   onClick={() => void saveLotteryOdds()}
                 >
-                  {lotterySaving ? '保存中' : '保存赔率'}
+                  {lotterySaving ? '保存中' : '保存玩法配置'}
                 </Button>
               </div>
 

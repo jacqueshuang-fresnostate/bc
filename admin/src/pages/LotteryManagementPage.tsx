@@ -1,5 +1,5 @@
 import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
-import { Plus, RefreshCcw, Save, Trash2 } from 'lucide-react';
+import { Calculator, Plus, RefreshCcw, Save, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useLotteries } from '../hooks/useLotteries';
 import type {
@@ -14,6 +14,7 @@ import { playCategoryForRule } from '../utils/playRules';
 
 interface LotteryManagementPageProps {
   onDashboardRefresh: () => void;
+  onOpenPlayConfig: () => void;
 }
 
 type ScheduleKind = 'periodic' | 'daily' | 'weekly';
@@ -46,6 +47,7 @@ const playCategoryOptions: Array<{ label: string; value: PlayCategory }> = [
 
 export function LotteryManagementPage({
   onDashboardRefresh,
+  onOpenPlayConfig,
 }: LotteryManagementPageProps) {
   const {
     create,
@@ -116,6 +118,9 @@ export function LotteryManagementPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button icon={<Calculator size={16} />} onClick={onOpenPlayConfig}>
+            玩法配置
+          </Button>
           <Button icon={<RefreshCcw size={16} />} onClick={refresh}>
             刷新
           </Button>

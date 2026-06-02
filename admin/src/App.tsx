@@ -49,7 +49,10 @@ export function App() {
           onRefresh={refresh}
         />
       ) : activeKey === 'lotteries' ? (
-        <LotteryManagementPage onDashboardRefresh={refresh} />
+        <LotteryManagementPage
+          onDashboardRefresh={refresh}
+          onOpenPlayConfig={() => setActiveKey('play-rules')}
+        />
       ) : activeKey === 'draw-modes' || activeKey === 'schedules' ? (
         <DrawManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'orders' ? (
