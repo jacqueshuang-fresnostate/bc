@@ -14,6 +14,7 @@ use crate::{
             GenerateDrawIssuesRequest,
         },
         finance::{FinancialAccountSummary, LedgerEntry, ManualBalanceAdjustmentRequest},
+        invite::{CreateInviteRecordRequest, InviteRecord, UpdateInviteRecordRequest},
         lottery::{DrawSource, LotteryKind},
         order::{CreateOrderRequest, OrderDetail},
         permission::{AdminRole, SystemSetting, UpdateSystemSettingRequest},
@@ -49,6 +50,14 @@ pub fn router() -> Router<AppState> {
         .route("/financial-accounts", get(list_financial_accounts))
         .route("/ledger-entries", get(list_ledger_entries))
         .route("/financial-adjustments", post(manual_balance_adjustment))
+        .route(
+            "/invitations",
+            get(list_invitations).post(create_invitation),
+        )
+        .route(
+            "/invitations/{id}",
+            get(get_invitation).put(update_invitation),
+        )
         .route(
             "/support/conversations",
             get(list_support_conversations).post(create_support_conversation),
@@ -294,6 +303,47 @@ async fn get_dashboard_summary(
         invite_policy,
         robots,
     ))))
+}
+
+async fn list_invitations(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<InviteRecord>>>> {
+    let invitations = state.invites.list().await?;
+
+    Ok(Json(ApiEnvelope::success(invitations)))
+}
+
+async fn get_invitation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<InviteRecord>>> {
+    let invitation = state.invites.get(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(invitation)))
+}
+
+async fn create_invitation(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateInviteRecordRequest>,
+) -> ApiResult<Json<ApiEnvelope<InviteRecord>>> {
+    let access = state.access.snapshot().await?;
+    let policy = state.rebates.get().await?;
+    let invitation = state
+        .invites
+        .create(payload, &access.users, &policy)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(invitation)))
+}
+
+async fn update_invitation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<UpdateInviteRecordRequest>,
+) -> ApiResult<Json<ApiEnvelope<InviteRecord>>> {
+    let invitation = state.invites.update(&id, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(invitation)))
 }
 
 async fn list_support_conversations(

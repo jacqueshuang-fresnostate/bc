@@ -4,6 +4,7 @@ pub mod dashboard;
 pub mod draw;
 pub mod draw_generation;
 pub mod finance;
+pub mod invite;
 pub mod lottery;
 pub mod order;
 pub mod play_rules;

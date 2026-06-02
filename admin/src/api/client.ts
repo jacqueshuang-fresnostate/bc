@@ -25,6 +25,11 @@ import type {
   ManualBalanceAdjustmentRequest,
 } from '../types/finance';
 import type {
+  CreateInviteRecordRequest,
+  InviteRecord,
+  UpdateInviteRecordRequest,
+} from '../types/invitations';
+import type {
   PlayRuleEvaluateRequest,
   PlayRuleEvaluation,
   PlayRuleSummary,
@@ -92,6 +97,24 @@ export function createManualBalanceAdjustment(payload: ManualBalanceAdjustmentRe
   return requestJson<LedgerEntry>('/api/admin/financial-adjustments', {
     body: payload,
     method: 'POST',
+  });
+}
+
+export function fetchInvitations(signal?: AbortSignal) {
+  return requestJson<InviteRecord[]>('/api/admin/invitations', { signal });
+}
+
+export function createInvitation(payload: CreateInviteRecordRequest) {
+  return requestJson<InviteRecord>('/api/admin/invitations', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateInvitation(id: string, payload: UpdateInviteRecordRequest) {
+  return requestJson<InviteRecord>(`/api/admin/invitations/${encodeURIComponent(id)}`, {
+    body: payload,
+    method: 'PUT',
   });
 }
 

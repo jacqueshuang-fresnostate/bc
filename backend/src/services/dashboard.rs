@@ -63,7 +63,6 @@ pub struct AdminModule {
 #[serde(rename_all = "camelCase")]
 pub enum ModuleStatus {
     Scaffolded,
-    Planned,
 }
 
 pub fn dashboard_summary_with_orders(
@@ -262,7 +261,7 @@ fn module_groups() -> Vec<ModuleGroup> {
                     "invite",
                     "邀请管理",
                     "代理邀请关系入口",
-                    ModuleStatus::Planned,
+                    ModuleStatus::Scaffolded,
                 ),
                 module(
                     "rebate",

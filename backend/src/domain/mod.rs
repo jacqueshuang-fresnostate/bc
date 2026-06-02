@@ -1,5 +1,6 @@
 pub mod draw;
 pub mod finance;
+pub mod invite;
 pub mod lottery;
 pub mod order;
 pub mod permission;

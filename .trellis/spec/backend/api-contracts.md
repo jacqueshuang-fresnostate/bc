@@ -2023,3 +2023,156 @@ await createSupportConversation({
 ```
 
 前端只提交可编辑和绑定字段，展示名由后端生成。
+
+---
+
+## 场景：邀请管理接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改代理邀请关系、邀请码、邀请状态或返利资格管理接口。
+- 范围：后端邀请领域模型、内存邀请仓储、邀请策略校验、管理后台 API、前端 API client、`useInvitations` hook 和“邀请管理”页面。
+
+### 2. 签名
+
+- `GET /api/admin/invitations`
+- `GET /api/admin/invitations/{id}`
+- `POST /api/admin/invitations`
+- `PUT /api/admin/invitations/{id}`
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封。邀请关系字段：
+
+```json
+{
+  "id": "INV-10001",
+  "inviterUserId": "U90001",
+  "inviterUsername": "agent_alpha",
+  "inviteeUserId": "U10001",
+  "inviteeUsername": "demo_user",
+  "inviteCode": "AGENT10001",
+  "status": "active",
+  "rebateEnabled": true,
+  "note": "默认代理邀请关系",
+  "createdAt": "2026-06-02 08:30:00",
+  "updatedAt": "2026-06-02 08:30:00"
+}
+```
+
+创建请求字段：
+
+```json
+{
+  "id": "INV-NEW",
+  "inviterUserId": "U90001",
+  "inviteeUserId": "U10004",
+  "inviteCode": "AGENT-NEW",
+  "rebateEnabled": true,
+  "note": "运营备注"
+}
+```
+
+更新请求字段：
+
+```json
+{
+  "status": "disabled",
+  "rebateEnabled": false,
+  "note": "暂停返利"
+}
+```
+
+字段契约：
+
+1. `status` 只允许 `pending`、`active`、`disabled`。
+2. 创建邀请关系时后端必须读取 `InvitePolicySummary` 判断邀请人是否有邀请权限。
+3. 默认策略下只有 `agent` 用户可以作为邀请人；如果 `regularUsersCanInvite=true`，普通用户也可作为邀请人。
+4. `inviterUsername` 和 `inviteeUsername` 由后端根据用户仓储回填，前端不能提交或覆盖。
+5. `rebateEnabled` 只表示该邀请关系有返利资格，不代表已经发放返利。
+6. 本阶段只做邀请关系配置，不执行真实充值返利发放，不写返利流水或财务入账。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 邀请关系 ID 为空 | HTTP 400，返回 `invite record id is required` |
+| 创建重复邀请关系 ID | HTTP 409，返回重复关系 ID 错误 |
+| 邀请人 ID 为空 | HTTP 400，返回 `inviter user id is required` |
+| 被邀请人 ID 为空 | HTTP 400，返回 `invitee user id is required` |
+| 邀请人不存在 | HTTP 404，返回邀请人用户不存在 |
+| 被邀请人不存在 | HTTP 404，返回被邀请人用户不存在 |
+| 邀请人和被邀请人相同 | HTTP 400，返回 `inviter and invitee must be different users` |
+| 普通用户邀请但策略未开启 | HTTP 403，返回 `regular user invite entry is disabled` |
+| 代理邀请但策略未开启 | HTTP 403，返回 `agent invite entry is disabled` |
+| 同一邀请人和被邀请人关系重复 | HTTP 409，返回重复邀请关系错误 |
+| 邀请码为空 | HTTP 400，返回 `invite code is required` |
+| 邀请码重复 | HTTP 409，返回重复邀请码错误 |
+| 查询或更新不存在邀请关系 | HTTP 404，返回邀请关系不存在 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`U90001` 代理邀请 `U20092`，响应自动回填 `agent_alpha` 和 `api_invitee`。
+- Good：把邀请关系状态改为 `disabled` 并关闭 `rebateEnabled`，后续真实返利发放应跳过该关系。
+- Base：无数据库环境下使用内存邀请仓储，服务重启后恢复种子邀请关系。
+- Bad：前端提交 `inviterUsername` 或 `inviteeUsername` 并让后端信任，会导致用户改名或伪造请求时数据漂移。
+- Bad：邀请管理页面不读取返利配置，允许普通用户在默认策略下创建邀请关系，会违反业务入口策略。
+
+### 6. 必要测试
+
+- 后端需要覆盖代理创建邀请关系和更新状态。
+- 后端需要覆盖默认策略下普通用户邀请被拒绝。
+- 后端需要覆盖被邀请人不存在拒绝。
+- 后端需要覆盖重复邀请码拒绝。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`，确认邀请状态、请求字段和 API client 类型一致。
+- API 冒烟需要创建用户后创建邀请关系、更新状态、验证普通用户邀请被拒绝，并确认 dashboard 中 `invite` 为 `scaffolded`。
+- 浏览器验证需要进入“邀请管理”入口，确认真实页面显示、保存状态无接口错误且控制台无错误。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+InviteRecord {
+    inviter_username: payload.inviter_username,
+    invitee_username: payload.invitee_username,
+    // ...
+}
+```
+
+这个写法信任前端提交的展示名，无法保证邀请关系与用户仓储一致。
+
+```ts
+await createInvitation({
+  inviterUserId,
+  inviterUsername,
+  inviteeUserId,
+  inviteeUsername,
+});
+```
+
+这个写法把只读展示字段带入创建请求。
+
+#### 正确
+
+```rust
+let access = state.access.snapshot().await?;
+let policy = state.rebates.get().await?;
+state.invites.create(payload, &access.users, &policy).await?;
+```
+
+创建邀请关系前从用户仓储和返利配置仓储校验。
+
+```ts
+await createInvitation({
+  id,
+  inviterUserId,
+  inviteeUserId,
+  inviteCode,
+  rebateEnabled,
+  note,
+});
+```
+
+前端只提交可编辑字段和绑定 ID。
