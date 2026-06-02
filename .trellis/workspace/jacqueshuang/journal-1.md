@@ -203,3 +203,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: 计奖与派奖基础
+
+**Date**: 2026-06-02
+**Task**: 计奖与派奖基础
+**Branch**: `main`
+
+### Summary
+
+完成计奖与派奖基础：新增结算领域模型、结算 API、订单状态流转和基础派奖结果；管理后台新增计奖派奖页面，订单页展示结算字段；同步架构、TODO 和 API 规格，并通过 Rust/前端构建测试及浏览器联调。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `42c5d18` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

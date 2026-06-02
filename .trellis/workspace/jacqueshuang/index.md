@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 7
 - **Last Active**: 2026-06-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~205 | Active |
+| `journal-1.md` | ~238 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-06-02 | 计奖与派奖基础 | `42c5d18` | `main` |
 | 6 | 2026-06-02 | 开奖期号与开奖源基础 | `77bfbc3` | `main` |
 | 5 | 2026-06-02 | 订单与投注基础 | `1fe6ec0` | `main` |
 | 4 | 2026-06-02 | 玩法规则引擎 | `8a15b3d` | `main` |
