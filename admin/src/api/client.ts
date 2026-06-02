@@ -11,6 +11,7 @@ import type {
   PlayRuleSummary,
 } from '../types/playRules';
 import type { CreateOrderRequest, OrderDetail } from '../types/orders';
+import type { SettlementRun } from '../types/settlements';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -146,4 +147,24 @@ export function cancelOrder(id: string) {
   return requestJson<OrderDetail>(`/api/admin/orders/${encodeURIComponent(id)}/cancel`, {
     method: 'PATCH',
   });
+}
+
+export function fetchSettlements(signal?: AbortSignal) {
+  return requestJson<SettlementRun[]>('/api/admin/settlements', { signal });
+}
+
+export function fetchSettlement(id: string, signal?: AbortSignal) {
+  return requestJson<SettlementRun>(
+    `/api/admin/settlements/${encodeURIComponent(id)}`,
+    { signal },
+  );
+}
+
+export function settleDrawIssue(drawIssueId: string) {
+  return requestJson<SettlementRun>(
+    `/api/admin/settlements/draw-issues/${encodeURIComponent(drawIssueId)}`,
+    {
+      method: 'POST',
+    },
+  );
 }

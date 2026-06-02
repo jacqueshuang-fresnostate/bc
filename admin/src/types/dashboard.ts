@@ -77,7 +77,11 @@ export interface OrderSummary {
   ruleCode: string;
   stakeCount: number;
   amountMinor: number;
+  drawNumber: string | null;
+  matchedBets: string[];
+  payoutMinor: number;
   status: 'pendingDraw' | 'won' | 'lost' | 'cancelled';
+  settledAt: string | null;
 }
 
 export interface GroupBuyPlanSummary {

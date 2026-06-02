@@ -25,7 +25,11 @@ pub struct OrderSummary {
     pub rule_code: PlayRuleCode,
     pub stake_count: u32,
     pub amount_minor: i64,
+    pub draw_number: Option<String>,
+    pub matched_bets: Vec<String>,
+    pub payout_minor: i64,
     pub status: OrderStatus,
+    pub settled_at: Option<String>,
     pub created_at: String,
 }
 
@@ -55,7 +59,11 @@ pub struct OrderDetail {
     pub unit_amount_minor: i64,
     pub amount_minor: i64,
     pub expanded_bets: Vec<String>,
+    pub draw_number: Option<String>,
+    pub matched_bets: Vec<String>,
+    pub payout_minor: i64,
     pub status: OrderStatus,
+    pub settled_at: Option<String>,
     pub created_at: String,
 }
 
@@ -70,7 +78,11 @@ impl OrderDetail {
             rule_code: self.rule_code.clone(),
             stake_count: self.stake_count,
             amount_minor: self.amount_minor,
+            draw_number: self.draw_number.clone(),
+            matched_bets: self.matched_bets.clone(),
+            payout_minor: self.payout_minor,
             status: self.status.clone(),
+            settled_at: self.settled_at.clone(),
             created_at: self.created_at.clone(),
         }
     }

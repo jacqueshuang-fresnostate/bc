@@ -163,7 +163,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
             </div>
           ) : orders.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[920px] text-left text-sm">
+              <table className="w-full min-w-[1120px] text-left text-sm">
                 <thead className="border-b border-line text-xs text-slate-500">
                   <tr>
                     <th className="py-2 pr-4 font-medium">订单</th>
@@ -172,6 +172,8 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                     <th className="py-2 pr-4 font-medium">玩法</th>
                     <th className="py-2 pr-4 font-medium">注数</th>
                     <th className="py-2 pr-4 font-medium">金额</th>
+                    <th className="py-2 pr-4 font-medium">开奖</th>
+                    <th className="py-2 pr-4 font-medium">派奖</th>
                     <th className="py-2 pr-4 font-medium">状态</th>
                     <th className="py-2 pr-4 font-medium">操作</th>
                   </tr>
@@ -191,6 +193,40 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                       <td className="py-3 pr-4 text-slate-600">{ruleLabel(order.ruleCode, rules)}</td>
                       <td className="py-3 pr-4 text-slate-600">{order.stakeCount} 注</td>
                       <td className="py-3 pr-4 text-slate-600">{formatMoney(order.amountMinor)}</td>
+                      <td className="py-3 pr-4">
+                        {order.drawNumber ? (
+                          <>
+                            <div className="font-mono font-semibold text-ink">
+                              {order.drawNumber}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-400">
+                              {order.settledAt ?? '已结算'}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-slate-400">未开奖</span>
+                        )}
+                      </td>
+                      <td className="py-3 pr-4">
+                        {order.payoutMinor > 0 ? (
+                          <>
+                            <div className="font-semibold text-ink">
+                              {formatMoney(order.payoutMinor)}
+                            </div>
+                            <div className="mt-1 flex max-w-[180px] flex-wrap gap-1">
+                              {order.matchedBets.map((bet) => (
+                                <Tag key={bet} color="green">
+                                  {bet}
+                                </Tag>
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-slate-400">
+                            {order.status === 'lost' ? '未中奖' : '-'}
+                          </span>
+                        )}
+                      </td>
                       <td className="py-3 pr-4">
                         <Tag color={statusColor(order.status)}>{statusText(order.status)}</Tag>
                       </td>

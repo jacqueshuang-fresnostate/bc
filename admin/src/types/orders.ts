@@ -24,7 +24,11 @@ export interface OrderDetail {
   ruleCode: PlayRuleCode;
   selection: PlaySelection;
   stakeCount: number;
+  drawNumber: string | null;
+  matchedBets: string[];
+  payoutMinor: number;
   status: OrderStatus;
+  settledAt: string | null;
   unitAmountMinor: number;
   userId: string;
 }

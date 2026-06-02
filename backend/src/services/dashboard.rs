@@ -220,6 +220,12 @@ fn module_groups() -> Vec<ModuleGroup> {
                     "注数计算、投注展开、中奖判断验证",
                     ModuleStatus::Scaffolded,
                 ),
+                module(
+                    "settlements",
+                    "计奖派奖",
+                    "开奖后计奖、派奖结果和订单状态",
+                    ModuleStatus::Scaffolded,
+                ),
             ],
         },
         ModuleGroup {

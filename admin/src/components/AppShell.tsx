@@ -41,6 +41,7 @@ const iconByKey: Record<string, ReactNode> = {
   schedules: <ChartNoAxesCombined size={18} />,
   'group-buy': <Banknote size={18} />,
   'play-rules': <Calculator size={18} />,
+  settlements: <CircleDollarSign size={18} />,
   'group-buy-robot': <Bot size={18} />,
   'purchase-robot': <Bot size={18} />,
   registration: <UserRound size={18} />,

@@ -7,6 +7,7 @@ import { LotteryManagementPage } from './pages/LotteryManagementPage';
 import { OrderManagementPage } from './pages/OrderManagementPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { PlayRulesPage } from './pages/PlayRulesPage';
+import { SettlementManagementPage } from './pages/SettlementManagementPage';
 
 export function App() {
   const { data, loading, error, refresh } = useDashboard();
@@ -54,6 +55,8 @@ export function App() {
         <OrderManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'play-rules' ? (
         <PlayRulesPage />
+      ) : activeKey === 'settlements' ? (
+        <SettlementManagementPage onDashboardRefresh={refresh} />
       ) : data ? (
         <PlaceholderPage moduleKey={activeKey} summary={data} />
       ) : (

@@ -12,6 +12,7 @@ use crate::{
         lottery::{DrawSource, LotteryKind},
         order::{CreateOrderRequest, OrderDetail},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
+        settlement::SettlementRun,
     },
     error::ApiResult,
     response::ApiEnvelope,
@@ -33,6 +34,12 @@ pub fn router() -> Router<AppState> {
         .route("/draw-issues/{id}/close", patch(close_draw_issue))
         .route("/draw-issues/{id}/draw", patch(draw_issue_result))
         .route("/draw-issues/{id}/cancel", patch(cancel_draw_issue))
+        .route("/settlements", get(list_settlements))
+        .route("/settlements/{id}", get(get_settlement))
+        .route(
+            "/settlements/draw-issues/{id}",
+            post(settle_draw_issue_orders),
+        )
         .route("/play-rules", get(list_play_rules))
         .route("/play-rules/evaluate", post(evaluate_play_rule_request))
         .route("/orders", get(list_orders).post(create_order))
@@ -103,6 +110,33 @@ async fn cancel_draw_issue(
     let issue = state.draws.cancel(&id).await?;
 
     Ok(Json(ApiEnvelope::success(issue)))
+}
+
+async fn list_settlements(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<SettlementRun>>>> {
+    let settlements = state.orders.settlement_runs().await?;
+
+    Ok(Json(ApiEnvelope::success(settlements)))
+}
+
+async fn get_settlement(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<SettlementRun>>> {
+    let settlement = state.orders.get_settlement(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(settlement)))
+}
+
+async fn settle_draw_issue_orders(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<SettlementRun>>> {
+    let draw_issue = state.draws.get(&id).await?;
+    let settlement = state.orders.settle_draw_issue(&draw_issue).await?;
+
+    Ok(Json(ApiEnvelope::success(settlement)))
 }
 
 async fn list_play_rules() -> ApiResult<Json<ApiEnvelope<Vec<PlayRuleSummary>>>> {

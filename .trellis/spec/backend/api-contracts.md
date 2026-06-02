@@ -619,3 +619,137 @@ await drawIssueResult(issue.id, issue.drawMode === 'manual'
 ```
 
 后端根据彩种开奖模式决定是校验管理员录入号码，还是由平台/API 本地生成器生成号码。
+
+---
+
+## 场景：计奖派奖基础接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改开奖后订单计奖、基础派奖结果、订单状态流转、结算批次列表和管理后台计奖派奖页面。
+- 范围：后端结算领域模型、订单结算字段、内存订单仓储结算方法、结算 API、前端 settlement API client、`useSettlements` hook、“计奖派奖”页面和订单列表结算展示。
+
+### 2. 签名
+
+- `GET /api/admin/settlements`
+- `GET /api/admin/settlements/{id}`
+- `POST /api/admin/settlements/draw-issues/{id}`
+- `GET /api/admin/orders` 和 `GET /api/admin/orders/{id}` 的订单响应新增结算字段。
+- `GET /api/admin/dashboard` 的 `recentOrders` 新增结算字段。
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封，金额字段必须使用最小货币单位整数。基础派奖倍数只用于本阶段链路验证，不代表真实生产赔率。
+
+执行结算：
+
+```http
+POST /api/admin/settlements/draw-issues/D000000000001
+```
+
+结算批次响应：
+
+```json
+{
+  "id": "S000000000001",
+  "drawIssueId": "D000000000001",
+  "lotteryId": "fc3d",
+  "lotteryName": "福彩 3D",
+  "issue": "2026200",
+  "drawNumber": "023",
+  "settledOrderCount": 1,
+  "winningOrderCount": 1,
+  "totalStakeAmountMinor": 200,
+  "totalPayoutMinor": 2000,
+  "createdAt": "unix:1780388582",
+  "orders": [
+    {
+      "orderId": "O000000000001",
+      "userId": "U10001",
+      "ruleCode": "threeDirect",
+      "stakeCount": 1,
+      "amountMinor": 200,
+      "isWinning": true,
+      "matchedBets": ["023"],
+      "payoutMultiplier": 10,
+      "payoutMinor": 2000,
+      "status": "won"
+    }
+  ]
+}
+```
+
+订单响应新增字段：
+
+```json
+{
+  "drawNumber": "023",
+  "matchedBets": ["023"],
+  "payoutMinor": 2000,
+  "settledAt": "unix:1780388582"
+}
+```
+
+结算后订单状态：
+
+- 命中订单：`won`
+- 未命中订单：`lost`
+- 已取消订单：保持 `cancelled`，不参与结算。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 查询不存在结算批次 | HTTP 404，返回结算批次不存在 |
+| 查询不存在开奖期号后结算 | HTTP 404，返回期号不存在 |
+| 开奖期号不是 `drawn` | HTTP 400，返回 `only drawn issues can be settled` |
+| 已开奖期号缺少 `drawNumber` | HTTP 400，返回 `draw issue does not have draw number` |
+| 同一开奖期号重复结算 | HTTP 409，返回 `already settled` |
+| 待结算订单玩法评估失败 | HTTP 400，透传玩法规则引擎校验错误 |
+| 派奖金额溢出 | HTTP 400，返回 `payout amount is too large` |
+| 期号没有待结算订单 | HTTP 200，生成 `settledOrderCount=0` 的结算批次 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`fc3d` 期号开奖 `023`，同期开奖的 `threeDirect` 订单选号 `023`，结算后订单状态为 `won`，`matchedBets=["023"]`，`payoutMinor=2000`。
+- Good：同期开奖的未命中订单结算后状态为 `lost`，`matchedBets=[]`，`payoutMinor=0`。
+- Good：同一期号存在已取消订单时，取消订单不参与结算且状态保持 `cancelled`。
+- Base：结算批次当前保存在内存订单仓储，服务重启后清空；这适合当前后台流程验证。
+- Bad：路由函数直接判断中奖或修改订单状态；结算逻辑必须留在服务层/仓储层并复用玩法规则引擎。
+- Bad：结算接口直接修改用户余额；本阶段没有真实资金流水，派奖结果不能代表资金已入账。
+
+### 6. 必要测试
+
+- 后端需要覆盖中奖订单结算为 `won`，未中奖订单结算为 `lost`。
+- 后端需要覆盖已取消订单不参与结算。
+- 后端需要覆盖未开奖期号拒绝结算和同一期号重复结算拒绝。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`。
+- 跨层联调需要完成“创建订单 → 创建/开奖期号 → 执行计奖派奖 → 查询订单列表和结算批次”。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+async fn settle_draw_issue_orders(...) {
+    if order.expanded_bets.contains(&draw_number) {
+        order.status = OrderStatus::Won;
+    }
+}
+```
+
+这个写法把中奖判断写进路由，还只适用于直选，无法复用组三、组六、大小单双等规则。
+
+#### 正确
+
+```rust
+let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
+    number_type: order.number_type.clone(),
+    rule_code: order.rule_code.clone(),
+    selection: order.selection.clone(),
+    draw_number: draw_number.clone(),
+})?;
+```
+
+结算服务复用玩法规则引擎，拿 `matchedBets` 决定订单中奖状态和基础派奖结果。
