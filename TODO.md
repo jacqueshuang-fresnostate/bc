@@ -106,3 +106,10 @@
 - 完成任务：开始并实现 `06-02-draw-issue-order-guard` 期号封盘投注校验阶段，订单创建必须找到同彩种同 `issue` 的开奖期号，并且只有 `open` 状态允许投注；订单管理页的期号输入改为当前彩种 open 期号下拉框。
 - 解决问题：此前订单可以对不存在期号、已封盘期号、已开奖期号或已取消期号继续创建，容易产生无法结算或绕过封盘的异常订单；本次把订单创建和开奖期号销售状态接起来，后端在扣款前再次校验期号状态，前端也只展示可投注期号。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 37 个。API 冒烟确认 open 期号 `GUARD20260602OPEN` 可创建订单，closed 期号返回 `draw issue is not open for order creation`，不存在期号返回 `not found for lottery`；浏览器验证订单页期号字段已变为 open 期号下拉框，当前值可选中 `UIOPEN20260602`。
+
+## 2026-06-02 17:43:47 HKT
+
+- 完成任务：实现 `06-02-draw-automation-runner` 自动封盘开奖结算基础阶段，新增 `POST /api/admin/draw-automation/run` 接口和后端自动任务服务；管理后台“开奖期号与开奖源”页面新增“自动任务”操作区，可按传入执行时间触发封盘、开奖、结算和派奖入账。
+- 解决问题：此前期号只能由管理员逐个点击封盘、开奖，再到计奖派奖页面手动结算，封盘投注校验虽然已接入，但没有按时间批量推进期号状态的入口；本次让 `open` 且到封盘时间的期号自动变为 `closed`，让到开奖时间的 `platform/api` 期号自动开奖并结算入账，同时让 `manual` 期号缺少开奖号码时只记录跳过原因，不伪造开奖号码。用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 39 个。API 冒烟确认到期 API 期号自动封盘并开奖为逗号格式 `4,8,7`，生成 1 个结算批次和 1 笔 `payoutCredit` 入账，手动开奖期号返回 `manual draw requires administrator draw number` 跳过原因。浏览器验证 `http://127.0.0.1:5177/` 的“开奖期号与开奖源”页面已显示“自动任务”入口和“运行自动任务”按钮，点击后页面无控制台错误。
+- 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议实现系统级常驻调度、自动创建下一期号、失败重试队列和开奖 API 源数据审计。

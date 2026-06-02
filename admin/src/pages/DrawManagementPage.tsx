@@ -1,5 +1,5 @@
 import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
-import { Lock, Play, Plus, RefreshCcw, XCircle } from 'lucide-react';
+import { Clock3, Lock, Play, Plus, RefreshCcw, XCircle } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -13,6 +13,7 @@ import { useLotteries } from '../hooks/useLotteries';
 import type { DrawMode, LotteryKind, LotteryNumberType } from '../types/dashboard';
 import type {
   CreateDrawIssueRequest,
+  DrawAutomationRun,
   DrawIssue,
   DrawIssueStatus,
 } from '../types/draws';
@@ -40,6 +41,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     issues,
     loading: drawsLoading,
     refresh: refreshDraws,
+    runAutomation,
     saving,
   } = useDraws();
   const {
@@ -49,6 +51,9 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     refresh: refreshLotteries,
   } = useLotteries();
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
+  const [automationNow, setAutomationNow] = useState(() => currentDateTimeLabel());
+  const [automationResult, setAutomationResult] =
+    useState<DrawAutomationRun | null>(null);
   const [form, setForm] = useState<DrawIssueFormState>(() => emptyForm());
 
   const selectedLottery = useMemo(
@@ -112,6 +117,16 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   const cancelIssue = async (issue: DrawIssue) => {
     const cancelled = await cancel(issue.id);
     setSelectedIssueId(cancelled.id);
+    onDashboardRefresh();
+  };
+
+  const runDueAutomation = async () => {
+    const result = await runAutomation({ now: automationNow.trim() });
+    setAutomationResult(result);
+    const focusIssue = result.drawnIssues[0] ?? result.closedIssues[0] ?? null;
+    if (focusIssue) {
+      setSelectedIssueId(focusIssue.id);
+    }
     onDashboardRefresh();
   };
 
@@ -274,6 +289,41 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
         </Card>
 
         <div className="space-y-4">
+          <Card className="rounded-md border border-line">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-ink">自动任务</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  按时间执行封盘、开奖、结算和派奖入账。
+                </p>
+              </div>
+              <Tag color="blue">执行器</Tag>
+            </div>
+
+            <div className="space-y-4">
+              <Field label="执行时间">
+                <input
+                  className="form-input"
+                  value={automationNow}
+                  onChange={(event) => setAutomationNow(event.target.value)}
+                />
+              </Field>
+
+              <Button
+                disabled={saving || !automationNow.trim()}
+                icon={<Clock3 size={16} />}
+                theme="solid"
+                onClick={() => void runDueAutomation()}
+              >
+                {saving ? '处理中' : '运行自动任务'}
+              </Button>
+
+              {automationResult ? (
+                <AutomationResultSummary run={automationResult} />
+              ) : null}
+            </div>
+          </Card>
+
           <Card className="rounded-md border border-line">
             <div className="mb-4">
               <h2 className="text-base font-semibold text-ink">创建期号</h2>
@@ -459,6 +509,41 @@ function IssueSummary({ issue }: { issue: DrawIssue }) {
   );
 }
 
+function AutomationResultSummary({ run }: { run: DrawAutomationRun }) {
+  return (
+    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
+      <div className="font-medium text-ink">{run.now}</div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <ResultMetric label="封盘" value={`${run.closedIssues.length} 期`} />
+        <ResultMetric label="开奖" value={`${run.drawnIssues.length} 期`} />
+        <ResultMetric label="结算" value={`${run.settlementRuns.length} 批`} />
+        <ResultMetric label="入账" value={`${run.ledgerEntries.length} 笔`} />
+      </div>
+      {run.skippedIssues.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          {run.skippedIssues.map((issue) => (
+            <div
+              key={`${issue.drawIssueId}-${issue.reason}`}
+              className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700"
+            >
+              {issue.issue}：{issue.reason}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ResultMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-slate-200 bg-white px-2 py-2">
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className="mt-1 font-semibold text-ink">{value}</div>
+    </div>
+  );
+}
+
 function emptyForm(): DrawIssueFormState {
   return {
     drawNumber: '',
@@ -467,6 +552,16 @@ function emptyForm(): DrawIssueFormState {
     saleClosedAt: '2026-06-02 20:59:45',
     scheduledAt: '2026-06-02 21:00:15',
   };
+}
+
+function currentDateTimeLabel() {
+  const now = new Date();
+  const pad = (value: number) => value.toString().padStart(2, '0');
+
+  return [
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`,
+  ].join(' ');
 }
 
 function setFormValue<K extends keyof DrawIssueFormState>(

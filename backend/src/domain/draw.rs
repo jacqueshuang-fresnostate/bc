@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::lottery::{DrawMode, LotteryNumberType};
+use crate::domain::{
+    finance::LedgerEntry,
+    lottery::{DrawMode, LotteryNumberType},
+    settlement::SettlementRun,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -42,4 +46,30 @@ pub struct DrawIssue {
     pub draw_number: Option<String>,
     pub drawn_at: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DrawAutomationRunRequest {
+    pub now: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DrawAutomationSkippedIssue {
+    pub draw_issue_id: String,
+    pub lottery_id: String,
+    pub issue: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DrawAutomationRun {
+    pub now: String,
+    pub closed_issues: Vec<DrawIssue>,
+    pub drawn_issues: Vec<DrawIssue>,
+    pub settlement_runs: Vec<SettlementRun>,
+    pub ledger_entries: Vec<LedgerEntry>,
+    pub skipped_issues: Vec<DrawAutomationSkippedIssue>,
 }

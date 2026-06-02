@@ -1019,3 +1019,108 @@ state.finance.credit_settlement(&settlement).await?;
 ```
 
 结算服务负责订单状态和派奖结果，资金服务负责余额入账和 `payoutCredit` 流水。
+
+---
+
+## 场景：自动封盘开奖结算接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改开奖期号自动封盘、自动开奖、开奖后自动结算、派奖入账和管理后台自动任务入口。
+- 范围：后端自动任务领域模型、自动任务服务、开奖仓储、订单结算、资金入账、前端 draw API client、`useDraws` hook 和“开奖期号与开奖源”页面。
+
+### 2. 签名
+
+- `POST /api/admin/draw-automation/run`
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封，字段命名必须使用 `camelCase`。
+
+请求体：
+
+```json
+{
+  "now": "2026-06-02 22:00:00"
+}
+```
+
+`now` 使用当前期号字段相同的固定格式 `YYYY-MM-DD HH:mm:ss`。本阶段以传入时间做字符串比较，要求期号 `scheduledAt` 和 `saleClosedAt` 保持同一格式。
+
+响应 `data` 字段：
+
+```json
+{
+  "now": "2026-06-02 22:00:00",
+  "closedIssues": [],
+  "drawnIssues": [],
+  "settlementRuns": [],
+  "ledgerEntries": [],
+  "skippedIssues": [
+    {
+      "drawIssueId": "D000000000001",
+      "lotteryId": "manual-test",
+      "issue": "20260602001",
+      "reason": "manual draw requires administrator draw number"
+    }
+  ]
+}
+```
+
+执行顺序：
+
+1. 扫描现有期号，`open` 且 `saleClosedAt <= now` 的期号自动封盘。
+2. 再次扫描现有期号，`open/closed` 且 `scheduledAt <= now` 的期号进入开奖判断。
+3. `platform` 和 `api` 期号由后端生成逗号分隔开奖号码，并把期号状态改为 `drawn`。
+4. `manual` 期号不自动开奖，写入 `skippedIssues`。
+5. 本次自动开奖成功的期号会立即执行结算，并把中奖派奖写入资金流水。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `now` 为空 | HTTP 400，返回 `automation time is required` |
+| 没有到期可处理期号 | HTTP 200，返回空数组 |
+| 到期 `open` 期号 | 自动关闭销售并出现在 `closedIssues` |
+| 到期 `platform/api` 期号 | 自动开奖、结算和派奖入账 |
+| 到期 `manual` 期号 | 不自动开奖，出现在 `skippedIssues` |
+| 自动结算重复 | 只处理本次新开奖成功期号，重复结算仍由结算服务拒绝 |
+| 中奖用户资金账户不存在 | 资金服务返回错误；后续需要事务化避免部分状态落地 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`fc3d` 的 open 期号封盘时间和开奖时间都早于 `now`，执行后期号先封盘再开奖，生成结算批次和 `payoutCredit` 流水。
+- Good：手动开奖期号到期后只封盘，不自动伪造开奖号码，结果中包含跳过原因。
+- Base：本阶段是后台触发式一次性执行器，适合内存仓储阶段验证状态链路。
+- Bad：自动任务直接修改订单状态或用户余额；必须复用订单结算服务和资金服务。
+- Bad：为 `manual` 期号静默生成号码；手动开奖必须由管理员录入号码。
+
+### 6. 必要测试
+
+- 后端需要覆盖到期自动封盘、自动开奖、自动结算和派奖入账。
+- 后端需要覆盖手动开奖缺少号码时被跳过。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`。
+- 跨层联调需要创建到期期号、创建订单、运行自动任务，再核对期号状态、结算批次和资金流水。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+issue.status = DrawIssueStatus::Drawn;
+order.status = OrderStatus::Won;
+account.available_balance_minor += payout_minor;
+```
+
+这个写法绕过开奖、结算和资金服务，缺少号码校验、赔率快照、结算批次和资金流水。
+
+#### 正确
+
+```rust
+let drawn = draws.draw(&issue.id, DrawIssueResultRequest::default()).await?;
+let settlement = orders.settle_draw_issue(&drawn).await?;
+let entries = finance.credit_settlement(&settlement).await?;
+```
+
+自动任务只负责调度现有服务，业务规则仍由各服务层统一执行。

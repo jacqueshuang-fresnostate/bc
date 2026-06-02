@@ -2,6 +2,8 @@ import type { ApiEnvelope, DashboardSummary, LotteryKind } from '../types/dashbo
 import type { DrawSource } from '../types/dashboard';
 import type {
   CreateDrawIssueRequest,
+  DrawAutomationRun,
+  DrawAutomationRunRequest,
   DrawIssue,
   DrawIssueResultRequest,
 } from '../types/draws';
@@ -141,6 +143,13 @@ export function cancelDrawIssue(id: string) {
       method: 'PATCH',
     },
   );
+}
+
+export function runDrawAutomation(payload: DrawAutomationRunRequest) {
+  return requestJson<DrawAutomationRun>('/api/admin/draw-automation/run', {
+    body: payload,
+    method: 'POST',
+  });
 }
 
 export function fetchPlayRules(signal?: AbortSignal) {

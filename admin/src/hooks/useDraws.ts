@@ -6,10 +6,12 @@ import {
   drawIssueResult,
   fetchDrawIssues,
   fetchDrawSources,
+  runDrawAutomation,
 } from '../api/client';
 import type { DrawSource } from '../types/dashboard';
 import type {
   CreateDrawIssueRequest,
+  DrawAutomationRunRequest,
   DrawIssue,
   DrawIssueResultRequest,
 } from '../types/draws';
@@ -122,6 +124,22 @@ export function useDraws() {
     }
   }, []);
 
+  const runAutomation = useCallback(async (payload: DrawAutomationRunRequest) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const run = await runDrawAutomation(payload);
+      const latestIssues = await fetchDrawIssues();
+      setIssues(latestIssues);
+      return run;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
   return {
     cancel,
     close,
@@ -132,6 +150,7 @@ export function useDraws() {
     issues,
     loading,
     refresh,
+    runAutomation,
     saving,
   };
 }

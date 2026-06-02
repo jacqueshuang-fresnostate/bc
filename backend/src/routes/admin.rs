@@ -8,7 +8,10 @@ use serde::Deserialize;
 use crate::{
     app::AppState,
     domain::{
-        draw::{CreateDrawIssueRequest, DrawIssue, DrawIssueResultRequest},
+        draw::{
+            CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest, DrawIssue,
+            DrawIssueResultRequest,
+        },
         finance::{FinancialAccountSummary, LedgerEntry, ManualBalanceAdjustmentRequest},
         lottery::{DrawSource, LotteryKind},
         order::{CreateOrderRequest, OrderDetail},
@@ -18,6 +21,7 @@ use crate::{
     error::ApiResult,
     response::ApiEnvelope,
     services::{
+        automation::run_draw_automation,
         dashboard::{dashboard_summary_with_orders, draw_sources, DashboardSummary},
         order::validate_draw_issue_accepts_order,
         play_rules::{evaluate_play_rule, play_rule_summaries},
@@ -39,6 +43,7 @@ pub fn router() -> Router<AppState> {
         .route("/draw-issues/{id}/close", patch(close_draw_issue))
         .route("/draw-issues/{id}/draw", patch(draw_issue_result))
         .route("/draw-issues/{id}/cancel", patch(cancel_draw_issue))
+        .route("/draw-automation/run", post(run_draw_automation_request))
         .route("/settlements", get(list_settlements))
         .route("/settlements/{id}", get(get_settlement))
         .route(
@@ -56,6 +61,15 @@ pub fn router() -> Router<AppState> {
             get(get_lottery).put(update_lottery).delete(delete_lottery),
         )
         .route("/lotteries/{id}/sale", patch(set_lottery_sale))
+}
+
+async fn run_draw_automation_request(
+    State(state): State<AppState>,
+    Json(payload): Json<DrawAutomationRunRequest>,
+) -> ApiResult<Json<ApiEnvelope<DrawAutomationRun>>> {
+    let run = run_draw_automation(&state.draws, &state.orders, &state.finance, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(run)))
 }
 
 async fn list_draw_sources() -> ApiResult<Json<ApiEnvelope<Vec<DrawSource>>>> {
