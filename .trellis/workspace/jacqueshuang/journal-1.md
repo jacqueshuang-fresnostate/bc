@@ -863,3 +863,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: 后台登录鉴权与权限拦截
+
+**Date**: 2026-06-02
+**Task**: 后台登录鉴权与权限拦截
+**Branch**: `main`
+
+### Summary
+
+新增后台登录页、登录/当前管理员/登出接口、内存 Bearer Token 会话、API 权限中间件和按角色权限过滤菜单/工作台模块。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1d758e1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
