@@ -11,6 +11,7 @@ use crate::{
         finance::FinanceRepository,
         lottery::LotteryRepository,
         order::OrderRepository,
+        rebate::RebateRepository,
         robot::RobotRepository,
         scheduler::{spawn_draw_scheduler, DrawSchedulerConfig, DrawSchedulerRepository},
     },
@@ -23,6 +24,7 @@ pub struct AppState {
     pub finance: FinanceRepository,
     pub lotteries: LotteryRepository,
     pub orders: OrderRepository,
+    pub rebates: RebateRepository,
     pub robots: RobotRepository,
     pub scheduler: DrawSchedulerRepository,
 }
@@ -35,6 +37,7 @@ impl AppState {
             finance: FinanceRepository::memory_seeded(),
             lotteries: LotteryRepository::memory_seeded(),
             orders: OrderRepository::memory(),
+            rebates: RebateRepository::memory_seeded(),
             robots: RobotRepository::memory_seeded(),
             scheduler,
         }
@@ -57,6 +60,7 @@ impl AppState {
             finance: FinanceRepository::memory_seeded(),
             lotteries,
             orders: OrderRepository::memory(),
+            rebates: RebateRepository::memory_seeded(),
             robots: RobotRepository::memory_seeded(),
             scheduler,
         })

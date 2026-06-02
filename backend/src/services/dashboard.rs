@@ -5,7 +5,7 @@ use crate::domain::{
     lottery::{DrawMode, DrawSource, LotteryKind},
     order::{GroupBuyPlanSummary, OrderSummary},
     permission::{AdminRole, SystemSetting},
-    rebate::{InvitePolicySummary, RebateMode},
+    rebate::InvitePolicySummary,
     robot::RobotConfigSummary,
     user::{AdminSummary, RegistrationConfig, UserSummary},
 };
@@ -72,6 +72,7 @@ pub fn dashboard_summary_with_orders(
     finance: FinanceOverview,
     financial_accounts: Vec<FinancialAccountSummary>,
     access: AccessSnapshot,
+    invite_policy: InvitePolicySummary,
     robots: Vec<RobotConfigSummary>,
 ) -> DashboardSummary {
     let lottery_count = lotteries.len();
@@ -109,13 +110,7 @@ pub fn dashboard_summary_with_orders(
         roles: access.roles,
         settings: access.settings,
         registration: access.registration,
-        invite_policy: InvitePolicySummary {
-            agents_can_invite: true,
-            regular_users_can_invite: false,
-            rebate_mode: RebateMode::Immediate,
-            supported_rebate_modes: vec![RebateMode::Immediate, RebateMode::RechargeTiered],
-            default_recharge_rebate_basis_points: 350,
-        },
+        invite_policy,
     }
 }
 
@@ -328,6 +323,7 @@ mod tests {
     use super::dashboard_summary_with_orders;
     use crate::{
         domain::finance::{FinanceOverview, FinancialAccountSummary},
+        domain::rebate::{InvitePolicySummary, RebateMode},
         services::access::AccessRepository,
         services::lottery::seed_lotteries,
     };
@@ -353,6 +349,13 @@ mod tests {
                 frozen_balance_minor: 2_000,
             }],
             access,
+            InvitePolicySummary {
+                agents_can_invite: true,
+                regular_users_can_invite: false,
+                rebate_mode: RebateMode::Immediate,
+                supported_rebate_modes: vec![RebateMode::Immediate, RebateMode::RechargeTiered],
+                default_recharge_rebate_basis_points: 350,
+            },
             Vec::new(),
         );
         let keys = summary

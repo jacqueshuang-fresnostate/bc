@@ -1746,3 +1746,120 @@ state.robots.create(payload, &lotteries).await?;
 ```
 
 保存机器人前先校验绑定彩种存在。
+
+---
+
+## 场景：邀请返利配置接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改代理邀请、普通用户邀请、充值返利模式、默认返利比例配置接口，或让 dashboard 读取返利配置仓储。
+- 范围：后端返利领域模型、内存返利仓储、管理后台 API、前端 API client、`useRebatePolicy` hook 和“返利配置”页面。
+
+### 2. 签名
+
+- `GET /api/admin/invite-policy`
+- `PUT /api/admin/invite-policy`
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封。查询响应字段：
+
+```json
+{
+  "agentsCanInvite": true,
+  "regularUsersCanInvite": false,
+  "rebateMode": "immediate",
+  "supportedRebateModes": ["immediate", "rechargeTiered"],
+  "defaultRechargeRebateBasisPoints": 350
+}
+```
+
+更新请求字段：
+
+```json
+{
+  "agentsCanInvite": true,
+  "regularUsersCanInvite": true,
+  "rebateMode": "rechargeTiered",
+  "defaultRechargeRebateBasisPoints": 520
+}
+```
+
+字段契约：
+
+1. `rebateMode` 只允许 `immediate` 或 `rechargeTiered`。
+2. `defaultRechargeRebateBasisPoints` 使用 basis points，`350` 表示 `3.50%`。
+3. `supportedRebateModes` 是后端只读能力列表，前端更新时不能提交该字段。
+4. `DashboardSummary.invitePolicy` 必须从 `RebateRepository` 读取，不允许 dashboard 内部返回静态返利摘要。
+5. 本阶段只维护配置，不执行真实充值返利发放，不写返利流水或财务入账。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `agentsCanInvite=false` 且 `regularUsersCanInvite=false` | HTTP 400，返回 `agents or regular users must be able to invite` |
+| `defaultRechargeRebateBasisPoints > 10000` | HTTP 400，返回 `default recharge rebate basis points must not exceed 10000` |
+| `rebateMode` 不是允许枚举值 | HTTP 400，由 JSON 反序列化返回业务错误信封 |
+| 请求缺少必填字段 | HTTP 400，由 JSON 反序列化返回业务错误信封 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：把返利模式更新为 `rechargeTiered`，默认比例更新为 `520`，响应和 dashboard 都同步显示 `5.20%`。
+- Good：只开启代理邀请，关闭普通用户邀请，符合当前业务默认策略。
+- Base：无数据库环境下使用内存返利仓储，服务重启后恢复默认策略。
+- Bad：dashboard 继续直接构造静态 `InvitePolicySummary`，保存后首页摘要会与配置页漂移。
+- Bad：前端把 `supportedRebateModes` 当作可编辑字段提交，可能让能力列表被错误覆盖。
+
+### 6. 必要测试
+
+- 后端需要覆盖返利策略更新成功。
+- 后端需要覆盖代理邀请和普通用户邀请不能同时关闭。
+- 后端需要覆盖默认返利比例不能超过 `10000` basis points。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`，确认返利模式、更新请求和 API client 类型一致。
+- API 冒烟需要查询、更新、验证关闭全部邀请入口错误，并确认 dashboard 同步返回。
+- 浏览器验证需要进入“返利配置”入口，确认真实页面显示、保存无接口错误且控制台无错误。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+invite_policy: InvitePolicySummary {
+    agents_can_invite: true,
+    regular_users_can_invite: false,
+    // ...
+}
+```
+
+这个写法会让 dashboard 使用静态策略，配置页保存后不会同步。
+
+```ts
+await updateInvitePolicy({
+  ...policy,
+  supportedRebateModes: ['immediate'],
+});
+```
+
+这个写法把后端能力列表当成可编辑字段，容易误伤系统契约。
+
+#### 正确
+
+```rust
+let invite_policy = state.rebates.get().await?;
+dashboard_summary_with_orders(..., invite_policy, robots)
+```
+
+dashboard 从返利仓储读取配置。
+
+```ts
+await updateInvitePolicy({
+  agentsCanInvite: form.agentsCanInvite,
+  regularUsersCanInvite: form.regularUsersCanInvite,
+  rebateMode: form.rebateMode,
+  defaultRechargeRebateBasisPoints,
+});
+```
+
+前端只提交可编辑字段。

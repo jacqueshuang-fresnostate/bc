@@ -9,6 +9,7 @@ import { LotteryManagementPage } from './pages/LotteryManagementPage';
 import { OrderManagementPage } from './pages/OrderManagementPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { PlayRulesPage } from './pages/PlayRulesPage';
+import { RebateManagementPage } from './pages/RebateManagementPage';
 import { RobotManagementPage } from './pages/RobotManagementPage';
 import { SettlementManagementPage } from './pages/SettlementManagementPage';
 
@@ -75,6 +76,8 @@ export function App() {
           activeModuleKey={activeKey}
           onDashboardRefresh={refresh}
         />
+      ) : activeKey === 'rebate' ? (
+        <RebateManagementPage onDashboardRefresh={refresh} />
       ) : data ? (
         <PlaceholderPage moduleKey={activeKey} summary={data} />
       ) : (

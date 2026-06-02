@@ -174,11 +174,13 @@ export interface RegistrationConfig {
   agentInviteRequired: boolean;
 }
 
+export type RebateMode = 'immediate' | 'rechargeTiered';
+
 export interface InvitePolicySummary {
   agentsCanInvite: boolean;
   regularUsersCanInvite: boolean;
-  rebateMode: 'immediate' | 'rechargeTiered';
-  supportedRebateModes: Array<'immediate' | 'rechargeTiered'>;
+  rebateMode: RebateMode;
+  supportedRebateModes: RebateMode[];
   defaultRechargeRebateBasisPoints: number;
 }
 

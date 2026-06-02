@@ -35,6 +35,10 @@ import type {
   RobotConfigSummary,
   RobotStatusUpdateRequest,
 } from '../types/robots';
+import type {
+  InvitePolicySummary,
+  InvitePolicyUpdateRequest,
+} from '../types/rebates';
 import type { SettlementRun } from '../types/settlements';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -188,6 +192,17 @@ export function fetchRegistrationConfig(signal?: AbortSignal) {
 
 export function updateRegistrationConfig(payload: RegistrationConfig) {
   return requestJson<RegistrationConfig>('/api/admin/registration', {
+    body: payload,
+    method: 'PUT',
+  });
+}
+
+export function fetchInvitePolicy(signal?: AbortSignal) {
+  return requestJson<InvitePolicySummary>('/api/admin/invite-policy', { signal });
+}
+
+export function updateInvitePolicy(payload: InvitePolicyUpdateRequest) {
+  return requestJson<InvitePolicySummary>('/api/admin/invite-policy', {
     body: payload,
     method: 'PUT',
   });

@@ -18,6 +18,7 @@ use crate::{
         order::{CreateOrderRequest, OrderDetail},
         permission::{AdminRole, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
+        rebate::{InvitePolicySummary, InvitePolicyUpdateRequest},
         robot::{RobotConfigSummary, RobotStatusRequest},
         settlement::SettlementRun,
         user::{
@@ -60,6 +61,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/registration",
             get(get_registration_config).put(update_registration_config),
+        )
+        .route(
+            "/invite-policy",
+            get(get_invite_policy).put(update_invite_policy),
         )
         .route("/robots", get(list_robots).post(create_robot))
         .route(
@@ -261,6 +266,7 @@ async fn get_dashboard_summary(
     let finance = state.finance.overview().await?;
     let financial_accounts = state.finance.accounts().await?;
     let access = state.access.snapshot().await?;
+    let invite_policy = state.rebates.get().await?;
     let robots = state.robots.list().await?;
 
     Ok(Json(ApiEnvelope::success(dashboard_summary_with_orders(
@@ -269,6 +275,7 @@ async fn get_dashboard_summary(
         finance,
         financial_accounts,
         access,
+        invite_policy,
         robots,
     ))))
 }
@@ -441,6 +448,23 @@ async fn update_registration_config(
     let registration = state.access.update_registration(payload).await?;
 
     Ok(Json(ApiEnvelope::success(registration)))
+}
+
+async fn get_invite_policy(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<InvitePolicySummary>>> {
+    let policy = state.rebates.get().await?;
+
+    Ok(Json(ApiEnvelope::success(policy)))
+}
+
+async fn update_invite_policy(
+    State(state): State<AppState>,
+    Json(payload): Json<InvitePolicyUpdateRequest>,
+) -> ApiResult<Json<ApiEnvelope<InvitePolicySummary>>> {
+    let policy = state.rebates.update(payload).await?;
+
+    Ok(Json(ApiEnvelope::success(policy)))
 }
 
 async fn list_robots(
