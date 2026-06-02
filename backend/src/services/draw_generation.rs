@@ -13,7 +13,7 @@ use crate::{
     services::draw::DrawRepository,
 };
 
-const DEFAULT_SALE_CLOSE_LEAD_SECONDS: u32 = 30;
+pub const DEFAULT_SALE_CLOSE_LEAD_SECONDS: u32 = 30;
 const MAX_GENERATION_COUNT: u32 = 50;
 const MAX_UNIQUE_ATTEMPTS_PER_ISSUE: u32 = 100;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";

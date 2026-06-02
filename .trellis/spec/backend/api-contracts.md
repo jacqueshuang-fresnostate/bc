@@ -1282,3 +1282,102 @@ await previewDrawIssueGeneration({
 ```
 
 批量场景也只提交彩种、基准时间和数量，计划仍由后端统一返回。
+
+---
+
+## 场景：系统级常驻调度运行契约
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改服务启动后的常驻调度、自动补齐未来期号、自动封盘开奖结算循环。
+- 范围：后端运行环境变量、`app::router_from_env` 启动流程、调度服务、自动任务服务、期号生成服务和结构化日志。
+
+### 2. 签名
+
+本阶段不新增 HTTP 接口，调度通过服务启动时读取环境变量启用：
+
+- `DRAW_SCHEDULER_ENABLED`
+- `DRAW_SCHEDULER_INTERVAL_SECONDS`
+- `DRAW_SCHEDULER_FUTURE_ISSUE_COUNT`
+- `DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS`
+
+后端内部入口：
+
+- `DrawSchedulerConfig::from_env()`
+- `spawn_draw_scheduler(draws, lotteries, orders, finance, config)`
+- `run_draw_scheduler_once(draws, lotteries, orders, finance, config, now)`
+
+### 3. 契约
+
+默认配置：
+
+```text
+DRAW_SCHEDULER_ENABLED=false
+DRAW_SCHEDULER_INTERVAL_SECONDS=60
+DRAW_SCHEDULER_FUTURE_ISSUE_COUNT=1
+DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
+```
+
+行为契约：
+
+1. 未设置 `DRAW_SCHEDULER_ENABLED` 时，调度默认关闭，不会后台改写期号、订单或资金数据。
+2. `DRAW_SCHEDULER_ENABLED=true` 时，服务启动后创建 Tokio 后台任务。
+3. 每轮调度使用服务器当前本地时间，格式为 `YYYY-MM-DD HH:mm:ss`。
+4. 每轮先调用既有 `run_draw_automation`，处理到期封盘、开奖、结算和派奖入账。
+5. 自动任务执行后，再扫描 `saleEnabled=true` 的彩种，确保每个彩种至少有 `DRAW_SCHEDULER_FUTURE_ISSUE_COUNT` 个未来 `open/closed` 期号。
+6. 未来期号判断只统计同彩种、状态为 `open` 或 `closed`，并且 `scheduledAt >= now` 的期号。
+7. 补期继续调用 `generate_draw_issue_batch`，不在调度服务里重新实现开奖计划算法。
+8. `saleEnabled=false` 彩种不会自动补期，会记录为跳过彩种。
+9. 调度周期成功或失败都使用 `tracing` 结构化日志记录，不暴露原始请求体或敏感信息。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `DRAW_SCHEDULER_ENABLED` 未设置 | 使用默认 `false`，记录调度关闭日志 |
+| `DRAW_SCHEDULER_ENABLED=true/1/yes/on` | 启动后台调度 |
+| `DRAW_SCHEDULER_ENABLED=false/0/no/off` | 不启动后台调度 |
+| `DRAW_SCHEDULER_ENABLED` 为其他值 | 启动失败，返回清晰配置错误 |
+| `DRAW_SCHEDULER_INTERVAL_SECONDS=0` | 启动失败，返回 `draw scheduler interval seconds must be greater than zero` |
+| `DRAW_SCHEDULER_FUTURE_ISSUE_COUNT` 小于 1 或大于 50 | 启动失败，返回未来期号数量范围错误 |
+| `DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=0` | 启动失败，返回封盘提前秒数错误 |
+| 单轮调度 `now` 为空 | 返回 `draw scheduler time is required` |
+| 自动开奖或补期过程中发生业务错误 | 当前轮记录错误日志，后台任务继续下一轮 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：设置 `DRAW_SCHEDULER_ENABLED=true` 和 `DRAW_SCHEDULER_INTERVAL_SECONDS=1` 后，本地启动服务会自动为销售开启彩种补齐未来期号。
+- Good：已有到期开奖期号时，单轮调度先执行封盘/开奖/结算，再补齐下一期期号。
+- Base：默认关闭适合本地开发和测试，不会让后台循环干扰手动 API 冒烟。
+- Bad：在调度服务里复制一套封盘、开奖、结算或开奖计划计算逻辑；这些必须继续复用 `run_draw_automation` 和 `generate_draw_issue_batch`。
+
+### 6. 必要测试
+
+- 后端需要覆盖调度默认关闭时不启动后台任务。
+- 后端需要覆盖环境变量解析和无效值拒绝。
+- 后端需要覆盖销售开启彩种自动补齐未来期号，销售关闭彩种跳过。
+- 后端需要覆盖未来期号缓冲已满足时不重复生成。
+- 后端需要覆盖到期期号先自动开奖，再补齐未来期号。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 本地冒烟需要用短周期启用调度，确认 `/api/admin/draw-issues` 能看到自动补齐的 open 期号。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+tokio::spawn(async move {
+    // 后台任务直接复制封盘、开奖和派奖逻辑
+});
+```
+
+这个写法会让手动自动任务接口和常驻调度逐渐分叉。
+
+#### 正确
+
+```rust
+run_draw_automation(draws, orders, finance, DrawAutomationRunRequest { now }).await?;
+generate_draw_issue_batch(draws, lottery, payload).await?;
+```
+
+常驻调度只负责编排时机和缓冲数量，业务动作继续复用已有服务。

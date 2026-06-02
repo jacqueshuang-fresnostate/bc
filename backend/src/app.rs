@@ -6,8 +6,11 @@ use tower_http::cors::CorsLayer;
 use crate::{
     routes,
     services::{
-        draw::DrawRepository, finance::FinanceRepository, lottery::LotteryRepository,
+        draw::DrawRepository,
+        finance::FinanceRepository,
+        lottery::LotteryRepository,
         order::OrderRepository,
+        scheduler::{spawn_draw_scheduler, DrawSchedulerConfig},
     },
 };
 
@@ -48,7 +51,17 @@ impl AppState {
 }
 
 pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
-    Ok(router_with_state(AppState::from_env().await?))
+    let state = AppState::from_env().await?;
+    let scheduler_config = DrawSchedulerConfig::from_env()?;
+    spawn_draw_scheduler(
+        state.draws.clone(),
+        state.lotteries.clone(),
+        state.orders.clone(),
+        state.finance.clone(),
+        scheduler_config,
+    );
+
+    Ok(router_with_state(state))
 }
 
 fn router_with_state(state: AppState) -> Router {
