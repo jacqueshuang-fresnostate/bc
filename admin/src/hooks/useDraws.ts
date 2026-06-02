@@ -6,7 +6,9 @@ import {
   drawIssueResult,
   fetchDrawIssues,
   fetchDrawSources,
+  generateDrawIssueBatch,
   generateNextDrawIssue,
+  previewDrawIssueGeneration,
   runDrawAutomation,
 } from '../api/client';
 import type { DrawSource } from '../types/dashboard';
@@ -14,8 +16,10 @@ import type {
   CreateDrawIssueRequest,
   DrawAutomationRunRequest,
   DrawIssue,
+  DrawIssueGenerationPreview,
   DrawIssueResultRequest,
   GenerateDrawIssueRequest,
+  GenerateDrawIssuesRequest,
 } from '../types/draws';
 
 export function useDraws() {
@@ -81,6 +85,37 @@ export function useDraws() {
     try {
       const created = await generateNextDrawIssue(payload);
       setIssues((current) => [created, ...current]);
+      return created;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const previewGeneration = useCallback(
+    async (payload: GenerateDrawIssuesRequest): Promise<DrawIssueGenerationPreview[]> => {
+      setSaving(true);
+      setError(null);
+      try {
+        return await previewDrawIssueGeneration(payload);
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [],
+  );
+
+  const generateBatch = useCallback(async (payload: GenerateDrawIssuesRequest) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await generateDrawIssueBatch(payload);
+      setIssues((current) => [...created, ...current]);
       return created;
     } catch (requestError) {
       setError(errorMessage(requestError));
@@ -164,9 +199,11 @@ export function useDraws() {
     draw,
     drawSources,
     error,
+    generateBatch,
     generateNext,
     issues,
     loading,
+    previewGeneration,
     refresh,
     runAutomation,
     saving,

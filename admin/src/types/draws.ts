@@ -17,6 +17,23 @@ export interface GenerateDrawIssueRequest {
   saleCloseLeadSeconds?: number;
 }
 
+export interface GenerateDrawIssuesRequest {
+  lotteryId: string;
+  now: string;
+  count: number;
+  saleCloseLeadSeconds?: number;
+}
+
+export interface DrawIssueGenerationPreview {
+  lotteryId: string;
+  lotteryName: string;
+  issue: string;
+  numberType: LotteryNumberType;
+  drawMode: DrawMode;
+  scheduledAt: string;
+  saleClosedAt: string;
+}
+
 export interface DrawIssueResultRequest {
   drawNumber?: string;
 }

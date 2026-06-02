@@ -5,8 +5,10 @@ import type {
   DrawAutomationRun,
   DrawAutomationRunRequest,
   DrawIssue,
+  DrawIssueGenerationPreview,
   DrawIssueResultRequest,
   GenerateDrawIssueRequest,
+  GenerateDrawIssuesRequest,
 } from '../types/draws';
 import type {
   FinancialAccountSummary,
@@ -120,6 +122,23 @@ export function createDrawIssue(payload: CreateDrawIssueRequest) {
 
 export function generateNextDrawIssue(payload: GenerateDrawIssueRequest) {
   return requestJson<DrawIssue>('/api/admin/draw-issues/generate-next', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function previewDrawIssueGeneration(payload: GenerateDrawIssuesRequest) {
+  return requestJson<DrawIssueGenerationPreview[]>(
+    '/api/admin/draw-issues/preview-generation',
+    {
+      body: payload,
+      method: 'POST',
+    },
+  );
+}
+
+export function generateDrawIssueBatch(payload: GenerateDrawIssuesRequest) {
+  return requestJson<DrawIssue[]>('/api/admin/draw-issues/generate-batch', {
     body: payload,
     method: 'POST',
   });

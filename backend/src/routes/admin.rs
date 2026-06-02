@@ -10,7 +10,8 @@ use crate::{
     domain::{
         draw::{
             CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest, DrawIssue,
-            DrawIssueResultRequest, GenerateDrawIssueRequest,
+            DrawIssueGenerationPreview, DrawIssueResultRequest, GenerateDrawIssueRequest,
+            GenerateDrawIssuesRequest,
         },
         finance::{FinancialAccountSummary, LedgerEntry, ManualBalanceAdjustmentRequest},
         lottery::{DrawSource, LotteryKind},
@@ -23,7 +24,9 @@ use crate::{
     services::{
         automation::run_draw_automation,
         dashboard::{dashboard_summary_with_orders, draw_sources, DashboardSummary},
-        draw_generation::generate_next_draw_issue,
+        draw_generation::{
+            generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
+        },
         order::validate_draw_issue_accepts_order,
         play_rules::{evaluate_play_rule, play_rule_summaries},
     },
@@ -43,6 +46,14 @@ pub fn router() -> Router<AppState> {
         .route(
             "/draw-issues/generate-next",
             post(generate_next_draw_issue_request),
+        )
+        .route(
+            "/draw-issues/preview-generation",
+            post(preview_draw_issue_generation_request),
+        )
+        .route(
+            "/draw-issues/generate-batch",
+            post(generate_draw_issue_batch_request),
         )
         .route("/draw-issues/{id}", get(get_draw_issue))
         .route("/draw-issues/{id}/close", patch(close_draw_issue))
@@ -116,6 +127,26 @@ async fn generate_next_draw_issue_request(
     let issue = generate_next_draw_issue(&state.draws, &lottery, payload).await?;
 
     Ok(Json(ApiEnvelope::success(issue)))
+}
+
+async fn preview_draw_issue_generation_request(
+    State(state): State<AppState>,
+    Json(payload): Json<GenerateDrawIssuesRequest>,
+) -> ApiResult<Json<ApiEnvelope<Vec<DrawIssueGenerationPreview>>>> {
+    let lottery = state.lotteries.get(&payload.lottery_id).await?;
+    let plans = preview_draw_issue_generation(&state.draws, &lottery, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(plans)))
+}
+
+async fn generate_draw_issue_batch_request(
+    State(state): State<AppState>,
+    Json(payload): Json<GenerateDrawIssuesRequest>,
+) -> ApiResult<Json<ApiEnvelope<Vec<DrawIssue>>>> {
+    let lottery = state.lotteries.get(&payload.lottery_id).await?;
+    let issues = generate_draw_issue_batch(&state.draws, &lottery, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(issues)))
 }
 
 async fn close_draw_issue(

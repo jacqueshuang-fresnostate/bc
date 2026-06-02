@@ -2,10 +2,12 @@ import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
 import {
   CalendarPlus,
   Clock3,
+  ListPlus,
   Lock,
   Play,
   Plus,
   RefreshCcw,
+  Search,
   XCircle,
 } from 'lucide-react';
 import {
@@ -23,6 +25,7 @@ import type {
   CreateDrawIssueRequest,
   DrawAutomationRun,
   DrawIssue,
+  DrawIssueGenerationPreview,
   DrawIssueStatus,
 } from '../types/draws';
 
@@ -46,9 +49,11 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     draw,
     drawSources,
     error: drawError,
+    generateBatch,
     generateNext,
     issues,
     loading: drawsLoading,
+    previewGeneration,
     refresh: refreshDraws,
     runAutomation,
     saving,
@@ -63,6 +68,10 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   const [automationNow, setAutomationNow] = useState(() => currentDateTimeLabel());
   const [automationResult, setAutomationResult] =
     useState<DrawAutomationRun | null>(null);
+  const [generationCount, setGenerationCount] = useState('5');
+  const [generationPreview, setGenerationPreview] = useState<
+    DrawIssueGenerationPreview[]
+  >([]);
   const [form, setForm] = useState<DrawIssueFormState>(() => emptyForm());
 
   const selectedLottery = useMemo(
@@ -114,7 +123,46 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
       lotteryId: selectedLottery.id,
       now: automationNow.trim(),
     });
+    setGenerationPreview([]);
     setSelectedIssueId(created.id);
+    onDashboardRefresh();
+  };
+
+  const previewIssueGeneration = async () => {
+    if (!selectedLottery) {
+      return;
+    }
+    const count = parseGenerationCount(generationCount);
+    if (!count) {
+      return;
+    }
+
+    const plans = await previewGeneration({
+      count,
+      lotteryId: selectedLottery.id,
+      now: automationNow.trim(),
+    });
+    setGenerationPreview(plans);
+  };
+
+  const generateIssueBatch = async () => {
+    if (!selectedLottery) {
+      return;
+    }
+    const count = parseGenerationCount(generationCount);
+    if (!count) {
+      return;
+    }
+
+    const created = await generateBatch({
+      count,
+      lotteryId: selectedLottery.id,
+      now: automationNow.trim(),
+    });
+    setGenerationPreview([]);
+    if (created[0]) {
+      setSelectedIssueId(created[0].id);
+    }
     onDashboardRefresh();
   };
 
@@ -153,6 +201,9 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
 
   const loading = drawsLoading || lotteriesLoading;
   const error = drawError ?? lotteryError;
+  const generationCountValue = parseGenerationCount(generationCount);
+  const generationActionDisabled =
+    !selectedLottery || saving || !automationNow.trim() || !generationCountValue;
 
   return (
     <div className="space-y-5">
@@ -407,6 +458,22 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
                 </Field>
               </div>
 
+              <Field label="预生成数量">
+                <input
+                  className="form-input"
+                  max={50}
+                  min={1}
+                  type="number"
+                  value={generationCount}
+                  onChange={(event) => setGenerationCount(event.target.value)}
+                />
+                {!generationCountValue ? (
+                  <span className="mt-1 block text-xs text-amber-600">
+                    数量需要在 1 到 50 之间。
+                  </span>
+                ) : null}
+              </Field>
+
               <div className="flex flex-wrap gap-2">
                 <Button
                   disabled={!selectedLottery || saving}
@@ -423,7 +490,25 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
                 >
                   按计划生成下一期
                 </Button>
+                <Button
+                  disabled={generationActionDisabled}
+                  icon={<Search size={16} />}
+                  onClick={() => void previewIssueGeneration()}
+                >
+                  预览计划
+                </Button>
+                <Button
+                  disabled={generationActionDisabled}
+                  icon={<ListPlus size={16} />}
+                  onClick={() => void generateIssueBatch()}
+                >
+                  批量生成
+                </Button>
               </div>
+
+              {generationPreview.length > 0 ? (
+                <GenerationPreviewList plans={generationPreview} />
+              ) : null}
             </form>
           </Card>
 
@@ -565,6 +650,41 @@ function AutomationResultSummary({ run }: { run: DrawAutomationRun }) {
   );
 }
 
+function GenerationPreviewList({
+  plans,
+}: {
+  plans: DrawIssueGenerationPreview[];
+}) {
+  return (
+    <div className="rounded-md border border-line bg-slate-50 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2 text-sm">
+        <span className="font-medium text-ink">计划预览</span>
+        <Tag color="cyan">{plans.length} 期</Tag>
+      </div>
+      <div className="max-h-56 overflow-y-auto">
+        <table className="w-full text-left text-xs">
+          <thead className="border-b border-slate-200 text-slate-500">
+            <tr>
+              <th className="py-2 pr-2 font-medium">期号</th>
+              <th className="py-2 pr-2 font-medium">封盘</th>
+              <th className="py-2 font-medium">开奖</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plans.map((plan) => (
+              <tr key={plan.issue} className="border-b border-slate-200 last:border-0">
+                <td className="py-2 pr-2 font-mono text-ink">{plan.issue}</td>
+                <td className="py-2 pr-2 text-slate-500">{plan.saleClosedAt}</td>
+                <td className="py-2 text-slate-500">{plan.scheduledAt}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ResultMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-slate-200 bg-white px-2 py-2">
@@ -592,6 +712,14 @@ function currentDateTimeLabel() {
     `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
     `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`,
   ].join(' ');
+}
+
+function parseGenerationCount(value: string) {
+  const count = Number.parseInt(value, 10);
+  if (!Number.isFinite(count) || count < 1 || count > 50) {
+    return null;
+  }
+  return count;
 }
 
 function setFormValue<K extends keyof DrawIssueFormState>(

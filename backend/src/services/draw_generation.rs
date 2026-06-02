@@ -1,8 +1,12 @@
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
+use std::collections::HashSet;
 
 use crate::{
     domain::{
-        draw::{CreateDrawIssueRequest, DrawIssue, GenerateDrawIssueRequest},
+        draw::{
+            CreateDrawIssueRequest, DrawIssue, DrawIssueGenerationPreview,
+            GenerateDrawIssueRequest, GenerateDrawIssuesRequest,
+        },
         lottery::{DrawSchedule, LotteryKind},
     },
     error::{ApiError, ApiResult},
@@ -10,6 +14,8 @@ use crate::{
 };
 
 const DEFAULT_SALE_CLOSE_LEAD_SECONDS: u32 = 30;
+const MAX_GENERATION_COUNT: u32 = 50;
+const MAX_UNIQUE_ATTEMPTS_PER_ISSUE: u32 = 100;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const ISSUE_FORMAT: &str = "%Y%m%d%H%M%S";
 
@@ -18,6 +24,64 @@ pub async fn generate_next_draw_issue(
     lottery: &LotteryKind,
     payload: GenerateDrawIssueRequest,
 ) -> ApiResult<DrawIssue> {
+    let created = generate_draw_issue_batch(
+        draws,
+        lottery,
+        GenerateDrawIssuesRequest {
+            lottery_id: payload.lottery_id,
+            now: payload.now,
+            count: 1,
+            sale_close_lead_seconds: payload.sale_close_lead_seconds,
+        },
+    )
+    .await?;
+
+    created
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::Internal("draw issue was not generated".to_string()))
+}
+
+pub async fn preview_draw_issue_generation(
+    draws: &DrawRepository,
+    lottery: &LotteryKind,
+    payload: GenerateDrawIssuesRequest,
+) -> ApiResult<Vec<DrawIssueGenerationPreview>> {
+    plan_draw_issue_generation(draws, lottery, payload).await
+}
+
+pub async fn generate_draw_issue_batch(
+    draws: &DrawRepository,
+    lottery: &LotteryKind,
+    payload: GenerateDrawIssuesRequest,
+) -> ApiResult<Vec<DrawIssue>> {
+    let plans = plan_draw_issue_generation(draws, lottery, payload).await?;
+    let mut created = Vec::with_capacity(plans.len());
+
+    for plan in plans {
+        created.push(
+            draws
+                .create(
+                    lottery,
+                    CreateDrawIssueRequest {
+                        lottery_id: lottery.id.clone(),
+                        issue: plan.issue,
+                        scheduled_at: plan.scheduled_at,
+                        sale_closed_at: plan.sale_closed_at,
+                    },
+                )
+                .await?,
+        );
+    }
+
+    Ok(created)
+}
+
+async fn plan_draw_issue_generation(
+    draws: &DrawRepository,
+    lottery: &LotteryKind,
+    payload: GenerateDrawIssuesRequest,
+) -> ApiResult<Vec<DrawIssueGenerationPreview>> {
     validate_request(lottery, &payload)?;
     let now = parse_timestamp(&payload.now, "now")?;
     let existing_issues = draws.list().await?;
@@ -33,41 +97,55 @@ pub async fn generate_next_draw_issue(
         ));
     }
 
+    if payload.count == 0 || payload.count > MAX_GENERATION_COUNT {
+        return Err(ApiError::BadRequest(format!(
+            "draw issue generation count must be between 1 and {MAX_GENERATION_COUNT}"
+        )));
+    }
+
+    let mut known_issues: HashSet<String> = existing_issues
+        .iter()
+        .filter(|existing| existing.lottery_id == lottery.id)
+        .map(|existing| existing.issue.clone())
+        .collect();
+    let mut plans = Vec::with_capacity(payload.count as usize);
     let mut scheduled_at = next_scheduled_at(&lottery.schedule, baseline)?;
-    for _ in 0..100 {
+    let attempt_limit = payload.count.saturating_mul(MAX_UNIQUE_ATTEMPTS_PER_ISSUE);
+
+    for _ in 0..attempt_limit {
         let issue = format_issue(scheduled_at);
-        if !existing_issues
-            .iter()
-            .any(|existing| existing.lottery_id == lottery.id && existing.issue == issue)
-        {
+        if !known_issues.contains(&issue) {
             let sale_closed_at = scheduled_at
                 .checked_sub_signed(Duration::seconds(i64::from(sale_close_lead_seconds)))
                 .ok_or_else(|| {
                     ApiError::BadRequest("sale close time is out of range".to_string())
                 })?;
 
-            return draws
-                .create(
-                    lottery,
-                    CreateDrawIssueRequest {
-                        lottery_id: lottery.id.clone(),
-                        issue,
-                        scheduled_at: format_timestamp(scheduled_at),
-                        sale_closed_at: format_timestamp(sale_closed_at),
-                    },
-                )
-                .await;
+            known_issues.insert(issue.clone());
+            plans.push(DrawIssueGenerationPreview {
+                lottery_id: lottery.id.clone(),
+                lottery_name: lottery.name.clone(),
+                issue,
+                number_type: lottery.number_type.clone(),
+                draw_mode: lottery.draw_mode.clone(),
+                scheduled_at: format_timestamp(scheduled_at),
+                sale_closed_at: format_timestamp(sale_closed_at),
+            });
+
+            if plans.len() == payload.count as usize {
+                return Ok(plans);
+            }
         }
 
         scheduled_at = next_scheduled_at(&lottery.schedule, scheduled_at)?;
     }
 
     Err(ApiError::Conflict(
-        "unable to generate unique draw issue after 100 attempts".to_string(),
+        "unable to generate requested unique draw issues".to_string(),
     ))
 }
 
-fn validate_request(lottery: &LotteryKind, payload: &GenerateDrawIssueRequest) -> ApiResult<()> {
+fn validate_request(lottery: &LotteryKind, payload: &GenerateDrawIssuesRequest) -> ApiResult<()> {
     if payload.lottery_id.trim().is_empty() {
         return Err(ApiError::BadRequest("lottery id is required".to_string()));
     }
@@ -203,13 +281,18 @@ fn format_issue(value: NaiveDateTime) -> String {
 mod tests {
     use crate::{
         domain::{
-            draw::GenerateDrawIssueRequest,
+            draw::{GenerateDrawIssueRequest, GenerateDrawIssuesRequest},
             lottery::{
                 DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
                 PlayCategory,
             },
         },
-        services::{draw::DrawRepository, draw_generation::generate_next_draw_issue},
+        services::{
+            draw::DrawRepository,
+            draw_generation::{
+                generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
+            },
+        },
     };
 
     #[tokio::test]
@@ -277,10 +360,166 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-04 21:00:00");
     }
 
+    #[tokio::test]
+    async fn preview_generation_does_not_create_draw_issues() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+
+        let plans = preview_draw_issue_generation(
+            &draws,
+            &lottery,
+            batch_request("2026-06-02 20:00:00", 3),
+        )
+        .await
+        .expect("plans can be previewed");
+
+        assert_eq!(
+            plans
+                .iter()
+                .map(|plan| plan.issue.as_str())
+                .collect::<Vec<_>>(),
+            vec!["20260602200100", "20260602200200", "20260602200300"]
+        );
+        assert!(draws
+            .list()
+            .await
+            .expect("draw issues can be listed")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn batch_generation_creates_multiple_periodic_draw_issues() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+
+        let issues =
+            generate_draw_issue_batch(&draws, &lottery, batch_request("2026-06-02 20:00:00", 3))
+                .await
+                .expect("issues can be generated");
+
+        assert_eq!(
+            issues
+                .iter()
+                .map(|issue| issue.issue.as_str())
+                .collect::<Vec<_>>(),
+            vec!["20260602200100", "20260602200200", "20260602200300"]
+        );
+        assert_eq!(
+            draws.list().await.expect("draw issues can be listed").len(),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_generation_uses_latest_existing_issue_as_baseline() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+
+        generate_draw_issue_batch(&draws, &lottery, batch_request("2026-06-02 20:00:00", 2))
+            .await
+            .expect("first batch can be generated");
+        let issues =
+            generate_draw_issue_batch(&draws, &lottery, batch_request("2026-06-02 20:00:00", 2))
+                .await
+                .expect("second batch can be generated");
+
+        assert_eq!(
+            issues
+                .iter()
+                .map(|issue| issue.issue.as_str())
+                .collect::<Vec<_>>(),
+            vec!["20260602200300", "20260602200400"]
+        );
+    }
+
+    #[tokio::test]
+    async fn daily_batch_generation_rolls_across_days() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::Daily {
+            time: "21:00:15".to_string(),
+        });
+
+        let plans = preview_draw_issue_generation(
+            &draws,
+            &lottery,
+            batch_request("2026-06-02 22:00:00", 2),
+        )
+        .await
+        .expect("plans can be previewed");
+
+        assert_eq!(
+            plans
+                .iter()
+                .map(|plan| plan.issue.as_str())
+                .collect::<Vec<_>>(),
+            vec!["20260603210015", "20260604210015"]
+        );
+    }
+
+    #[tokio::test]
+    async fn weekly_batch_generation_picks_configured_weekdays() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::Weekly {
+            weekdays: vec!["Tuesday".to_string(), "Thursday".to_string()],
+            time: "21:00:00".to_string(),
+        });
+
+        let plans = preview_draw_issue_generation(
+            &draws,
+            &lottery,
+            batch_request("2026-06-02 22:00:00", 3),
+        )
+        .await
+        .expect("plans can be previewed");
+
+        assert_eq!(
+            plans
+                .iter()
+                .map(|plan| plan.issue.as_str())
+                .collect::<Vec<_>>(),
+            vec!["20260604210000", "20260609210000", "20260611210000"]
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_generation_rejects_count_out_of_range() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+
+        let error = preview_draw_issue_generation(
+            &draws,
+            &lottery,
+            batch_request("2026-06-02 20:00:00", 0),
+        )
+        .await
+        .expect_err("zero count is rejected");
+
+        assert!(error
+            .to_string()
+            .contains("draw issue generation count must be between 1 and 50"));
+    }
+
     fn request(now: &str) -> GenerateDrawIssueRequest {
         GenerateDrawIssueRequest {
             lottery_id: "fc3d".to_string(),
             now: now.to_string(),
+            sale_close_lead_seconds: None,
+        }
+    }
+
+    fn batch_request(now: &str, count: u32) -> GenerateDrawIssuesRequest {
+        GenerateDrawIssuesRequest {
+            lottery_id: "fc3d".to_string(),
+            now: now.to_string(),
+            count,
             sale_close_lead_seconds: None,
         }
     }

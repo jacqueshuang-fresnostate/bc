@@ -1131,18 +1131,20 @@ let entries = finance.credit_settlement(&settlement).await?;
 
 ### 1. 范围 / 触发条件
 
-- 触发条件：新增或修改按彩种开奖计划生成下一期号、期号计划计算、前端生成下一期入口。
-- 范围：后端生成下一期请求模型、期号生成服务、开奖期号创建、前端 draw API client、`useDraws` hook 和“开奖期号与开奖源”页面。
+- 触发条件：新增或修改按彩种开奖计划生成下一期号、批量预生成、期号计划预览、期号计划计算、前端生成入口。
+- 范围：后端生成期号请求模型、期号生成服务、开奖期号创建、前端 draw API client、`useDraws` hook 和“开奖期号与开奖源”页面。
 
 ### 2. 签名
 
 - `POST /api/admin/draw-issues/generate-next`
+- `POST /api/admin/draw-issues/preview-generation`
+- `POST /api/admin/draw-issues/generate-batch`
 
 ### 3. 契约
 
 所有接口继续使用统一 API 信封，字段命名必须使用 `camelCase`。
 
-请求体：
+`generate-next` 请求体：
 
 ```json
 {
@@ -1154,7 +1156,20 @@ let entries = finance.credit_settlement(&settlement).await?;
 
 `now` 使用 `YYYY-MM-DD HH:mm:ss`。`saleCloseLeadSeconds` 可省略，默认 `30`，表示封盘时间为开奖前 30 秒。
 
-响应 `data` 字段为标准 `DrawIssue`：
+`preview-generation` 和 `generate-batch` 请求体：
+
+```json
+{
+  "lotteryId": "fc3d",
+  "now": "2026-06-02 20:00:00",
+  "count": 5,
+  "saleCloseLeadSeconds": 30
+}
+```
+
+`count` 必须在 `1..=50` 之间。`preview-generation` 只返回计划，不写入开奖期号仓储；`generate-batch` 会按计划创建多期。
+
+`generate-next` 和 `generate-batch` 创建后的响应 `data` 字段为标准 `DrawIssue` 或 `DrawIssue[]`：
 
 ```json
 {
@@ -1173,6 +1188,22 @@ let entries = finance.credit_settlement(&settlement).await?;
 }
 ```
 
+`preview-generation` 响应 `data` 字段为 `DrawIssueGenerationPreview[]`：
+
+```json
+[
+  {
+    "lotteryId": "fc3d",
+    "lotteryName": "福彩 3D",
+    "issue": "20260602210015",
+    "numberType": "threeDigit",
+    "drawMode": "api",
+    "scheduledAt": "2026-06-02 21:00:15",
+    "saleClosedAt": "2026-06-02 20:59:45"
+  }
+]
+```
+
 生成规则：
 
 1. 后端读取彩种 `DrawSchedule`，不由前端计算开奖时间。
@@ -1182,6 +1213,7 @@ let entries = finance.credit_settlement(&settlement).await?;
 5. 周开奖：选择严格晚于基线的下一个配置星期和时间。
 6. 期号编码使用开奖时间格式化为 `YYYYMMDDHHMMSS`。
 7. 创建仍复用开奖期号仓储，保持重复期号、彩种匹配、开奖时间和封盘时间校验一致。
+8. 批量预览和批量生成必须在同一次计划中跳过已存在的同彩种同 `issue`，并继续寻找后续可用期号。
 
 ### 4. 校验与错误矩阵
 
@@ -1193,26 +1225,31 @@ let entries = finance.credit_settlement(&settlement).await?;
 | `now` 为空 | HTTP 400，返回 `now time is required` |
 | `now` 格式错误 | HTTP 400，返回 `now must use YYYY-MM-DD HH:mm:ss format` |
 | `saleCloseLeadSeconds=0` | HTTP 400，返回 `sale close lead seconds must be greater than zero` |
+| `count` 小于 1 或大于 50 | HTTP 400，返回 `draw issue generation count must be between 1 and 50` |
 | 周期开奖秒数为 0 | HTTP 400，返回 `periodic interval must be greater than zero` |
 | 每日或周开奖时间格式错误 | HTTP 400，返回 `... must use HH:mm:ss format` |
 | 周开奖星期为空或不支持 | HTTP 400，返回 weekday 错误 |
-| 100 次仍无法生成唯一期号 | HTTP 409，返回唯一期号生成失败 |
+| 计划尝试次数耗尽仍无法生成足量唯一期号 | HTTP 409，返回唯一期号生成失败 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：`ssc60` 配置 `periodic.intervalSeconds=60`，`now=2026-06-02 20:00:00`，生成 `scheduledAt=2026-06-02 20:01:00`。
 - Good：`fc3d` 配置每日 `21:00:15`，`now=2026-06-02 22:00:00`，生成次日 `2026-06-03 21:00:15`。
 - Good：周二、周四 `21:00:00` 的彩种，在周二 22:00 后生成周四 21:00。
-- Base：本阶段是后台触发式生成单期，适合内存仓储阶段验证计划计算。
+- Good：`preview-generation` 请求 `count=3` 返回未来 3 期计划，但随后请求期号列表不会多出新期号。
+- Good：`generate-batch` 请求 `count=3` 创建 3 个 open 期号，并返回标准 `DrawIssue[]`。
+- Base：本阶段是后台触发式生成单期或多期，适合内存仓储阶段验证计划计算。
 - Bad：前端自己根据彩种 schedule 计算开奖时间；计划计算必须由后端统一负责。
 
 ### 6. 必要测试
 
 - 后端需要覆盖周期、每日、周开奖三种计划。
 - 后端需要覆盖已有期号时从最新期号继续生成。
+- 后端需要覆盖计划预览不写入仓储。
+- 后端需要覆盖批量生成和 `count` 边界。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`。
-- 跨层联调需要请求生成下一期接口，并在管理后台开奖期号页面确认新期号显示。
+- 跨层联调需要请求生成下一期、计划预览和批量生成接口，并在管理后台开奖期号页面确认预览展示和新期号显示。
 
 ### 7. Wrong vs Correct
 
@@ -1235,3 +1272,13 @@ await generateNextDrawIssue({
 ```
 
 前端只提交彩种和基准时间，后端根据彩种计划生成标准期号并复用创建校验。
+
+```ts
+await previewDrawIssueGeneration({
+  count: 5,
+  lotteryId,
+  now,
+});
+```
+
+批量场景也只提交彩种、基准时间和数量，计划仍由后端统一返回。
