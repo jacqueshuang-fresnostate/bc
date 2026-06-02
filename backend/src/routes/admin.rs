@@ -16,8 +16,12 @@ use crate::{
         finance::{FinancialAccountSummary, LedgerEntry, ManualBalanceAdjustmentRequest},
         lottery::{DrawSource, LotteryKind},
         order::{CreateOrderRequest, OrderDetail},
+        permission::{AdminRole, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
         settlement::SettlementRun,
+        user::{
+            AdminStatusRequest, AdminSummary, RegistrationConfig, UserStatusRequest, UserSummary,
+        },
     },
     error::ApiResult,
     response::ApiEnvelope,
@@ -39,6 +43,23 @@ pub fn router() -> Router<AppState> {
         .route("/financial-accounts", get(list_financial_accounts))
         .route("/ledger-entries", get(list_ledger_entries))
         .route("/financial-adjustments", post(manual_balance_adjustment))
+        .route("/users", get(list_users).post(create_user))
+        .route("/users/{id}", get(get_user).put(update_user))
+        .route("/users/{id}/status", patch(set_user_status))
+        .route("/admins", get(list_admins).post(create_admin))
+        .route("/admins/{id}", get(get_admin).put(update_admin))
+        .route("/admins/{id}/status", patch(set_admin_status))
+        .route("/roles", get(list_roles).post(create_role))
+        .route(
+            "/roles/{id}",
+            get(get_role).put(update_role).delete(delete_role),
+        )
+        .route("/system-settings", get(list_system_settings))
+        .route("/system-settings/{key}", patch(update_system_setting))
+        .route(
+            "/registration",
+            get(get_registration_config).put(update_registration_config),
+        )
         .route("/draw-sources", get(list_draw_sources))
         .route(
             "/draw-issues",
@@ -232,13 +253,185 @@ async fn get_dashboard_summary(
     let recent_orders = state.orders.recent_summaries(8).await?;
     let finance = state.finance.overview().await?;
     let financial_accounts = state.finance.accounts().await?;
+    let access = state.access.snapshot().await?;
 
     Ok(Json(ApiEnvelope::success(dashboard_summary_with_orders(
         lotteries,
         recent_orders,
         finance,
         financial_accounts,
+        access,
     ))))
+}
+
+async fn list_users(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<UserSummary>>>> {
+    let users = state.access.users().await?;
+
+    Ok(Json(ApiEnvelope::success(users)))
+}
+
+async fn get_user(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
+    let user = state.access.get_user(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(user)))
+}
+
+async fn create_user(
+    State(state): State<AppState>,
+    Json(payload): Json<UserSummary>,
+) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
+    let user = state.access.create_user(payload).await?;
+
+    Ok(Json(ApiEnvelope::success(user)))
+}
+
+async fn update_user(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<UserSummary>,
+) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
+    let user = state.access.update_user(&id, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(user)))
+}
+
+async fn set_user_status(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<UserStatusRequest>,
+) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
+    let user = state.access.set_user_status(&id, payload.status).await?;
+
+    Ok(Json(ApiEnvelope::success(user)))
+}
+
+async fn list_admins(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<AdminSummary>>>> {
+    let admins = state.access.admins().await?;
+
+    Ok(Json(ApiEnvelope::success(admins)))
+}
+
+async fn get_admin(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<AdminSummary>>> {
+    let admin = state.access.get_admin(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(admin)))
+}
+
+async fn create_admin(
+    State(state): State<AppState>,
+    Json(payload): Json<AdminSummary>,
+) -> ApiResult<Json<ApiEnvelope<AdminSummary>>> {
+    let admin = state.access.create_admin(payload).await?;
+
+    Ok(Json(ApiEnvelope::success(admin)))
+}
+
+async fn update_admin(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<AdminSummary>,
+) -> ApiResult<Json<ApiEnvelope<AdminSummary>>> {
+    let admin = state.access.update_admin(&id, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(admin)))
+}
+
+async fn set_admin_status(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<AdminStatusRequest>,
+) -> ApiResult<Json<ApiEnvelope<AdminSummary>>> {
+    let admin = state.access.set_admin_status(&id, payload.status).await?;
+
+    Ok(Json(ApiEnvelope::success(admin)))
+}
+
+async fn list_roles(State(state): State<AppState>) -> ApiResult<Json<ApiEnvelope<Vec<AdminRole>>>> {
+    let roles = state.access.roles().await?;
+
+    Ok(Json(ApiEnvelope::success(roles)))
+}
+
+async fn get_role(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<AdminRole>>> {
+    let role = state.access.get_role(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(role)))
+}
+
+async fn create_role(
+    State(state): State<AppState>,
+    Json(payload): Json<AdminRole>,
+) -> ApiResult<Json<ApiEnvelope<AdminRole>>> {
+    let role = state.access.create_role(payload).await?;
+
+    Ok(Json(ApiEnvelope::success(role)))
+}
+
+async fn update_role(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<AdminRole>,
+) -> ApiResult<Json<ApiEnvelope<AdminRole>>> {
+    let role = state.access.update_role(&id, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(role)))
+}
+
+async fn delete_role(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<AdminRole>>> {
+    let role = state.access.delete_role(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(role)))
+}
+
+async fn list_system_settings(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<SystemSetting>>>> {
+    let settings = state.access.settings().await?;
+
+    Ok(Json(ApiEnvelope::success(settings)))
+}
+
+async fn update_system_setting(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(payload): Json<UpdateSystemSettingRequest>,
+) -> ApiResult<Json<ApiEnvelope<SystemSetting>>> {
+    let setting = state.access.update_setting(&key, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(setting)))
+}
+
+async fn get_registration_config(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<RegistrationConfig>>> {
+    let registration = state.access.registration().await?;
+
+    Ok(Json(ApiEnvelope::success(registration)))
+}
+
+async fn update_registration_config(
+    State(state): State<AppState>,
+    Json(payload): Json<RegistrationConfig>,
+) -> ApiResult<Json<ApiEnvelope<RegistrationConfig>>> {
+    let registration = state.access.update_registration(payload).await?;
+
+    Ok(Json(ApiEnvelope::success(registration)))
 }
 
 async fn list_financial_accounts(

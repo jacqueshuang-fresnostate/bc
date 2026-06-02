@@ -6,6 +6,7 @@ use tower_http::cors::CorsLayer;
 use crate::{
     routes,
     services::{
+        access::AccessRepository,
         draw::DrawRepository,
         finance::FinanceRepository,
         lottery::LotteryRepository,
@@ -16,6 +17,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct AppState {
+    pub access: AccessRepository,
     pub draws: DrawRepository,
     pub finance: FinanceRepository,
     pub lotteries: LotteryRepository,
@@ -26,6 +28,7 @@ pub struct AppState {
 impl AppState {
     fn new_with_scheduler(scheduler: DrawSchedulerRepository) -> Self {
         Self {
+            access: AccessRepository::memory_seeded(),
             draws: DrawRepository::memory(),
             finance: FinanceRepository::memory_seeded(),
             lotteries: LotteryRepository::memory_seeded(),
@@ -46,6 +49,7 @@ impl AppState {
 
         tracing::info!("DATABASE_URL configured; using PostgreSQL lottery repository");
         Ok(Self {
+            access: AccessRepository::memory_seeded(),
             draws: DrawRepository::memory(),
             finance: FinanceRepository::memory_seeded(),
             lotteries,

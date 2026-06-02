@@ -1,6 +1,15 @@
 import type { ApiEnvelope, DashboardSummary, LotteryKind } from '../types/dashboard';
 import type { DrawSource } from '../types/dashboard';
 import type {
+  AdminRole,
+  AdminSummary,
+  RegistrationConfig,
+  StatusUpdateRequest,
+  SystemSetting,
+  UpdateSystemSettingRequest,
+  UserSummary,
+} from '../types/access';
+import type {
   CreateDrawIssueRequest,
   DrawAutomationRun,
   DrawAutomationRunRequest,
@@ -69,6 +78,114 @@ export function createManualBalanceAdjustment(payload: ManualBalanceAdjustmentRe
   return requestJson<LedgerEntry>('/api/admin/financial-adjustments', {
     body: payload,
     method: 'POST',
+  });
+}
+
+export function fetchUsers(signal?: AbortSignal) {
+  return requestJson<UserSummary[]>('/api/admin/users', { signal });
+}
+
+export function createUser(payload: UserSummary) {
+  return requestJson<UserSummary>('/api/admin/users', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateUser(id: string, payload: UserSummary) {
+  return requestJson<UserSummary>(`/api/admin/users/${encodeURIComponent(id)}`, {
+    body: payload,
+    method: 'PUT',
+  });
+}
+
+export function setUserStatus(id: string, payload: StatusUpdateRequest) {
+  return requestJson<UserSummary>(
+    `/api/admin/users/${encodeURIComponent(id)}/status`,
+    {
+      body: payload,
+      method: 'PATCH',
+    },
+  );
+}
+
+export function fetchAdmins(signal?: AbortSignal) {
+  return requestJson<AdminSummary[]>('/api/admin/admins', { signal });
+}
+
+export function createAdmin(payload: AdminSummary) {
+  return requestJson<AdminSummary>('/api/admin/admins', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateAdmin(id: string, payload: AdminSummary) {
+  return requestJson<AdminSummary>(`/api/admin/admins/${encodeURIComponent(id)}`, {
+    body: payload,
+    method: 'PUT',
+  });
+}
+
+export function setAdminStatus(id: string, payload: StatusUpdateRequest) {
+  return requestJson<AdminSummary>(
+    `/api/admin/admins/${encodeURIComponent(id)}/status`,
+    {
+      body: payload,
+      method: 'PATCH',
+    },
+  );
+}
+
+export function fetchRoles(signal?: AbortSignal) {
+  return requestJson<AdminRole[]>('/api/admin/roles', { signal });
+}
+
+export function createRole(payload: AdminRole) {
+  return requestJson<AdminRole>('/api/admin/roles', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateRole(id: string, payload: AdminRole) {
+  return requestJson<AdminRole>(`/api/admin/roles/${encodeURIComponent(id)}`, {
+    body: payload,
+    method: 'PUT',
+  });
+}
+
+export function deleteRole(id: string) {
+  return requestJson<AdminRole>(`/api/admin/roles/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export function fetchSystemSettings(signal?: AbortSignal) {
+  return requestJson<SystemSetting[]>('/api/admin/system-settings', { signal });
+}
+
+export function updateSystemSetting(
+  key: string,
+  payload: UpdateSystemSettingRequest,
+) {
+  return requestJson<SystemSetting>(
+    `/api/admin/system-settings/${encodeURIComponent(key)}`,
+    {
+      body: payload,
+      method: 'PATCH',
+    },
+  );
+}
+
+export function fetchRegistrationConfig(signal?: AbortSignal) {
+  return requestJson<RegistrationConfig>('/api/admin/registration', { signal });
+}
+
+export function updateRegistrationConfig(payload: RegistrationConfig) {
+  return requestJson<RegistrationConfig>('/api/admin/registration', {
+    body: payload,
+    method: 'PUT',
   });
 }
 

@@ -141,3 +141,10 @@
 - 解决问题：此前常驻调度启用后只能通过日志或期号变化侧面判断是否在运行，管理员无法直接看到最近是否成功、补了多少期、是否跳过停售彩种或是否失败；本次让成功和失败都写入最近 20 条内存历史，并通过 typed API、`useDrawScheduler` hook 和页面状态块展示。手动点击“运行自动任务”仍不写入常驻调度历史，避免混淆自动循环来源；用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 58 个，覆盖调度历史成功记录、失败记录和最近 20 条保留上限。API 冒烟使用 `DRAW_SCHEDULER_ENABLED=true DRAW_SCHEDULER_INTERVAL_SECONDS=1 DRAW_SCHEDULER_FUTURE_ISSUE_COUNT=1 PORT=18087` 启动后，`GET /api/admin/draw-scheduler/status` 返回 `enabled=true`、最近运行 `SCH...` 和历史记录，`GET /api/admin/draw-issues` 自动出现 3 个未来 open 期号。浏览器验证 `http://127.0.0.1:5180/` 的“开奖期号与开奖源”页面已显示“常驻调度”“已启用”“最近运行”，控制台无错误。
 - 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议实现调度配置后台编辑、调度历史持久化、失败重试、告警、管理员审计和分布式锁。
+
+## 2026-06-02 19:23:50 HKT
+
+- 完成任务：实现 `06-02-admin-user-permission-foundation` 后台用户权限基础管理阶段，新增后端 `AccessRepository` 内存仓储和用户、管理员、角色权限、系统设置、注册配置接口；管理后台新增“用户权限管理”真实页面，把用户管理、管理员管理、角色权限、系统设置和用户注册入口接入可操作界面。
+- 解决问题：此前这些公共功能只有 dashboard 静态摘要和占位页，无法真实维护用户、后台账号、角色范围或注册配置；本次让 dashboard 和管理页面共用同一个用户权限仓储，避免摘要与页面数据漂移。管理员保存时提交稳定 `roleId`，后端根据角色仓储回填 `roleName`，避免靠中文角色名反查；已被管理员使用的角色不能删除，注册方式不能全部关闭。用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 63 个，覆盖用户创建与状态变更、空权限角色拒绝保存、已分配角色拒绝删除、角色改名同步管理员角色名、注册入口不能全部关闭。API 冒烟使用 `PORT=18088` 启动后，成功创建用户 `U20088`、角色 `role-audit`，更新注册配置和邮箱注册设置，dashboard 能返回 `U20088`、`role-audit`、`emailEnabled=true` 和 `agentInviteRequired=true`；删除 `role-super` 返回已分配角色冲突。浏览器验证 `http://127.0.0.1:5181/` 的用户、角色权限和系统设置视图均显示真实数据，控制台无错误。
+- 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议继续落地在线客服、机器人、邀请返利、合买配置，或推进用户权限 PostgreSQL 持久化、真实登录鉴权和管理员审计。

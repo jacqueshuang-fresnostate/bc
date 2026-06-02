@@ -1452,3 +1452,190 @@ await fetchDrawSchedulerStatus();
 ```
 
 管理后台通过明确的状态接口读取调度配置、最近运行和失败摘要。
+
+---
+
+## 场景：用户权限与系统设置管理接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改用户管理、管理员管理、角色权限、系统设置、注册配置接口，或让 dashboard 读取用户权限仓储。
+- 范围：后端用户权限领域模型、内存用户权限仓储、管理后台 API、前端 API client、`useAccessManagement` hook 和“用户权限管理”页面。
+
+### 2. 签名
+
+用户接口：
+
+- `GET /api/admin/users`
+- `GET /api/admin/users/{id}`
+- `POST /api/admin/users`
+- `PUT /api/admin/users/{id}`
+- `PATCH /api/admin/users/{id}/status`
+
+管理员接口：
+
+- `GET /api/admin/admins`
+- `GET /api/admin/admins/{id}`
+- `POST /api/admin/admins`
+- `PUT /api/admin/admins/{id}`
+- `PATCH /api/admin/admins/{id}/status`
+
+角色与设置接口：
+
+- `GET /api/admin/roles`
+- `GET /api/admin/roles/{id}`
+- `POST /api/admin/roles`
+- `PUT /api/admin/roles/{id}`
+- `DELETE /api/admin/roles/{id}`
+- `GET /api/admin/system-settings`
+- `PATCH /api/admin/system-settings/{key}`
+- `GET /api/admin/registration`
+- `PUT /api/admin/registration`
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封。用户字段：
+
+```json
+{
+  "id": "U10001",
+  "username": "demo_user",
+  "email": "demo@example.com",
+  "kind": "regular",
+  "status": "active",
+  "balanceMinor": 12000,
+  "agentId": "U90001"
+}
+```
+
+管理员字段：
+
+```json
+{
+  "id": "A10001",
+  "username": "admin",
+  "roleId": "role-super",
+  "roleName": "超级管理员",
+  "status": "active"
+}
+```
+
+角色字段：
+
+```json
+{
+  "id": "role-ops",
+  "name": "运营管理员",
+  "scopes": ["users", "orders", "lotteries"]
+}
+```
+
+系统设置字段：
+
+```json
+{
+  "key": "email_registration_enabled",
+  "value": "true",
+  "description": "是否开启邮箱注册"
+}
+```
+
+注册配置字段：
+
+```json
+{
+  "usernameEnabled": true,
+  "emailEnabled": false,
+  "agentInviteRequired": false
+}
+```
+
+行为契约：
+
+1. `DashboardSummary.users/admins/roles/settings/registration` 必须从同一个用户权限仓储读取，不允许继续使用 dashboard 内部静态函数。
+2. 管理员保存时前端提交 `roleId`；后端根据 `roleId` 查找角色并回填 `roleName`，前端不能靠中文角色名反查。
+3. 角色权限范围使用后端枚举的 `camelCase` 值：`users`、`orders`、`finance`、`customerService`、`admins`、`roles`、`systemSettings`、`lotteries`、`robots`、`rebates`。
+4. 用户余额字段仍是 `balanceMinor` 最小货币单位。本阶段用户摘要余额不强制和财务账户仓储同步。
+5. 本阶段不保存管理员密码，不提供真实登录、JWT、菜单拦截或权限鉴权。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 用户 ID 为空 | HTTP 400，返回 `user id is required` |
+| 用户名为空 | HTTP 400，返回 `username is required` |
+| 用户余额小于 0 | HTTP 400，返回 `user balance must not be negative` |
+| 创建重复用户 ID | HTTP 409，返回重复用户错误 |
+| 更新路径 ID 与用户 ID 不一致 | HTTP 400，返回 `path id must match user id` |
+| 管理员 ID 或用户名为空 | HTTP 400，返回对应必填错误 |
+| 管理员 `roleId` 不存在 | HTTP 404，返回角色不存在 |
+| 创建重复管理员 ID | HTTP 409，返回重复管理员错误 |
+| 角色 ID 或名称为空 | HTTP 400，返回对应必填错误 |
+| 角色权限范围为空 | HTTP 400，返回 `at least one permission scope is required` |
+| 删除已分配给管理员的角色 | HTTP 409，返回角色已被管理员使用 |
+| 设置 key 不存在 | HTTP 404，返回设置不存在 |
+| 设置值为空 | HTTP 400，返回 `setting value is required` |
+| 用户名注册和邮箱注册同时关闭 | HTTP 400，返回至少开启一种注册方式 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：创建 `role-audit` 后再创建管理员并传入 `roleId=role-audit`，响应自动带上正确 `roleName`。
+- Good：修改角色名称后，已绑定该角色的管理员摘要同步更新 `roleName`。
+- Base：无数据库环境下使用内存仓储，服务重启后恢复种子用户、管理员、角色和设置。
+- Bad：前端提交 `roleName` 并假设后端按中文名称匹配角色；这会在改名和多语言时失效。
+- Bad：dashboard 继续调用独立静态 `users()`、`admins()` 函数；这会让页面保存后首页摘要不同步。
+
+### 6. 必要测试
+
+- 后端需要覆盖创建/更新用户和用户状态变更。
+- 后端需要覆盖角色权限范围为空拒绝保存。
+- 后端需要覆盖已分配角色拒绝删除。
+- 后端需要覆盖角色改名后管理员 `roleName` 同步。
+- 后端需要覆盖注册方式不能全部关闭。
+- 前端需要运行 `npm run build`，确认 `AdminSummary.roleId`、`PermissionScope` 和接口函数类型一致。
+- API 冒烟需要创建用户、创建角色、更新注册配置，并确认 `/api/admin/dashboard` 同步返回。
+- 浏览器验证需要进入用户、角色、系统设置入口，确认真实页面显示且控制台无错误。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+pub fn dashboard_summary_with_orders(...) -> DashboardSummary {
+    DashboardSummary {
+        users: users(),
+        admins: admins(),
+        roles: roles(),
+        settings: settings(),
+        // ...
+    }
+}
+```
+
+这个写法会让 dashboard 和管理页面使用两份数据。
+
+```ts
+await createAdmin({
+  roleName: '运营管理员',
+});
+```
+
+这个写法把角色匹配建立在展示文本上，角色改名后会失效。
+
+#### 正确
+
+```rust
+let access = state.access.snapshot().await?;
+dashboard_summary_with_orders(lotteries, recent_orders, finance, accounts, access)
+```
+
+dashboard 和管理页面共用同一个仓储快照。
+
+```ts
+await createAdmin({
+  roleId: 'role-ops',
+  roleName: '运营管理员',
+});
+```
+
+前端提交稳定 `roleId`，后端根据角色仓储回填可信 `roleName`。

@@ -124,23 +124,39 @@ export interface UserSummary {
   id: string;
   username: string;
   email: string | null;
-  kind: 'regular' | 'agent';
-  status: 'active' | 'suspended' | 'locked';
+  kind: UserKind;
+  status: UserStatus;
   balanceMinor: number;
   agentId: string | null;
 }
 
+export type UserStatus = 'active' | 'suspended' | 'locked';
+export type UserKind = 'regular' | 'agent';
+
 export interface AdminSummary {
   id: string;
   username: string;
+  roleId: string;
   roleName: string;
-  status: 'active' | 'suspended' | 'locked';
+  status: UserStatus;
 }
+
+export type PermissionScope =
+  | 'users'
+  | 'orders'
+  | 'finance'
+  | 'customerService'
+  | 'admins'
+  | 'roles'
+  | 'systemSettings'
+  | 'lotteries'
+  | 'robots'
+  | 'rebates';
 
 export interface AdminRole {
   id: string;
   name: string;
-  scopes: string[];
+  scopes: PermissionScope[];
 }
 
 export interface SystemSetting {

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { AppShell, type NavigationItem } from './components/AppShell';
 import { useDashboard } from './hooks/useDashboard';
+import { AccessManagementPage } from './pages/AccessManagementPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DrawManagementPage } from './pages/DrawManagementPage';
 import { FinanceManagementPage } from './pages/FinanceManagementPage';
@@ -63,6 +64,11 @@ export function App() {
         <PlayRulesPage onDashboardRefresh={refresh} />
       ) : activeKey === 'settlements' ? (
         <SettlementManagementPage onDashboardRefresh={refresh} />
+      ) : isAccessModule(activeKey) ? (
+        <AccessManagementPage
+          activeModuleKey={activeKey}
+          onDashboardRefresh={refresh}
+        />
       ) : data ? (
         <PlaceholderPage moduleKey={activeKey} summary={data} />
       ) : (
@@ -75,5 +81,15 @@ export function App() {
         />
       )}
     </AppShell>
+  );
+}
+
+function isAccessModule(activeKey: string) {
+  return (
+    activeKey === 'users' ||
+    activeKey === 'admins' ||
+    activeKey === 'roles' ||
+    activeKey === 'settings' ||
+    activeKey === 'registration'
   );
 }

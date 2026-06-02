@@ -4,11 +4,13 @@ use crate::domain::{
     finance::{FinanceOverview, FinancialAccountSummary},
     lottery::{DrawMode, DrawSource, LotteryKind},
     order::{GroupBuyPlanSummary, OrderSummary},
-    permission::{AdminRole, PermissionScope, SystemSetting},
+    permission::{AdminRole, SystemSetting},
     rebate::{InvitePolicySummary, RebateMode},
     robot::{RobotConfigSummary, RobotKind, RobotStatus},
-    user::{AdminSummary, RegistrationConfig, UserKind, UserStatus, UserSummary},
+    user::{AdminSummary, RegistrationConfig, UserSummary},
 };
+
+use super::access::AccessSnapshot;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,14 +71,16 @@ pub fn dashboard_summary_with_orders(
     recent_orders: Vec<OrderSummary>,
     finance: FinanceOverview,
     financial_accounts: Vec<FinancialAccountSummary>,
+    access: AccessSnapshot,
 ) -> DashboardSummary {
     let lottery_count = lotteries.len();
     let order_count = recent_orders.len();
     let finance_metric = money_label(finance.total_balance_minor);
+    let user_count = access.users.len();
 
     DashboardSummary {
         metrics: vec![
-            metric("users", "用户总数", "128", "+12 今日新增"),
+            metric("users", "用户总数", user_count.to_string(), "内存用户仓储"),
             metric(
                 "orders",
                 "今日订单",
@@ -99,15 +103,11 @@ pub fn dashboard_summary_with_orders(
         finance,
         financial_accounts,
         robots: robots(),
-        users: users(),
-        admins: admins(),
-        roles: roles(),
-        settings: settings(),
-        registration: RegistrationConfig {
-            username_enabled: true,
-            email_enabled: false,
-            agent_invite_required: false,
-        },
+        users: access.users,
+        admins: access.admins,
+        roles: access.roles,
+        settings: access.settings,
+        registration: access.registration,
         invite_policy: InvitePolicySummary {
             agents_can_invite: true,
             regular_users_can_invite: false,
@@ -351,110 +351,21 @@ fn robots() -> Vec<RobotConfigSummary> {
     ]
 }
 
-fn users() -> Vec<UserSummary> {
-    vec![
-        UserSummary {
-            id: "U10001".to_string(),
-            username: "demo_user".to_string(),
-            email: Some("demo@example.com".to_string()),
-            kind: UserKind::Regular,
-            status: UserStatus::Active,
-            balance_minor: 12_000,
-            agent_id: Some("U90001".to_string()),
-        },
-        UserSummary {
-            id: "U90001".to_string(),
-            username: "agent_alpha".to_string(),
-            email: None,
-            kind: UserKind::Agent,
-            status: UserStatus::Active,
-            balance_minor: 520_000,
-            agent_id: None,
-        },
-        UserSummary {
-            id: "U10004".to_string(),
-            username: "risk_watch".to_string(),
-            email: None,
-            kind: UserKind::Regular,
-            status: UserStatus::Suspended,
-            balance_minor: 0,
-            agent_id: Some("U90001".to_string()),
-        },
-    ]
-}
-
-fn admins() -> Vec<AdminSummary> {
-    vec![
-        AdminSummary {
-            id: "A10001".to_string(),
-            username: "admin".to_string(),
-            role_name: "超级管理员".to_string(),
-            status: UserStatus::Active,
-        },
-        AdminSummary {
-            id: "A10002".to_string(),
-            username: "locked_admin".to_string(),
-            role_name: "运营管理员".to_string(),
-            status: UserStatus::Locked,
-        },
-    ]
-}
-
-fn roles() -> Vec<AdminRole> {
-    vec![
-        AdminRole {
-            id: "role-super".to_string(),
-            name: "超级管理员".to_string(),
-            scopes: vec![
-                PermissionScope::Users,
-                PermissionScope::Orders,
-                PermissionScope::Finance,
-                PermissionScope::CustomerService,
-                PermissionScope::Admins,
-                PermissionScope::Roles,
-                PermissionScope::SystemSettings,
-                PermissionScope::Lotteries,
-                PermissionScope::Robots,
-                PermissionScope::Rebates,
-            ],
-        },
-        AdminRole {
-            id: "role-ops".to_string(),
-            name: "运营管理员".to_string(),
-            scopes: vec![
-                PermissionScope::Users,
-                PermissionScope::Orders,
-                PermissionScope::Lotteries,
-            ],
-        },
-    ]
-}
-
-fn settings() -> Vec<SystemSetting> {
-    vec![
-        SystemSetting {
-            key: "email_registration_enabled".to_string(),
-            value: "false".to_string(),
-            description: "是否开启邮箱注册".to_string(),
-        },
-        SystemSetting {
-            key: "recharge_rebate_mode".to_string(),
-            value: "immediate".to_string(),
-            description: "代理充值返利模式".to_string(),
-        },
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::dashboard_summary_with_orders;
     use crate::{
         domain::finance::{FinanceOverview, FinancialAccountSummary},
+        services::access::AccessRepository,
         services::lottery::seed_lotteries,
     };
 
-    #[test]
-    fn dashboard_includes_required_module_groups() {
+    #[tokio::test]
+    async fn dashboard_includes_required_module_groups() {
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
         let summary = dashboard_summary_with_orders(
             seed_lotteries(),
             Vec::new(),
@@ -469,6 +380,7 @@ mod tests {
                 available_balance_minor: 12_000,
                 frozen_balance_minor: 2_000,
             }],
+            access,
         );
         let keys = summary
             .module_groups
