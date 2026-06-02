@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  createSupportConversation,
   fetchAdmins,
   fetchSupportConversations,
-  fetchUsers,
   replySupportConversation,
   updateSupportConversation,
 } from '../api/client';
-import type { AdminSummary, UserSummary } from '../types/dashboard';
+import type { AdminSummary } from '../types/dashboard';
 import type {
-  CreateSupportConversationRequest,
   SupportConversation,
   SupportReplyRequest,
   UpdateSupportConversationRequest,
@@ -18,7 +15,6 @@ import type {
 export function useSupportConversations() {
   const [admins, setAdmins] = useState<AdminSummary[]>([]);
   const [conversations, setConversations] = useState<SupportConversation[]>([]);
-  const [users, setUsers] = useState<UserSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,12 +32,10 @@ export function useSupportConversations() {
 
     Promise.all([
       fetchSupportConversations(controller.signal),
-      fetchUsers(controller.signal),
       fetchAdmins(controller.signal),
     ])
-      .then(([nextConversations, nextUsers, nextAdmins]) => {
+      .then(([nextConversations, nextAdmins]) => {
         setConversations(nextConversations);
-        setUsers(nextUsers);
         setAdmins(nextAdmins);
       })
       .catch((requestError: unknown) => {
@@ -59,21 +53,6 @@ export function useSupportConversations() {
       controller.abort();
     };
   }, [refreshToken]);
-
-  const create = useCallback(async (payload: CreateSupportConversationRequest) => {
-    setSaving(true);
-    setError(null);
-    try {
-      const created = await createSupportConversation(payload);
-      setConversations((current) => upsertById(current, created));
-      return created;
-    } catch (requestError) {
-      setError(errorMessage(requestError));
-      throw requestError;
-    } finally {
-      setSaving(false);
-    }
-  }, []);
 
   const update = useCallback(
     async (id: string, payload: UpdateSupportConversationRequest) => {
@@ -111,14 +90,12 @@ export function useSupportConversations() {
   return {
     admins,
     conversations,
-    create,
     error,
     loading,
     refresh,
     reply,
     saving,
     update,
-    users,
   };
 }
 

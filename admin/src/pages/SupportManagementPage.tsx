@@ -1,10 +1,9 @@
 import { Avatar, Banner, Button, Card, Chat, Spin, Tag } from '@douyinfe/semi-ui';
-import { MessageCircle, RefreshCcw, Save, Send, UserPlus } from 'lucide-react';
+import { MessageCircle, RefreshCcw, Save, Send } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
 import { useSupportConversations } from '../hooks/useSupportConversations';
 import type {
-  CreateSupportConversationRequest,
   SupportConversation,
   SupportConversationStatus,
   SupportMessage,
@@ -15,14 +14,6 @@ import type {
 
 interface SupportManagementPageProps {
   onDashboardRefresh: () => void;
-}
-
-interface CreateFormState {
-  content: string;
-  id: string;
-  priority: SupportPriority;
-  subject: string;
-  userId: string;
 }
 
 interface UpdateFormState {
@@ -50,19 +41,14 @@ export function SupportManagementPage({
   const {
     admins,
     conversations,
-    create,
     error,
     loading,
     refresh,
     reply,
     saving,
     update,
-    users,
   } = useSupportConversations();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [createForm, setCreateForm] = useState<CreateFormState>(() =>
-    emptyCreateForm(),
-  );
   const [replyContent, setReplyContent] = useState('');
   const [updateForm, setUpdateForm] = useState<UpdateFormState>(() =>
     emptyUpdateForm(),
@@ -84,12 +70,6 @@ export function SupportManagementPage({
   );
 
   useEffect(() => {
-    if (!createForm.userId && users[0]) {
-      setCreateForm((current) => ({ ...current, userId: users[0].id }));
-    }
-  }, [createForm.userId, users]);
-
-  useEffect(() => {
     if (selectedConversation && selectedConversation.id !== selectedId) {
       setSelectedId(selectedConversation.id);
     }
@@ -103,13 +83,6 @@ export function SupportManagementPage({
 
   const refreshAll = () => {
     refresh();
-    onDashboardRefresh();
-  };
-
-  const submitCreate = async () => {
-    const created = await create(createPayload(createForm));
-    setSelectedId(created.id);
-    setCreateForm(emptyCreateForm(users[0]?.id));
     onDashboardRefresh();
   };
 
@@ -142,7 +115,7 @@ export function SupportManagementPage({
         <div>
           <h1 className="text-xl font-semibold text-ink">在线客服</h1>
           <p className="mt-1 text-sm text-slate-500">
-            维护客服会话、工单状态、分配客服和后台回复记录。
+            处理用户发起的客服会话、工单状态、分配客服和后台回复记录。
           </p>
         </div>
         <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
@@ -171,146 +144,66 @@ export function SupportManagementPage({
         </Card>
       ) : (
         <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.95fr)]">
-          <div className="space-y-4">
-            <Card className="rounded-md border border-line">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-base font-semibold text-ink">会话列表</h2>
-                <Tag color="teal">{conversations.length} 条</Tag>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="border-b border-line text-xs text-slate-500">
-                    <tr>
-                      <th className="py-2 pr-4 font-medium">主题</th>
-                      <th className="py-2 pr-4 font-medium">用户</th>
-                      <th className="py-2 pr-4 font-medium">状态</th>
-                      <th className="py-2 pr-4 font-medium">优先级</th>
-                      <th className="py-2 pr-4 font-medium">未读</th>
+          <Card className="rounded-md border border-line">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-semibold text-ink">用户会话</h2>
+              <Tag color="teal">{conversations.length} 条</Tag>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="border-b border-line text-xs text-slate-500">
+                  <tr>
+                    <th className="py-2 pr-4 font-medium">主题</th>
+                    <th className="py-2 pr-4 font-medium">用户</th>
+                    <th className="py-2 pr-4 font-medium">状态</th>
+                    <th className="py-2 pr-4 font-medium">优先级</th>
+                    <th className="py-2 pr-4 font-medium">未读</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {conversations.map((conversation) => (
+                    <tr
+                      key={conversation.id}
+                      className={
+                        selectedConversation?.id === conversation.id
+                          ? 'bg-teal-50/60'
+                          : ''
+                      }
+                    >
+                      <td className="py-3 pr-4">
+                        <button
+                          className="text-left font-medium text-ink hover:text-teal-700"
+                          type="button"
+                          onClick={() => setSelectedId(conversation.id)}
+                        >
+                          {conversation.subject}
+                        </button>
+                        <div className="mt-1 text-xs text-slate-400">
+                          {conversation.id}
+                        </div>
+                      </td>
+                      <td className="py-3 pr-4 text-slate-600">
+                        {conversation.username}
+                      </td>
+                      <td className="py-3 pr-4">
+                        <Tag color={statusColor(conversation.status)}>
+                          {statusText(conversation.status)}
+                        </Tag>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <Tag color={priorityColor(conversation.priority)}>
+                          {priorityText(conversation.priority)}
+                        </Tag>
+                      </td>
+                      <td className="py-3 pr-4 text-slate-600">
+                        {conversation.unreadCount}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line">
-                    {conversations.map((conversation) => (
-                      <tr
-                        key={conversation.id}
-                        className={
-                          selectedConversation?.id === conversation.id
-                            ? 'bg-teal-50/60'
-                            : ''
-                        }
-                      >
-                        <td className="py-3 pr-4">
-                          <button
-                            className="text-left font-medium text-ink hover:text-teal-700"
-                            type="button"
-                            onClick={() => setSelectedId(conversation.id)}
-                          >
-                            {conversation.subject}
-                          </button>
-                          <div className="mt-1 text-xs text-slate-400">
-                            {conversation.id}
-                          </div>
-                        </td>
-                        <td className="py-3 pr-4 text-slate-600">
-                          {conversation.username}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <Tag color={statusColor(conversation.status)}>
-                            {statusText(conversation.status)}
-                          </Tag>
-                        </td>
-                        <td className="py-3 pr-4">
-                          <Tag color={priorityColor(conversation.priority)}>
-                            {priorityText(conversation.priority)}
-                          </Tag>
-                        </td>
-                        <td className="py-3 pr-4 text-slate-600">
-                          {conversation.unreadCount}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-
-            <Card className="rounded-md border border-line">
-              <div className="mb-4 flex items-center gap-2">
-                <UserPlus size={17} />
-                <h2 className="text-base font-semibold text-ink">新建会话</h2>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <Field label="会话 ID">
-                  <input
-                    className="h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-teal-500"
-                    value={createForm.id}
-                    onChange={(event) =>
-                      setCreateFormValue(setCreateForm, 'id', event.target.value)
-                    }
-                  />
-                </Field>
-                <Field label="绑定用户">
-                  <select
-                    className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
-                    value={createForm.userId}
-                    onChange={(event) =>
-                      setCreateFormValue(setCreateForm, 'userId', event.target.value)
-                    }
-                  >
-                    {users.map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.username} ({user.id})
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="主题">
-                  <input
-                    className="h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-teal-500"
-                    value={createForm.subject}
-                    onChange={(event) =>
-                      setCreateFormValue(setCreateForm, 'subject', event.target.value)
-                    }
-                  />
-                </Field>
-                <Field label="优先级">
-                  <select
-                    className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
-                    value={createForm.priority}
-                    onChange={(event) =>
-                      setCreateFormValue(
-                        setCreateForm,
-                        'priority',
-                        event.target.value as SupportPriority,
-                      )
-                    }
-                  >
-                    <option value="normal">普通</option>
-                    <option value="urgent">紧急</option>
-                  </select>
-                </Field>
-                <Field label="首条消息">
-                  <textarea
-                    className="min-h-24 w-full rounded-md border border-line px-3 py-2 text-sm outline-none focus:border-teal-500"
-                    value={createForm.content}
-                    onChange={(event) =>
-                      setCreateFormValue(setCreateForm, 'content', event.target.value)
-                    }
-                  />
-                </Field>
-              </div>
-              <div className="mt-4">
-                <Button
-                  disabled={saving}
-                  icon={<Save size={16} />}
-                  loading={saving}
-                  onClick={() => void submitCreate()}
-                  theme="solid"
-                >
-                  创建会话
-                </Button>
-              </div>
-            </Card>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
 
           <Card className="rounded-md border border-line">
             {selectedConversation ? (
@@ -490,16 +383,6 @@ function Field({ children, label }: FieldProps) {
   );
 }
 
-function emptyCreateForm(userId = ''): CreateFormState {
-  return {
-    content: '',
-    id: 'CS-NEW',
-    priority: 'normal',
-    subject: '',
-    userId,
-  };
-}
-
 function emptyUpdateForm(): UpdateFormState {
   return {
     assignedAdminId: '',
@@ -513,16 +396,6 @@ function formFromConversation(conversation: SupportConversation): UpdateFormStat
     assignedAdminId: conversation.assignedAdminId ?? '',
     priority: conversation.priority,
     status: conversation.status,
-  };
-}
-
-function createPayload(form: CreateFormState): CreateSupportConversationRequest {
-  return {
-    content: form.content,
-    id: form.id,
-    priority: form.priority,
-    subject: form.subject,
-    userId: form.userId,
   };
 }
 
@@ -635,14 +508,6 @@ function authorText(author: SupportMessageAuthor) {
     return '系统';
   }
   return '用户';
-}
-
-function setCreateFormValue<K extends keyof CreateFormState>(
-  setForm: (updater: (current: CreateFormState) => CreateFormState) => void,
-  key: K,
-  value: CreateFormState[K],
-) {
-  setForm((current) => ({ ...current, [key]: value }));
 }
 
 function setUpdateFormValue<K extends keyof UpdateFormState>(
