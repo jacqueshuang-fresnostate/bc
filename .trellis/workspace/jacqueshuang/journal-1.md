@@ -500,3 +500,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: 后台用户权限基础管理
+
+**Date**: 2026-06-02
+**Task**: 后台用户权限基础管理
+**Branch**: `main`
+
+### Summary
+
+新增 AccessRepository 内存仓储和用户、管理员、角色、系统设置、注册配置管理接口；dashboard 改为读取同一用户权限仓储；管理后台新增用户权限管理真实页面，接入用户、管理员、角色权限、系统设置、用户注册入口。验证通过 cargo fmt --check、cargo check、cargo test、npm run build、API 冒烟和浏览器控制台检查。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e265495` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

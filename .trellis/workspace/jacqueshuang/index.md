@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-06-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~502 | Active |
+| `journal-1.md` | ~535 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-06-02 | 后台用户权限基础管理 | `e265495` | `main` |
 | 15 | 2026-06-02 | 调度运行历史与后台可视化基础 | `cc79406` | `main` |
 | 14 | 2026-06-02 | 系统级常驻调度基础 | `90959cd` | `main` |
 | 13 | 2026-06-02 | 批量预生成期号和计划预览 | `6f55bb3` | `main` |
