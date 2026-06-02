@@ -269,3 +269,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: 玩法与赔率配置完善
+
+**Date**: 2026-06-02
+**Task**: 玩法与赔率配置完善
+**Branch**: `main`
+
+### Summary
+
+完成彩种单玩法赔率配置、订单赔率快照、结算按快照派奖和玩法规则页赔率维护；验证 3 位 5 个、5 位 19 个玩法，以及 API、浏览器、Rust/前端质量门。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `55d00a8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

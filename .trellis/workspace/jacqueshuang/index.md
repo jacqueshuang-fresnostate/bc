@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-06-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~271 | Active |
+| `journal-1.md` | ~304 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-06-02 | 玩法与赔率配置完善 | `55d00a8` | `main` |
 | 8 | 2026-06-02 | 用户资金与资金流水基础 | `303d9b1` | `main` |
 | 7 | 2026-06-02 | 计奖与派奖基础 | `42c5d18` | `main` |
 | 6 | 2026-06-02 | 开奖期号与开奖源基础 | `77bfbc3` | `main` |
