@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
+- **Total Sessions**: 5
 - **Last Active**: 2026-06-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~139 | Active |
+| `journal-1.md` | ~172 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-06-02 | 订单与投注基础 | `1fe6ec0` | `main` |
 | 4 | 2026-06-02 | 玩法规则引擎 | `8a15b3d` | `main` |
 | 3 | 2026-06-02 | 彩种数据库持久化 | `00f5199` | `main` |
 | 2 | 2026-06-02 | 彩种管理 CRUD | `984cf1d` | `main` |

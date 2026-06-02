@@ -137,3 +137,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: 订单与投注基础
+
+**Date**: 2026-06-02
+**Task**: 订单与投注基础
+**Branch**: `main`
+
+### Summary
+
+实现订单与投注基础：新增后端订单模型、内存订单仓储、订单创建/列表/详情/取消 API，订单创建复用玩法规则引擎计算注数和金额；新增管理后台订单管理页和工作台最近订单展示，并同步架构、TODO 与 API 契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1fe6ec0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
