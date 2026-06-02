@@ -830,3 +830,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: 后台彩种控制台
+
+**Date**: 2026-06-02
+**Task**: 后台彩种控制台
+**Branch**: `main`
+
+### Summary
+
+新增后台彩种控制台，按彩种展示销售状态、当前期号、封盘倒计时、开奖倒计时和最近开奖号码；入口接入 dashboard 与侧边栏，文档和 TODO 已同步。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d511e3a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
