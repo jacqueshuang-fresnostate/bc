@@ -1,0 +1,508 @@
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use crate::{
+    domain::{
+        finance::{
+            FinanceOverview, FinancialAccountSummary, LedgerEntry, LedgerEntryKind,
+            ManualBalanceAdjustmentRequest,
+        },
+        order::OrderDetail,
+        settlement::SettlementRun,
+    },
+    error::{ApiError, ApiResult},
+};
+
+#[derive(Clone)]
+pub struct FinanceRepository {
+    inner: Arc<RwLock<FinanceStore>>,
+}
+
+impl FinanceRepository {
+    pub fn memory_seeded() -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(FinanceStore::seeded())),
+        }
+    }
+
+    pub async fn overview(&self) -> ApiResult<FinanceOverview> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .overview()
+    }
+
+    pub async fn accounts(&self) -> ApiResult<Vec<FinancialAccountSummary>> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))
+            .map(|store| store.accounts())
+    }
+
+    pub async fn ledger_entries(&self) -> ApiResult<Vec<LedgerEntry>> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))
+            .map(|store| store.ledger_entries())
+    }
+
+    pub async fn ensure_available(&self, user_id: &str, amount_minor: i64) -> ApiResult<()> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .ensure_available(user_id, amount_minor)
+    }
+
+    pub async fn ensure_order_can_refund(&self, order: &OrderDetail) -> ApiResult<()> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .ensure_order_can_refund(order)
+    }
+
+    pub async fn manual_adjust(
+        &self,
+        payload: ManualBalanceAdjustmentRequest,
+    ) -> ApiResult<LedgerEntry> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .manual_adjust(payload)
+    }
+
+    pub async fn debit_order(&self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .debit_order(order)
+    }
+
+    pub async fn refund_order(&self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .refund_order(order)
+    }
+
+    pub async fn credit_settlement(
+        &self,
+        settlement: &SettlementRun,
+    ) -> ApiResult<Vec<LedgerEntry>> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .credit_settlement(settlement)
+    }
+}
+
+#[derive(Debug, Default)]
+struct FinanceStore {
+    accounts: BTreeMap<String, FinancialAccountSummary>,
+    ledger_entries: Vec<LedgerEntry>,
+    next_sequence: u64,
+}
+
+impl FinanceStore {
+    fn seeded() -> Self {
+        let mut store = Self::default();
+        store.seed_account("U10001", 12_000, 2_000);
+        store.seed_account("U10002", 50_000, 0);
+        store.seed_account("U10003", 100_000, 0);
+        store.seed_account("U10004", 0, 0);
+        store.seed_account("U90001", 520_000, 0);
+        store
+    }
+
+    fn seed_account(
+        &mut self,
+        user_id: &str,
+        available_balance_minor: i64,
+        frozen_balance_minor: i64,
+    ) {
+        self.accounts.insert(
+            user_id.to_string(),
+            FinancialAccountSummary {
+                user_id: user_id.to_string(),
+                available_balance_minor,
+                frozen_balance_minor,
+            },
+        );
+    }
+
+    fn overview(&self) -> ApiResult<FinanceOverview> {
+        let mut total_balance_minor = 0_i64;
+        for account in self.accounts.values() {
+            total_balance_minor = total_balance_minor
+                .checked_add(account.available_balance_minor)
+                .and_then(|amount| amount.checked_add(account.frozen_balance_minor))
+                .ok_or_else(|| {
+                    ApiError::Internal("finance overview amount overflow".to_string())
+                })?;
+        }
+
+        let today_payout_minor = self
+            .ledger_entries
+            .iter()
+            .filter(|entry| entry.kind == LedgerEntryKind::PayoutCredit)
+            .try_fold(0_i64, |total, entry| total.checked_add(entry.amount_minor))
+            .ok_or_else(|| ApiError::Internal("finance payout amount overflow".to_string()))?;
+
+        Ok(FinanceOverview {
+            total_balance_minor,
+            pending_withdraw_minor: 0,
+            today_recharge_minor: 0,
+            today_payout_minor,
+        })
+    }
+
+    fn accounts(&self) -> Vec<FinancialAccountSummary> {
+        self.accounts.values().cloned().collect()
+    }
+
+    fn ledger_entries(&self) -> Vec<LedgerEntry> {
+        self.ledger_entries.iter().rev().cloned().collect()
+    }
+
+    fn ensure_available(&self, user_id: &str, amount_minor: i64) -> ApiResult<()> {
+        if amount_minor <= 0 {
+            return Err(ApiError::BadRequest(
+                "amount must be greater than zero".to_string(),
+            ));
+        }
+
+        let account = self.account(user_id)?;
+        if account.available_balance_minor < amount_minor {
+            return Err(ApiError::BadRequest(
+                "insufficient available balance".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn ensure_order_can_refund(&self, order: &OrderDetail) -> ApiResult<()> {
+        if !self.has_reference(&LedgerEntryKind::OrderDebit, &order.id) {
+            return Err(ApiError::BadRequest(
+                "order debit ledger entry is required before refund".to_string(),
+            ));
+        }
+        if self.has_reference(&LedgerEntryKind::OrderRefund, &order.id) {
+            return Err(ApiError::Conflict(format!(
+                "order `{}` has already been refunded",
+                order.id
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn manual_adjust(&mut self, payload: ManualBalanceAdjustmentRequest) -> ApiResult<LedgerEntry> {
+        let user_id = payload.user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
+        if payload.amount_minor == 0 {
+            return Err(ApiError::BadRequest(
+                "adjustment amount must not be zero".to_string(),
+            ));
+        }
+
+        let description = payload.description.trim();
+        if description.is_empty() {
+            return Err(ApiError::BadRequest(
+                "adjustment description is required".to_string(),
+            ));
+        }
+
+        self.apply_available_delta(
+            user_id,
+            LedgerEntryKind::ManualAdjustment,
+            payload.amount_minor,
+            None,
+            description.to_string(),
+        )
+    }
+
+    fn debit_order(&mut self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
+        if self.has_reference(&LedgerEntryKind::OrderDebit, &order.id) {
+            return Err(ApiError::Conflict(format!(
+                "order `{}` has already been debited",
+                order.id
+            )));
+        }
+        self.ensure_available(&order.user_id, order.amount_minor)?;
+
+        self.apply_available_delta(
+            &order.user_id,
+            LedgerEntryKind::OrderDebit,
+            order
+                .amount_minor
+                .checked_neg()
+                .ok_or_else(|| ApiError::BadRequest("order amount is too large".to_string()))?,
+            Some(order.id.clone()),
+            format!("投注扣款：{} {}", order.lottery_name, order.issue),
+        )
+    }
+
+    fn refund_order(&mut self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
+        if let Some(entry) = self.reference_entry(&LedgerEntryKind::OrderRefund, &order.id) {
+            return Ok(entry);
+        }
+        self.ensure_order_can_refund(order)?;
+
+        self.apply_available_delta(
+            &order.user_id,
+            LedgerEntryKind::OrderRefund,
+            order.amount_minor,
+            Some(order.id.clone()),
+            format!("取消订单退款：{} {}", order.lottery_name, order.issue),
+        )
+    }
+
+    fn credit_settlement(&mut self, settlement: &SettlementRun) -> ApiResult<Vec<LedgerEntry>> {
+        let mut entries = Vec::new();
+
+        for order in &settlement.orders {
+            if !order.is_winning || order.payout_minor <= 0 {
+                continue;
+            }
+
+            let reference_id = format!("{}:{}", settlement.id, order.order_id);
+            if let Some(entry) = self.reference_entry(&LedgerEntryKind::PayoutCredit, &reference_id)
+            {
+                entries.push(entry);
+                continue;
+            }
+
+            let entry = self.apply_available_delta(
+                &order.user_id,
+                LedgerEntryKind::PayoutCredit,
+                order.payout_minor,
+                Some(reference_id),
+                format!("中奖派奖：{} {}", settlement.lottery_name, settlement.issue),
+            )?;
+            entries.push(entry);
+        }
+
+        Ok(entries)
+    }
+
+    fn account(&self, user_id: &str) -> ApiResult<&FinancialAccountSummary> {
+        let user_id = user_id.trim();
+        self.accounts
+            .get(user_id)
+            .ok_or_else(|| ApiError::NotFound(format!("financial account `{user_id}` not found")))
+    }
+
+    fn apply_available_delta(
+        &mut self,
+        user_id: &str,
+        kind: LedgerEntryKind,
+        amount_minor: i64,
+        reference_id: Option<String>,
+        description: String,
+    ) -> ApiResult<LedgerEntry> {
+        let user_id = user_id.trim();
+        let account = self.accounts.get_mut(user_id).ok_or_else(|| {
+            ApiError::NotFound(format!("financial account `{user_id}` not found"))
+        })?;
+        let available_balance_minor = account
+            .available_balance_minor
+            .checked_add(amount_minor)
+            .ok_or_else(|| ApiError::BadRequest("balance amount is too large".to_string()))?;
+        if available_balance_minor < 0 {
+            return Err(ApiError::BadRequest(
+                "available balance cannot be negative".to_string(),
+            ));
+        }
+
+        account.available_balance_minor = available_balance_minor;
+        let balance_after_minor = account
+            .available_balance_minor
+            .checked_add(account.frozen_balance_minor)
+            .ok_or_else(|| ApiError::BadRequest("balance amount is too large".to_string()))?;
+
+        self.next_sequence += 1;
+        let entry = LedgerEntry {
+            id: format!("L{:012}", self.next_sequence),
+            user_id: user_id.to_string(),
+            kind,
+            amount_minor,
+            balance_after_minor,
+            reference_id,
+            description,
+            created_at: current_timestamp_label(),
+        };
+        self.ledger_entries.push(entry.clone());
+
+        Ok(entry)
+    }
+
+    fn has_reference(&self, kind: &LedgerEntryKind, reference_id: &str) -> bool {
+        self.reference_entry(kind, reference_id).is_some()
+    }
+
+    fn reference_entry(&self, kind: &LedgerEntryKind, reference_id: &str) -> Option<LedgerEntry> {
+        self.ledger_entries
+            .iter()
+            .find(|entry| {
+                &entry.kind == kind && entry.reference_id.as_deref() == Some(reference_id)
+            })
+            .cloned()
+    }
+}
+
+fn current_timestamp_label() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    format!("unix:{seconds}")
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        domain::{
+            finance::{LedgerEntryKind, ManualBalanceAdjustmentRequest},
+            lottery::LotteryNumberType,
+            order::{OrderDetail, OrderStatus},
+            play::{PlayRuleCode, PlaySelection},
+            settlement::{OrderSettlement, SettlementRun},
+        },
+        services::finance::FinanceStore,
+    };
+
+    #[test]
+    fn store_debits_order_and_records_ledger() {
+        let mut store = FinanceStore::seeded();
+        let order = order_detail("O000000000001", "U10001", 200, 0);
+
+        let entry = store.debit_order(&order).expect("order can be debited");
+        let account = store.account("U10001").expect("account exists");
+
+        assert_eq!(account.available_balance_minor, 11_800);
+        assert_eq!(entry.kind, LedgerEntryKind::OrderDebit);
+        assert_eq!(entry.amount_minor, -200);
+        assert_eq!(entry.balance_after_minor, 13_800);
+        assert_eq!(entry.reference_id.as_deref(), Some("O000000000001"));
+    }
+
+    #[test]
+    fn store_rejects_insufficient_order_balance() {
+        let mut store = FinanceStore::seeded();
+        let order = order_detail("O000000000001", "U10004", 200, 0);
+
+        assert!(store
+            .debit_order(&order)
+            .expect_err("zero balance user cannot bet")
+            .to_string()
+            .contains("insufficient available balance"));
+    }
+
+    #[test]
+    fn store_refunds_order_once() {
+        let mut store = FinanceStore::seeded();
+        let order = order_detail("O000000000001", "U10001", 200, 0);
+        store.debit_order(&order).expect("order can be debited");
+
+        let refunded = store.refund_order(&order).expect("order can be refunded");
+        let repeated = store.refund_order(&order).expect("refund is idempotent");
+        let account = store.account("U10001").expect("account exists");
+
+        assert_eq!(account.available_balance_minor, 12_000);
+        assert_eq!(refunded.id, repeated.id);
+        assert_eq!(refunded.kind, LedgerEntryKind::OrderRefund);
+        assert_eq!(refunded.amount_minor, 200);
+    }
+
+    #[test]
+    fn store_credits_winning_settlement() {
+        let mut store = FinanceStore::seeded();
+        let settlement = settlement_run("S000000000001", "U10001", 2_000);
+
+        let entries = store
+            .credit_settlement(&settlement)
+            .expect("settlement can be credited");
+        let account = store.account("U10001").expect("account exists");
+        let overview = store.overview().expect("overview can be calculated");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, LedgerEntryKind::PayoutCredit);
+        assert_eq!(entries[0].amount_minor, 2_000);
+        assert_eq!(account.available_balance_minor, 14_000);
+        assert_eq!(overview.today_payout_minor, 2_000);
+    }
+
+    #[test]
+    fn store_applies_manual_adjustment() {
+        let mut store = FinanceStore::seeded();
+
+        let entry = store
+            .manual_adjust(ManualBalanceAdjustmentRequest {
+                user_id: "U10001".to_string(),
+                amount_minor: 1_000,
+                description: "后台补款".to_string(),
+            })
+            .expect("manual adjustment can be applied");
+        let account = store.account("U10001").expect("account exists");
+
+        assert_eq!(entry.kind, LedgerEntryKind::ManualAdjustment);
+        assert_eq!(entry.amount_minor, 1_000);
+        assert_eq!(account.available_balance_minor, 13_000);
+    }
+
+    fn order_detail(id: &str, user_id: &str, amount_minor: i64, payout_minor: i64) -> OrderDetail {
+        OrderDetail {
+            id: id.to_string(),
+            user_id: user_id.to_string(),
+            lottery_id: "fc3d".to_string(),
+            lottery_name: "福彩 3D".to_string(),
+            issue: "2026155".to_string(),
+            rule_code: PlayRuleCode::ThreeDirect,
+            number_type: LotteryNumberType::ThreeDigit,
+            selection: PlaySelection::default(),
+            stake_count: 1,
+            unit_amount_minor: amount_minor,
+            amount_minor,
+            expanded_bets: vec!["247".to_string()],
+            draw_number: None,
+            matched_bets: Vec::new(),
+            payout_minor,
+            status: OrderStatus::PendingDraw,
+            settled_at: None,
+            created_at: "unix:1780388800".to_string(),
+        }
+    }
+
+    fn settlement_run(id: &str, user_id: &str, payout_minor: i64) -> SettlementRun {
+        SettlementRun {
+            id: id.to_string(),
+            draw_issue_id: "D000000000001".to_string(),
+            lottery_id: "fc3d".to_string(),
+            lottery_name: "福彩 3D".to_string(),
+            issue: "2026155".to_string(),
+            draw_number: "247".to_string(),
+            settled_order_count: 1,
+            winning_order_count: 1,
+            total_stake_amount_minor: 200,
+            total_payout_minor: payout_minor,
+            created_at: "unix:1780389000".to_string(),
+            orders: vec![OrderSettlement {
+                order_id: "O000000000001".to_string(),
+                user_id: user_id.to_string(),
+                rule_code: PlayRuleCode::ThreeDirect,
+                stake_count: 1,
+                amount_minor: 200,
+                is_winning: payout_minor > 0,
+                matched_bets: vec!["247".to_string()],
+                payout_multiplier: 10,
+                payout_minor,
+                status: OrderStatus::Won,
+            }],
+        }
+    }
+}

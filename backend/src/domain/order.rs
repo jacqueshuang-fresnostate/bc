@@ -46,6 +46,13 @@ pub struct CreateOrderRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct OrderQuote {
+    pub stake_count: u32,
+    pub amount_minor: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderDetail {
     pub id: String,
     pub user_id: String,

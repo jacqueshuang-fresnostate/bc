@@ -3,6 +3,7 @@ import { AppShell, type NavigationItem } from './components/AppShell';
 import { useDashboard } from './hooks/useDashboard';
 import { DashboardPage } from './pages/DashboardPage';
 import { DrawManagementPage } from './pages/DrawManagementPage';
+import { FinanceManagementPage } from './pages/FinanceManagementPage';
 import { LotteryManagementPage } from './pages/LotteryManagementPage';
 import { OrderManagementPage } from './pages/OrderManagementPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
@@ -53,6 +54,8 @@ export function App() {
         <DrawManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'orders' ? (
         <OrderManagementPage onDashboardRefresh={refresh} />
+      ) : activeKey === 'finance' ? (
+        <FinanceManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'play-rules' ? (
         <PlayRulesPage />
       ) : activeKey === 'settlements' ? (

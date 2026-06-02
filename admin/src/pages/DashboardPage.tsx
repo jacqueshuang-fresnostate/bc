@@ -3,6 +3,7 @@ import { RefreshCcw } from 'lucide-react';
 import { MetricCard } from '../components/MetricCard';
 import { ModulePanel } from '../components/ModulePanel';
 import type { DashboardSummary, DrawSchedule } from '../types/dashboard';
+import { formatMoney } from '../utils/format';
 
 interface DashboardPageProps {
   data: DashboardSummary | null;
@@ -228,11 +229,4 @@ function scheduleText(schedule: DrawSchedule) {
     return `每日 ${schedule.daily.time}`;
   }
   return `${schedule.weekly.weekdays.join('、')} ${schedule.weekly.time}`;
-}
-
-function formatMoney(amountMinor: number) {
-  return new Intl.NumberFormat('zh-CN', {
-    style: 'currency',
-    currency: 'CNY',
-  }).format(amountMinor / 100);
 }

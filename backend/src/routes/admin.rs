@@ -9,6 +9,7 @@ use crate::{
     app::AppState,
     domain::{
         draw::{CreateDrawIssueRequest, DrawIssue, DrawIssueResultRequest},
+        finance::{FinancialAccountSummary, LedgerEntry, ManualBalanceAdjustmentRequest},
         lottery::{DrawSource, LotteryKind},
         order::{CreateOrderRequest, OrderDetail},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
@@ -25,6 +26,9 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/dashboard", get(get_dashboard_summary))
+        .route("/financial-accounts", get(list_financial_accounts))
+        .route("/ledger-entries", get(list_ledger_entries))
+        .route("/financial-adjustments", post(manual_balance_adjustment))
         .route("/draw-sources", get(list_draw_sources))
         .route(
             "/draw-issues",
@@ -135,6 +139,7 @@ async fn settle_draw_issue_orders(
 ) -> ApiResult<Json<ApiEnvelope<SettlementRun>>> {
     let draw_issue = state.draws.get(&id).await?;
     let settlement = state.orders.settle_draw_issue(&draw_issue).await?;
+    state.finance.credit_settlement(&settlement).await?;
 
     Ok(Json(ApiEnvelope::success(settlement)))
 }
@@ -154,11 +159,40 @@ async fn get_dashboard_summary(
 ) -> ApiResult<Json<ApiEnvelope<DashboardSummary>>> {
     let lotteries = state.lotteries.list().await?;
     let recent_orders = state.orders.recent_summaries(8).await?;
+    let finance = state.finance.overview().await?;
+    let financial_accounts = state.finance.accounts().await?;
 
     Ok(Json(ApiEnvelope::success(dashboard_summary_with_orders(
         lotteries,
         recent_orders,
+        finance,
+        financial_accounts,
     ))))
+}
+
+async fn list_financial_accounts(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<FinancialAccountSummary>>>> {
+    let accounts = state.finance.accounts().await?;
+
+    Ok(Json(ApiEnvelope::success(accounts)))
+}
+
+async fn list_ledger_entries(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<LedgerEntry>>>> {
+    let entries = state.finance.ledger_entries().await?;
+
+    Ok(Json(ApiEnvelope::success(entries)))
+}
+
+async fn manual_balance_adjustment(
+    State(state): State<AppState>,
+    Json(payload): Json<ManualBalanceAdjustmentRequest>,
+) -> ApiResult<Json<ApiEnvelope<LedgerEntry>>> {
+    let entry = state.finance.manual_adjust(payload).await?;
+
+    Ok(Json(ApiEnvelope::success(entry)))
 }
 
 async fn list_orders(
@@ -183,7 +217,22 @@ async fn create_order(
     Json(payload): Json<CreateOrderRequest>,
 ) -> ApiResult<Json<ApiEnvelope<OrderDetail>>> {
     let lottery = state.lotteries.get(&payload.lottery_id).await?;
+    let quote = state.orders.quote(&lottery, &payload).await?;
+    state
+        .finance
+        .ensure_available(&payload.user_id, quote.amount_minor)
+        .await?;
     let order = state.orders.create(&lottery, payload).await?;
+    if let Err(error) = state.finance.debit_order(&order).await {
+        if let Err(rollback_error) = state.orders.remove_unfunded(&order.id).await {
+            tracing::error!(
+                order_id = %order.id,
+                error = %rollback_error,
+                "failed to remove unfunded order after debit failure"
+            );
+        }
+        return Err(error);
+    }
 
     Ok(Json(ApiEnvelope::success(order)))
 }
@@ -192,7 +241,10 @@ async fn cancel_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<OrderDetail>>> {
+    let existing = state.orders.get(&id).await?;
+    state.finance.ensure_order_can_refund(&existing).await?;
     let order = state.orders.cancel(&id).await?;
+    state.finance.refund_order(&order).await?;
 
     Ok(Json(ApiEnvelope::success(order)))
 }

@@ -6,6 +6,11 @@ import type {
   DrawIssueResultRequest,
 } from '../types/draws';
 import type {
+  FinancialAccountSummary,
+  LedgerEntry,
+  ManualBalanceAdjustmentRequest,
+} from '../types/finance';
+import type {
   PlayRuleEvaluateRequest,
   PlayRuleEvaluation,
   PlayRuleSummary,
@@ -42,6 +47,23 @@ async function requestJson<T>(
 
 export function fetchDashboard(signal?: AbortSignal) {
   return requestJson<DashboardSummary>('/api/admin/dashboard', { signal });
+}
+
+export function fetchFinancialAccounts(signal?: AbortSignal) {
+  return requestJson<FinancialAccountSummary[]>('/api/admin/financial-accounts', {
+    signal,
+  });
+}
+
+export function fetchLedgerEntries(signal?: AbortSignal) {
+  return requestJson<LedgerEntry[]>('/api/admin/ledger-entries', { signal });
+}
+
+export function createManualBalanceAdjustment(payload: ManualBalanceAdjustmentRequest) {
+  return requestJson<LedgerEntry>('/api/admin/financial-adjustments', {
+    body: payload,
+    method: 'POST',
+  });
 }
 
 export function fetchLotteries(signal?: AbortSignal) {

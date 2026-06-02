@@ -19,6 +19,7 @@ import type {
   PlayRuleCode,
   PlaySelection,
 } from '../types/playRules';
+import { formatMoney } from '../utils/format';
 
 interface OrderManagementPageProps {
   onDashboardRefresh: () => void;
@@ -699,11 +700,4 @@ function statusColor(status: OrderStatus) {
     won: 'green',
   };
   return colors[status];
-}
-
-function formatMoney(amountMinor: number) {
-  return new Intl.NumberFormat('zh-CN', {
-    style: 'currency',
-    currency: 'CNY',
-  }).format(amountMinor / 100);
 }

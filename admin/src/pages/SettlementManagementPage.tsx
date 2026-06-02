@@ -5,6 +5,7 @@ import { useDraws } from '../hooks/useDraws';
 import { useSettlements } from '../hooks/useSettlements';
 import type { DrawIssue } from '../types/draws';
 import type { SettlementRun } from '../types/settlements';
+import { formatMoney } from '../utils/format';
 
 interface SettlementManagementPageProps {
   onDashboardRefresh: () => void;
@@ -332,8 +333,4 @@ function InfoLine({ label, value }: { label: string; value: string }) {
       <div className="mt-1 font-medium text-ink">{value}</div>
     </div>
   );
-}
-
-function formatMoney(amountMinor: number) {
-  return `¥${(amountMinor / 100).toFixed(2)}`;
 }

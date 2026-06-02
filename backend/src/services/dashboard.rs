@@ -67,9 +67,12 @@ pub enum ModuleStatus {
 pub fn dashboard_summary_with_orders(
     lotteries: Vec<LotteryKind>,
     recent_orders: Vec<OrderSummary>,
+    finance: FinanceOverview,
+    financial_accounts: Vec<FinancialAccountSummary>,
 ) -> DashboardSummary {
     let lottery_count = lotteries.len();
     let order_count = recent_orders.len();
+    let finance_metric = money_label(finance.total_balance_minor);
 
     DashboardSummary {
         metrics: vec![
@@ -86,20 +89,15 @@ pub fn dashboard_summary_with_orders(
                 lottery_count.to_string(),
                 "3 位与 5 位玩法",
             ),
-            metric("finance", "平台余额", "¥83,240.00", "等待接入数据库"),
+            metric("finance", "平台余额", finance_metric, "内存资金仓储"),
         ],
         module_groups: module_groups(),
         lotteries,
         draw_sources: draw_sources(),
         recent_orders,
         group_buy_plans: group_buy_plans(),
-        finance: FinanceOverview {
-            total_balance_minor: 8_324_000,
-            pending_withdraw_minor: 240_000,
-            today_recharge_minor: 1_980_000,
-            today_payout_minor: 760_000,
-        },
-        financial_accounts: financial_accounts(),
+        finance,
+        financial_accounts,
         robots: robots(),
         users: users(),
         admins: admins(),
@@ -118,6 +116,12 @@ pub fn dashboard_summary_with_orders(
             default_recharge_rebate_basis_points: 350,
         },
     }
+}
+
+fn money_label(amount_minor: i64) -> String {
+    let sign = if amount_minor < 0 { "-" } else { "" };
+    let abs_amount = amount_minor.checked_abs().unwrap_or(i64::MAX);
+    format!("{sign}¥{}.{:02}", abs_amount / 100, abs_amount % 100)
 }
 
 fn metric(
@@ -396,21 +400,6 @@ fn admins() -> Vec<AdminSummary> {
     ]
 }
 
-fn financial_accounts() -> Vec<FinancialAccountSummary> {
-    vec![
-        FinancialAccountSummary {
-            user_id: "U10001".to_string(),
-            available_balance_minor: 12_000,
-            frozen_balance_minor: 2_000,
-        },
-        FinancialAccountSummary {
-            user_id: "U90001".to_string(),
-            available_balance_minor: 520_000,
-            frozen_balance_minor: 0,
-        },
-    ]
-}
-
 fn roles() -> Vec<AdminRole> {
     vec![
         AdminRole {
@@ -459,11 +448,28 @@ fn settings() -> Vec<SystemSetting> {
 #[cfg(test)]
 mod tests {
     use super::dashboard_summary_with_orders;
-    use crate::services::lottery::seed_lotteries;
+    use crate::{
+        domain::finance::{FinanceOverview, FinancialAccountSummary},
+        services::lottery::seed_lotteries,
+    };
 
     #[test]
     fn dashboard_includes_required_module_groups() {
-        let summary = dashboard_summary_with_orders(seed_lotteries(), Vec::new());
+        let summary = dashboard_summary_with_orders(
+            seed_lotteries(),
+            Vec::new(),
+            FinanceOverview {
+                total_balance_minor: 684_000,
+                pending_withdraw_minor: 0,
+                today_recharge_minor: 0,
+                today_payout_minor: 0,
+            },
+            vec![FinancialAccountSummary {
+                user_id: "U10001".to_string(),
+                available_balance_minor: 12_000,
+                frozen_balance_minor: 2_000,
+            }],
+        );
         let keys = summary
             .module_groups
             .iter()

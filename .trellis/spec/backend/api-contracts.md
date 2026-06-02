@@ -716,7 +716,7 @@ POST /api/admin/settlements/draw-issues/D000000000001
 - Good：同一期号存在已取消订单时，取消订单不参与结算且状态保持 `cancelled`。
 - Base：结算批次当前保存在内存订单仓储，服务重启后清空；这适合当前后台流程验证。
 - Bad：路由函数直接判断中奖或修改订单状态；结算逻辑必须留在服务层/仓储层并复用玩法规则引擎。
-- Bad：结算接口直接修改用户余额；本阶段没有真实资金流水，派奖结果不能代表资金已入账。
+- Bad：结算路由绕过资金服务直接修改用户余额；派奖入账必须通过资金仓储生成 `payoutCredit` 流水。
 
 ### 6. 必要测试
 
@@ -753,3 +753,140 @@ let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
 ```
 
 结算服务复用玩法规则引擎，拿 `matchedBets` 决定订单中奖状态和基础派奖结果。
+
+---
+
+## 场景：用户资金与资金流水基础接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改用户资金账户、资金流水、手动调账、订单扣款、取消退款、结算派奖入账和管理后台财务页面。
+- 范围：后端资金领域模型、内存资金仓储、财务 API、订单创建和取消资金联动、结算派奖资金联动、前端 finance API client、`useFinance` hook 和“财务管理”页面。
+
+### 2. 签名
+
+- `GET /api/admin/financial-accounts`
+- `GET /api/admin/ledger-entries`
+- `POST /api/admin/financial-adjustments`
+- `POST /api/admin/orders` 创建成功后写入投注扣款流水。
+- `PATCH /api/admin/orders/{id}/cancel` 取消成功后写入退款流水。
+- `POST /api/admin/settlements/draw-issues/{id}` 中奖订单结算后写入派奖流水。
+- `GET /api/admin/dashboard` 的 `finance` 和 `financialAccounts` 从资金仓储读取。
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封。金额字段必须使用最小货币单位整数，不能使用浮点数。
+
+资金账户响应：
+
+```json
+{
+  "userId": "U10001",
+  "availableBalanceMinor": 12000,
+  "frozenBalanceMinor": 2000
+}
+```
+
+资金流水响应：
+
+```json
+{
+  "id": "L000000000001",
+  "userId": "U10001",
+  "kind": "orderDebit",
+  "amountMinor": -200,
+  "balanceAfterMinor": 13800,
+  "referenceId": "O000000000001",
+  "description": "投注扣款：福彩 3D 2026155",
+  "createdAt": "unix:1780388582"
+}
+```
+
+流水类型：
+
+- `manualAdjustment`：后台手动调账。
+- `orderDebit`：投注扣款，金额为负数。
+- `orderRefund`：取消订单退款，金额为正数。
+- `payoutCredit`：中奖派奖入账，金额为正数。
+
+手动调账请求：
+
+```json
+{
+  "userId": "U10001",
+  "amountMinor": 1000,
+  "description": "后台手动补款"
+}
+```
+
+订单创建资金流：
+
+1. 后端按玩法规则计算订单金额。
+2. 资金仓储检查 `availableBalanceMinor >= amountMinor`。
+3. 订单创建成功后写入 `orderDebit` 流水。
+4. 扣款失败时移除刚创建且仍待开奖的未入资订单。
+
+订单取消资金流：
+
+1. 取消前确认订单存在 `orderDebit` 流水。
+2. 订单状态成功改为 `cancelled` 后写入 `orderRefund` 流水。
+3. 同一订单重复退款必须拒绝或保持幂等，不能重复加钱。
+
+结算派奖资金流：
+
+1. 订单结算服务生成结算批次。
+2. 资金仓储只对 `isWinning=true` 且 `payoutMinor > 0` 的订单写入 `payoutCredit`。
+3. `payoutCredit` 的 `referenceId` 使用结算批次和订单组合，避免重复入账。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 查询资金账户 | HTTP 200，返回资金账户列表 |
+| 查询资金流水 | HTTP 200，返回最新流水在前的列表 |
+| 手动调账 `userId` 为空 | HTTP 400，返回 `user id is required` |
+| 手动调账金额为 0 | HTTP 400，返回 `adjustment amount must not be zero` |
+| 手动调账说明为空 | HTTP 400，返回 `adjustment description is required` |
+| 调账或扣款导致可用余额为负 | HTTP 400，返回余额不足或余额不能为负 |
+| 订单创建用户资金账户不存在 | HTTP 404，返回资金账户不存在 |
+| 订单创建可用余额不足 | HTTP 400，返回 `insufficient available balance`，不创建订单 |
+| 取消订单缺少扣款流水 | HTTP 400，返回 `order debit ledger entry is required before refund` |
+| 同一订单重复退款 | HTTP 409 或幂等返回已有退款流水，不能新增第二笔退款 |
+| 同一结算订单重复派奖入账 | 返回已有派奖流水或跳过新增，不能重复加钱 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`U10001` 创建 `200` 分订单后，账户可用余额减少 `200` 分，并出现 `orderDebit` 流水。
+- Good：取消同一待开奖订单后，账户可用余额恢复，并出现 `orderRefund` 流水。
+- Good：中奖结算产生 `2000` 分派奖后，账户可用余额增加 `2000` 分，并出现 `payoutCredit` 流水。
+- Good：dashboard 和财务管理页读取同一份资金仓储，平台余额和账户列表保持一致。
+- Base：资金账户和流水当前是内存模式，服务重启后恢复种子账户；这适合当前后台流程验证。
+- Bad：前端直接计算扣款或派奖金额后提交给资金接口；金额变更必须由后端订单、结算和资金服务协同产生。
+- Bad：路由直接修改账户字段而不生成流水；所有资金变更必须有可查询的 `LedgerEntry`。
+
+### 6. 必要测试
+
+- 后端需要覆盖订单扣款、余额不足拒绝、取消退款、派奖入账和手动调账。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`。
+- 跨层联调需要完成“查询账户 → 创建订单扣款 → 取消订单退款 → 创建中奖订单并结算入账 → 查询流水”。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+order.status = OrderStatus::Won;
+account.available_balance_minor += order.payout_minor;
+```
+
+这个写法绕过资金服务，没有流水、没有幂等保护，也无法审计派奖来源。
+
+#### 正确
+
+```rust
+let settlement = state.orders.settle_draw_issue(&draw_issue).await?;
+state.finance.credit_settlement(&settlement).await?;
+```
+
+结算服务负责订单状态和派奖结果，资金服务负责余额入账和 `payoutCredit` 流水。

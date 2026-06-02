@@ -8,7 +8,7 @@ use crate::{
     domain::{
         draw::{DrawIssue, DrawIssueStatus},
         lottery::{LotteryKind, PlayCategory},
-        order::{CreateOrderRequest, OrderDetail, OrderStatus, OrderSummary},
+        order::{CreateOrderRequest, OrderDetail, OrderQuote, OrderStatus, OrderSummary},
         play::{PlayRuleCode, PlayRuleEvaluateRequest},
         settlement::{OrderSettlement, SettlementRun},
     },
@@ -53,11 +53,29 @@ impl OrderRepository {
             .create(lottery, payload)
     }
 
+    pub async fn quote(
+        &self,
+        lottery: &LotteryKind,
+        payload: &CreateOrderRequest,
+    ) -> ApiResult<OrderQuote> {
+        calculated_order(lottery, payload).map(|calculation| OrderQuote {
+            stake_count: calculation.stake_count,
+            amount_minor: calculation.amount_minor,
+        })
+    }
+
     pub async fn cancel(&self, id: &str) -> ApiResult<OrderDetail> {
         self.inner
             .write()
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
             .cancel(id)
+    }
+
+    pub async fn remove_unfunded(&self, id: &str) -> ApiResult<OrderDetail> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .remove_unfunded(id)
     }
 
     pub async fn recent_summaries(&self, limit: usize) -> ApiResult<Vec<OrderSummary>> {
@@ -114,19 +132,7 @@ impl OrderStore {
         lottery: &LotteryKind,
         payload: CreateOrderRequest,
     ) -> ApiResult<OrderDetail> {
-        validate_order_request(lottery, &payload)?;
-
-        let expanded_bets = expanded_bets_for_rule(&payload.rule_code, &payload.selection)?;
-        if expanded_bets.is_empty() {
-            return Err(ApiError::BadRequest(
-                "order must contain at least one stake".to_string(),
-            ));
-        }
-
-        let stake_count = expanded_bets.len() as u32;
-        let amount_minor = i64::from(stake_count)
-            .checked_mul(payload.unit_amount_minor)
-            .ok_or_else(|| ApiError::BadRequest("order amount is too large".to_string()))?;
+        let calculation = calculated_order(lottery, &payload)?;
 
         self.next_sequence += 1;
         let order = OrderDetail {
@@ -138,10 +144,10 @@ impl OrderStore {
             rule_code: payload.rule_code,
             number_type: lottery.number_type.clone(),
             selection: payload.selection,
-            stake_count,
+            stake_count: calculation.stake_count,
             unit_amount_minor: payload.unit_amount_minor,
-            amount_minor,
-            expanded_bets,
+            amount_minor: calculation.amount_minor,
+            expanded_bets: calculation.expanded_bets,
             draw_number: None,
             matched_bets: Vec::new(),
             payout_minor: 0,
@@ -168,6 +174,23 @@ impl OrderStore {
 
         order.status = OrderStatus::Cancelled;
         Ok(order.clone())
+    }
+
+    fn remove_unfunded(&mut self, id: &str) -> ApiResult<OrderDetail> {
+        let order = self
+            .orders
+            .get(id)
+            .ok_or_else(|| ApiError::NotFound(format!("order `{id}` not found")))?;
+
+        if order.status != OrderStatus::PendingDraw {
+            return Err(ApiError::BadRequest(
+                "only pending draw orders can be removed after failed debit".to_string(),
+            ));
+        }
+
+        self.orders
+            .remove(id)
+            .ok_or_else(|| ApiError::NotFound(format!("order `{id}` not found")))
     }
 
     fn recent_summaries(&self, limit: usize) -> Vec<OrderSummary> {
@@ -342,6 +365,37 @@ fn validate_order_request(lottery: &LotteryKind, payload: &CreateOrderRequest) -
     }
 
     Ok(())
+}
+
+struct CalculatedOrder {
+    stake_count: u32,
+    amount_minor: i64,
+    expanded_bets: Vec<String>,
+}
+
+fn calculated_order(
+    lottery: &LotteryKind,
+    payload: &CreateOrderRequest,
+) -> ApiResult<CalculatedOrder> {
+    validate_order_request(lottery, payload)?;
+
+    let expanded_bets = expanded_bets_for_rule(&payload.rule_code, &payload.selection)?;
+    if expanded_bets.is_empty() {
+        return Err(ApiError::BadRequest(
+            "order must contain at least one stake".to_string(),
+        ));
+    }
+
+    let stake_count = expanded_bets.len() as u32;
+    let amount_minor = i64::from(stake_count)
+        .checked_mul(payload.unit_amount_minor)
+        .ok_or_else(|| ApiError::BadRequest("order amount is too large".to_string()))?;
+
+    Ok(CalculatedOrder {
+        stake_count,
+        amount_minor,
+        expanded_bets,
+    })
 }
 
 pub fn play_category_for_rule(rule_code: &PlayRuleCode) -> PlayCategory {
