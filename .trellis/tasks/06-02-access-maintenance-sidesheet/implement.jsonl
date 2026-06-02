@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "确认前端管理后台开发规范和需要读取的层级文档"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "确认 Semi UI、卡片布局、组件 props 和后台界面约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "确认前端变更需要构建验证和显著布局变更浏览器验证"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "确认 TypeScript 类型约定和禁用 any"}
+{"file": ".trellis/spec/guides/index.md", "reason": "确认共享思考指南"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "三类维护表单改造存在重复模式，需要保持结构一致"}

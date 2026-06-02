@@ -47,6 +47,8 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 能用 Semi UI 组件 prop 表达的变体，优先不用自定义 CSS。
 - 页面背景保持克制并服务后台工作。
 - 卡片只用于真实分组数据或重复项，不用于装饰页面区块。
+- 后台列表页的创建/编辑维护表单如不需要常驻对照，应使用 Semi UI `SideSheet` 打开；主页面保留列表、筛选、统计和“新建/编辑”入口，避免右侧表单长期占用列表扫描空间。
+- `SideSheet` 表单保存、删除成功后应关闭抽屉，并沿用页面原有 hook 或 API 刷新链路；切换模块时应关闭已打开的维护抽屉，防止不同模块的编辑状态残留。
 
 > **注意**：当前 `@douyinfe/semi-ui` 包的 `exports` 不暴露 `dist/css/semi.min.css` 作为 bare import。Vite 构建中需要通过相对路径导入完整样式：
 >

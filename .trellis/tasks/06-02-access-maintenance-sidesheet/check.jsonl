@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查构建、可见状态和布局验证要求"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查 SideSheet 与卡片布局是否符合后台组件规范"}

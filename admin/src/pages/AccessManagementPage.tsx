@@ -1,4 +1,4 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Banner, Button, Card, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
 import {
   RefreshCcw,
   Save,
@@ -108,6 +108,9 @@ export function AccessManagementPage({
   const [editingAdminId, setEditingAdminId] = useState<string | null>(null);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [adminSheetVisible, setAdminSheetVisible] = useState(false);
+  const [roleSheetVisible, setRoleSheetVisible] = useState(false);
+  const [userSheetVisible, setUserSheetVisible] = useState(false);
   const [adminForm, setAdminForm] = useState<AdminFormState>(() =>
     emptyAdminForm('role-ops'),
   );
@@ -121,6 +124,12 @@ export function AccessManagementPage({
   useEffect(() => {
     setSection(sectionForModule(activeModuleKey));
   }, [activeModuleKey]);
+
+  useEffect(() => {
+    setAdminSheetVisible(false);
+    setRoleSheetVisible(false);
+    setUserSheetVisible(false);
+  }, [section]);
 
   useEffect(() => {
     if (!adminForm.roleId && roles[0]) {
@@ -152,6 +161,7 @@ export function AccessManagementPage({
     const saved = await saveUser(userPayload(userForm), editingUserId ?? undefined);
     setUserForm(userFormFromSummary(saved));
     setEditingUserId(saved.id);
+    setUserSheetVisible(false);
     onDashboardRefresh();
   };
 
@@ -162,6 +172,7 @@ export function AccessManagementPage({
     );
     setAdminForm(adminFormFromSummary(saved));
     setEditingAdminId(saved.id);
+    setAdminSheetVisible(false);
     onDashboardRefresh();
   };
 
@@ -169,6 +180,7 @@ export function AccessManagementPage({
     const saved = await saveRole(rolePayload(roleForm), editingRoleId ?? undefined);
     setRoleForm(roleFormFromSummary(saved));
     setEditingRoleId(saved.id);
+    setRoleSheetVisible(false);
     onDashboardRefresh();
   };
 
@@ -179,6 +191,7 @@ export function AccessManagementPage({
     await removeRole(editingRoleId);
     setEditingRoleId(null);
     setRoleForm(emptyRoleForm());
+    setRoleSheetVisible(false);
     onDashboardRefresh();
   };
 
@@ -252,14 +265,18 @@ export function AccessManagementPage({
           editingId={editingUserId}
           form={userForm}
           saving={saving}
+          sheetVisible={userSheetVisible}
           users={users}
+          onClose={() => setUserSheetVisible(false)}
           onEdit={(user) => {
             setEditingUserId(user.id);
             setUserForm(userFormFromSummary(user));
+            setUserSheetVisible(true);
           }}
           onNew={() => {
             setEditingUserId(null);
             setUserForm(emptyUserForm());
+            setUserSheetVisible(true);
           }}
           onSetForm={setUserForm}
           onStatus={(id, status) => {
@@ -274,13 +291,17 @@ export function AccessManagementPage({
           form={adminForm}
           roles={roles}
           saving={saving}
+          sheetVisible={adminSheetVisible}
+          onClose={() => setAdminSheetVisible(false)}
           onEdit={(admin) => {
             setEditingAdminId(admin.id);
             setAdminForm(adminFormFromSummary(admin));
+            setAdminSheetVisible(true);
           }}
           onNew={() => {
             setEditingAdminId(null);
             setAdminForm(emptyAdminForm(roles[0]?.id ?? ''));
+            setAdminSheetVisible(true);
           }}
           onSetForm={setAdminForm}
           onStatus={(id, status) => {
@@ -294,14 +315,18 @@ export function AccessManagementPage({
           form={roleForm}
           roles={roles}
           saving={saving}
+          sheetVisible={roleSheetVisible}
+          onClose={() => setRoleSheetVisible(false)}
           onDelete={() => void deleteCurrentRole()}
           onEdit={(role) => {
             setEditingRoleId(role.id);
             setRoleForm(roleFormFromSummary(role));
+            setRoleSheetVisible(true);
           }}
           onNew={() => {
             setEditingRoleId(null);
             setRoleForm(emptyRoleForm());
+            setRoleSheetVisible(true);
           }}
           onSetForm={setRoleForm}
           onSubmit={() => void submitRole()}
@@ -330,30 +355,44 @@ export function AccessManagementPage({
 function UserSection({
   editingId,
   form,
+  onClose,
   onEdit,
   onNew,
   onSetForm,
   onStatus,
   onSubmit,
   saving,
+  sheetVisible,
   users,
 }: {
   editingId: string | null;
   form: UserFormState;
+  onClose: () => void;
   onEdit: (user: UserSummary) => void;
   onNew: () => void;
   onSetForm: Dispatch<SetStateAction<UserFormState>>;
   onStatus: (id: string, status: UserStatus) => void;
   onSubmit: () => void;
   saving: boolean;
+  sheetVisible: boolean;
   users: UserSummary[];
 }) {
   return (
-    <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
+    <section className="space-y-4">
       <Card className="rounded-md border border-line">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-ink">用户列表</h2>
-          <Tag color="cyan">{users.length} 个用户</Tag>
+          <div className="flex items-center gap-2">
+            <Tag color="cyan">{users.length} 个用户</Tag>
+            <Button
+              icon={<UserPlus size={15} />}
+              size="small"
+              theme="solid"
+              onClick={onNew}
+            >
+              新建用户
+            </Button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left text-sm">
@@ -432,8 +471,13 @@ function UserSection({
         </div>
       </Card>
 
-      <Card className="rounded-md border border-line">
-        <PanelTitle icon={<UserPlus size={18} />} title="用户维护" />
+      <SideSheet
+        aria-label="用户维护"
+        title="用户维护"
+        visible={sheetVisible}
+        width={460}
+        onCancel={() => onClose()}
+      >
         <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
           <Field label="用户 ID">
             <input
@@ -518,7 +562,7 @@ function UserSection({
             <Button onClick={onNew}>新建</Button>
           </div>
         </form>
-      </Card>
+      </SideSheet>
     </section>
   );
 }
@@ -527,6 +571,7 @@ function AdminSection({
   admins,
   editingId,
   form,
+  onClose,
   onEdit,
   onNew,
   onSetForm,
@@ -534,10 +579,12 @@ function AdminSection({
   onSubmit,
   roles,
   saving,
+  sheetVisible,
 }: {
   admins: AdminSummary[];
   editingId: string | null;
   form: AdminFormState;
+  onClose: () => void;
   onEdit: (admin: AdminSummary) => void;
   onNew: () => void;
   onSetForm: Dispatch<SetStateAction<AdminFormState>>;
@@ -545,13 +592,24 @@ function AdminSection({
   onSubmit: () => void;
   roles: AdminRole[];
   saving: boolean;
+  sheetVisible: boolean;
 }) {
   return (
-    <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
+    <section className="space-y-4">
       <Card className="rounded-md border border-line">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-ink">后台账号</h2>
-          <Tag color="cyan">{admins.length} 个账号</Tag>
+          <div className="flex items-center gap-2">
+            <Tag color="cyan">{admins.length} 个账号</Tag>
+            <Button
+              icon={<ShieldCheck size={15} />}
+              size="small"
+              theme="solid"
+              onClick={onNew}
+            >
+              新建账号
+            </Button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-left text-sm">
@@ -615,8 +673,13 @@ function AdminSection({
         </div>
       </Card>
 
-      <Card className="rounded-md border border-line">
-        <PanelTitle icon={<ShieldCheck size={18} />} title="账号维护" />
+      <SideSheet
+        aria-label="账号维护"
+        title="账号维护"
+        visible={sheetVisible}
+        width={460}
+        onCancel={() => onClose()}
+      >
         <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
           <Field label="管理员 ID">
             <input
@@ -674,7 +737,7 @@ function AdminSection({
             <Button onClick={onNew}>新建</Button>
           </div>
         </form>
-      </Card>
+      </SideSheet>
     </section>
   );
 }
@@ -682,6 +745,7 @@ function AdminSection({
 function RoleSection({
   editingId,
   form,
+  onClose,
   onDelete,
   onEdit,
   onNew,
@@ -689,9 +753,11 @@ function RoleSection({
   onSubmit,
   roles,
   saving,
+  sheetVisible,
 }: {
   editingId: string | null;
   form: RoleFormState;
+  onClose: () => void;
   onDelete: () => void;
   onEdit: (role: AdminRole) => void;
   onNew: () => void;
@@ -699,13 +765,24 @@ function RoleSection({
   onSubmit: () => void;
   roles: AdminRole[];
   saving: boolean;
+  sheetVisible: boolean;
 }) {
   return (
-    <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
+    <section className="space-y-4">
       <Card className="rounded-md border border-line">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-ink">角色列表</h2>
-          <Tag color="cyan">{roles.length} 个角色</Tag>
+          <div className="flex items-center gap-2">
+            <Tag color="cyan">{roles.length} 个角色</Tag>
+            <Button
+              icon={<ShieldCheck size={15} />}
+              size="small"
+              theme="solid"
+              onClick={onNew}
+            >
+              新建角色
+            </Button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-left text-sm">
@@ -755,8 +832,13 @@ function RoleSection({
         </div>
       </Card>
 
-      <Card className="rounded-md border border-line">
-        <PanelTitle icon={<ShieldCheck size={18} />} title="角色维护" />
+      <SideSheet
+        aria-label="角色维护"
+        title="角色维护"
+        visible={sheetVisible}
+        width={480}
+        onCancel={() => onClose()}
+      >
         <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
           <Field label="角色 ID">
             <input
@@ -811,7 +893,7 @@ function RoleSection({
             </Button>
           </div>
         </form>
-      </Card>
+      </SideSheet>
     </section>
   );
 }
