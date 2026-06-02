@@ -370,7 +370,10 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
                   <Field label={`开奖号码（${numberTypeText(selectedIssue.numberType)}）`}>
                     <input
                       className="form-input font-mono"
-                      maxLength={selectedIssue.numberType === 'threeDigit' ? 3 : 5}
+                      maxLength={selectedIssue.numberType === 'threeDigit' ? 5 : 9}
+                      placeholder={
+                        selectedIssue.numberType === 'threeDigit' ? '2,4,7' : '7,8,9,4,2'
+                      }
                       value={form.drawNumber}
                       onChange={(event) =>
                         setFormValue(setForm, 'drawNumber', event.target.value)

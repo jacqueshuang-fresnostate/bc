@@ -172,7 +172,7 @@ impl DrawStore {
             }
         };
 
-        validate_draw_number(&draw_number, &issue.number_type)?;
+        let draw_number = normalize_draw_number(&draw_number, &issue.number_type)?;
 
         issue.draw_number = Some(draw_number);
         issue.drawn_at = Some(current_timestamp_label());
@@ -230,25 +230,56 @@ fn validate_create_request(
     Ok(())
 }
 
-fn validate_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> ApiResult<()> {
+fn normalize_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> ApiResult<String> {
     let expected_len = match number_type {
         LotteryNumberType::ThreeDigit => 3,
         LotteryNumberType::FiveDigit => 5,
     };
+    let digits = draw_number_digits(draw_number)?;
 
-    if draw_number.len() != expected_len {
+    if digits.len() != expected_len {
         return Err(ApiError::BadRequest(format!(
             "draw number must be {expected_len} digits"
         )));
     }
 
-    if !draw_number.bytes().all(|byte| byte.is_ascii_digit()) {
+    Ok(format_draw_number(&digits))
+}
+
+fn draw_number_digits(draw_number: &str) -> ApiResult<Vec<u8>> {
+    let value = draw_number.trim();
+    if value.contains(',') || value.contains('，') {
+        return value
+            .split([',', '，'])
+            .map(|part| parse_draw_digit(part.trim()))
+            .collect();
+    }
+
+    if !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(ApiError::BadRequest(
-            "draw number must contain digits only".to_string(),
+            "draw number must contain digits separated by commas".to_string(),
         ));
     }
 
-    Ok(())
+    Ok(value.bytes().map(|byte| byte - b'0').collect())
+}
+
+fn parse_draw_digit(value: &str) -> ApiResult<u8> {
+    if value.len() != 1 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(ApiError::BadRequest(
+            "draw number must contain digits separated by commas".to_string(),
+        ));
+    }
+
+    Ok(value.as_bytes()[0] - b'0')
+}
+
+fn format_draw_number(digits: &[u8]) -> String {
+    digits
+        .iter()
+        .map(|digit| digit.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn generated_draw_number(number_type: &LotteryNumberType, lottery_id: &str, issue: &str) -> String {
@@ -262,14 +293,15 @@ fn generated_draw_number(number_type: &LotteryNumberType, lottery_id: &str, issu
         seed = seed.wrapping_mul(1_099_511_628_211);
     }
 
-    (0..len)
+    let digits = (0..len)
         .map(|index| {
             seed = seed
                 .wrapping_mul(1_103_515_245)
                 .wrapping_add(12_345 + index as u64);
-            char::from(b'0' + (seed % 10) as u8)
+            (seed % 10) as u8
         })
-        .collect()
+        .collect::<Vec<_>>();
+    format_draw_number(&digits)
 }
 
 fn current_timestamp_label() -> String {
@@ -322,13 +354,13 @@ mod tests {
             .draw(
                 &issue.id,
                 DrawIssueResultRequest {
-                    draw_number: Some("78942".to_string()),
+                    draw_number: Some("7,8,9,4,2".to_string()),
                 },
             )
             .expect("manual draw can be recorded");
 
         assert_eq!(drawn.status, DrawIssueStatus::Drawn);
-        assert_eq!(drawn.draw_number.as_deref(), Some("78942"));
+        assert_eq!(drawn.draw_number.as_deref(), Some("7,8,9,4,2"));
     }
 
     #[test]
@@ -344,8 +376,10 @@ mod tests {
             .expect("platform draw can be generated");
 
         let draw_number = drawn.draw_number.expect("draw number exists");
-        assert_eq!(draw_number.len(), 5);
-        assert!(draw_number.bytes().all(|byte| byte.is_ascii_digit()));
+        assert_eq!(draw_number.split(',').count(), 5);
+        assert!(draw_number
+            .split(',')
+            .all(|part| part.len() == 1 && part.bytes().all(|byte| byte.is_ascii_digit())));
     }
 
     #[test]

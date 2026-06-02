@@ -571,29 +571,42 @@ fn validate_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> A
         LotteryNumberType::ThreeDigit => 3,
         LotteryNumberType::FiveDigit => 5,
     };
+    let digits = digits_from_string(draw_number)?;
 
-    if draw_number.len() != expected_len {
+    if digits.len() != expected_len {
         return Err(ApiError::BadRequest(format!(
             "draw number must be {expected_len} digits"
         )));
-    }
-
-    if !draw_number.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(ApiError::BadRequest(
-            "draw number must contain digits only".to_string(),
-        ));
     }
 
     Ok(())
 }
 
 fn digits_from_string(value: &str) -> ApiResult<Vec<u8>> {
+    let value = value.trim();
+    if value.contains(',') || value.contains('，') {
+        return value
+            .split(|character| character == ',' || character == '，')
+            .map(|part| parse_digit_token(part.trim()))
+            .collect();
+    }
+
     if !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(ApiError::BadRequest(
-            "number value must contain digits only".to_string(),
+            "number value must contain digits separated by commas".to_string(),
         ));
     }
     Ok(value.bytes().map(|byte| byte - b'0').collect())
+}
+
+fn parse_digit_token(value: &str) -> ApiResult<u8> {
+    if value.len() != 1 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(ApiError::BadRequest(
+            "number value must contain digits separated by commas".to_string(),
+        ));
+    }
+
+    Ok(value.as_bytes()[0] - b'0')
 }
 
 fn normalized_digits(digits: &[u8]) -> ApiResult<Vec<u8>> {
@@ -768,7 +781,7 @@ mod tests {
                 positions: vec![vec![2], vec![4], vec![7]],
                 ..PlaySelection::default()
             },
-            draw_number: "247".to_string(),
+            draw_number: "2,4,7".to_string(),
         });
 
         assert_eq!(evaluation.stake_count, 1);
@@ -785,7 +798,7 @@ mod tests {
                 numbers: vec![2, 4, 7],
                 ..PlaySelection::default()
             },
-            draw_number: "422".to_string(),
+            draw_number: "4,2,2".to_string(),
         });
 
         assert_eq!(evaluation.stake_count, 6);
@@ -803,7 +816,7 @@ mod tests {
                 drag_numbers: vec![4, 7],
                 ..PlaySelection::default()
             },
-            draw_number: "772".to_string(),
+            draw_number: "7,7,2".to_string(),
         });
 
         assert_eq!(evaluation.stake_count, 4);
@@ -820,7 +833,7 @@ mod tests {
                 numbers: vec![1, 2, 4, 7],
                 ..PlaySelection::default()
             },
-            draw_number: "724".to_string(),
+            draw_number: "7,2,4".to_string(),
         });
 
         assert_eq!(evaluation.stake_count, 4);
@@ -838,7 +851,7 @@ mod tests {
                 drag_numbers: vec![1, 7, 9],
                 ..PlaySelection::default()
             },
-            draw_number: "942".to_string(),
+            draw_number: "9,4,2".to_string(),
         });
 
         assert_eq!(evaluation.stake_count, 3);
@@ -855,7 +868,7 @@ mod tests {
                 positions: vec![vec![8], vec![9], vec![4]],
                 ..PlaySelection::default()
             },
-            draw_number: "78942".to_string(),
+            draw_number: "7,8,9,4,2".to_string(),
         });
 
         assert_eq!(evaluation.stake_count, 1);
@@ -872,7 +885,7 @@ mod tests {
                 numbers: vec![1, 2, 3, 4],
                 ..PlaySelection::default()
             },
-            draw_number: "23142".to_string(),
+            draw_number: "2,3,1,4,2".to_string(),
         });
 
         assert_eq!(evaluation.stake_count, 24);
@@ -889,7 +902,7 @@ mod tests {
                 numbers: vec![2, 4, 7, 9],
                 ..PlaySelection::default()
             },
-            draw_number: "78942".to_string(),
+            draw_number: "7,8,9,4,2".to_string(),
         });
 
         assert_eq!(evaluation.stake_count, 4);
@@ -915,7 +928,7 @@ mod tests {
                 ],
                 ..PlaySelection::default()
             },
-            draw_number: "78942".to_string(),
+            draw_number: "7,8,9,4,2".to_string(),
         });
 
         assert_eq!(evaluation.stake_count, 2);
@@ -933,7 +946,7 @@ mod tests {
                 drag_numbers: vec![2, 4, 7],
                 ..PlaySelection::default()
             },
-            draw_number: "247".to_string(),
+            draw_number: "2,4,7".to_string(),
         })
         .expect_err("overlap should be rejected");
 

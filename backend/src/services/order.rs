@@ -584,7 +584,7 @@ mod tests {
             .expect("losing order can be created");
 
         let run = store
-            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("247")))
+            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")))
             .expect("drawn issue can be settled");
 
         assert_eq!(run.settled_order_count, 2);
@@ -596,14 +596,14 @@ mod tests {
 
         let winning = store.get(&winning.id).expect("winning order exists");
         assert_eq!(winning.status, OrderStatus::Won);
-        assert_eq!(winning.draw_number.as_deref(), Some("247"));
+        assert_eq!(winning.draw_number.as_deref(), Some("2,4,7"));
         assert_eq!(winning.matched_bets, vec!["247"]);
         assert_eq!(winning.payout_minor, 2000);
         assert!(winning.settled_at.is_some());
 
         let losing = store.get(&losing.id).expect("losing order exists");
         assert_eq!(losing.status, OrderStatus::Lost);
-        assert_eq!(losing.draw_number.as_deref(), Some("247"));
+        assert_eq!(losing.draw_number.as_deref(), Some("2,4,7"));
         assert!(losing.matched_bets.is_empty());
         assert_eq!(losing.payout_minor, 0);
         assert!(losing.settled_at.is_some());
@@ -632,7 +632,7 @@ mod tests {
 
         store.cancel(&order.id).expect("order can be cancelled");
         let run = store
-            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("247")))
+            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")))
             .expect("drawn issue can be settled");
 
         assert_eq!(run.settled_order_count, 0);
@@ -670,10 +670,10 @@ mod tests {
             .contains("only drawn issues can be settled"));
 
         store
-            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("247")))
+            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")))
             .expect("drawn issue can be settled");
         assert!(store
-            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("247")))
+            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")))
             .expect_err("same issue cannot be settled twice")
             .to_string()
             .contains("already settled"));

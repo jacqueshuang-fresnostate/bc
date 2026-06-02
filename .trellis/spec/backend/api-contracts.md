@@ -298,9 +298,11 @@ pub enum DrawSchedule {
   "selection": {
     "positions": [[2], [4], [7]]
   },
-  "drawNumber": "247"
+  "drawNumber": "2,4,7"
 }
 ```
+
+`drawNumber` 为开奖号码展示格式，使用英文逗号分隔每一位数字。投注展开结果 `expandedBets` 和命中投注 `matchedBets` 仍使用紧凑投注编码，例如 `247`。
 
 响应 `data` 字段：
 
@@ -326,8 +328,8 @@ pub enum DrawSchedule {
 | 条件 | 预期行为 |
 |------|----------|
 | `numberType` 与 `ruleCode` 不匹配 | HTTP 400，返回 `rule code does not match number type` |
-| 3 位玩法开奖号码不是 3 位数字 | HTTP 400，返回开奖号码长度或数字错误 |
-| 5 位玩法开奖号码不是 5 位数字 | HTTP 400，返回开奖号码长度或数字错误 |
+| 3 位玩法开奖号码不是 3 个数字 | HTTP 400，返回开奖号码长度或数字错误 |
+| 5 位玩法开奖号码不是 5 个数字 | HTTP 400，返回开奖号码长度或数字错误 |
 | 直选没有 3 个位置选择 | HTTP 400，返回 `direct play requires three position selections` |
 | 选号为空 | HTTP 400，返回 `digit selection cannot be empty` |
 | 选号数字大于 9 | HTTP 400，返回 `digit selection must be between 0 and 9` |
@@ -338,9 +340,9 @@ pub enum DrawSchedule {
 
 ### 5. Good / Base / Bad Cases
 
-- Good：`threeDirect` 选择 `[[2], [4], [7]]`，开奖号码 `247`，返回 `stakeCount=1`、`isWinning=true`。
-- Good：`fiveBackGroupSix` 选择 `2,4,7,9`，开奖号码 `78942` 的后三为 `942`，属于组六且数字都在选号范围内，应命中。
-- Good：`fiveBigSmallOddEven` 当前默认按后两位判断，开奖号码 `78942` 的十位 `4` 为小、个位 `2` 为双。
+- Good：`threeDirect` 选择 `[[2], [4], [7]]`，开奖号码 `2,4,7`，返回 `stakeCount=1`、`isWinning=true`。
+- Good：`fiveBackGroupSix` 选择 `2,4,7,9`，开奖号码 `7,8,9,4,2` 的后三为 `942`，属于组六且数字都在选号范围内，应命中。
+- Good：`fiveBigSmallOddEven` 当前默认按后两位判断，开奖号码 `7,8,9,4,2` 的十位 `4` 为小、个位 `2` 为双。
 - Base：规则评估只计算注数、展开投注和命中，不处理赔率、奖金、订单金额、余额扣减或派奖。
 - Bad：前端自行计算玩法结果并只把中奖状态传给后端；后续订单和派奖必须复用后端规则引擎。
 
@@ -648,11 +650,11 @@ await createOrder({
 
 ```json
 {
-  "drawNumber": "247"
+  "drawNumber": "2,4,7"
 }
 ```
 
-`platform` 和 `api` 开奖模式可以传空对象 `{}`，后端本地生成号码。`manual` 开奖模式必须传 `drawNumber`。
+`platform` 和 `api` 开奖模式可以传空对象 `{}`，后端本地生成逗号分隔开奖号码。`manual` 开奖模式必须传 `drawNumber`，格式为英文逗号分隔数字，例如 `2,4,7` 或 `7,8,9,4,2`。后端兼容读取旧的紧凑数字串，但保存和返回统一使用逗号分隔格式。
 
 开奖期号响应：
 
@@ -703,7 +705,7 @@ await createOrder({
 ### 5. Good / Base / Bad Cases
 
 - Good：`fc3d` 创建期号后调用 `PATCH /draw` 传 `{}`，后端按 `threeDigit` 生成 3 位数字并返回 `status="drawn"`。
-- Good：`manual-test` 创建期号后传 `{"drawNumber":"78942"}`，后端按 `fiveDigit` 校验并保存开奖结果。
+- Good：`manual-test` 创建期号后传 `{"drawNumber":"7,8,9,4,2"}`，后端按 `fiveDigit` 校验并保存逗号分隔开奖结果。
 - Base：开奖期号仓储当前是内存模式，服务重启后期号清空；这适合当前后台流程验证。
 - Bad：前端为 `manual` 期号传空对象执行开奖；后端必须拒绝，不能静默生成号码。
 - Bad：开奖后直接改订单状态或资金余额；本阶段还没有计奖、派奖和资金流水，开奖只记录结果事实。
@@ -722,7 +724,7 @@ await createOrder({
 
 ```tsx
 await drawIssueResult(issue.id, {
-  drawNumber: issue.drawNumber ?? '000',
+  drawNumber: issue.drawNumber ?? '0,0,0',
 });
 ```
 
@@ -775,7 +777,7 @@ POST /api/admin/settlements/draw-issues/D000000000001
   "lotteryId": "fc3d",
   "lotteryName": "福彩 3D",
   "issue": "2026200",
-  "drawNumber": "023",
+  "drawNumber": "0,2,3",
   "settledOrderCount": 1,
   "winningOrderCount": 1,
   "totalStakeAmountMinor": 200,
@@ -802,7 +804,7 @@ POST /api/admin/settlements/draw-issues/D000000000001
 
 ```json
 {
-  "drawNumber": "023",
+  "drawNumber": "0,2,3",
   "matchedBets": ["023"],
   "oddsBasisPoints": 104000,
   "payoutMinor": 2080,
@@ -831,7 +833,7 @@ POST /api/admin/settlements/draw-issues/D000000000001
 
 ### 5. Good / Base / Bad Cases
 
-- Good：`fc3d` 期号开奖 `023`，同期开奖的 `threeDirect` 订单选号 `023`，订单赔率快照 `oddsBasisPoints=104000`，结算后订单状态为 `won`，`matchedBets=["023"]`，单注 `200` 分派发 `2080` 分。
+- Good：`fc3d` 期号开奖 `0,2,3`，同期开奖的 `threeDirect` 订单选号 `023`，订单赔率快照 `oddsBasisPoints=104000`，结算后订单状态为 `won`，`matchedBets=["023"]`，单注 `200` 分派发 `2080` 分。
 - Good：同期开奖的未命中订单结算后状态为 `lost`，`matchedBets=[]`，`payoutMinor=0`。
 - Good：同一期号存在已取消订单时，取消订单不参与结算且状态保持 `cancelled`。
 - Base：结算批次当前保存在内存订单仓储，服务重启后清空；这适合当前后台流程验证。

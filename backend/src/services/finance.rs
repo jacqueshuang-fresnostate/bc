@@ -486,7 +486,7 @@ mod tests {
             lottery_id: "fc3d".to_string(),
             lottery_name: "福彩 3D".to_string(),
             issue: "2026155".to_string(),
-            draw_number: "247".to_string(),
+            draw_number: "2,4,7".to_string(),
             settled_order_count: 1,
             winning_order_count: 1,
             total_stake_amount_minor: 200,

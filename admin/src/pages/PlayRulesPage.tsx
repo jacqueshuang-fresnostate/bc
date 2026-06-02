@@ -694,13 +694,13 @@ function ResultList({ emptyText, items, suffix, title }: ResultListProps) {
 
 function defaultForm(rule: PlayRuleSummary | null): FormState {
   const code = rule?.code ?? 'threeDirect';
-  const drawNumber = rule?.numberType === 'fiveDigit' ? '78942' : '247';
+  const drawNumber = rule?.numberType === 'fiveDigit' ? '7,8,9,4,2' : '2,4,7';
 
   if (isBigSmallOddEvenRule(code)) {
     return {
       bankerNumbers: '',
       dragNumbers: '',
-      drawNumber: '78942',
+      drawNumber: '7,8,9,4,2',
       numbers: '',
       onesAttributes: ['even'],
       positionA: '',
