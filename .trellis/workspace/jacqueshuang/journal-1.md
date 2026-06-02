@@ -104,3 +104,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: 玩法规则引擎
+
+**Date**: 2026-06-02
+**Task**: 玩法规则引擎
+**Branch**: `main`
+
+### Summary
+
+实现彩票玩法规则引擎：新增后端规则目录与评估 API，支持 3 位/5 位玩法注数计算、投注展开和中奖判断；新增管理后台玩法规则验证页，并同步架构、TODO 与 API 契约规格。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8a15b3d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
