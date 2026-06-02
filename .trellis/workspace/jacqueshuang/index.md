@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
-- **Last Active**: 2026-06-02
+- **Total Sessions**: 28
+- **Last Active**: 2026-06-03
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~898 | Active |
+| `journal-1.md` | ~931 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 28 | 2026-06-03 | dashboard 数据按权限裁剪 | `ed78d37` | `main` |
 | 27 | 2026-06-02 | 后台登录鉴权与权限拦截 | `1d758e1` | `main` |
 | 26 | 2026-06-02 | 后台彩种控制台 | `d511e3a` | `main` |
 | 25 | 2026-06-02 | 在线客服仅保留回复入口 | `84bc6d5` | `main` |

@@ -896,3 +896,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: dashboard 数据按权限裁剪
+
+**Date**: 2026-06-03
+**Task**: dashboard 数据按权限裁剪
+**Branch**: `main`
+
+### Summary
+
+完成 dashboard 数据按权限裁剪：/api/admin/dashboard 读取当前 AdminAuthSession.scopes，后端按 users/orders/finance/admins/roles/systemSettings/lotteries/customerService/robots/rebates 过滤模块、指标和摘要字段；无权限数组清空，财务/注册/返利对象返回安全默认值。已更新 架构设计.md、TODO.md 和 backend api-contracts spec。验证通过 cargo fmt --check、cargo check、cargo test、npm run build，并用低权限 token 做 API 冒烟。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ed78d37` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
