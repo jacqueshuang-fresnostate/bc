@@ -236,3 +236,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: 用户资金与资金流水基础
+
+**Date**: 2026-06-02
+**Task**: 用户资金与资金流水基础
+**Branch**: `main`
+
+### Summary
+
+完成用户资金与资金流水基础：新增资金账户、流水、手动调账、订单扣款/取消退款、结算派奖入账和管理后台财务页面；验证 cargo fmt/check/test、npm build、API 冒烟和浏览器财务页。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `303d9b1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
