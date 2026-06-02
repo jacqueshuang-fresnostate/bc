@@ -2176,3 +2176,196 @@ await createInvitation({
 ```
 
 前端只提交可编辑字段和绑定 ID。
+
+---
+
+## 场景：合买管理接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增后端合买领域模型、合买计划仓储、管理后台 API、前端 API client、`useGroupBuyPlans` hook 和“合买配置”页面。
+- 范围：合买计划列表、详情、创建、状态维护、参与记录添加、dashboard `groupBuyPlans` 真实数据来源。
+- 本阶段只维护合买计划和参与记录，不创建真实投注订单，不冻结/扣减用户资金，不执行中奖分账。
+
+### 2. 签名
+
+- `GET /api/admin/group-buy/plans`
+- `GET /api/admin/group-buy/plans/{id}`
+- `POST /api/admin/group-buy/plans`
+- `PUT /api/admin/group-buy/plans/{id}`
+- `POST /api/admin/group-buy/plans/{id}/participants`
+- dashboard：`GET /api/admin/dashboard` 的 `groupBuyPlans` 来自 `GroupBuyRepository::list()`。
+
+### 3. 契约
+
+计划详情响应字段：
+
+```json
+{
+  "id": "G202606020001",
+  "lotteryId": "fc3d",
+  "lotteryName": "福彩 3D",
+  "initiatorUserId": "U90001",
+  "initiatorUsername": "agent_alpha",
+  "totalAmountMinor": 100000,
+  "filledAmountMinor": 72000,
+  "minShareAmountMinor": 100,
+  "participantMinAmountMinor": 1000,
+  "shareCount": 1000,
+  "status": "open",
+  "participants": [
+    {
+      "id": "G202606020001-P001",
+      "userId": "U90001",
+      "username": "agent_alpha",
+      "amountMinor": 10000,
+      "shareCount": 100,
+      "note": "发起人认购",
+      "createdAt": "2026-06-02 09:00:00"
+    }
+  ],
+  "note": "默认合买计划示例",
+  "createdAt": "2026-06-02 09:00:00",
+  "updatedAt": "2026-06-02 09:30:00"
+}
+```
+
+创建计划请求字段：
+
+```json
+{
+  "id": "G-NEW-001",
+  "lotteryId": "fc3d",
+  "initiatorUserId": "U90001",
+  "totalAmountMinor": 100000,
+  "initiatorAmountMinor": 10000,
+  "note": "后台创建合买计划"
+}
+```
+
+更新计划请求字段：
+
+```json
+{
+  "status": "cancelled",
+  "note": "运营取消"
+}
+```
+
+新增参与记录请求字段：
+
+```json
+{
+  "id": "G-NEW-001-P002",
+  "userId": "U10001",
+  "amountMinor": 1000,
+  "note": "后台添加参与记录"
+}
+```
+
+字段契约：
+
+1. `status` 只允许 `draft`、`open`、`filled`、`cancelled`、`settled`。
+2. 金额字段统一使用最小货币单位，前端不传浮点金额。
+3. `lotteryName`、`initiatorUsername` 和参与记录 `username` 均由后端根据仓储回填，前端不能提交或覆盖。
+4. `shareCount = amountMinor / minShareAmountMinor`，计划总金额和参与金额都必须能按最小份额金额整除。
+5. 创建计划会自动写入一条发起人参与记录，参与记录 ID 使用 `{planId}-P001`。
+6. 参与金额达到计划总金额时，计划状态自动变为 `filled`。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 计划 ID 为空 | HTTP 400，返回 `group buy plan id is required` |
+| 创建重复计划 ID | HTTP 409，返回重复计划 ID 错误 |
+| 彩种 ID 为空 | HTTP 400，返回 `lottery id is required` |
+| 彩种不存在 | HTTP 404，返回彩种不存在 |
+| 彩种未开启合买 | HTTP 400，返回 `lottery ... group buy is disabled` |
+| 发起人不存在 | HTTP 404，返回用户不存在 |
+| 总金额或发起人认购金额小于等于 0 | HTTP 400，返回金额必须大于 0 |
+| 总金额或参与金额不能按 `minShareAmountMinor` 整除 | HTTP 400，返回必须按最小份额金额整除 |
+| 发起人认购低于彩种 `initiatorMinPercent` | HTTP 400，返回发起人最低认购金额 |
+| 发起人认购超过计划总金额 | HTTP 400，返回发起人认购不能超过总金额 |
+| 查询或更新不存在计划 | HTTP 404，返回计划不存在 |
+| 计划未满额却更新为 `filled` 或 `settled` | HTTP 400，返回必须满额后才能进入已满单或已结算 |
+| 参与记录 ID 为空 | HTTP 400，返回参与记录 ID 必填 |
+| 同一计划参与记录 ID 重复 | HTTP 409，返回重复参与记录 ID |
+| 参与用户不存在 | HTTP 404，返回用户不存在 |
+| 参与金额低于 `participantMinAmountMinor` | HTTP 400，返回参与金额最低要求 |
+| 参与金额超过剩余可认购金额 | HTTP 400，返回超额参与错误 |
+| 计划不是 `draft` 或 `open` | HTTP 400，返回计划不可参与 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`fc3d` 开启合买，`U90001` 发起 `100000` 分计划并认购 `10000` 分，后端自动生成发起人参与记录和 `1000` 份总份额。
+- Good：追加 `U10001` 参与记录后，如果 `filledAmountMinor == totalAmountMinor`，后端自动把计划状态改为 `filled`。
+- Base：无数据库环境下使用内存合买仓储，服务重启后恢复种子合买计划。
+- Bad：前端自行计算 `shareCount` 并提交给后端，后续会与彩种合买配置漂移。
+- Bad：直接把 dashboard 的 `groupBuyPlans` 写成静态函数，页面创建计划后首页摘要不会同步。
+
+### 6. 必要测试
+
+- 后端需要覆盖创建合买计划并自动写入发起人参与记录。
+- 后端需要覆盖未开启合买彩种被拒绝。
+- 后端需要覆盖发起人认购低于最低比例被拒绝。
+- 后端需要覆盖添加参与记录后自动满单。
+- 后端需要覆盖超额参与被拒绝。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`，确认计划状态、请求字段和 API client 类型一致。
+- API 冒烟需要创建计划、更新状态、添加参与记录到满单，并验证 dashboard `groupBuyPlans` 来自真实仓储。
+- 浏览器验证需要进入“合买配置”入口，确认真实页面显示、保存状态和添加参与记录无接口错误且控制台无错误。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+fn group_buy_plans() -> Vec<GroupBuyPlanSummary> {
+    vec![GroupBuyPlanSummary {
+        id: "G202606020001".to_string(),
+        status: "open".to_string(),
+        // ...
+    }]
+}
+```
+
+这个写法让 dashboard 永远显示静态示例，创建和更新计划后不会同步。
+
+```ts
+await addGroupBuyParticipant(id, {
+  userId,
+  amountMinor,
+  shareCount,
+});
+```
+
+这个写法把份额计算放到前端，后续彩种配置调整时容易不一致。
+
+#### 正确
+
+```rust
+let group_buy_plans = state.group_buys.list().await?;
+dashboard_summary_with_orders(
+    lotteries,
+    recent_orders,
+    group_buy_plans,
+    finance,
+    financial_accounts,
+    access,
+    invite_policy,
+    robots,
+)
+```
+
+dashboard 从同一个合买仓储读取 summary。
+
+```ts
+await addGroupBuyParticipant(id, {
+  id: participantId,
+  userId,
+  amountMinor,
+  note,
+});
+```
+
+前端只提交参与金额和绑定 ID，份额数量由后端按彩种合买配置计算。

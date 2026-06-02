@@ -25,6 +25,13 @@ import type {
   ManualBalanceAdjustmentRequest,
 } from '../types/finance';
 import type {
+  AddGroupBuyParticipantRequest,
+  CreateGroupBuyPlanRequest,
+  GroupBuyPlan,
+  GroupBuyPlanSummary,
+  UpdateGroupBuyPlanRequest,
+} from '../types/groupBuy';
+import type {
   CreateInviteRecordRequest,
   InviteRecord,
   UpdateInviteRecordRequest,
@@ -98,6 +105,49 @@ export function createManualBalanceAdjustment(payload: ManualBalanceAdjustmentRe
     body: payload,
     method: 'POST',
   });
+}
+
+export function fetchGroupBuyPlans(signal?: AbortSignal) {
+  return requestJson<GroupBuyPlanSummary[]>('/api/admin/group-buy/plans', {
+    signal,
+  });
+}
+
+export function fetchGroupBuyPlan(id: string, signal?: AbortSignal) {
+  return requestJson<GroupBuyPlan>(
+    `/api/admin/group-buy/plans/${encodeURIComponent(id)}`,
+    { signal },
+  );
+}
+
+export function createGroupBuyPlan(payload: CreateGroupBuyPlanRequest) {
+  return requestJson<GroupBuyPlan>('/api/admin/group-buy/plans', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateGroupBuyPlan(id: string, payload: UpdateGroupBuyPlanRequest) {
+  return requestJson<GroupBuyPlan>(
+    `/api/admin/group-buy/plans/${encodeURIComponent(id)}`,
+    {
+      body: payload,
+      method: 'PUT',
+    },
+  );
+}
+
+export function addGroupBuyParticipant(
+  id: string,
+  payload: AddGroupBuyParticipantRequest,
+) {
+  return requestJson<GroupBuyPlan>(
+    `/api/admin/group-buy/plans/${encodeURIComponent(id)}/participants`,
+    {
+      body: payload,
+      method: 'POST',
+    },
+  );
 }
 
 export function fetchInvitations(signal?: AbortSignal) {

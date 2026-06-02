@@ -5,6 +5,7 @@ import { AccessManagementPage } from './pages/AccessManagementPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DrawManagementPage } from './pages/DrawManagementPage';
 import { FinanceManagementPage } from './pages/FinanceManagementPage';
+import { GroupBuyManagementPage } from './pages/GroupBuyManagementPage';
 import { InviteManagementPage } from './pages/InviteManagementPage';
 import { LotteryManagementPage } from './pages/LotteryManagementPage';
 import { OrderManagementPage } from './pages/OrderManagementPage';
@@ -66,6 +67,8 @@ export function App() {
         <FinanceManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'support' ? (
         <SupportManagementPage onDashboardRefresh={refresh} />
+      ) : activeKey === 'group-buy' ? (
+        <GroupBuyManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'invite' ? (
         <InviteManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'play-rules' ? (

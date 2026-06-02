@@ -2,8 +2,9 @@ use serde::Serialize;
 
 use crate::domain::{
     finance::{FinanceOverview, FinancialAccountSummary},
+    group_buy::GroupBuyPlanSummary,
     lottery::{DrawMode, DrawSource, LotteryKind},
-    order::{GroupBuyPlanSummary, OrderSummary},
+    order::OrderSummary,
     permission::{AdminRole, SystemSetting},
     rebate::InvitePolicySummary,
     robot::RobotConfigSummary,
@@ -68,6 +69,7 @@ pub enum ModuleStatus {
 pub fn dashboard_summary_with_orders(
     lotteries: Vec<LotteryKind>,
     recent_orders: Vec<OrderSummary>,
+    group_buy_plans: Vec<GroupBuyPlanSummary>,
     finance: FinanceOverview,
     financial_accounts: Vec<FinancialAccountSummary>,
     access: AccessSnapshot,
@@ -100,7 +102,7 @@ pub fn dashboard_summary_with_orders(
         lotteries,
         draw_sources: draw_sources(),
         recent_orders,
-        group_buy_plans: group_buy_plans(),
+        group_buy_plans,
         finance,
         financial_accounts,
         robots,
@@ -305,23 +307,12 @@ pub fn draw_sources() -> Vec<DrawSource> {
     ]
 }
 
-fn group_buy_plans() -> Vec<GroupBuyPlanSummary> {
-    vec![GroupBuyPlanSummary {
-        id: "G202606020001".to_string(),
-        lottery_id: "fc3d".to_string(),
-        initiator_user_id: "U10003".to_string(),
-        total_amount_minor: 100_000,
-        filled_amount_minor: 72_000,
-        share_count: 1_000,
-        status: "open".to_string(),
-    }]
-}
-
 #[cfg(test)]
 mod tests {
     use super::dashboard_summary_with_orders;
     use crate::{
         domain::finance::{FinanceOverview, FinancialAccountSummary},
+        domain::group_buy::{GroupBuyPlanStatus, GroupBuyPlanSummary},
         domain::rebate::{InvitePolicySummary, RebateMode},
         services::access::AccessRepository,
         services::lottery::seed_lotteries,
@@ -336,6 +327,17 @@ mod tests {
         let summary = dashboard_summary_with_orders(
             seed_lotteries(),
             Vec::new(),
+            vec![GroupBuyPlanSummary {
+                id: "G202606020001".to_string(),
+                lottery_id: "fc3d".to_string(),
+                lottery_name: "福彩 3D".to_string(),
+                initiator_user_id: "U90001".to_string(),
+                initiator_username: "agent_alpha".to_string(),
+                total_amount_minor: 100_000,
+                filled_amount_minor: 72_000,
+                share_count: 1_000,
+                status: GroupBuyPlanStatus::Open,
+            }],
             FinanceOverview {
                 total_balance_minor: 684_000,
                 pending_withdraw_minor: 0,

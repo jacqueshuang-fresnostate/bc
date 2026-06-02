@@ -14,6 +14,10 @@ use crate::{
             GenerateDrawIssuesRequest,
         },
         finance::{FinancialAccountSummary, LedgerEntry, ManualBalanceAdjustmentRequest},
+        group_buy::{
+            AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyPlan,
+            GroupBuyPlanSummary, UpdateGroupBuyPlanRequest,
+        },
         invite::{CreateInviteRecordRequest, InviteRecord, UpdateInviteRecordRequest},
         lottery::{DrawSource, LotteryKind},
         order::{CreateOrderRequest, OrderDetail},
@@ -50,6 +54,18 @@ pub fn router() -> Router<AppState> {
         .route("/financial-accounts", get(list_financial_accounts))
         .route("/ledger-entries", get(list_ledger_entries))
         .route("/financial-adjustments", post(manual_balance_adjustment))
+        .route(
+            "/group-buy/plans",
+            get(list_group_buy_plans).post(create_group_buy_plan),
+        )
+        .route(
+            "/group-buy/plans/{id}",
+            get(get_group_buy_plan).put(update_group_buy_plan),
+        )
+        .route(
+            "/group-buy/plans/{id}/participants",
+            post(add_group_buy_participant),
+        )
         .route(
             "/invitations",
             get(list_invitations).post(create_invitation),
@@ -293,16 +309,73 @@ async fn get_dashboard_summary(
     let access = state.access.snapshot().await?;
     let invite_policy = state.rebates.get().await?;
     let robots = state.robots.list().await?;
+    let group_buy_plans = state.group_buys.list().await?;
 
     Ok(Json(ApiEnvelope::success(dashboard_summary_with_orders(
         lotteries,
         recent_orders,
+        group_buy_plans,
         finance,
         financial_accounts,
         access,
         invite_policy,
         robots,
     ))))
+}
+
+async fn list_group_buy_plans(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<GroupBuyPlanSummary>>>> {
+    let plans = state.group_buys.list().await?;
+
+    Ok(Json(ApiEnvelope::success(plans)))
+}
+
+async fn get_group_buy_plan(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
+    let plan = state.group_buys.get(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(plan)))
+}
+
+async fn create_group_buy_plan(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateGroupBuyPlanRequest>,
+) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
+    let lotteries = state.lotteries.list().await?;
+    let access = state.access.snapshot().await?;
+    let plan = state
+        .group_buys
+        .create(payload, &lotteries, &access.users)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(plan)))
+}
+
+async fn update_group_buy_plan(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<UpdateGroupBuyPlanRequest>,
+) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
+    let plan = state.group_buys.update(&id, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(plan)))
+}
+
+async fn add_group_buy_participant(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<AddGroupBuyParticipantRequest>,
+) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
+    let access = state.access.snapshot().await?;
+    let plan = state
+        .group_buys
+        .add_participant(&id, payload, &access.users)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(plan)))
 }
 
 async fn list_invitations(

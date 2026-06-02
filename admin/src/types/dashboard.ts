@@ -1,4 +1,5 @@
 import type { PlayRuleCode } from './playRules';
+import type { GroupBuyPlanSummary } from './groupBuy';
 
 export interface ApiEnvelope<T> {
   success: boolean;
@@ -92,16 +93,6 @@ export interface OrderSummary {
   payoutMinor: number;
   status: 'pendingDraw' | 'won' | 'lost' | 'cancelled';
   settledAt: string | null;
-}
-
-export interface GroupBuyPlanSummary {
-  id: string;
-  lotteryId: string;
-  initiatorUserId: string;
-  totalAmountMinor: number;
-  filledAmountMinor: number;
-  shareCount: number;
-  status: string;
 }
 
 export interface FinanceOverview {
