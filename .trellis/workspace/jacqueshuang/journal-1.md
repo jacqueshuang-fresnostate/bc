@@ -335,3 +335,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: 自动封盘开奖结算基础
+
+**Date**: 2026-06-02
+**Task**: 自动封盘开奖结算基础
+**Branch**: `main`
+
+### Summary
+
+实现后台触发式自动封盘、自动开奖、自动结算和派奖入账入口，补齐管理后台自动任务操作区，并同步中文架构、TODO 和 API 契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0e5930f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
