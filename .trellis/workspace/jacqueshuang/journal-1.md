@@ -434,3 +434,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: 系统级常驻调度基础
+
+**Date**: 2026-06-02
+**Task**: 系统级常驻调度基础
+**Branch**: `main`
+
+### Summary
+
+实现后端常驻开奖调度基础，支持通过环境变量启用后台循环，周期性自动封盘、开奖、结算、派奖并补齐未来期号，同时同步中文架构、TODO 和运行契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `90959cd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
