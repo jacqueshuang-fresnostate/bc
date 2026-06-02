@@ -6,6 +6,7 @@ import {
   drawIssueResult,
   fetchDrawIssues,
   fetchDrawSources,
+  generateNextDrawIssue,
   runDrawAutomation,
 } from '../api/client';
 import type { DrawSource } from '../types/dashboard';
@@ -14,6 +15,7 @@ import type {
   DrawAutomationRunRequest,
   DrawIssue,
   DrawIssueResultRequest,
+  GenerateDrawIssueRequest,
 } from '../types/draws';
 
 export function useDraws() {
@@ -63,6 +65,21 @@ export function useDraws() {
     setError(null);
     try {
       const created = await createDrawIssue(payload);
+      setIssues((current) => [created, ...current]);
+      return created;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const generateNext = useCallback(async (payload: GenerateDrawIssueRequest) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await generateNextDrawIssue(payload);
       setIssues((current) => [created, ...current]);
       return created;
     } catch (requestError) {
@@ -147,6 +164,7 @@ export function useDraws() {
     draw,
     drawSources,
     error,
+    generateNext,
     issues,
     loading,
     refresh,

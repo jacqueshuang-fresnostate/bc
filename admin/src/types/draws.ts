@@ -11,6 +11,12 @@ export interface CreateDrawIssueRequest {
   saleClosedAt: string;
 }
 
+export interface GenerateDrawIssueRequest {
+  lotteryId: string;
+  now: string;
+  saleCloseLeadSeconds?: number;
+}
+
 export interface DrawIssueResultRequest {
   drawNumber?: string;
 }

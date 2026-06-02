@@ -6,6 +6,7 @@ import type {
   DrawAutomationRunRequest,
   DrawIssue,
   DrawIssueResultRequest,
+  GenerateDrawIssueRequest,
 } from '../types/draws';
 import type {
   FinancialAccountSummary,
@@ -112,6 +113,13 @@ export function fetchDrawIssues(signal?: AbortSignal) {
 
 export function createDrawIssue(payload: CreateDrawIssueRequest) {
   return requestJson<DrawIssue>('/api/admin/draw-issues', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function generateNextDrawIssue(payload: GenerateDrawIssueRequest) {
+  return requestJson<DrawIssue>('/api/admin/draw-issues/generate-next', {
     body: payload,
     method: 'POST',
   });

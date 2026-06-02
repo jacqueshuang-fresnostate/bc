@@ -1124,3 +1124,114 @@ let entries = finance.credit_settlement(&settlement).await?;
 ```
 
 自动任务只负责调度现有服务，业务规则仍由各服务层统一执行。
+
+---
+
+## 场景：自动创建下一期号接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改按彩种开奖计划生成下一期号、期号计划计算、前端生成下一期入口。
+- 范围：后端生成下一期请求模型、期号生成服务、开奖期号创建、前端 draw API client、`useDraws` hook 和“开奖期号与开奖源”页面。
+
+### 2. 签名
+
+- `POST /api/admin/draw-issues/generate-next`
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封，字段命名必须使用 `camelCase`。
+
+请求体：
+
+```json
+{
+  "lotteryId": "fc3d",
+  "now": "2026-06-02 20:00:00",
+  "saleCloseLeadSeconds": 30
+}
+```
+
+`now` 使用 `YYYY-MM-DD HH:mm:ss`。`saleCloseLeadSeconds` 可省略，默认 `30`，表示封盘时间为开奖前 30 秒。
+
+响应 `data` 字段为标准 `DrawIssue`：
+
+```json
+{
+  "id": "D000000000001",
+  "lotteryId": "fc3d",
+  "lotteryName": "福彩 3D",
+  "issue": "20260602210015",
+  "numberType": "threeDigit",
+  "drawMode": "api",
+  "scheduledAt": "2026-06-02 21:00:15",
+  "saleClosedAt": "2026-06-02 20:59:45",
+  "status": "open",
+  "drawNumber": null,
+  "drawnAt": null,
+  "createdAt": "unix:1780394800"
+}
+```
+
+生成规则：
+
+1. 后端读取彩种 `DrawSchedule`，不由前端计算开奖时间。
+2. 如果同彩种已有期号，使用该彩种最新 `scheduledAt` 和传入 `now` 中较晚的时间作为基线。
+3. 周期开奖：`baseline + intervalSeconds`。
+4. 每日固定开奖：选择严格晚于基线的当天或次日配置时间。
+5. 周开奖：选择严格晚于基线的下一个配置星期和时间。
+6. 期号编码使用开奖时间格式化为 `YYYYMMDDHHMMSS`。
+7. 创建仍复用开奖期号仓储，保持重复期号、彩种匹配、开奖时间和封盘时间校验一致。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 彩种不存在 | HTTP 404，返回彩种不存在 |
+| `lotteryId` 为空 | HTTP 400，返回 `lottery id is required` |
+| 请求彩种 ID 与读取彩种不一致 | HTTP 400，返回 `request lottery id does not match lottery` |
+| `now` 为空 | HTTP 400，返回 `now time is required` |
+| `now` 格式错误 | HTTP 400，返回 `now must use YYYY-MM-DD HH:mm:ss format` |
+| `saleCloseLeadSeconds=0` | HTTP 400，返回 `sale close lead seconds must be greater than zero` |
+| 周期开奖秒数为 0 | HTTP 400，返回 `periodic interval must be greater than zero` |
+| 每日或周开奖时间格式错误 | HTTP 400，返回 `... must use HH:mm:ss format` |
+| 周开奖星期为空或不支持 | HTTP 400，返回 weekday 错误 |
+| 100 次仍无法生成唯一期号 | HTTP 409，返回唯一期号生成失败 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`ssc60` 配置 `periodic.intervalSeconds=60`，`now=2026-06-02 20:00:00`，生成 `scheduledAt=2026-06-02 20:01:00`。
+- Good：`fc3d` 配置每日 `21:00:15`，`now=2026-06-02 22:00:00`，生成次日 `2026-06-03 21:00:15`。
+- Good：周二、周四 `21:00:00` 的彩种，在周二 22:00 后生成周四 21:00。
+- Base：本阶段是后台触发式生成单期，适合内存仓储阶段验证计划计算。
+- Bad：前端自己根据彩种 schedule 计算开奖时间；计划计算必须由后端统一负责。
+
+### 6. 必要测试
+
+- 后端需要覆盖周期、每日、周开奖三种计划。
+- 后端需要覆盖已有期号时从最新期号继续生成。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`。
+- 跨层联调需要请求生成下一期接口，并在管理后台开奖期号页面确认新期号显示。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```tsx
+const scheduledAt = addSeconds(form.now, lottery.schedule.periodic.intervalSeconds);
+await createDrawIssue({ lotteryId, issue, scheduledAt, saleClosedAt });
+```
+
+这个写法把开奖计划计算放在前端，后续手机端、机器人和后台调度容易漂移。
+
+#### 正确
+
+```ts
+await generateNextDrawIssue({
+  lotteryId,
+  now,
+});
+```
+
+前端只提交彩种和基准时间，后端根据彩种计划生成标准期号并复用创建校验。

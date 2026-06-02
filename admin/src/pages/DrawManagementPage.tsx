@@ -1,5 +1,13 @@
 import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
-import { Clock3, Lock, Play, Plus, RefreshCcw, XCircle } from 'lucide-react';
+import {
+  CalendarPlus,
+  Clock3,
+  Lock,
+  Play,
+  Plus,
+  RefreshCcw,
+  XCircle,
+} from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -38,6 +46,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     draw,
     drawSources,
     error: drawError,
+    generateNext,
     issues,
     loading: drawsLoading,
     refresh: refreshDraws,
@@ -93,6 +102,18 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
       scheduledAt: form.scheduledAt.trim(),
     };
     const created = await create(payload);
+    setSelectedIssueId(created.id);
+    onDashboardRefresh();
+  };
+
+  const generateNextIssue = async () => {
+    if (!selectedLottery) {
+      return;
+    }
+    const created = await generateNext({
+      lotteryId: selectedLottery.id,
+      now: automationNow.trim(),
+    });
     setSelectedIssueId(created.id);
     onDashboardRefresh();
   };
@@ -386,14 +407,23 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
                 </Field>
               </div>
 
-              <Button
-                disabled={!selectedLottery || saving}
-                icon={<Plus size={16} />}
-                theme="solid"
-                onClick={() => void createIssue()}
-              >
-                {saving ? '处理中' : '创建期号'}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={!selectedLottery || saving}
+                  icon={<Plus size={16} />}
+                  theme="solid"
+                  onClick={() => void createIssue()}
+                >
+                  {saving ? '处理中' : '创建期号'}
+                </Button>
+                <Button
+                  disabled={!selectedLottery || saving || !automationNow.trim()}
+                  icon={<CalendarPlus size={16} />}
+                  onClick={() => void generateNextIssue()}
+                >
+                  按计划生成下一期
+                </Button>
+              </div>
             </form>
           </Card>
 

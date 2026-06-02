@@ -10,7 +10,7 @@ use crate::{
     domain::{
         draw::{
             CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest, DrawIssue,
-            DrawIssueResultRequest,
+            DrawIssueResultRequest, GenerateDrawIssueRequest,
         },
         finance::{FinancialAccountSummary, LedgerEntry, ManualBalanceAdjustmentRequest},
         lottery::{DrawSource, LotteryKind},
@@ -23,6 +23,7 @@ use crate::{
     services::{
         automation::run_draw_automation,
         dashboard::{dashboard_summary_with_orders, draw_sources, DashboardSummary},
+        draw_generation::generate_next_draw_issue,
         order::validate_draw_issue_accepts_order,
         play_rules::{evaluate_play_rule, play_rule_summaries},
     },
@@ -38,6 +39,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/draw-issues",
             get(list_draw_issues).post(create_draw_issue),
+        )
+        .route(
+            "/draw-issues/generate-next",
+            post(generate_next_draw_issue_request),
         )
         .route("/draw-issues/{id}", get(get_draw_issue))
         .route("/draw-issues/{id}/close", patch(close_draw_issue))
@@ -99,6 +104,16 @@ async fn create_draw_issue(
 ) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
     let lottery = state.lotteries.get(&payload.lottery_id).await?;
     let issue = state.draws.create(&lottery, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(issue)))
+}
+
+async fn generate_next_draw_issue_request(
+    State(state): State<AppState>,
+    Json(payload): Json<GenerateDrawIssueRequest>,
+) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
+    let lottery = state.lotteries.get(&payload.lottery_id).await?;
+    let issue = generate_next_draw_issue(&state.draws, &lottery, payload).await?;
 
     Ok(Json(ApiEnvelope::success(issue)))
 }

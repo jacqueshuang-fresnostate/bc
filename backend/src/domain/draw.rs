@@ -24,6 +24,15 @@ pub struct CreateDrawIssueRequest {
     pub sale_closed_at: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateDrawIssueRequest {
+    pub lottery_id: String,
+    pub now: String,
+    #[serde(default)]
+    pub sale_close_lead_seconds: Option<u32>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DrawIssueResultRequest {
