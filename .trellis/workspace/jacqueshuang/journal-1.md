@@ -467,3 +467,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: 调度运行历史与后台可视化基础
+
+**Date**: 2026-06-02
+**Task**: 调度运行历史与后台可视化基础
+**Branch**: `main`
+
+### Summary
+
+新增调度状态仓储和 GET /api/admin/draw-scheduler/status 接口；管理后台开奖期号页面新增常驻调度状态、最近运行和历史展示；同步更新架构设计、TODO 和 API 契约。验证通过 cargo fmt --check、cargo check、cargo test、npm run build、API 冒烟和浏览器控制台检查。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cc79406` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
