@@ -1,27 +1,45 @@
 use axum::{
     extract::{Path, State},
-    routing::{get, patch},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::Deserialize;
 
 use crate::{
     app::AppState,
-    domain::lottery::LotteryKind,
+    domain::{
+        lottery::LotteryKind,
+        play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
+    },
     error::ApiResult,
     response::ApiEnvelope,
-    services::dashboard::{dashboard_summary, DashboardSummary},
+    services::{
+        dashboard::{dashboard_summary, DashboardSummary},
+        play_rules::{evaluate_play_rule, play_rule_summaries},
+    },
 };
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/dashboard", get(get_dashboard_summary))
+        .route("/play-rules", get(list_play_rules))
+        .route("/play-rules/evaluate", post(evaluate_play_rule_request))
         .route("/lotteries", get(list_lotteries).post(create_lottery))
         .route(
             "/lotteries/{id}",
             get(get_lottery).put(update_lottery).delete(delete_lottery),
         )
         .route("/lotteries/{id}/sale", patch(set_lottery_sale))
+}
+
+async fn list_play_rules() -> ApiResult<Json<ApiEnvelope<Vec<PlayRuleSummary>>>> {
+    Ok(Json(ApiEnvelope::success(play_rule_summaries())))
+}
+
+async fn evaluate_play_rule_request(
+    Json(payload): Json<PlayRuleEvaluateRequest>,
+) -> ApiResult<Json<ApiEnvelope<PlayRuleEvaluation>>> {
+    Ok(Json(ApiEnvelope::success(evaluate_play_rule(payload)?)))
 }
 
 async fn get_dashboard_summary(

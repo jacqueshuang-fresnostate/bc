@@ -205,6 +205,12 @@ fn module_groups() -> Vec<ModuleGroup> {
                     "份额、起购、参与金额配置",
                     ModuleStatus::Scaffolded,
                 ),
+                module(
+                    "play-rules",
+                    "玩法规则",
+                    "注数计算、投注展开、中奖判断验证",
+                    ModuleStatus::Scaffolded,
+                ),
             ],
         },
         ModuleGroup {

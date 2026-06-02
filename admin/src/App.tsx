@@ -4,6 +4,7 @@ import { useDashboard } from './hooks/useDashboard';
 import { DashboardPage } from './pages/DashboardPage';
 import { LotteryManagementPage } from './pages/LotteryManagementPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
+import { PlayRulesPage } from './pages/PlayRulesPage';
 
 export function App() {
   const { data, loading, error, refresh } = useDashboard();
@@ -45,6 +46,8 @@ export function App() {
         />
       ) : activeKey === 'lotteries' ? (
         <LotteryManagementPage onDashboardRefresh={refresh} />
+      ) : activeKey === 'play-rules' ? (
+        <PlayRulesPage />
       ) : data ? (
         <PlaceholderPage moduleKey={activeKey} summary={data} />
       ) : (

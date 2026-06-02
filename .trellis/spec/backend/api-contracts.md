@@ -237,3 +237,119 @@ pub enum DrawSchedule {
 ```
 
 这样后端会按前端契约接受并返回 `intervalSeconds`。
+
+---
+
+## 场景：玩法规则评估接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改彩票玩法的注数计算、投注展开、中奖判断、管理后台规则验证页面。
+- 范围：3 位玩法、5 位前三/中三/后三玩法、5 位大小单双、后端服务层规则校验、前端 API client 和 `usePlayRules` hook。
+
+### 2. 签名
+
+- `GET /api/admin/play-rules`
+- `POST /api/admin/play-rules/evaluate`
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封。
+
+`GET /api/admin/play-rules` 的 `data` 字段返回规则目录，字段必须使用 `camelCase`：
+
+```json
+[
+  {
+    "code": "threeDirect",
+    "label": "3 位直选",
+    "numberType": "threeDigit",
+    "window": "full",
+    "description": "按百位、十位、个位顺序完全匹配"
+  }
+]
+```
+
+`POST /api/admin/play-rules/evaluate` 请求体：
+
+```json
+{
+  "numberType": "threeDigit",
+  "ruleCode": "threeDirect",
+  "selection": {
+    "positions": [[2], [4], [7]]
+  },
+  "drawNumber": "247"
+}
+```
+
+响应 `data` 字段：
+
+```json
+{
+  "ruleCode": "threeDirect",
+  "stakeCount": 1,
+  "expandedBets": ["247"],
+  "isWinning": true,
+  "matchedBets": ["247"]
+}
+```
+
+选号结构按玩法使用：
+
+- 直选：`selection.positions`，必须是 3 个位置数组。
+- 直选组合、组三复式、组六复式：`selection.numbers`。
+- 组三胆拖、组六胆拖：`selection.bankerNumbers` 和 `selection.dragNumbers`。
+- 大小单双：`selection.bigSmallOddEven`，每项包含 `position` 和 `attributes`。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `numberType` 与 `ruleCode` 不匹配 | HTTP 400，返回 `rule code does not match number type` |
+| 3 位玩法开奖号码不是 3 位数字 | HTTP 400，返回开奖号码长度或数字错误 |
+| 5 位玩法开奖号码不是 5 位数字 | HTTP 400，返回开奖号码长度或数字错误 |
+| 直选没有 3 个位置选择 | HTTP 400，返回 `direct play requires three position selections` |
+| 选号为空 | HTTP 400，返回 `digit selection cannot be empty` |
+| 选号数字大于 9 | HTTP 400，返回 `digit selection must be between 0 and 9` |
+| 组三胆码数量不是 1 | HTTP 400，返回胆码数量错误 |
+| 组六胆码数量不是 1 或 2 | HTTP 400，返回胆码数量错误 |
+| 胆码和拖码重复 | HTTP 400，返回 `banker digits and drag digits cannot overlap` |
+| 大小单双没有选择属性 | HTTP 400，返回大小单双属性错误 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`threeDirect` 选择 `[[2], [4], [7]]`，开奖号码 `247`，返回 `stakeCount=1`、`isWinning=true`。
+- Good：`fiveBackGroupSix` 选择 `2,4,7,9`，开奖号码 `78942` 的后三为 `942`，属于组六且数字都在选号范围内，应命中。
+- Good：`fiveBigSmallOddEven` 当前默认按后两位判断，开奖号码 `78942` 的十位 `4` 为小、个位 `2` 为双。
+- Base：规则评估只计算注数、展开投注和命中，不处理赔率、奖金、订单金额、余额扣减或派奖。
+- Bad：前端自行计算玩法结果并只把中奖状态传给后端；后续订单和派奖必须复用后端规则引擎。
+
+### 6. 必要测试
+
+- 后端需要覆盖 3 位直选精确顺序匹配。
+- 后端需要覆盖 3 位组三复式、组三胆拖、组六复式、组六胆拖的注数和顺序无关命中。
+- 后端需要覆盖 5 位前/中/后窗口选择，例如中三使用第 2-4 位、后三使用第 3-5 位。
+- 后端需要覆盖 5 位直选组合排列注数。
+- 后端需要覆盖 5 位大小单双默认后两位口径。
+- 后端需要覆盖胆码/拖码重复等基础校验。
+- 前端需要运行 `npm run build`，确认 `admin/src/types/playRules.ts` 与后端契约一致。
+- 跨层联调需要请求规则目录和至少两个评估接口，再在管理后台“玩法规则”页面完成一次计算。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```ts
+const stakeCount = selectedDigits.length * 2;
+```
+
+这个写法把玩法公式写在页面里，后续订单、派奖和手机端很容易与后台展示不一致。
+
+#### 正确
+
+```ts
+const result = await evaluatePlayRule(payload);
+```
+
+前端只提交选号和开奖号码，注数、展开投注和中奖判断都由后端规则引擎返回。

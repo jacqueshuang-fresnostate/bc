@@ -1,4 +1,9 @@
 import type { ApiEnvelope, DashboardSummary, LotteryKind } from '../types/dashboard';
+import type {
+  PlayRuleEvaluateRequest,
+  PlayRuleEvaluation,
+  PlayRuleSummary,
+} from '../types/playRules';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -63,4 +68,15 @@ export function setLotterySaleStatus(id: string, saleEnabled: boolean) {
       method: 'PATCH',
     },
   );
+}
+
+export function fetchPlayRules(signal?: AbortSignal) {
+  return requestJson<PlayRuleSummary[]>('/api/admin/play-rules', { signal });
+}
+
+export function evaluatePlayRule(payload: PlayRuleEvaluateRequest) {
+  return requestJson<PlayRuleEvaluation>('/api/admin/play-rules/evaluate', {
+    body: payload,
+    method: 'POST',
+  });
 }
