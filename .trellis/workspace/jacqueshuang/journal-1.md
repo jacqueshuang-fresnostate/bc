@@ -599,3 +599,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 在线客服基础管理
+
+**Date**: 2026-06-02
+**Task**: 在线客服基础管理
+**Branch**: `main`
+
+### Summary
+
+完成在线客服基础管理：新增后端客服会话领域模型、SupportRepository 和客服会话列表/详情/创建/更新/回复接口；管理后台新增在线客服页面，支持会话列表、创建工单、状态优先级维护、客服分配和后台回复。同步更新架构设计、TODO 和后端 API 契约。验证 cargo fmt --check、cargo check、cargo test、npm run build 通过，并完成 API 与浏览器冒烟。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3b1ffa6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
