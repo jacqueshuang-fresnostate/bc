@@ -9,6 +9,7 @@ import { LotteryManagementPage } from './pages/LotteryManagementPage';
 import { OrderManagementPage } from './pages/OrderManagementPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { PlayRulesPage } from './pages/PlayRulesPage';
+import { RobotManagementPage } from './pages/RobotManagementPage';
 import { SettlementManagementPage } from './pages/SettlementManagementPage';
 
 export function App() {
@@ -69,6 +70,11 @@ export function App() {
           activeModuleKey={activeKey}
           onDashboardRefresh={refresh}
         />
+      ) : isRobotModule(activeKey) ? (
+        <RobotManagementPage
+          activeModuleKey={activeKey}
+          onDashboardRefresh={refresh}
+        />
       ) : data ? (
         <PlaceholderPage moduleKey={activeKey} summary={data} />
       ) : (
@@ -82,6 +88,10 @@ export function App() {
       )}
     </AppShell>
   );
+}
+
+function isRobotModule(activeKey: string) {
+  return activeKey === 'group-buy-robot' || activeKey === 'purchase-robot';
 }
 
 function isAccessModule(activeKey: string) {

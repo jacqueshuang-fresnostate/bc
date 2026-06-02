@@ -31,6 +31,10 @@ import type {
 } from '../types/playRules';
 import type { CreateOrderRequest, OrderDetail } from '../types/orders';
 import type { DrawSchedulerStatus } from '../types/scheduler';
+import type {
+  RobotConfigSummary,
+  RobotStatusUpdateRequest,
+} from '../types/robots';
 import type { SettlementRun } from '../types/settlements';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -187,6 +191,40 @@ export function updateRegistrationConfig(payload: RegistrationConfig) {
     body: payload,
     method: 'PUT',
   });
+}
+
+export function fetchRobots(signal?: AbortSignal) {
+  return requestJson<RobotConfigSummary[]>('/api/admin/robots', { signal });
+}
+
+export function createRobot(payload: RobotConfigSummary) {
+  return requestJson<RobotConfigSummary>('/api/admin/robots', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateRobot(id: string, payload: RobotConfigSummary) {
+  return requestJson<RobotConfigSummary>(`/api/admin/robots/${encodeURIComponent(id)}`, {
+    body: payload,
+    method: 'PUT',
+  });
+}
+
+export function deleteRobot(id: string) {
+  return requestJson<RobotConfigSummary>(`/api/admin/robots/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export function setRobotStatus(id: string, payload: RobotStatusUpdateRequest) {
+  return requestJson<RobotConfigSummary>(
+    `/api/admin/robots/${encodeURIComponent(id)}/status`,
+    {
+      body: payload,
+      method: 'PATCH',
+    },
+  );
 }
 
 export function fetchLotteries(signal?: AbortSignal) {

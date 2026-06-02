@@ -6,7 +6,7 @@ use crate::domain::{
     order::{GroupBuyPlanSummary, OrderSummary},
     permission::{AdminRole, SystemSetting},
     rebate::{InvitePolicySummary, RebateMode},
-    robot::{RobotConfigSummary, RobotKind, RobotStatus},
+    robot::RobotConfigSummary,
     user::{AdminSummary, RegistrationConfig, UserSummary},
 };
 
@@ -72,6 +72,7 @@ pub fn dashboard_summary_with_orders(
     finance: FinanceOverview,
     financial_accounts: Vec<FinancialAccountSummary>,
     access: AccessSnapshot,
+    robots: Vec<RobotConfigSummary>,
 ) -> DashboardSummary {
     let lottery_count = lotteries.len();
     let order_count = recent_orders.len();
@@ -102,7 +103,7 @@ pub fn dashboard_summary_with_orders(
         group_buy_plans: group_buy_plans(),
         finance,
         financial_accounts,
-        robots: robots(),
+        robots,
         users: access.users,
         admins: access.admins,
         roles: access.roles,
@@ -322,35 +323,6 @@ fn group_buy_plans() -> Vec<GroupBuyPlanSummary> {
     }]
 }
 
-fn robots() -> Vec<RobotConfigSummary> {
-    vec![
-        RobotConfigSummary {
-            id: "R-GROUP-001".to_string(),
-            name: "合买补单机器人".to_string(),
-            kind: RobotKind::GroupBuy,
-            lottery_ids: vec!["fc3d".to_string(), "ssc60".to_string()],
-            status: RobotStatus::Enabled,
-            description: "开盘期间发起合买并辅助满单".to_string(),
-        },
-        RobotConfigSummary {
-            id: "R-BUY-001".to_string(),
-            name: "购彩模拟机器人".to_string(),
-            kind: RobotKind::Purchase,
-            lottery_ids: vec!["ssc60".to_string()],
-            status: RobotStatus::Paused,
-            description: "按彩种开盘时间模拟普通用户购彩".to_string(),
-        },
-        RobotConfigSummary {
-            id: "R-BUY-002".to_string(),
-            name: "指定号码测试机器人".to_string(),
-            kind: RobotKind::Purchase,
-            lottery_ids: vec!["manual-test".to_string()],
-            status: RobotStatus::Disabled,
-            description: "指定号码测试彩暂停机器人执行".to_string(),
-        },
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::dashboard_summary_with_orders;
@@ -381,6 +353,7 @@ mod tests {
                 frozen_balance_minor: 2_000,
             }],
             access,
+            Vec::new(),
         );
         let keys = summary
             .module_groups

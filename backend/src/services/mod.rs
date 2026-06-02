@@ -7,4 +7,5 @@ pub mod finance;
 pub mod lottery;
 pub mod order;
 pub mod play_rules;
+pub mod robot;
 pub mod scheduler;

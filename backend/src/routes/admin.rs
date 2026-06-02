@@ -18,6 +18,7 @@ use crate::{
         order::{CreateOrderRequest, OrderDetail},
         permission::{AdminRole, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
+        robot::{RobotConfigSummary, RobotStatusRequest},
         settlement::SettlementRun,
         user::{
             AdminStatusRequest, AdminSummary, RegistrationConfig, UserStatusRequest, UserSummary,
@@ -60,6 +61,12 @@ pub fn router() -> Router<AppState> {
             "/registration",
             get(get_registration_config).put(update_registration_config),
         )
+        .route("/robots", get(list_robots).post(create_robot))
+        .route(
+            "/robots/{id}",
+            get(get_robot).put(update_robot).delete(delete_robot),
+        )
+        .route("/robots/{id}/status", patch(set_robot_status))
         .route("/draw-sources", get(list_draw_sources))
         .route(
             "/draw-issues",
@@ -254,6 +261,7 @@ async fn get_dashboard_summary(
     let finance = state.finance.overview().await?;
     let financial_accounts = state.finance.accounts().await?;
     let access = state.access.snapshot().await?;
+    let robots = state.robots.list().await?;
 
     Ok(Json(ApiEnvelope::success(dashboard_summary_with_orders(
         lotteries,
@@ -261,6 +269,7 @@ async fn get_dashboard_summary(
         finance,
         financial_accounts,
         access,
+        robots,
     ))))
 }
 
@@ -432,6 +441,63 @@ async fn update_registration_config(
     let registration = state.access.update_registration(payload).await?;
 
     Ok(Json(ApiEnvelope::success(registration)))
+}
+
+async fn list_robots(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<RobotConfigSummary>>>> {
+    let robots = state.robots.list().await?;
+
+    Ok(Json(ApiEnvelope::success(robots)))
+}
+
+async fn get_robot(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<RobotConfigSummary>>> {
+    let robot = state.robots.get(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(robot)))
+}
+
+async fn create_robot(
+    State(state): State<AppState>,
+    Json(payload): Json<RobotConfigSummary>,
+) -> ApiResult<Json<ApiEnvelope<RobotConfigSummary>>> {
+    let lotteries = state.lotteries.list().await?;
+    let robot = state.robots.create(payload, &lotteries).await?;
+
+    Ok(Json(ApiEnvelope::success(robot)))
+}
+
+async fn update_robot(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<RobotConfigSummary>,
+) -> ApiResult<Json<ApiEnvelope<RobotConfigSummary>>> {
+    let lotteries = state.lotteries.list().await?;
+    let robot = state.robots.update(&id, payload, &lotteries).await?;
+
+    Ok(Json(ApiEnvelope::success(robot)))
+}
+
+async fn delete_robot(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<RobotConfigSummary>>> {
+    let robot = state.robots.delete(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(robot)))
+}
+
+async fn set_robot_status(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<RobotStatusRequest>,
+) -> ApiResult<Json<ApiEnvelope<RobotConfigSummary>>> {
+    let robot = state.robots.set_status(&id, payload.status).await?;
+
+    Ok(Json(ApiEnvelope::success(robot)))
 }
 
 async fn list_financial_accounts(

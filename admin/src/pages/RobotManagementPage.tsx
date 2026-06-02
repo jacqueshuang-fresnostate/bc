@@ -1,0 +1,468 @@
+import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Bot, RefreshCcw, Save, Trash2 } from 'lucide-react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from 'react';
+import { MetricCard } from '../components/MetricCard';
+import { useRobots } from '../hooks/useRobots';
+import type { LotteryKind } from '../types/dashboard';
+import type { RobotConfigSummary, RobotKind, RobotStatus } from '../types/robots';
+
+interface RobotManagementPageProps {
+  activeModuleKey: string;
+  onDashboardRefresh: () => void;
+}
+
+interface RobotFormState {
+  description: string;
+  id: string;
+  kind: RobotKind;
+  lotteryIds: string[];
+  name: string;
+  status: RobotStatus;
+}
+
+export function RobotManagementPage({
+  activeModuleKey,
+  onDashboardRefresh,
+}: RobotManagementPageProps) {
+  const {
+    changeStatus,
+    error,
+    loading,
+    lotteries,
+    refresh,
+    remove,
+    robots,
+    save,
+    saving,
+  } = useRobots();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [filterKind, setFilterKind] = useState<RobotKind>(
+    kindForModule(activeModuleKey),
+  );
+  const [form, setForm] = useState<RobotFormState>(() =>
+    emptyRobotForm(kindForModule(activeModuleKey)),
+  );
+  const filteredRobots = useMemo(
+    () => robots.filter((robot) => robot.kind === filterKind),
+    [filterKind, robots],
+  );
+  const totals = useMemo(() => robotTotals(robots), [robots]);
+
+  useEffect(() => {
+    const nextKind = kindForModule(activeModuleKey);
+    setFilterKind(nextKind);
+    setForm((current) => ({ ...current, kind: nextKind }));
+  }, [activeModuleKey]);
+
+  const refreshAll = () => {
+    refresh();
+    onDashboardRefresh();
+  };
+
+  const submit = async () => {
+    const saved = await save(robotPayload(form), editingId ?? undefined);
+    setEditingId(saved.id);
+    setForm(robotFormFromSummary(saved));
+    onDashboardRefresh();
+  };
+
+  const deleteCurrent = async () => {
+    if (!editingId) {
+      return;
+    }
+    await remove(editingId);
+    setEditingId(null);
+    setForm(emptyRobotForm(filterKind));
+    onDashboardRefresh();
+  };
+
+  return (
+    <div className="space-y-5">
+      <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-ink">机器人配置</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            维护合买机器人和购彩机器人适用彩种、状态和说明。
+          </p>
+        </div>
+        <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
+          刷新
+        </Button>
+      </section>
+
+      {error ? <Banner type="danger" title="机器人接口错误" description={error} /> : null}
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="机器人总数" trend="内存配置" value={`${robots.length}`} />
+        <MetricCard
+          label="合买机器人"
+          trend="发起合买与满单辅助"
+          value={`${totals.groupBuyCount}`}
+        />
+        <MetricCard
+          label="购彩机器人"
+          trend="模拟普通用户购彩"
+          value={`${totals.purchaseCount}`}
+        />
+        <MetricCard
+          label="已启用"
+          trend={`${totals.pausedCount} 个暂停`}
+          value={`${totals.enabledCount}`}
+        />
+      </section>
+
+      <section className="flex flex-wrap gap-2">
+        <Button
+          theme={filterKind === 'groupBuy' ? 'solid' : 'light'}
+          onClick={() => {
+            setFilterKind('groupBuy');
+            setForm((current) => ({ ...current, kind: 'groupBuy' }));
+          }}
+        >
+          合买机器人
+        </Button>
+        <Button
+          theme={filterKind === 'purchase' ? 'solid' : 'light'}
+          onClick={() => {
+            setFilterKind('purchase');
+            setForm((current) => ({ ...current, kind: 'purchase' }));
+          }}
+        >
+          购彩机器人
+        </Button>
+      </section>
+
+      {loading ? (
+        <Card className="rounded-md border border-line">
+          <div className="grid min-h-[320px] place-items-center">
+            <Spin tip="正在加载机器人配置" />
+          </div>
+        </Card>
+      ) : (
+        <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
+          <Card className="rounded-md border border-line">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-semibold text-ink">
+                {robotKindText(filterKind)}
+              </h2>
+              <Tag color="cyan">{filteredRobots.length} 个配置</Tag>
+            </div>
+            {filteredRobots.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[840px] text-left text-sm">
+                  <thead className="border-b border-line text-xs text-slate-500">
+                    <tr>
+                      <th className="py-2 pr-4 font-medium">机器人</th>
+                      <th className="py-2 pr-4 font-medium">彩种</th>
+                      <th className="py-2 pr-4 font-medium">状态</th>
+                      <th className="py-2 pr-4 font-medium">说明</th>
+                      <th className="py-2 pr-4 font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRobots.map((robot) => (
+                      <tr
+                        key={robot.id}
+                        className={`border-b border-slate-100 ${
+                          editingId === robot.id ? 'bg-teal-50/60' : ''
+                        }`}
+                      >
+                        <td className="py-3 pr-4">
+                          <button
+                            className="text-left font-semibold text-accent"
+                            type="button"
+                            onClick={() => {
+                              setEditingId(robot.id);
+                              setForm(robotFormFromSummary(robot));
+                            }}
+                          >
+                            {robot.name}
+                          </button>
+                          <div className="mt-1 text-xs text-slate-400">{robot.id}</div>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <div className="flex flex-wrap gap-2">
+                            {robot.lotteryIds.map((lotteryId) => (
+                              <Tag key={lotteryId} color="grey">
+                                {lotteryName(lotteryId, lotteries)}
+                              </Tag>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Tag color={robotStatusColor(robot.status)}>
+                            {robotStatusText(robot.status)}
+                          </Tag>
+                        </td>
+                        <td className="py-3 pr-4 text-slate-600">
+                          {robot.description}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="small"
+                              onClick={() => {
+                                setEditingId(robot.id);
+                                setForm(robotFormFromSummary(robot));
+                              }}
+                            >
+                              编辑
+                            </Button>
+                            <Button
+                              disabled={robot.status === 'enabled'}
+                              size="small"
+                              onClick={() =>
+                                void changeStatus(robot.id, 'enabled').then(
+                                  onDashboardRefresh,
+                                )
+                              }
+                            >
+                              启用
+                            </Button>
+                            <Button
+                              disabled={robot.status === 'paused'}
+                              size="small"
+                              onClick={() =>
+                                void changeStatus(robot.id, 'paused').then(
+                                  onDashboardRefresh,
+                                )
+                              }
+                            >
+                              暂停
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+                当前类型暂无机器人配置。
+              </div>
+            )}
+          </Card>
+
+          <Card className="rounded-md border border-line">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-md bg-teal-50 text-teal-700">
+                <Bot size={18} />
+              </div>
+              <h2 className="text-base font-semibold text-ink">配置维护</h2>
+            </div>
+            <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
+              <Field label="机器人 ID">
+                <input
+                  className="form-input"
+                  value={form.id}
+                  onChange={(event) => setFormValue(setForm, 'id', event.target.value)}
+                />
+              </Field>
+              <Field label="名称">
+                <input
+                  className="form-input"
+                  value={form.name}
+                  onChange={(event) =>
+                    setFormValue(setForm, 'name', event.target.value)
+                  }
+                />
+              </Field>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                <Field label="类型">
+                  <select
+                    className="form-input"
+                    value={form.kind}
+                    onChange={(event) =>
+                      setFormValue(setForm, 'kind', event.target.value as RobotKind)
+                    }
+                  >
+                    <option value="groupBuy">合买机器人</option>
+                    <option value="purchase">购彩机器人</option>
+                  </select>
+                </Field>
+                <Field label="状态">
+                  <select
+                    className="form-input"
+                    value={form.status}
+                    onChange={(event) =>
+                      setFormValue(setForm, 'status', event.target.value as RobotStatus)
+                    }
+                  >
+                    <option value="enabled">启用</option>
+                    <option value="paused">暂停</option>
+                    <option value="disabled">禁用</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm font-medium text-slate-600">适用彩种</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {lotteries.map((lottery) => (
+                    <label
+                      key={lottery.id}
+                      className="flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-2 text-sm text-slate-600"
+                    >
+                      <input
+                        checked={form.lotteryIds.includes(lottery.id)}
+                        type="checkbox"
+                        onChange={(event) =>
+                          toggleLottery(setForm, lottery.id, event.target.checked)
+                        }
+                      />
+                      {lottery.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <Field label="说明">
+                <input
+                  className="form-input"
+                  value={form.description}
+                  onChange={(event) =>
+                    setFormValue(setForm, 'description', event.target.value)
+                  }
+                />
+              </Field>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={saving || form.lotteryIds.length === 0}
+                  icon={<Save size={16} />}
+                  theme="solid"
+                  onClick={() => void submit()}
+                >
+                  {editingId ? '保存配置' : '新增配置'}
+                </Button>
+                <Button
+                  onClick={() => {
+                    setEditingId(null);
+                    setForm(emptyRobotForm(filterKind));
+                  }}
+                >
+                  新建
+                </Button>
+                <Button
+                  disabled={!editingId || saving}
+                  icon={<Trash2 size={16} />}
+                  onClick={() => void deleteCurrent()}
+                >
+                  删除
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function Field({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <label className="block text-sm font-medium text-slate-600">
+      <span className="mb-1 block">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function kindForModule(moduleKey: string): RobotKind {
+  return moduleKey === 'group-buy-robot' ? 'groupBuy' : 'purchase';
+}
+
+function emptyRobotForm(kind: RobotKind): RobotFormState {
+  return {
+    description: kind === 'groupBuy' ? '开盘期间发起合买并辅助满单' : '模拟用户购彩',
+    id: kind === 'groupBuy' ? 'R-GROUP-NEW' : 'R-BUY-NEW',
+    kind,
+    lotteryIds: [],
+    name: kind === 'groupBuy' ? '新合买机器人' : '新购彩机器人',
+    status: 'paused',
+  };
+}
+
+function robotFormFromSummary(robot: RobotConfigSummary): RobotFormState {
+  return {
+    description: robot.description,
+    id: robot.id,
+    kind: robot.kind,
+    lotteryIds: robot.lotteryIds,
+    name: robot.name,
+    status: robot.status,
+  };
+}
+
+function robotPayload(form: RobotFormState): RobotConfigSummary {
+  return {
+    description: form.description.trim(),
+    id: form.id.trim(),
+    kind: form.kind,
+    lotteryIds: form.lotteryIds,
+    name: form.name.trim(),
+    status: form.status,
+  };
+}
+
+function robotTotals(robots: RobotConfigSummary[]) {
+  return {
+    enabledCount: robots.filter((robot) => robot.status === 'enabled').length,
+    groupBuyCount: robots.filter((robot) => robot.kind === 'groupBuy').length,
+    pausedCount: robots.filter((robot) => robot.status === 'paused').length,
+    purchaseCount: robots.filter((robot) => robot.kind === 'purchase').length,
+  };
+}
+
+function setFormValue<K extends keyof RobotFormState>(
+  setForm: Dispatch<SetStateAction<RobotFormState>>,
+  key: K,
+  value: RobotFormState[K],
+) {
+  setForm((current) => ({ ...current, [key]: value }));
+}
+
+function toggleLottery(
+  setForm: Dispatch<SetStateAction<RobotFormState>>,
+  lotteryId: string,
+  checked: boolean,
+) {
+  setForm((current) => ({
+    ...current,
+    lotteryIds: checked
+      ? Array.from(new Set([...current.lotteryIds, lotteryId]))
+      : current.lotteryIds.filter((id) => id !== lotteryId),
+  }));
+}
+
+function lotteryName(id: string, lotteries: LotteryKind[]) {
+  return lotteries.find((lottery) => lottery.id === id)?.name ?? id;
+}
+
+function robotKindText(kind: RobotKind) {
+  return kind === 'groupBuy' ? '合买机器人' : '购彩机器人';
+}
+
+function robotStatusText(status: RobotStatus) {
+  const labels: Record<RobotStatus, string> = {
+    disabled: '禁用',
+    enabled: '启用',
+    paused: '暂停',
+  };
+  return labels[status];
+}
+
+function robotStatusColor(status: RobotStatus) {
+  if (status === 'enabled') {
+    return 'green';
+  }
+  if (status === 'paused') {
+    return 'orange';
+  }
+  return 'grey';
+}

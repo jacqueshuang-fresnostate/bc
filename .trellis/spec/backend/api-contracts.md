@@ -1639,3 +1639,110 @@ await createAdmin({
 ```
 
 前端提交稳定 `roleId`，后端根据角色仓储回填可信 `roleName`。
+
+---
+
+## 场景：机器人配置管理接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改合买机器人、购彩机器人配置管理接口，或让 dashboard 读取机器人仓储。
+- 范围：后端机器人领域模型、内存机器人仓储、彩种绑定校验、管理后台 API、前端 API client、`useRobots` hook 和“机器人配置”页面。
+
+### 2. 签名
+
+- `GET /api/admin/robots`
+- `GET /api/admin/robots/{id}`
+- `POST /api/admin/robots`
+- `PUT /api/admin/robots/{id}`
+- `DELETE /api/admin/robots/{id}`
+- `PATCH /api/admin/robots/{id}/status`
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封。机器人配置字段：
+
+```json
+{
+  "id": "R-BUY-001",
+  "name": "购彩模拟机器人",
+  "kind": "purchase",
+  "lotteryIds": ["ssc60"],
+  "status": "paused",
+  "description": "按彩种开盘时间模拟普通用户购彩"
+}
+```
+
+字段契约：
+
+1. `kind` 只允许 `groupBuy` 或 `purchase`。
+2. `status` 只允许 `enabled`、`paused`、`disabled`。
+3. `lotteryIds` 必须至少包含一个有效彩种 ID；后端保存时会去重并按稳定顺序返回。
+4. `DashboardSummary.robots` 必须从 `RobotRepository` 读取，不允许 dashboard 使用独立静态机器人函数。
+5. 本阶段只维护配置，不执行真实机器人任务，不自动创建合买计划，也不自动下投注单。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 机器人 ID 为空 | HTTP 400，返回 `robot id is required` |
+| 机器人名称为空 | HTTP 400，返回 `robot name is required` |
+| 机器人说明为空 | HTTP 400，返回 `robot description is required` |
+| `lotteryIds` 为空 | HTTP 400，返回 `at least one robot lottery is required` |
+| `lotteryIds` 包含不存在彩种 | HTTP 404，返回 `lottery ... not found for robot` |
+| 创建重复机器人 ID | HTTP 409，返回重复机器人错误 |
+| 更新路径 ID 与机器人 ID 不一致 | HTTP 400，返回 `path id must match robot id` |
+| 查询、更新、删除不存在机器人 | HTTP 404，返回机器人不存在 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：创建 `purchase` 机器人并绑定 `fc3d`、`ssc60`，响应按标准字段返回，dashboard 同步显示该机器人。
+- Good：通过 `PATCH /api/admin/robots/{id}/status` 把机器人从 `paused` 改为 `enabled`，列表立即显示启用状态。
+- Base：无数据库环境下使用内存机器人仓储，服务重启后恢复种子机器人配置。
+- Bad：机器人页面直接读取 dashboard 静态 `robots`，保存后列表与首页摘要会漂移。
+- Bad：机器人配置保存时不校验彩种存在，后续真实执行会对不存在彩种下单或发起合买。
+
+### 6. 必要测试
+
+- 后端需要覆盖机器人创建、状态变更和绑定彩种去重。
+- 后端需要覆盖无彩种拒绝保存。
+- 后端需要覆盖绑定不存在彩种拒绝保存。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`，确认机器人类型、状态和 API client 类型一致。
+- API 冒烟需要创建机器人、切换状态、验证不存在彩种错误，并确认 dashboard 同步返回。
+- 浏览器验证需要进入“合买机器人”和“购彩机器人”入口，确认真实页面显示且控制台无错误。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+DashboardSummary {
+    robots: robots(),
+    // ...
+}
+```
+
+这个写法让 dashboard 和机器人管理页面使用两份数据。
+
+```rust
+robot_store.create(robot)?;
+```
+
+如果保存时不传入彩种列表校验，后续机器人执行会绑定不存在彩种。
+
+#### 正确
+
+```rust
+let robots = state.robots.list().await?;
+dashboard_summary_with_orders(..., robots)
+```
+
+dashboard 读取同一个机器人仓储。
+
+```rust
+let lotteries = state.lotteries.list().await?;
+state.robots.create(payload, &lotteries).await?;
+```
+
+保存机器人前先校验绑定彩种存在。

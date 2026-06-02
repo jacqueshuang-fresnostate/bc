@@ -111,12 +111,15 @@ export interface FinanceOverview {
   todayPayoutMinor: number;
 }
 
+export type RobotKind = 'groupBuy' | 'purchase';
+export type RobotStatus = 'enabled' | 'paused' | 'disabled';
+
 export interface RobotConfigSummary {
   id: string;
   name: string;
-  kind: 'groupBuy' | 'purchase';
+  kind: RobotKind;
   lotteryIds: string[];
-  status: 'enabled' | 'paused' | 'disabled';
+  status: RobotStatus;
   description: string;
 }
 
