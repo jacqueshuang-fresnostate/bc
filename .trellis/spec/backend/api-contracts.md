@@ -2489,3 +2489,133 @@ setStatus(nextStatus);
 ```
 
 前端保存后以服务端返回状态作为事实来源。
+
+---
+
+## 场景：管理后台登录鉴权接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增登录、当前管理员、登出接口，并让 `/api/admin/**` 管理接口开始要求 Bearer Token。
+- 范围：后端 auth DTO、统一 API 信封、前端 API client token 处理、菜单权限过滤、HTTP 401/403 错误契约。
+
+### 2. 签名
+
+- `POST /api/admin/auth/login`
+- `GET /api/admin/auth/me`
+- `POST /api/admin/auth/logout`
+- 认证头：`Authorization: Bearer <token>`
+
+### 3. 契约
+
+登录请求：
+
+```json
+{
+  "username": "admin",
+  "password": "admin123"
+}
+```
+
+登录响应 `data`：
+
+```json
+{
+  "token": "adm-A10001-...",
+  "admin": {
+    "id": "A10001",
+    "username": "admin",
+    "roleId": "role-super",
+    "roleName": "超级管理员",
+    "status": "active"
+  },
+  "role": {
+    "id": "role-super",
+    "name": "超级管理员",
+    "scopes": ["users", "orders", "finance"]
+  },
+  "scopes": ["users", "orders", "finance"]
+}
+```
+
+`GET /api/admin/auth/me` 返回当前管理员资料，不返回新 token：
+
+```json
+{
+  "admin": {},
+  "role": {},
+  "scopes": []
+}
+```
+
+`POST /api/admin/auth/logout` 返回：
+
+```json
+{
+  "loggedOut": true
+}
+```
+
+前端 API client 必须把 token 放入 `localStorage` 的 `bc.admin.authToken`，并在所有管理接口请求中附加 `Authorization` 头。登录页不应提前请求 dashboard。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 登录账号或密码为空 | HTTP 400，统一错误信封 |
+| 账号或密码错误 | HTTP 401，`invalid admin credentials` |
+| 管理员状态不是 `active` | HTTP 403，`admin account is not active` |
+| `/api/admin/**` 缺少 Authorization | HTTP 401，`authorization token is required` |
+| Authorization 不是 Bearer 格式 | HTTP 401，`authorization bearer token is required` |
+| token 无效或已登出 | HTTP 401，`invalid admin session` |
+| token 有效但缺少路径所需权限 | HTTP 403，提示缺少权限 |
+| 登出成功 | HTTP 200，`loggedOut=true`，后续同 token 请求返回 401 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：未登录打开前端只显示登录页；登录后请求 dashboard 带 token，菜单按 scopes 过滤。
+- Base：无数据库阶段使用内存 token；服务重启后 token 失效，前端清理本地 token 并回到登录页。
+- Bad：前端在未登录时先请求 `/api/admin/dashboard`，造成无意义 401 和页面闪烁。
+- Bad：后端只隐藏菜单但不拦截 API，低权限管理员仍可直接请求无权限接口。
+
+### 6. 必要测试
+
+- 后端测试需要覆盖活跃管理员登录、锁定管理员拒绝、登出后 token 失效和路径权限映射。
+- API 冒烟需要确认无 token 为 401、有效 token 可访问、低权限 token 访问高权限接口为 403。
+- 前端需要运行 `npm run build`。
+- 浏览器验证需要覆盖未登录登录页、登录成功进入后台、刷新保持登录态、登出回到登录页。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```ts
+const { data } = useDashboard();
+if (!session) return <LoginPage />;
+```
+
+这个写法在未登录时仍会先请求 dashboard，制造 401 噪声。
+
+```rust
+Router::new().route("/admins", get(list_admins))
+// 只在前端隐藏菜单，后端不校验 scopes
+```
+
+这个写法不能阻止绕过前端直接调用接口。
+
+#### 正确
+
+```ts
+const { data } = useDashboard(Boolean(session));
+if (!session) return <LoginPage />;
+```
+
+未登录时不发管理接口请求。
+
+```rust
+if !session.scopes.contains(&required_scope) {
+    return Err(ApiError::Forbidden(...));
+}
+```
+
+后端按 token 的角色权限做最终拦截。

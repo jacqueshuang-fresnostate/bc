@@ -97,7 +97,7 @@ pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
 
 fn router_with_state(state: AppState) -> Router {
     Router::new()
-        .nest("/api", routes::router())
+        .nest("/api", routes::router(state.clone()))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }

@@ -1,10 +1,12 @@
 use std::{
     collections::{BTreeMap, HashSet},
     sync::{Arc, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
     domain::{
+        auth::{AdminAuthSession, AdminLoginRequest},
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         user::{AdminSummary, RegistrationConfig, UserStatus, UserSummary},
     },
@@ -178,14 +180,38 @@ impl AccessRepository {
             .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
             .update_registration(registration)
     }
+
+    pub async fn login(&self, payload: AdminLoginRequest) -> ApiResult<AdminAuthSession> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .login(payload)
+    }
+
+    pub async fn session_from_token(&self, token: &str) -> ApiResult<AdminAuthSession> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .session_from_token(token)
+    }
+
+    pub async fn logout(&self, token: &str) -> ApiResult<()> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .logout(token)
+    }
 }
 
 #[derive(Debug)]
 struct AccessStore {
     users: BTreeMap<String, UserSummary>,
     admins: BTreeMap<String, AdminSummary>,
+    demo_password: String,
     roles: BTreeMap<String, AdminRole>,
+    sessions: BTreeMap<String, String>,
     settings: BTreeMap<String, SystemSetting>,
+    session_counter: u64,
     registration: RegistrationConfig,
 }
 
@@ -211,8 +237,11 @@ impl AccessStore {
         Self {
             users,
             admins,
+            demo_password: "admin123".to_string(),
             roles,
+            sessions: BTreeMap::new(),
             settings,
+            session_counter: 0,
             registration: RegistrationConfig {
                 username_enabled: true,
                 email_enabled: false,
@@ -417,6 +446,65 @@ impl AccessStore {
         Ok(self.registration.clone())
     }
 
+    fn login(&mut self, payload: AdminLoginRequest) -> ApiResult<AdminAuthSession> {
+        let username = required_trimmed(payload.username, "admin username")?;
+        let password = required_trimmed(payload.password, "admin password")?;
+        let admin = self
+            .admins
+            .values()
+            .find(|admin| admin.username == username || admin.id == username)
+            .cloned()
+            .ok_or_else(|| ApiError::Unauthorized("invalid admin credentials".to_string()))?;
+
+        if password != self.demo_password {
+            return Err(ApiError::Unauthorized(
+                "invalid admin credentials".to_string(),
+            ));
+        }
+        if admin.status != UserStatus::Active {
+            return Err(ApiError::Forbidden(
+                "admin account is not active".to_string(),
+            ));
+        }
+
+        let token = self.next_session_token(&admin.id)?;
+        self.sessions.insert(token.clone(), admin.id.clone());
+        self.session_from_token(&token)
+    }
+
+    fn session_from_token(&self, token: &str) -> ApiResult<AdminAuthSession> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(ApiError::Unauthorized(
+                "authorization token is required".to_string(),
+            ));
+        }
+
+        let admin_id = self
+            .sessions
+            .get(token)
+            .ok_or_else(|| ApiError::Unauthorized("invalid admin session".to_string()))?;
+        let admin = self.get_admin(admin_id)?;
+        if admin.status != UserStatus::Active {
+            return Err(ApiError::Forbidden(
+                "admin account is not active".to_string(),
+            ));
+        }
+        let role = self.get_role(&admin.role_id)?;
+
+        Ok(AdminAuthSession {
+            admin,
+            scopes: role.scopes.clone(),
+            role,
+            token: token.to_string(),
+        })
+    }
+
+    fn logout(&mut self, token: &str) -> ApiResult<()> {
+        self.sessions.remove(token.trim());
+        Ok(())
+    }
+
     fn sync_admin_role_names(&mut self, role_id: &str) {
         let Some(role) = self.roles.get(role_id) else {
             return;
@@ -426,6 +514,19 @@ impl AccessStore {
                 admin.role_name = role.name.clone();
             }
         }
+    }
+
+    fn next_session_token(&mut self, admin_id: &str) -> ApiResult<String> {
+        self.session_counter = self.session_counter.saturating_add(1);
+        let unix_millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| ApiError::Internal("system time is before unix epoch".to_string()))?
+            .as_millis();
+
+        Ok(format!(
+            "adm-{admin_id}-{unix_millis}-{}",
+            self.session_counter
+        ))
     }
 }
 
@@ -674,5 +775,63 @@ mod tests {
             .expect_err("all registration methods cannot be disabled");
 
         assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn access_repository_logs_in_active_admin() {
+        let access = AccessRepository::memory_seeded();
+        let session = access
+            .login(AdminLoginRequest {
+                username: "admin".to_string(),
+                password: "admin123".to_string(),
+            })
+            .await
+            .expect("active admin can login");
+
+        assert_eq!(session.admin.id, "A10001");
+        assert!(session.scopes.contains(&PermissionScope::Admins));
+
+        let current = access
+            .session_from_token(&session.token)
+            .await
+            .expect("session token can be resolved");
+        assert_eq!(current.admin.username, "admin");
+    }
+
+    #[tokio::test]
+    async fn access_repository_rejects_locked_admin_login() {
+        let access = AccessRepository::memory_seeded();
+        let error = access
+            .login(AdminLoginRequest {
+                username: "locked_admin".to_string(),
+                password: "admin123".to_string(),
+            })
+            .await
+            .expect_err("locked admin must be rejected");
+
+        assert!(matches!(error, ApiError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn access_repository_invalidates_logout_token() {
+        let access = AccessRepository::memory_seeded();
+        let session = access
+            .login(AdminLoginRequest {
+                username: "admin".to_string(),
+                password: "admin123".to_string(),
+            })
+            .await
+            .expect("active admin can login");
+
+        access
+            .logout(&session.token)
+            .await
+            .expect("logout should succeed");
+        let error = access
+            .session_from_token(&session.token)
+            .await
+            .expect_err("logged out token must be invalid");
+
+        assert!(matches!(error, ApiError::Unauthorized(_)));
     }
 }

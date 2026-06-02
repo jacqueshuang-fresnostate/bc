@@ -1,13 +1,17 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Request, State},
+    http::header::AUTHORIZATION,
+    middleware::{self, Next},
+    response::Response,
     routing::{get, patch, post, put},
-    Json, Router,
+    Extension, Json, Router,
 };
 use serde::Deserialize;
 
 use crate::{
     app::AppState,
     domain::{
+        auth::{AdminAuthSession, AdminLoginRequest, AdminLogoutResponse, CurrentAdminProfile},
         draw::{
             CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest, DrawIssue,
             DrawIssueGenerationPreview, DrawIssueResultRequest, GenerateDrawIssueRequest,
@@ -21,7 +25,7 @@ use crate::{
         invite::{CreateInviteRecordRequest, InviteRecord, UpdateInviteRecordRequest},
         lottery::{DrawSource, LotteryKind},
         order::{CreateOrderRequest, OrderDetail},
-        permission::{AdminRole, SystemSetting, UpdateSystemSettingRequest},
+        permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
         rebate::{InvitePolicySummary, InvitePolicyUpdateRequest},
         robot::{RobotConfigSummary, RobotStatusRequest},
@@ -34,7 +38,7 @@ use crate::{
             AdminStatusRequest, AdminSummary, RegistrationConfig, UserStatusRequest, UserSummary,
         },
     },
-    error::ApiResult,
+    error::{ApiError, ApiResult},
     response::ApiEnvelope,
     services::{
         automation::run_draw_automation,
@@ -49,8 +53,8 @@ use crate::{
     },
 };
 
-pub fn router() -> Router<AppState> {
-    Router::new()
+pub fn router(state: AppState) -> Router<AppState> {
+    let protected_routes = Router::new()
         .route("/dashboard", get(get_dashboard_summary))
         .route("/financial-accounts", get(list_financial_accounts))
         .route("/ledger-entries", get(list_ledger_entries))
@@ -155,6 +159,124 @@ pub fn router() -> Router<AppState> {
             get(get_lottery).put(update_lottery).delete(delete_lottery),
         )
         .route("/lotteries/{id}/sale", patch(set_lottery_sale))
+        .route("/auth/me", get(get_current_admin))
+        .route("/auth/logout", post(logout_admin))
+        .route_layer(middleware::from_fn_with_state(state, require_admin_auth));
+
+    Router::new()
+        .route("/auth/login", post(login_admin))
+        .merge(protected_routes)
+}
+
+async fn require_admin_auth(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> ApiResult<Response> {
+    let token = bearer_token(&request)?;
+    let session = state.access.session_from_token(token).await?;
+    if let Some(required_scope) = required_scope_for_path(request.uri().path()) {
+        if !session.scopes.contains(&required_scope) {
+            return Err(ApiError::Forbidden(format!(
+                "permission `{required_scope:?}` is required"
+            )));
+        }
+    }
+
+    request.extensions_mut().insert(session);
+    Ok(next.run(request).await)
+}
+
+fn bearer_token(request: &Request) -> ApiResult<&str> {
+    let header = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| ApiError::Unauthorized("authorization token is required".to_string()))?;
+    let Some(token) = header.strip_prefix("Bearer ") else {
+        return Err(ApiError::Unauthorized(
+            "authorization bearer token is required".to_string(),
+        ));
+    };
+
+    Ok(token)
+}
+
+fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
+    let path = path.trim_start_matches('/');
+    let path = path.strip_prefix("admin/").unwrap_or(path);
+
+    if path.starts_with("auth/") || path == "dashboard" {
+        return None;
+    }
+    if path.starts_with("users") || path.starts_with("registration") {
+        return Some(PermissionScope::Users);
+    }
+    if path.starts_with("admins") {
+        return Some(PermissionScope::Admins);
+    }
+    if path.starts_with("roles") {
+        return Some(PermissionScope::Roles);
+    }
+    if path.starts_with("system-settings") {
+        return Some(PermissionScope::SystemSettings);
+    }
+    if path.starts_with("orders") || path.starts_with("settlements") {
+        return Some(PermissionScope::Orders);
+    }
+    if path.starts_with("financial-")
+        || path.starts_with("ledger-entries")
+        || path.starts_with("finance")
+    {
+        return Some(PermissionScope::Finance);
+    }
+    if path.starts_with("support") {
+        return Some(PermissionScope::CustomerService);
+    }
+    if path.starts_with("robots") {
+        return Some(PermissionScope::Robots);
+    }
+    if path.starts_with("invitations")
+        || path.starts_with("invite-policy")
+        || path.starts_with("rebate")
+    {
+        return Some(PermissionScope::Rebates);
+    }
+    if path.starts_with("draw")
+        || path.starts_with("lotteries")
+        || path.starts_with("group-buy")
+        || path.starts_with("play-rules")
+    {
+        return Some(PermissionScope::Lotteries);
+    }
+
+    None
+}
+
+async fn login_admin(
+    State(state): State<AppState>,
+    Json(payload): Json<AdminLoginRequest>,
+) -> ApiResult<Json<ApiEnvelope<AdminAuthSession>>> {
+    let session = state.access.login(payload).await?;
+
+    Ok(Json(ApiEnvelope::success(session)))
+}
+
+async fn get_current_admin(
+    Extension(session): Extension<AdminAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<CurrentAdminProfile>>> {
+    Ok(Json(ApiEnvelope::success(session.profile())))
+}
+
+async fn logout_admin(
+    State(state): State<AppState>,
+    Extension(session): Extension<AdminAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<AdminLogoutResponse>>> {
+    state.access.logout(&session.token).await?;
+
+    Ok(Json(ApiEnvelope::success(AdminLogoutResponse {
+        logged_out: true,
+    })))
 }
 
 async fn run_draw_automation_request(
@@ -869,4 +991,47 @@ async fn set_lottery_sale(
 #[serde(rename_all = "camelCase")]
 struct SaleStatusRequest {
     sale_enabled: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::required_scope_for_path;
+    use crate::domain::permission::PermissionScope;
+
+    #[test]
+    fn required_scope_maps_admin_paths() {
+        assert_eq!(required_scope_for_path("/dashboard"), None);
+        assert_eq!(
+            required_scope_for_path("/users"),
+            Some(PermissionScope::Users)
+        );
+        assert_eq!(
+            required_scope_for_path("/admins/A10001"),
+            Some(PermissionScope::Admins)
+        );
+        assert_eq!(
+            required_scope_for_path("/roles"),
+            Some(PermissionScope::Roles)
+        );
+        assert_eq!(
+            required_scope_for_path("/draw-issues"),
+            Some(PermissionScope::Lotteries)
+        );
+        assert_eq!(
+            required_scope_for_path("/settlements"),
+            Some(PermissionScope::Orders)
+        );
+        assert_eq!(
+            required_scope_for_path("/support/conversations"),
+            Some(PermissionScope::CustomerService)
+        );
+        assert_eq!(
+            required_scope_for_path("/robots"),
+            Some(PermissionScope::Robots)
+        );
+        assert_eq!(
+            required_scope_for_path("/invite-policy"),
+            Some(PermissionScope::Rebates)
+        );
+    }
 }

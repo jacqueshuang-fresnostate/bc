@@ -10,6 +10,12 @@ import type {
   UserSummary,
 } from '../types/access';
 import type {
+  AdminAuthSession,
+  AdminLoginRequest,
+  AdminLogoutResponse,
+  CurrentAdminProfile,
+} from '../types/auth';
+import type {
   CreateDrawIssueRequest,
   DrawAutomationRun,
   DrawAutomationRunRequest,
@@ -60,6 +66,7 @@ import type {
 } from '../types/support';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const AUTH_TOKEN_STORAGE_KEY = 'bc.admin.authToken';
 
 interface JsonRequestOptions {
   body?: unknown;
@@ -71,9 +78,18 @@ async function requestJson<T>(
   path: string,
   { body, method = 'GET', signal }: JsonRequestOptions = {},
 ): Promise<T> {
+  const token = getStoredAuthToken();
+  const headers = new Headers();
+  if (body !== undefined) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     body: body === undefined ? undefined : JSON.stringify(body),
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers,
     method,
     signal,
   });
@@ -84,6 +100,38 @@ async function requestJson<T>(
   }
 
   return envelope.data;
+}
+
+export function getStoredAuthToken() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+}
+
+export function setStoredAuthToken(token: string) {
+  window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+}
+
+export function clearStoredAuthToken() {
+  window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+}
+
+export function loginAdmin(payload: AdminLoginRequest) {
+  return requestJson<AdminAuthSession>('/api/admin/auth/login', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function fetchCurrentAdmin(signal?: AbortSignal) {
+  return requestJson<CurrentAdminProfile>('/api/admin/auth/me', { signal });
+}
+
+export function logoutAdmin() {
+  return requestJson<AdminLogoutResponse>('/api/admin/auth/logout', {
+    method: 'POST',
+  });
 }
 
 export function fetchDashboard(signal?: AbortSignal) {

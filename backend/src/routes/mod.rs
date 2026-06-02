@@ -5,8 +5,8 @@ use axum::Router;
 
 use crate::app::AppState;
 
-pub fn router() -> Router<AppState> {
+pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .merge(health::router())
-        .nest("/admin", admin::router())
+        .nest("/admin", admin::router(state))
 }

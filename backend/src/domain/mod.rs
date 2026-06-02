@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod draw;
 pub mod finance;
 pub mod group_buy;

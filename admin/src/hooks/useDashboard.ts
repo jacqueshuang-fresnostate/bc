@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { fetchDashboard } from '../api/client';
 import type { DashboardSummary } from '../types/dashboard';
 
-export function useDashboard() {
+export function useDashboard(enabled = true) {
   const [data, setData] = useState<DashboardSummary | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -13,6 +13,13 @@ export function useDashboard() {
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      setData(null);
+      setLoading(false);
+      setError(null);
+      return undefined;
+    }
+
     const controller = new AbortController();
 
     setLoading(true);
@@ -39,7 +46,7 @@ export function useDashboard() {
     return () => {
       controller.abort();
     };
-  }, [refreshToken]);
+  }, [enabled, refreshToken]);
 
   return { data, loading, error, refresh };
 }

@@ -1,3 +1,4 @@
+import { Button } from '@douyinfe/semi-ui';
 import {
   Banknote,
   Bot,
@@ -7,6 +8,7 @@ import {
   ClipboardList,
   Gauge,
   LayoutDashboard,
+  LogOut,
   Settings,
   ShieldCheck,
   Ticket,
@@ -14,6 +16,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import type { AdminAuthSession } from '../types/auth';
 
 export interface NavigationItem {
   key: string;
@@ -23,9 +26,11 @@ export interface NavigationItem {
 
 interface AppShellProps {
   activeKey: string;
+  currentSession: AdminAuthSession;
   items: NavigationItem[];
   children: ReactNode;
   onNavigate: (key: string) => void;
+  onLogout: () => void;
 }
 
 const iconByKey: Record<string, ReactNode> = {
@@ -51,7 +56,14 @@ const iconByKey: Record<string, ReactNode> = {
   rebate: <Banknote size={18} />,
 };
 
-export function AppShell({ activeKey, items, children, onNavigate }: AppShellProps) {
+export function AppShell({
+  activeKey,
+  children,
+  currentSession,
+  items,
+  onLogout,
+  onNavigate,
+}: AppShellProps) {
   const groups = items.reduce<Record<string, NavigationItem[]>>((acc, item) => {
     acc[item.group] = [...(acc[item.group] ?? []), item];
     return acc;
@@ -105,7 +117,21 @@ export function AppShell({ activeKey, items, children, onNavigate }: AppShellPro
                 首期骨架已接入后端概览接口
               </div>
             </div>
-            <div className="text-sm text-slate-500">Asia/Hong_Kong</div>
+            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+              <div className="text-right">
+                <div className="font-medium text-ink">
+                  {currentSession.admin.username}
+                </div>
+                <div className="text-xs text-slate-500">{currentSession.role.name}</div>
+              </div>
+              <Button
+                theme="borderless"
+                icon={<LogOut size={16} />}
+                onClick={onLogout}
+              >
+                登出
+              </Button>
+            </div>
           </div>
         </header>
         <div className="px-4 py-5 sm:px-6">{children}</div>

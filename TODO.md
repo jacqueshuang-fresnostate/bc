@@ -218,3 +218,10 @@
 - 解决问题：此前运营需要分别进入彩种管理和开奖期号页面才能判断每个彩种的当前期号、封盘/开奖时间和开奖结果，缺少一个按彩种扫描的实时总览；本次新增 `useLotteryConsole` hook 并发拉取彩种与开奖期号，页面每秒本地刷新倒计时、每 10 秒轮询服务端数据，按彩种展示销售状态、当前 open/closed 期号、封盘倒计时、开奖倒计时和最近开奖号码。开奖号码继续保持英文逗号分隔格式；用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
 - 验证结果：`npm run build`、`cargo fmt --check`、`cargo check`、`cargo test` 均通过；后端测试 83 个全绿。浏览器验证 `http://127.0.0.1:5192/` 的“彩种控制台”入口可打开，使用 API 创建 `60 秒时时彩` open 期号和 `福彩 3D` 已开奖期号后，页面显示 `CONSOLE-OPEN-20260602212934`、`CONSOLE-DRAWN-20260602212934` 和英文逗号开奖号码 `2,0,3`，倒计时从 `00:00:46` 递减到 `00:00:44`；截图保存到 `/tmp/bc-lottery-console-smoke.png`。
 - 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议继续推进开奖期号持久化、控制台告警、WebSocket/SSE 实时推送或后台真实登录鉴权。
+
+## 2026-06-02 21:42:00 HKT
+
+- 完成任务：实现 `06-02-admin-auth-permission-foundation` 后台登录鉴权与权限拦截基础阶段，新增后台登录页、登录/当前管理员/登出接口、内存 Bearer Token 会话和按角色权限过滤菜单/工作台模块。
+- 解决问题：此前管理后台所有 `/api/admin/**` 接口和前端页面都可以直接访问，角色权限只停留在维护数据里，没有参与登录态、菜单入口或 API 拦截；本次让登录成功后前端保存 token 并自动附加到 API 请求，后端中间件按路径映射 `PermissionScope`，缺 token 返回 401、权限不足返回 403，应用外壳显示当前管理员和角色并支持登出。当前仍使用无数据库阶段的演示密码 `admin123`，后续需要替换为密码哈希和持久化凭据；用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 87 个，覆盖登录成功、锁定管理员拒绝、登出 token 失效和路由权限映射。API 冒烟使用 `PORT=18096` 确认无 token 请求 `/api/admin/dashboard` 返回 401，`admin/admin123` 登录成功并可访问 `/api/admin/auth/me`，`locked_admin/admin123` 返回 403，临时 `role-ops` 管理员可访问 `/api/admin/users` 但访问 `/api/admin/admins` 返回 403。浏览器验证 `http://127.0.0.1:5193/` 未登录显示“管理员登录”，登录后进入系统概览并显示 `admin/超级管理员/登出`，点击登出回到登录页，控制台无 warning/error；截图保存到 `/tmp/bc-auth-login-smoke.png`。
+- 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议推进密码哈希与密码重置、权限数据持久化、按钮级权限、管理员操作审计和 dashboard 敏感数据裁剪。
