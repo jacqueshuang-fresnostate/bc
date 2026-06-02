@@ -665,3 +665,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: 合买配置与计划基础
+
+**Date**: 2026-06-02
+**Task**: 合买配置与计划基础
+**Branch**: `main`
+
+### Summary
+
+实现合买配置与计划基础能力：后端新增合买计划模型、内存仓储和管理接口；dashboard 的 groupBuyPlans 改为读取真实仓储；前端新增合买配置页面，可创建计划、维护状态、查看参与记录并添加参与金额；同步更新架构说明、TODO 和后端 API 规格，并通过格式、检查、测试、构建、API 冒烟和浏览器验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e681e09` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
