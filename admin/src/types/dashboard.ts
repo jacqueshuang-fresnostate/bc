@@ -68,10 +68,14 @@ export interface DrawSource {
 }
 
 export interface OrderSummary {
+  createdAt: string;
   id: string;
   userId: string;
   lotteryId: string;
+  lotteryName: string;
   issue: string;
+  ruleCode: string;
+  stakeCount: number;
   amountMinor: number;
   status: 'pendingDraw' | 'won' | 'lost' | 'cancelled';
 }

@@ -3,6 +3,7 @@ import { AppShell, type NavigationItem } from './components/AppShell';
 import { useDashboard } from './hooks/useDashboard';
 import { DashboardPage } from './pages/DashboardPage';
 import { LotteryManagementPage } from './pages/LotteryManagementPage';
+import { OrderManagementPage } from './pages/OrderManagementPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { PlayRulesPage } from './pages/PlayRulesPage';
 
@@ -46,6 +47,8 @@ export function App() {
         />
       ) : activeKey === 'lotteries' ? (
         <LotteryManagementPage onDashboardRefresh={refresh} />
+      ) : activeKey === 'orders' ? (
+        <OrderManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'play-rules' ? (
         <PlayRulesPage />
       ) : data ? (

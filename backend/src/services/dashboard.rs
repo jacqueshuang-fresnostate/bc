@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::domain::{
     finance::{FinanceOverview, FinancialAccountSummary},
     lottery::{DrawMode, DrawSource, LotteryKind},
-    order::{GroupBuyPlanSummary, OrderStatus, OrderSummary},
+    order::{GroupBuyPlanSummary, OrderSummary},
     permission::{AdminRole, PermissionScope, SystemSetting},
     rebate::{InvitePolicySummary, RebateMode},
     robot::{RobotConfigSummary, RobotKind, RobotStatus},
@@ -64,13 +64,22 @@ pub enum ModuleStatus {
     Planned,
 }
 
-pub fn dashboard_summary(lotteries: Vec<LotteryKind>) -> DashboardSummary {
+pub fn dashboard_summary_with_orders(
+    lotteries: Vec<LotteryKind>,
+    recent_orders: Vec<OrderSummary>,
+) -> DashboardSummary {
     let lottery_count = lotteries.len();
+    let order_count = recent_orders.len();
 
     DashboardSummary {
         metrics: vec![
             metric("users", "用户总数", "128", "+12 今日新增"),
-            metric("orders", "今日订单", "2,418", "示例数据"),
+            metric(
+                "orders",
+                "今日订单",
+                order_count.to_string(),
+                "内存订单仓储",
+            ),
             metric(
                 "lotteries",
                 "已配置彩种",
@@ -82,7 +91,7 @@ pub fn dashboard_summary(lotteries: Vec<LotteryKind>) -> DashboardSummary {
         module_groups: module_groups(),
         lotteries,
         draw_sources: draw_sources(),
-        recent_orders: recent_orders(),
+        recent_orders,
         group_buy_plans: group_buy_plans(),
         finance: FinanceOverview {
             total_balance_minor: 8_324_000,
@@ -291,43 +300,6 @@ fn draw_sources() -> Vec<DrawSource> {
     ]
 }
 
-fn recent_orders() -> Vec<OrderSummary> {
-    vec![
-        OrderSummary {
-            id: "O202606020001".to_string(),
-            user_id: "U10001".to_string(),
-            lottery_id: "fc3d".to_string(),
-            issue: "2026154".to_string(),
-            amount_minor: 2_000,
-            status: OrderStatus::PendingDraw,
-        },
-        OrderSummary {
-            id: "O202606020002".to_string(),
-            user_id: "U10002".to_string(),
-            lottery_id: "ssc60".to_string(),
-            issue: "20260602-812".to_string(),
-            amount_minor: 5_000,
-            status: OrderStatus::Won,
-        },
-        OrderSummary {
-            id: "O202606020003".to_string(),
-            user_id: "U10004".to_string(),
-            lottery_id: "pl3".to_string(),
-            issue: "2026154".to_string(),
-            amount_minor: 4_000,
-            status: OrderStatus::Lost,
-        },
-        OrderSummary {
-            id: "O202606020004".to_string(),
-            user_id: "U10005".to_string(),
-            lottery_id: "manual-test".to_string(),
-            issue: "20260602-test".to_string(),
-            amount_minor: 1_000,
-            status: OrderStatus::Cancelled,
-        },
-    ]
-}
-
 fn group_buy_plans() -> Vec<GroupBuyPlanSummary> {
     vec![GroupBuyPlanSummary {
         id: "G202606020001".to_string(),
@@ -480,12 +452,12 @@ fn settings() -> Vec<SystemSetting> {
 
 #[cfg(test)]
 mod tests {
-    use super::dashboard_summary;
+    use super::dashboard_summary_with_orders;
     use crate::services::lottery::seed_lotteries;
 
     #[test]
     fn dashboard_includes_required_module_groups() {
-        let summary = dashboard_summary(seed_lotteries());
+        let summary = dashboard_summary_with_orders(seed_lotteries(), Vec::new());
         let keys = summary
             .module_groups
             .iter()

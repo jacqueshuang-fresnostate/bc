@@ -217,6 +217,24 @@ pub fn evaluate_play_rule(request: PlayRuleEvaluateRequest) -> ApiResult<PlayRul
     })
 }
 
+pub fn expanded_bets_for_rule(
+    rule_code: &PlayRuleCode,
+    selection: &PlaySelection,
+) -> ApiResult<Vec<String>> {
+    expand_bets(rule_code, selection)
+}
+
+pub fn number_type_for_rule(rule_code: &PlayRuleCode) -> LotteryNumberType {
+    match rule_code {
+        PlayRuleCode::ThreeDirect
+        | PlayRuleCode::ThreeGroupThree
+        | PlayRuleCode::ThreeGroupThreeBanker
+        | PlayRuleCode::ThreeGroupSix
+        | PlayRuleCode::ThreeGroupSixBanker => LotteryNumberType::ThreeDigit,
+        _ => LotteryNumberType::FiveDigit,
+    }
+}
+
 fn summary(
     code: PlayRuleCode,
     label: &str,
@@ -613,17 +631,6 @@ fn window_for_rule(rule_code: &PlayRuleCode) -> ThreeDigitWindow {
         | FiveBackGroupSix
         | FiveBackGroupSixBanker
         | FiveBigSmallOddEven => ThreeDigitWindow::Back,
-    }
-}
-
-fn number_type_for_rule(rule_code: &PlayRuleCode) -> LotteryNumberType {
-    match rule_code {
-        PlayRuleCode::ThreeDirect
-        | PlayRuleCode::ThreeGroupThree
-        | PlayRuleCode::ThreeGroupThreeBanker
-        | PlayRuleCode::ThreeGroupSix
-        | PlayRuleCode::ThreeGroupSixBanker => LotteryNumberType::ThreeDigit,
-        _ => LotteryNumberType::FiveDigit,
     }
 }
 

@@ -3,17 +3,22 @@ use std::error::Error;
 use axum::Router;
 use tower_http::cors::CorsLayer;
 
-use crate::{routes, services::lottery::LotteryRepository};
+use crate::{
+    routes,
+    services::{lottery::LotteryRepository, order::OrderRepository},
+};
 
 #[derive(Clone)]
 pub struct AppState {
     pub lotteries: LotteryRepository,
+    pub orders: OrderRepository,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
             lotteries: LotteryRepository::memory_seeded(),
+            orders: OrderRepository::memory(),
         }
     }
 
@@ -26,7 +31,10 @@ impl AppState {
         let lotteries = LotteryRepository::postgres(&database_url).await?;
 
         tracing::info!("DATABASE_URL configured; using PostgreSQL lottery repository");
-        Ok(Self { lotteries })
+        Ok(Self {
+            lotteries,
+            orders: OrderRepository::memory(),
+        })
     }
 }
 

@@ -139,6 +139,56 @@ export function DashboardPage({
         </Card>
       </section>
 
+      <Card className="rounded-md border border-line">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-ink">最近订单</h2>
+          <Tag color="blue">{data.recentOrders.length} 笔</Tag>
+        </div>
+        {data.recentOrders.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="border-b border-line text-xs text-slate-500">
+                <tr>
+                  <th className="py-2 pr-4 font-medium">订单</th>
+                  <th className="py-2 pr-4 font-medium">用户</th>
+                  <th className="py-2 pr-4 font-medium">彩种</th>
+                  <th className="py-2 pr-4 font-medium">玩法</th>
+                  <th className="py-2 pr-4 font-medium">注数</th>
+                  <th className="py-2 pr-4 font-medium">金额</th>
+                  <th className="py-2 pr-4 font-medium">状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.recentOrders.map((order) => (
+                  <tr key={order.id} className="border-b border-slate-100">
+                    <td className="py-3 pr-4">
+                      <div className="font-semibold text-ink">{order.id}</div>
+                      <div className="mt-1 text-xs text-slate-400">{order.issue}</div>
+                    </td>
+                    <td className="py-3 pr-4 text-slate-600">{order.userId}</td>
+                    <td className="py-3 pr-4 text-slate-600">{order.lotteryName}</td>
+                    <td className="py-3 pr-4 text-slate-600">{order.ruleCode}</td>
+                    <td className="py-3 pr-4 text-slate-600">{order.stakeCount} 注</td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      {formatMoney(order.amountMinor)}
+                    </td>
+                    <td className="py-3 pr-4">
+                      <Tag color={order.status === 'pendingDraw' ? 'blue' : 'grey'}>
+                        {order.status === 'pendingDraw' ? '待开奖' : order.status}
+                      </Tag>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+            暂无订单。进入订单管理创建测试投注单后，这里会显示最近订单。
+          </div>
+        )}
+      </Card>
+
       <section className="space-y-6">
         {data.moduleGroups.map((group) => (
           <ModulePanel

@@ -4,6 +4,7 @@ import type {
   PlayRuleEvaluation,
   PlayRuleSummary,
 } from '../types/playRules';
+import type { CreateOrderRequest, OrderDetail } from '../types/orders';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -78,5 +79,22 @@ export function evaluatePlayRule(payload: PlayRuleEvaluateRequest) {
   return requestJson<PlayRuleEvaluation>('/api/admin/play-rules/evaluate', {
     body: payload,
     method: 'POST',
+  });
+}
+
+export function fetchOrders(signal?: AbortSignal) {
+  return requestJson<OrderDetail[]>('/api/admin/orders', { signal });
+}
+
+export function createOrder(payload: CreateOrderRequest) {
+  return requestJson<OrderDetail>('/api/admin/orders', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function cancelOrder(id: string) {
+  return requestJson<OrderDetail>(`/api/admin/orders/${encodeURIComponent(id)}/cancel`, {
+    method: 'PATCH',
   });
 }

@@ -353,3 +353,140 @@ const result = await evaluatePlayRule(payload);
 ```
 
 前端只提交选号和开奖号码，注数、展开投注和中奖判断都由后端规则引擎返回。
+
+---
+
+## 场景：订单与投注基础接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改投注订单创建、订单列表、订单详情、订单取消、dashboard 最近订单。
+- 范围：后端订单领域模型、内存订单仓储、订单 API、玩法规则引擎复用、彩种配置校验、前端订单页面。
+
+### 2. 签名
+
+- `GET /api/admin/orders`
+- `GET /api/admin/orders/{id}`
+- `POST /api/admin/orders`
+- `PATCH /api/admin/orders/{id}/cancel`
+- `GET /api/admin/dashboard` 的 `recentOrders` 和今日订单指标读取订单仓储。
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封。订单金额字段必须使用最小货币单位整数，不使用浮点数。
+
+创建订单请求：
+
+```json
+{
+  "userId": "U10001",
+  "lotteryId": "fc3d",
+  "issue": "2026155",
+  "ruleCode": "threeDirect",
+  "selection": {
+    "positions": [[2], [4], [7]]
+  },
+  "unitAmountMinor": 200
+}
+```
+
+订单响应：
+
+```json
+{
+  "id": "O000000000001",
+  "userId": "U10001",
+  "lotteryId": "fc3d",
+  "lotteryName": "福彩 3D",
+  "issue": "2026155",
+  "ruleCode": "threeDirect",
+  "numberType": "threeDigit",
+  "selection": {
+    "positions": [[2], [4], [7]],
+    "numbers": [],
+    "bankerNumbers": [],
+    "dragNumbers": [],
+    "bigSmallOddEven": []
+  },
+  "stakeCount": 1,
+  "unitAmountMinor": 200,
+  "amountMinor": 200,
+  "expandedBets": ["247"],
+  "status": "pendingDraw",
+  "createdAt": "unix:1780386834"
+}
+```
+
+订单状态当前支持：
+
+- `pendingDraw`
+- `won`
+- `lost`
+- `cancelled`
+
+本阶段只有创建订单和取消订单会真实流转状态，开奖、计奖、派奖后续实现。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 用户 ID 为空 | HTTP 400，返回 `user id is required` |
+| 彩种 ID 为空 | HTTP 400，返回 `lottery id is required` |
+| 彩种不存在 | HTTP 404，返回彩种不存在 |
+| 请求彩种 ID 与读取的彩种不一致 | HTTP 400，返回 `request lottery id does not match lottery` |
+| 期号为空 | HTTP 400，返回 `issue is required` |
+| 单注金额小于等于 0 | HTTP 400，返回 `unit amount must be greater than zero` |
+| 彩种停售 | HTTP 400，返回 `lottery is not on sale` |
+| 玩法号码类型与彩种号码类型不匹配 | HTTP 400，返回 `rule code does not match lottery number type` |
+| 彩种未启用玩法分类 | HTTP 400，返回 `lottery does not enable this play category` |
+| 玩法选号无效 | HTTP 400，透传玩法规则引擎的校验错误 |
+| 订单金额溢出 | HTTP 400，返回 `order amount is too large` |
+| 查询或取消不存在订单 | HTTP 404，返回订单不存在 |
+| 取消非待开奖订单 | HTTP 400，返回 `only pending draw orders can be cancelled` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`fc3d` 创建 `threeDirect` 订单，选号 `247`、单注 `200` 分，后端返回 `stakeCount=1`、`amountMinor=200`、`expandedBets=["247"]`。
+- Good：创建订单后重新请求 `/api/admin/dashboard`，`recentOrders` 包含该订单，今日订单指标等于内存订单数量。
+- Base：订单仓储当前是内存模式，服务重启后订单清空；这适合当前后台功能验证。
+- Bad：前端传 `amountMinor` 给后端并由后端直接保存；订单金额必须由后端根据注数和单注金额计算。
+- Bad：机器人购彩绕过订单接口直接写订单；后续机器人必须复用订单创建校验。
+
+### 6. 必要测试
+
+- 后端需要覆盖订单创建时按玩法规则引擎计算注数、金额和展开投注。
+- 后端需要覆盖彩种未启用玩法分类时拒绝创建订单。
+- 后端需要覆盖取消待开奖订单，以及重复取消被拒绝。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`。
+- 跨层联调需要创建订单、查询列表、取消订单，并在 dashboard 最近订单确认回流。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```ts
+await createOrder({
+  amountMinor: stakeCount * unitAmountMinor,
+  lotteryId,
+  ruleCode,
+  selection,
+});
+```
+
+这个写法让前端决定订单金额，后续财务和派奖会失去可信入口。
+
+#### 正确
+
+```ts
+await createOrder({
+  lotteryId,
+  ruleCode,
+  selection,
+  unitAmountMinor,
+  userId,
+  issue,
+});
+```
+
+后端读取彩种配置，调用玩法规则引擎计算 `stakeCount` 和 `amountMinor`，再保存订单。
