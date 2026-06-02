@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "确认前端管理后台开发规范"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "确认 Semi UI 组件优先、后台布局和组件 props 约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "确认前端构建和布局验证要求"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "确认 TypeScript 类型安全约定"}
+{"file": ".trellis/spec/guides/index.md", "reason": "确认共享思考指南"}

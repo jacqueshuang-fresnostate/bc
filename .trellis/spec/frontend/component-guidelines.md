@@ -49,6 +49,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 卡片只用于真实分组数据或重复项，不用于装饰页面区块。
 - 后台列表页的创建/编辑维护表单如不需要常驻对照，应使用 Semi UI `SideSheet` 打开；主页面保留列表、筛选、统计和“新建/编辑”入口，避免右侧表单长期占用列表扫描空间。
 - `SideSheet` 表单保存、删除成功后应关闭抽屉，并沿用页面原有 hook 或 API 刷新链路；切换模块时应关闭已打开的维护抽屉，防止不同模块的编辑状态残留。
+- 客服会话消息流应使用 Semi UI `Chat` 组件承载，不手写消息气泡列表；当后台页面只需要展示历史消息、回复输入由业务表单承担时，需要设置 `renderInputArea={() => null}` 和 `enableUpload={false}`，避免出现重复输入区或默认上传控件警告。
 
 > **注意**：当前 `@douyinfe/semi-ui` 包的 `exports` 不暴露 `dist/css/semi.min.css` 作为 bare import。Vite 构建中需要通过相对路径导入完整样式：
 >

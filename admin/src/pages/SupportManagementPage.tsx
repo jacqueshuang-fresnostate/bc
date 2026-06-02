@@ -1,4 +1,4 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Avatar, Banner, Button, Card, Chat, Spin, Tag } from '@douyinfe/semi-ui';
 import { MessageCircle, RefreshCcw, Save, Send, UserPlus } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
@@ -7,6 +7,8 @@ import type {
   CreateSupportConversationRequest,
   SupportConversation,
   SupportConversationStatus,
+  SupportMessage,
+  SupportMessageAuthor,
   SupportPriority,
   UpdateSupportConversationRequest,
 } from '../types/support';
@@ -27,6 +29,19 @@ interface UpdateFormState {
   assignedAdminId: string;
   priority: SupportPriority;
   status: SupportConversationStatus;
+}
+
+type SupportChatRole = 'assistant' | 'system' | 'user';
+
+interface SupportChatMessage {
+  authorName: string;
+  authorText: string;
+  content: string;
+  createAt?: number;
+  createdAtLabel: string;
+  id: string;
+  role: SupportChatRole;
+  status: 'complete';
 }
 
 export function SupportManagementPage({
@@ -60,6 +75,13 @@ export function SupportManagementPage({
     [conversations, selectedId],
   );
   const totals = useMemo(() => supportTotals(conversations), [conversations]);
+  const selectedChatMessages = useMemo(
+    () =>
+      selectedConversation
+        ? selectedConversation.messages.map(supportMessageToChatMessage)
+        : [],
+    [selectedConversation],
+  );
 
   useEffect(() => {
     if (!createForm.userId && users[0]) {
@@ -379,22 +401,46 @@ export function SupportManagementPage({
                     <MessageCircle size={17} />
                     <h3 className="text-sm font-semibold text-ink">消息记录</h3>
                   </div>
-                  <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
-                    {selectedConversation.messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className="rounded-md border border-line bg-slate-50 px-3 py-2"
-                      >
-                        <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
-                          <span>
-                            {authorText(message.author)} · {message.authorName}
+                  <Chat
+                    align="leftRight"
+                    chats={selectedChatMessages}
+                    chatBoxRenderConfig={{
+                      renderChatBoxAction: () => null,
+                      renderChatBoxAvatar: ({ message }) => (
+                        <Avatar
+                          color={chatAvatarColor(message?.role)}
+                          shape="square"
+                          size="extra-small"
+                        >
+                          {chatAvatarText(message?.role)}
+                        </Avatar>
+                      ),
+                      renderChatBoxTitle: ({ message, role }) => {
+                        const chatMessage = message as SupportChatMessage | undefined;
+                        return (
+                          <span className="text-xs font-medium text-slate-500">
+                            {chatMessage?.authorText ?? role?.name}
+                            {chatMessage?.authorName
+                              ? ` · ${chatMessage.authorName}`
+                              : ''}
+                            {chatMessage?.createdAtLabel
+                              ? ` · ${chatMessage.createdAtLabel}`
+                              : ''}
                           </span>
-                          <span>{message.createdAt}</span>
-                        </div>
-                        <div className="mt-2 text-sm text-ink">{message.content}</div>
-                      </div>
-                    ))}
-                  </div>
+                        );
+                      },
+                    }}
+                    className="rounded-md border border-line bg-white"
+                    enableUpload={false}
+                    mode="bubble"
+                    renderInputArea={() => null}
+                    roleConfig={{
+                      assistant: { name: '客服' },
+                      system: { name: '系统' },
+                      user: { name: '用户' },
+                    }}
+                    style={{ height: 360 }}
+                  />
                 </div>
 
                 <div className="border-t border-line pt-4">
@@ -537,7 +583,51 @@ function priorityColor(priority: SupportPriority) {
   return colors[priority];
 }
 
-function authorText(author: string) {
+function supportMessageToChatMessage(message: SupportMessage): SupportChatMessage {
+  const createAt = Date.parse(message.createdAt);
+  return {
+    authorName: message.authorName,
+    authorText: authorText(message.author),
+    content: message.content,
+    createAt: Number.isNaN(createAt) ? undefined : createAt,
+    createdAtLabel: message.createdAt,
+    id: message.id,
+    role: chatRoleForAuthor(message.author),
+    status: 'complete',
+  };
+}
+
+function chatRoleForAuthor(author: SupportMessageAuthor): SupportChatRole {
+  if (author === 'admin') {
+    return 'assistant';
+  }
+  if (author === 'system') {
+    return 'system';
+  }
+  return 'user';
+}
+
+function chatAvatarText(role?: string) {
+  if (role === 'assistant') {
+    return '客';
+  }
+  if (role === 'system') {
+    return '系';
+  }
+  return '用';
+}
+
+function chatAvatarColor(role?: string): 'blue' | 'grey' | 'teal' {
+  if (role === 'assistant') {
+    return 'teal';
+  }
+  if (role === 'system') {
+    return 'grey';
+  }
+  return 'blue';
+}
+
+function authorText(author: SupportMessageAuthor) {
   if (author === 'admin') {
     return '客服';
   }
