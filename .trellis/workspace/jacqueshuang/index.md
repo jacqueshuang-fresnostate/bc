@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-06-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~568 | Active |
+| `journal-1.md` | ~601 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-06-02 | 邀请返利配置基础管理 | `559d982` | `main` |
 | 17 | 2026-06-02 | 机器人配置基础管理 | `e2051ad` | `main` |
 | 16 | 2026-06-02 | 后台用户权限基础管理 | `e265495` | `main` |
 | 15 | 2026-06-02 | 调度运行历史与后台可视化基础 | `cc79406` | `main` |

@@ -566,3 +566,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: 邀请返利配置基础管理
+
+**Date**: 2026-06-02
+**Task**: 邀请返利配置基础管理
+**Branch**: `main`
+
+### Summary
+
+完成邀请返利配置基础管理：新增后端 RebateRepository 和 GET/PUT /api/admin/invite-policy 接口，dashboard 改为读取共享返利仓储；管理后台新增返利配置页面，支持代理邀请、普通用户邀请、返利模式和默认充值返利比例维护。同步更新架构设计、TODO 和后端 API 契约。验证 cargo fmt --check、cargo check、cargo test、npm run build 通过，并完成 API 与浏览器冒烟。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `559d982` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
