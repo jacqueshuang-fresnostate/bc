@@ -192,6 +192,12 @@ fn module_groups() -> Vec<ModuleGroup> {
             description: "彩种、开奖、玩法与合买配置".to_string(),
             modules: vec![
                 module(
+                    "lottery-console",
+                    "彩种控制台",
+                    "实时查看每个彩种倒计时和开奖号码",
+                    ModuleStatus::Scaffolded,
+                ),
+                module(
                     "lotteries",
                     "彩种管理",
                     "依据 3 位和 5 位玩法创建彩种",
@@ -369,5 +375,16 @@ mod tests {
         assert!(keys.contains(&"lottery"));
         assert!(keys.contains(&"automation"));
         assert!(keys.contains(&"growth"));
+
+        let lottery_modules = summary
+            .module_groups
+            .iter()
+            .find(|group| group.key == "lottery")
+            .expect("lottery module group exists")
+            .modules
+            .iter()
+            .map(|module| module.key.as_str())
+            .collect::<Vec<_>>();
+        assert!(lottery_modules.contains(&"lottery-console"));
     }
 }

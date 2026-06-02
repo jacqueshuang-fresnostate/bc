@@ -38,6 +38,25 @@
 - 演示兜底必须明确；不要在生产路径中静默混合假数据和真实数据。
 - 如果轮询、缓存、失效或乐观更新变常见，再引入 React Query。
 
+## 实时看板状态
+
+- 秒级倒计时、当前时钟和剩余时间属于本地派生状态，页面组件用 `setInterval` 更新 `now`，不要每秒请求后端。
+- 服务端事实数据仍通过 typed hook 获取，例如彩种、期号、开奖结果；需要回流新期号或新开奖结果时，由 hook 使用低频轮询刷新。
+- 轮询 hook 必须在 `useEffect` 清理 `AbortController` 和 `window.setInterval`，避免切换页面后继续请求。
+- 倒计时展示必须从服务端时间字段即时计算，不要把剩余秒数复制到多个本地 state。
+
+示例：
+
+```tsx
+const { data, loading, error, refresh } = useRealtimePanel(10_000);
+const [now, setNow] = useState(() => new Date());
+
+useEffect(() => {
+  const intervalId = window.setInterval(() => setNow(new Date()), 1_000);
+  return () => window.clearInterval(intervalId);
+}, []);
+```
+
 ---
 
 ## 常见错误

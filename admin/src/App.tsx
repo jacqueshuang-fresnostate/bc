@@ -7,6 +7,7 @@ import { DrawManagementPage } from './pages/DrawManagementPage';
 import { FinanceManagementPage } from './pages/FinanceManagementPage';
 import { GroupBuyManagementPage } from './pages/GroupBuyManagementPage';
 import { InviteManagementPage } from './pages/InviteManagementPage';
+import { LotteryConsolePage } from './pages/LotteryConsolePage';
 import { LotteryManagementPage } from './pages/LotteryManagementPage';
 import { OrderManagementPage } from './pages/OrderManagementPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
@@ -59,6 +60,8 @@ export function App() {
           onDashboardRefresh={refresh}
           onOpenPlayConfig={() => setActiveKey('play-rules')}
         />
+      ) : activeKey === 'lottery-console' ? (
+        <LotteryConsolePage onDashboardRefresh={refresh} />
       ) : activeKey === 'draw-modes' || activeKey === 'schedules' ? (
         <DrawManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'orders' ? (
