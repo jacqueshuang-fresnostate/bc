@@ -18,6 +18,7 @@ import {
 } from 'react';
 import { MetricCard } from '../components/MetricCard';
 import { useAccessManagement } from '../hooks/useAccessManagement';
+import type { AdminSaveRequest } from '../types/access';
 import type {
   AdminRole,
   AdminSummary,
@@ -48,6 +49,7 @@ interface UserFormState {
 
 interface AdminFormState {
   id: string;
+  password: string;
   roleId: string;
   status: UserStatus;
   username: string;
@@ -92,6 +94,7 @@ export function AccessManagementPage({
     refresh,
     registration,
     removeRole,
+    resetPassword,
     roles,
     saveAdmin,
     saveRegistration,
@@ -166,10 +169,16 @@ export function AccessManagementPage({
   };
 
   const submitAdmin = async () => {
-    const saved = await saveAdmin(
-      adminPayload(adminForm, roles),
+    const isEditing = Boolean(editingAdminId);
+    let saved = await saveAdmin(
+      adminPayload(adminForm, roles, !isEditing),
       editingAdminId ?? undefined,
     );
+    if (editingAdminId && adminForm.password.trim()) {
+      saved = await resetPassword(editingAdminId, {
+        password: adminForm.password.trim(),
+      });
+    }
     setAdminForm(adminFormFromSummary(saved));
     setEditingAdminId(saved.id);
     setAdminSheetVisible(false);
@@ -697,6 +706,18 @@ function AdminSection({
               }
             />
           </Field>
+          <Field label={editingId ? '重置密码' : '初始密码'}>
+            <input
+              autoComplete="new-password"
+              className="form-input"
+              placeholder={editingId ? '留空则不修改密码' : '至少 8 位'}
+              type="password"
+              value={form.password}
+              onChange={(event) =>
+                setFormValue(onSetForm, 'password', event.target.value)
+              }
+            />
+          </Field>
           <Field label="角色">
             <select
               className="form-input"
@@ -727,7 +748,7 @@ function AdminSection({
           </Field>
           <div className="flex flex-wrap gap-2">
             <Button
-              disabled={saving || !form.roleId}
+              disabled={saving || !form.roleId || (!editingId && form.password.trim().length < 8)}
               icon={<Save size={16} />}
               theme="solid"
               onClick={onSubmit}
@@ -1117,6 +1138,7 @@ function userPayload(form: UserFormState): UserSummary {
 function emptyAdminForm(roleId: string): AdminFormState {
   return {
     id: 'A20001',
+    password: '',
     roleId,
     status: 'active',
     username: 'new_admin',
@@ -1126,21 +1148,31 @@ function emptyAdminForm(roleId: string): AdminFormState {
 function adminFormFromSummary(admin: AdminSummary): AdminFormState {
   return {
     id: admin.id,
+    password: '',
     roleId: admin.roleId,
     status: admin.status,
     username: admin.username,
   };
 }
 
-function adminPayload(form: AdminFormState, roles: AdminRole[]): AdminSummary {
+function adminPayload(
+  form: AdminFormState,
+  roles: AdminRole[],
+  includePassword: boolean,
+): AdminSaveRequest {
   const role = roles.find((item) => item.id === form.roleId);
-  return {
+  const payload: AdminSaveRequest = {
     id: form.id.trim(),
     roleId: form.roleId,
     roleName: role?.name ?? form.roleId,
     status: form.status,
     username: form.username.trim(),
   };
+  const password = form.password.trim();
+  if (includePassword && password) {
+    payload.password = password;
+  }
+  return payload;
 }
 
 function emptyRoleForm(): RoleFormState {

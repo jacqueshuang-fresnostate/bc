@@ -1,7 +1,9 @@
 import type { ApiEnvelope, DashboardSummary, LotteryKind } from '../types/dashboard';
 import type { DrawSource } from '../types/dashboard';
 import type {
+  AdminPasswordResetRequest,
   AdminRole,
+  AdminSaveRequest,
   AdminSummary,
   RegistrationConfig,
   StatusUpdateRequest,
@@ -286,18 +288,28 @@ export function fetchAdmins(signal?: AbortSignal) {
   return requestJson<AdminSummary[]>('/api/admin/admins', { signal });
 }
 
-export function createAdmin(payload: AdminSummary) {
+export function createAdmin(payload: AdminSaveRequest) {
   return requestJson<AdminSummary>('/api/admin/admins', {
     body: payload,
     method: 'POST',
   });
 }
 
-export function updateAdmin(id: string, payload: AdminSummary) {
+export function updateAdmin(id: string, payload: AdminSaveRequest) {
   return requestJson<AdminSummary>(`/api/admin/admins/${encodeURIComponent(id)}`, {
     body: payload,
     method: 'PUT',
   });
+}
+
+export function resetAdminPassword(id: string, payload: AdminPasswordResetRequest) {
+  return requestJson<AdminSummary>(
+    `/api/admin/admins/${encodeURIComponent(id)}/password`,
+    {
+      body: payload,
+      method: 'PATCH',
+    },
+  );
 }
 
 export function setAdminStatus(id: string, payload: StatusUpdateRequest) {

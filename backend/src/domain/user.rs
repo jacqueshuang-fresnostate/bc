@@ -39,6 +39,30 @@ pub struct AdminSummary {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AdminSaveRequest {
+    pub id: String,
+    pub username: String,
+    pub role_id: String,
+    pub role_name: String,
+    pub status: UserStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+}
+
+impl AdminSaveRequest {
+    pub fn summary(&self) -> AdminSummary {
+        AdminSummary {
+            id: self.id.clone(),
+            username: self.username.clone(),
+            role_id: self.role_id.clone(),
+            role_name: self.role_name.clone(),
+            status: self.status.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RegistrationConfig {
     pub username_enabled: bool,
     pub email_enabled: bool,
@@ -55,4 +79,10 @@ pub struct UserStatusRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AdminStatusRequest {
     pub status: UserStatus,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminPasswordResetRequest {
+    pub password: String,
 }

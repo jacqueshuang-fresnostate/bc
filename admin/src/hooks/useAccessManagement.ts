@@ -9,6 +9,7 @@ import {
   fetchRoles,
   fetchSystemSettings,
   fetchUsers,
+  resetAdminPassword,
   setAdminStatus,
   setUserStatus,
   updateAdmin,
@@ -18,8 +19,10 @@ import {
   updateUser,
 } from '../api/client';
 import type {
+  AdminSaveRequest,
   AdminRole,
   AdminSummary,
+  AdminPasswordResetRequest,
   RegistrationConfig,
   SystemSetting,
   UserStatus,
@@ -118,13 +121,31 @@ export function useAccessManagement() {
   }, []);
 
   const saveAdmin = useCallback(
-    async (payload: AdminSummary, existingId?: string) => {
+    async (payload: AdminSaveRequest, existingId?: string) => {
       setSaving(true);
       setError(null);
       try {
         const saved = existingId
           ? await updateAdmin(existingId, payload)
           : await createAdmin(payload);
+        setAdmins((current) => upsertById(current, saved));
+        return saved;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [],
+  );
+
+  const resetPassword = useCallback(
+    async (id: string, payload: AdminPasswordResetRequest) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const saved = await resetAdminPassword(id, payload);
         setAdmins((current) => upsertById(current, saved));
         return saved;
       } catch (requestError) {
@@ -225,6 +246,7 @@ export function useAccessManagement() {
     refresh,
     registration,
     removeRole,
+    resetPassword,
     roles,
     saveAdmin,
     saveRegistration,

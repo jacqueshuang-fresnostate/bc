@@ -2622,6 +2622,150 @@ if !session.scopes.contains(&required_scope) {
 
 ---
 
+## 场景：管理员密码哈希与重置接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改管理员创建、管理员更新、管理员密码重置、后台登录校验或管理员摘要返回结构。
+- 范围：后端 `AccessRepository` 密码哈希、管理员写入 DTO、登录校验、重置密码接口、前端 API client、`useAccessManagement` 和“账号维护” SideSheet。
+
+### 2. 签名
+
+- `POST /api/admin/admins`
+- `PUT /api/admin/admins/{id}`
+- `PATCH /api/admin/admins/{id}/password`
+- `POST /api/admin/auth/login`
+- 认证头：`Authorization: Bearer <token>`；管理员写入和重置密码接口需要 `admins` 权限。
+
+### 3. 契约
+
+管理员保存请求 `AdminSaveRequest`：
+
+```json
+{
+  "id": "A20001",
+  "username": "ops_admin",
+  "roleId": "role-ops",
+  "roleName": "",
+  "status": "active",
+  "password": "PassOps123"
+}
+```
+
+`password` 为可选字段：
+
+- 创建管理员时必须传入初始密码；不传、空白或小于 8 位会返回 HTTP 400。
+- 更新管理员资料时不传表示保留原密码；传入时更新密码哈希。
+- 后端保存前必须按 `roleId` 回填可信 `roleName`，不能信任前端提交的展示名。
+
+重置密码请求 `AdminPasswordResetRequest`：
+
+```json
+{
+  "password": "NewPass123"
+}
+```
+
+所有管理员读取接口和认证响应都不返回 `password`、`passwordHash` 或任何哈希内容：
+
+- `GET /api/admin/admins`
+- `GET /api/admin/admins/{id}`
+- `GET /api/admin/dashboard` 的 `admins`
+- `POST /api/admin/auth/login`
+- `GET /api/admin/auth/me`
+
+管理员摘要仍为：
+
+```json
+{
+  "id": "A20001",
+  "username": "ops_admin",
+  "roleId": "role-ops",
+  "roleName": "运营管理员",
+  "status": "active"
+}
+```
+
+密码哈希使用 Argon2id PHC 字符串格式和随机盐。当前无数据库阶段，密码哈希只保存在内存仓储中；种子管理员 `admin` 继续可用 `admin123` 登录。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 创建或更新管理员时 `roleId` 不存在 | HTTP 404，返回角色不存在 |
+| 创建重复管理员 ID | HTTP 409，返回管理员已存在 |
+| 创建管理员未传 `password` | HTTP 400，返回 `admin password is required` |
+| 更新路径 ID 与请求体 ID 不一致 | HTTP 400，返回 `path id must match admin id` |
+| 重置不存在管理员密码 | HTTP 404，返回管理员不存在 |
+| 密码为空白 | HTTP 400，返回 `admin password is required` |
+| 密码长度小于 8 | HTTP 400，返回最小长度错误 |
+| 登录密码错误 | HTTP 401，`invalid admin credentials` |
+| 管理员状态不是 `active` | HTTP 403，`admin account is not active` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：新建管理员时传入 `password`，随后该管理员可以用自己的密码登录。
+- Good：编辑管理员资料时留空密码字段，只更新角色或状态，不改变原密码。
+- Good：调用 `PATCH /admins/{id}/password` 后旧密码登录返回 401，新密码登录成功。
+- Base：无数据库阶段服务重启后恢复种子管理员和种子密码哈希。
+- Bad：在 `AdminSummary`、dashboard 或 auth/me 中返回 `passwordHash`；这会把敏感凭据暴露给前端。
+- Bad：继续使用单个全局 `demo_password` 校验所有管理员；这会让新建账号无法拥有独立凭据。
+
+### 6. 必要测试
+
+- 后端测试需要覆盖种子管理员 `admin/admin123` 可登录。
+- 后端测试需要覆盖错误密码返回 `Unauthorized`。
+- 后端测试需要覆盖锁定管理员即使密码正确也返回 `Forbidden`。
+- 后端测试需要覆盖新建管理员独立密码登录。
+- 后端测试需要覆盖重置密码后旧密码失效、新密码生效。
+- 后端测试需要覆盖短密码或空白密码返回 `BadRequest`。
+- API 冒烟需要创建管理员、登录、重置密码、再次登录，并检查所有读响应不包含密码字段。
+- 前端需要运行 `npm run build`，确认 `AdminSaveRequest`、`AdminPasswordResetRequest` 与页面消费一致。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+struct AccessStore {
+    admins: BTreeMap<String, AdminSummary>,
+    demo_password: String,
+}
+```
+
+这个写法会让所有管理员共享同一个密码，账号维护无法真正设置密码。
+
+```ts
+export interface AdminSummary {
+  id: string;
+  username: string;
+  passwordHash: string;
+}
+```
+
+这个写法把敏感凭据带到前端读取模型。
+
+#### 正确
+
+```rust
+struct AccessStore {
+    admins: BTreeMap<String, AdminSummary>,
+    admin_password_hashes: BTreeMap<String, String>,
+}
+```
+
+管理员摘要和密码哈希分开存储，读取接口只返回摘要。
+
+```ts
+export interface AdminSaveRequest extends AdminSummary {
+  password?: string;
+}
+```
+
+写接口可以携带密码，读接口继续使用不含密码的 `AdminSummary`。
+
+---
+
 ## 场景：dashboard 数据按角色权限裁剪
 
 ### 1. 范围 / 触发条件

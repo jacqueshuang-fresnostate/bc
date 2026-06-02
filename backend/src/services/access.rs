@@ -4,14 +4,26 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use argon2::{
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
+use rand_core::OsRng;
+
 use crate::{
     domain::{
         auth::{AdminAuthSession, AdminLoginRequest},
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
-        user::{AdminSummary, RegistrationConfig, UserStatus, UserSummary},
+        user::{
+            AdminPasswordResetRequest, AdminSaveRequest, AdminSummary, RegistrationConfig,
+            UserStatus, UserSummary,
+        },
     },
     error::{ApiError, ApiResult},
 };
+
+const DEFAULT_SEED_ADMIN_PASSWORD: &str = "admin123";
+const MIN_ADMIN_PASSWORD_LEN: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct AccessSnapshot {
@@ -90,14 +102,14 @@ impl AccessRepository {
             .get_admin(id)
     }
 
-    pub async fn create_admin(&self, admin: AdminSummary) -> ApiResult<AdminSummary> {
+    pub async fn create_admin(&self, admin: AdminSaveRequest) -> ApiResult<AdminSummary> {
         self.inner
             .write()
             .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
             .create_admin(admin)
     }
 
-    pub async fn update_admin(&self, id: &str, admin: AdminSummary) -> ApiResult<AdminSummary> {
+    pub async fn update_admin(&self, id: &str, admin: AdminSaveRequest) -> ApiResult<AdminSummary> {
         self.inner
             .write()
             .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
@@ -109,6 +121,17 @@ impl AccessRepository {
             .write()
             .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
             .set_admin_status(id, status)
+    }
+
+    pub async fn reset_admin_password(
+        &self,
+        id: &str,
+        payload: AdminPasswordResetRequest,
+    ) -> ApiResult<AdminSummary> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .reset_admin_password(id, payload)
     }
 
     pub async fn roles(&self) -> ApiResult<Vec<AdminRole>> {
@@ -207,7 +230,7 @@ impl AccessRepository {
 struct AccessStore {
     users: BTreeMap<String, UserSummary>,
     admins: BTreeMap<String, AdminSummary>,
-    demo_password: String,
+    admin_password_hashes: BTreeMap<String, String>,
     roles: BTreeMap<String, AdminRole>,
     sessions: BTreeMap<String, String>,
     settings: BTreeMap<String, SystemSetting>,
@@ -225,6 +248,7 @@ impl AccessStore {
             .into_iter()
             .map(|admin| (admin.id.clone(), admin))
             .collect();
+        let admin_password_hashes = seed_admin_password_hashes(&admins);
         let users = seed_users()
             .into_iter()
             .map(|user| (user.id.clone(), user))
@@ -237,7 +261,7 @@ impl AccessStore {
         Self {
             users,
             admins,
-            demo_password: "admin123".to_string(),
+            admin_password_hashes,
             roles,
             sessions: BTreeMap::new(),
             settings,
@@ -319,8 +343,13 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("admin `{id}` not found")))
     }
 
-    fn create_admin(&mut self, admin: AdminSummary) -> ApiResult<AdminSummary> {
-        let admin = normalize_admin(admin, &self.roles)?;
+    fn create_admin(&mut self, request: AdminSaveRequest) -> ApiResult<AdminSummary> {
+        let password = request
+            .password
+            .as_deref()
+            .ok_or_else(|| ApiError::BadRequest("admin password is required".to_string()))
+            .and_then(validate_admin_password)?;
+        let admin = normalize_admin(request.summary(), &self.roles)?;
         if self.admins.contains_key(&admin.id) {
             return Err(ApiError::Conflict(format!(
                 "admin `{}` already exists",
@@ -328,12 +357,19 @@ impl AccessStore {
             )));
         }
 
+        let password_hash = hash_admin_password(&password)?;
+        self.admin_password_hashes
+            .insert(admin.id.clone(), password_hash);
         self.admins.insert(admin.id.clone(), admin.clone());
         Ok(admin)
     }
 
-    fn update_admin(&mut self, id: &str, admin: AdminSummary) -> ApiResult<AdminSummary> {
-        let admin = normalize_admin(admin, &self.roles)?;
+    fn update_admin(&mut self, id: &str, request: AdminSaveRequest) -> ApiResult<AdminSummary> {
+        let password = match request.password.as_deref() {
+            Some(password) => Some(validate_admin_password(password)?),
+            None => None,
+        };
+        let admin = normalize_admin(request.summary(), &self.roles)?;
         if id != admin.id {
             return Err(ApiError::BadRequest(
                 "path id must match admin id".to_string(),
@@ -343,6 +379,11 @@ impl AccessStore {
             return Err(ApiError::NotFound(format!("admin `{id}` not found")));
         }
 
+        if let Some(password) = password {
+            let password_hash = hash_admin_password(&password)?;
+            self.admin_password_hashes
+                .insert(admin.id.clone(), password_hash);
+        }
         self.admins.insert(id.to_string(), admin.clone());
         Ok(admin)
     }
@@ -354,6 +395,19 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("admin `{id}` not found")))?;
         admin.status = status;
         Ok(admin.clone())
+    }
+
+    fn reset_admin_password(
+        &mut self,
+        id: &str,
+        payload: AdminPasswordResetRequest,
+    ) -> ApiResult<AdminSummary> {
+        let password = validate_admin_password(&payload.password)?;
+        let admin = self.get_admin(id)?;
+        let password_hash = hash_admin_password(&password)?;
+        self.admin_password_hashes
+            .insert(admin.id.clone(), password_hash);
+        Ok(admin)
     }
 
     fn roles(&self) -> Vec<AdminRole> {
@@ -456,7 +510,10 @@ impl AccessStore {
             .cloned()
             .ok_or_else(|| ApiError::Unauthorized("invalid admin credentials".to_string()))?;
 
-        if password != self.demo_password {
+        let password_hash = self.admin_password_hashes.get(&admin.id).ok_or_else(|| {
+            ApiError::Internal(format!("admin `{}` password hash missing", admin.id))
+        })?;
+        if !verify_admin_password(&password, password_hash)? {
             return Err(ApiError::Unauthorized(
                 "invalid admin credentials".to_string(),
             ));
@@ -566,6 +623,34 @@ fn normalize_admin(
     Ok(admin)
 }
 
+fn validate_admin_password(password: &str) -> ApiResult<String> {
+    let password = required_trimmed(password.to_string(), "admin password")?;
+    if password.chars().count() < MIN_ADMIN_PASSWORD_LEN {
+        return Err(ApiError::BadRequest(format!(
+            "admin password must be at least {MIN_ADMIN_PASSWORD_LEN} characters"
+        )));
+    }
+
+    Ok(password)
+}
+
+fn hash_admin_password(password: &str) -> ApiResult<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|_| ApiError::Internal("admin password hash failed".to_string()))
+}
+
+fn verify_admin_password(password: &str, password_hash: &str) -> ApiResult<bool> {
+    let parsed_hash = PasswordHash::new(password_hash)
+        .map_err(|_| ApiError::Internal("admin password hash is invalid".to_string()))?;
+
+    Ok(Argon2::default()
+        .verify_password(password.as_bytes(), &parsed_hash)
+        .is_ok())
+}
+
 fn normalize_role(mut role: AdminRole) -> ApiResult<AdminRole> {
     role.id = required_trimmed(role.id, "role id")?;
     role.name = required_trimmed(role.name, "role name")?;
@@ -637,6 +722,17 @@ fn seed_admins() -> Vec<AdminSummary> {
             status: UserStatus::Locked,
         },
     ]
+}
+
+fn seed_admin_password_hashes(admins: &BTreeMap<String, AdminSummary>) -> BTreeMap<String, String> {
+    admins
+        .keys()
+        .map(|admin_id| {
+            let hash = hash_admin_password(DEFAULT_SEED_ADMIN_PASSWORD)
+                .unwrap_or_else(|_| panic!("failed to hash seed admin password"));
+            (admin_id.clone(), hash)
+        })
+        .collect()
 }
 
 fn seed_roles() -> Vec<AdminRole> {
@@ -810,6 +906,127 @@ mod tests {
             .expect_err("locked admin must be rejected");
 
         assert!(matches!(error, ApiError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn access_repository_rejects_wrong_admin_password() {
+        let access = AccessRepository::memory_seeded();
+        let error = access
+            .login(AdminLoginRequest {
+                username: "admin".to_string(),
+                password: "wrong-password".to_string(),
+            })
+            .await
+            .expect_err("wrong password must be rejected");
+
+        assert!(matches!(error, ApiError::Unauthorized(_)));
+    }
+
+    #[tokio::test]
+    async fn access_repository_creates_admin_with_individual_password() {
+        let access = AccessRepository::memory_seeded();
+        let created = access
+            .create_admin(AdminSaveRequest {
+                id: "A20001".to_string(),
+                username: "ops_admin".to_string(),
+                role_id: "role-ops".to_string(),
+                role_name: String::new(),
+                status: UserStatus::Active,
+                password: Some("opsSecret123".to_string()),
+            })
+            .await
+            .expect("admin can be created");
+
+        assert_eq!(created.role_name, "运营管理员");
+
+        let session = access
+            .login(AdminLoginRequest {
+                username: "ops_admin".to_string(),
+                password: "opsSecret123".to_string(),
+            })
+            .await
+            .expect("new admin can login with individual password");
+        assert_eq!(session.admin.id, "A20001");
+    }
+
+    #[tokio::test]
+    async fn access_repository_resets_admin_password() {
+        let access = AccessRepository::memory_seeded();
+        access
+            .create_admin(AdminSaveRequest {
+                id: "A20002".to_string(),
+                username: "reset_admin".to_string(),
+                role_id: "role-ops".to_string(),
+                role_name: String::new(),
+                status: UserStatus::Active,
+                password: Some("beforeReset123".to_string()),
+            })
+            .await
+            .expect("admin can be created");
+
+        access
+            .reset_admin_password(
+                "A20002",
+                AdminPasswordResetRequest {
+                    password: "afterReset123".to_string(),
+                },
+            )
+            .await
+            .expect("password can be reset");
+
+        let old_error = access
+            .login(AdminLoginRequest {
+                username: "reset_admin".to_string(),
+                password: "beforeReset123".to_string(),
+            })
+            .await
+            .expect_err("old password must be rejected");
+        assert!(matches!(old_error, ApiError::Unauthorized(_)));
+
+        let session = access
+            .login(AdminLoginRequest {
+                username: "reset_admin".to_string(),
+                password: "afterReset123".to_string(),
+            })
+            .await
+            .expect("new password can login");
+        assert_eq!(session.admin.id, "A20002");
+    }
+
+    #[tokio::test]
+    async fn access_repository_rejects_short_admin_password() {
+        let access = AccessRepository::memory_seeded();
+        let error = access
+            .create_admin(AdminSaveRequest {
+                id: "A20003".to_string(),
+                username: "short_password_admin".to_string(),
+                role_id: "role-ops".to_string(),
+                role_name: String::new(),
+                status: UserStatus::Active,
+                password: Some("short".to_string()),
+            })
+            .await
+            .expect_err("short password must be rejected");
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn access_repository_requires_password_for_new_admin() {
+        let access = AccessRepository::memory_seeded();
+        let error = access
+            .create_admin(AdminSaveRequest {
+                id: "A20004".to_string(),
+                username: "missing_password_admin".to_string(),
+                role_id: "role-ops".to_string(),
+                role_name: String::new(),
+                status: UserStatus::Active,
+                password: None,
+            })
+            .await
+            .expect_err("new admin must include an initial password");
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
     }
 
     #[tokio::test]

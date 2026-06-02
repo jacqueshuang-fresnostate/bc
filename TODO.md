@@ -232,3 +232,10 @@
 - 解决问题：此前 dashboard 虽然需要登录，但为了作为系统概览入口没有绑定单一业务权限，低权限管理员仍可能通过 dashboard 响应看到管理员、角色、财务、机器人、返利等无权限领域摘要；本次保持 `DashboardSummary` 顶层字段不变，对无权限数组返回空数组，对财务、注册配置、邀请返利等对象返回置零或关闭状态，并在模块组和指标层同步过滤。用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 89 个，覆盖运营 scopes 裁剪和超级管理员全量保留。API 冒烟使用 `PORT=18097` 创建临时 `role-ops` 管理员后确认运营 dashboard 只返回 `users`、`orders`、`lotteries` 指标和用户/订单/彩票模块，管理员、角色、系统设置、财务、客服、机器人、邀请返利模块均不返回，财务金额为 `0`。
 - 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议推进密码哈希、权限持久化、按钮级权限、管理员操作审计，或继续补齐后台剩余真实业务流程。
+
+## 2026-06-03 01:59:30 HKT
+
+- 完成任务：实现 `06-03-admin-password-hash-reset` 管理员密码哈希与重置基础阶段，新增 Argon2id 密码哈希、管理员独立密码哈希存储、管理员保存请求 DTO 和 `PATCH /api/admin/admins/{id}/password` 重置密码接口；管理后台“账号维护” SideSheet 新增初始密码/重置密码输入。
+- 解决问题：此前所有后台管理员共用内存全局演示密码 `admin123`，新建账号没有独立密码，也无法在后台维护密码；本次让登录按管理员 ID 校验各自的密码哈希，创建账号可设置初始密码，编辑账号可留空不改密码或填写新密码触发重置。管理员列表、详情、dashboard、auth/me 和登录响应仍只返回 `AdminSummary`，不暴露密码哈希或明文密码；用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 93 个，覆盖错误密码、锁定账号、新建账号独立密码、重置密码和短密码拒绝。API 冒烟使用 `PORT=18098` 创建 `A-PASS-001/pass_ops`，初始密码可登录，重置后旧密码返回 401，新密码可登录，并确认管理员列表、dashboard 管理员摘要和 auth/me 中没有密码字段。
+- 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议推进用户权限 PostgreSQL 持久化、登录失败锁定、敏感操作审计和密码重置通知。

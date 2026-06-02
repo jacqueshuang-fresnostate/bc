@@ -35,7 +35,8 @@ use crate::{
             UpdateSupportConversationRequest,
         },
         user::{
-            AdminStatusRequest, AdminSummary, RegistrationConfig, UserStatusRequest, UserSummary,
+            AdminPasswordResetRequest, AdminSaveRequest, AdminStatusRequest, AdminSummary,
+            RegistrationConfig, UserStatusRequest, UserSummary,
         },
     },
     error::{ApiError, ApiResult},
@@ -99,6 +100,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/users/{id}/status", patch(set_user_status))
         .route("/admins", get(list_admins).post(create_admin))
         .route("/admins/{id}", get(get_admin).put(update_admin))
+        .route("/admins/{id}/password", patch(reset_admin_password))
         .route("/admins/{id}/status", patch(set_admin_status))
         .route("/roles", get(list_roles).post(create_role))
         .route(
@@ -673,7 +675,7 @@ async fn get_admin(
 
 async fn create_admin(
     State(state): State<AppState>,
-    Json(payload): Json<AdminSummary>,
+    Json(payload): Json<AdminSaveRequest>,
 ) -> ApiResult<Json<ApiEnvelope<AdminSummary>>> {
     let admin = state.access.create_admin(payload).await?;
 
@@ -683,9 +685,19 @@ async fn create_admin(
 async fn update_admin(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(payload): Json<AdminSummary>,
+    Json(payload): Json<AdminSaveRequest>,
 ) -> ApiResult<Json<ApiEnvelope<AdminSummary>>> {
     let admin = state.access.update_admin(&id, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(admin)))
+}
+
+async fn reset_admin_password(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<AdminPasswordResetRequest>,
+) -> ApiResult<Json<ApiEnvelope<AdminSummary>>> {
+    let admin = state.access.reset_admin_password(&id, payload).await?;
 
     Ok(Json(ApiEnvelope::success(admin)))
 }
