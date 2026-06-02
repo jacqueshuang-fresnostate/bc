@@ -8,7 +8,7 @@ mod services;
 use std::error::Error;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let listener = tokio::net::TcpListener::bind(&address).await?;
 
     tracing::info!(address = %address, "backend api listening");
-    axum::serve(listener, app::router()).await?;
+    axum::serve(listener, app::router_from_env().await?).await?;
 
     Ok(())
 }

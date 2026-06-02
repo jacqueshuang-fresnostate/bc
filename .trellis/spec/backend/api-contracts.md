@@ -17,6 +17,7 @@
 - 后端管理后台概览：`GET /api/admin/dashboard`
 - 后端端口环境变量：`PORT`
 - 前端 API 地址环境变量：`VITE_API_BASE_URL`
+- 可选数据库环境变量：`DATABASE_URL`
 
 ### 3. 契约
 
@@ -82,12 +83,15 @@
 | 前端收到 `data=null` | API client 抛出错误，不渲染空数据 |
 | `PORT` 未设置 | 后端默认监听 `8080` |
 | `VITE_API_BASE_URL` 未设置 | 前端使用同源 `/api`，由 Vite proxy 或部署网关转发 |
+| `DATABASE_URL` 未设置 | 后端使用内存彩种仓储，接口契约不变 |
+| `DATABASE_URL` 已设置但连接或迁移失败 | 后端启动失败，不静默降级 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：本地联调用 `PORT=18080 cargo run` 和 `VITE_API_BASE_URL=http://127.0.0.1:18080 npm run dev -- --port 5174`，不影响已有 `8080` 服务。
 - Base：默认开发时后端使用 `8080`，前端 dev server 通过 Vite proxy 转发 `/api`。
 - Bad：前端类型使用 `snake_case`，或把 `defaultRechargeRebateBasisPoints` 写成浮点百分比。
+- Bad：配置了 `DATABASE_URL` 但数据库不可用时继续以内存模式启动；这会误导用户以为数据已持久化。
 
 ### 6. 必要测试
 
@@ -95,6 +99,7 @@
 - 后端需要运行 `cargo test`，至少确认概览数据包含 `common`、`lottery`、`automation`、`growth` 模块组。
 - 前端需要运行 `npm run build`，确认 TypeScript 类型与接口消费代码一致。
 - 跨层联调需要请求 `/api/health` 和 `/api/admin/dashboard`，再打开管理后台确认页面无控制台错误。
+- 未配置 `DATABASE_URL` 的本地启动需要确认 `/api/admin/lotteries` 和 `/api/admin/dashboard` 仍返回种子彩种。
 
 ### 7. Wrong vs Correct
 

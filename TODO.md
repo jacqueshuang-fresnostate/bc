@@ -32,3 +32,10 @@
 - 解决问题：此前彩种只存在于 dashboard 静态演示数据中，无法维护配置；本次用共享 `LotteryStore` 让列表接口和 dashboard 使用同一份数据。接口联调时发现 `DrawSchedule` 枚举变体字段没有按前端契约接受 `intervalSeconds`，已通过 `rename_all_fields = "camelCase"` 修复，并新增序列化/反序列化测试。
 - 验证结果：HTTP 冒烟测试通过，确认 `GET/POST/PATCH/DELETE /api/admin/lotteries` 和 `/api/admin/dashboard` 数据一致；浏览器验证通过，彩种管理页从 4 条新增到 5 条再删除回 4 条；`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过。
 - 后续动作：提交 Git；下一阶段可进入数据库持久化、开奖源配置或鉴权权限。
+
+## 2026-06-02 15:10:45 HKT
+
+- 完成任务：实现 `06-02-lottery-database-persistence` 彩种数据库持久化阶段，新增 SQLx PostgreSQL 依赖、`lotteries` 表迁移、统一彩种仓储入口和 PostgreSQL 彩种仓储；后端会根据 `DATABASE_URL` 自动选择数据库模式或内存模式。
+- 解决问题：上一阶段彩种数据服务重启后会丢失；本次在配置数据库时可持久化彩种 CRUD 和销售状态，同时保留无数据库 fallback。实现中发现 SQLx `0.9.0` 要求 Rust `1.94.0`，当前工具链是 Rust `1.92.0`，已改用兼容的 SQLx `0.8.6` 并记录到 PRD 和调研文档。
+- 验证结果：无 `DATABASE_URL` 启动后端成功，`/api/health`、`/api/admin/lotteries` 和 `/api/admin/dashboard` 冒烟测试通过；`cargo fmt --check`、`cargo check`、`cargo test` 通过，后端 11 个测试全绿；`npm run build` 通过。
+- 后续动作：同步数据库/API 规格并完成 Git 提交；下一阶段可进入开奖源配置、数据库容器化联调或鉴权权限。
