@@ -929,3 +929,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: 管理员密码哈希与重置基础
+
+**Date**: 2026-06-03
+**Task**: 管理员密码哈希与重置基础
+**Branch**: `main`
+
+### Summary
+
+完成管理员密码哈希与重置基础：新增 Argon2id 密码哈希依赖，AccessStore 改为按管理员 ID 保存密码哈希；新增 AdminSaveRequest、AdminPasswordResetRequest 和 PATCH /api/admin/admins/{id}/password；前端账号维护 SideSheet 支持初始密码和重置密码。已更新 架构设计.md、TODO.md 和 backend api-contracts spec。验证通过 cargo fmt --check、cargo check、cargo test、npm run build，并用 API 冒烟确认创建账号必须传密码、重置后旧密码失败、新密码成功且读接口不泄露密码字段。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `09f4657` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
