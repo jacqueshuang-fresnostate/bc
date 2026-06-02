@@ -71,3 +71,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: 彩种数据库持久化
+
+**Date**: 2026-06-02
+**Task**: 彩种数据库持久化
+**Branch**: `main`
+
+### Summary
+
+为彩种管理新增 SQLx PostgreSQL 可选持久化、lotteries 迁移、统一仓储入口和 DATABASE_URL 启动选择；保留无数据库内存模式，完成后端测试、无数据库冒烟和前端构建。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `00f5199` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
