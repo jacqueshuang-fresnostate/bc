@@ -21,6 +21,10 @@ use crate::{
         rebate::{InvitePolicySummary, InvitePolicyUpdateRequest},
         robot::{RobotConfigSummary, RobotStatusRequest},
         settlement::SettlementRun,
+        support::{
+            CreateSupportConversationRequest, SupportConversation, SupportReplyRequest,
+            UpdateSupportConversationRequest,
+        },
         user::{
             AdminStatusRequest, AdminSummary, RegistrationConfig, UserStatusRequest, UserSummary,
         },
@@ -45,6 +49,18 @@ pub fn router() -> Router<AppState> {
         .route("/financial-accounts", get(list_financial_accounts))
         .route("/ledger-entries", get(list_ledger_entries))
         .route("/financial-adjustments", post(manual_balance_adjustment))
+        .route(
+            "/support/conversations",
+            get(list_support_conversations).post(create_support_conversation),
+        )
+        .route(
+            "/support/conversations/{id}",
+            get(get_support_conversation).put(update_support_conversation),
+        )
+        .route(
+            "/support/conversations/{id}/messages",
+            post(reply_support_conversation),
+        )
         .route("/users", get(list_users).post(create_user))
         .route("/users/{id}", get(get_user).put(update_user))
         .route("/users/{id}/status", patch(set_user_status))
@@ -278,6 +294,55 @@ async fn get_dashboard_summary(
         invite_policy,
         robots,
     ))))
+}
+
+async fn list_support_conversations(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<SupportConversation>>>> {
+    let conversations = state.support.list().await?;
+
+    Ok(Json(ApiEnvelope::success(conversations)))
+}
+
+async fn get_support_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+    let conversation = state.support.get(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(conversation)))
+}
+
+async fn create_support_conversation(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateSupportConversationRequest>,
+) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+    let access = state.access.snapshot().await?;
+    let conversation = state.support.create(payload, &access.users).await?;
+
+    Ok(Json(ApiEnvelope::success(conversation)))
+}
+
+async fn update_support_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<UpdateSupportConversationRequest>,
+) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+    let access = state.access.snapshot().await?;
+    let conversation = state.support.update(&id, payload, &access.admins).await?;
+
+    Ok(Json(ApiEnvelope::success(conversation)))
+}
+
+async fn reply_support_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<SupportReplyRequest>,
+) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+    let access = state.access.snapshot().await?;
+    let conversation = state.support.reply(&id, payload, &access.admins).await?;
+
+    Ok(Json(ApiEnvelope::success(conversation)))
 }
 
 async fn list_users(

@@ -40,6 +40,12 @@ import type {
   InvitePolicyUpdateRequest,
 } from '../types/rebates';
 import type { SettlementRun } from '../types/settlements';
+import type {
+  CreateSupportConversationRequest,
+  SupportConversation,
+  SupportReplyRequest,
+  UpdateSupportConversationRequest,
+} from '../types/support';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -87,6 +93,44 @@ export function createManualBalanceAdjustment(payload: ManualBalanceAdjustmentRe
     body: payload,
     method: 'POST',
   });
+}
+
+export function fetchSupportConversations(signal?: AbortSignal) {
+  return requestJson<SupportConversation[]>('/api/admin/support/conversations', {
+    signal,
+  });
+}
+
+export function createSupportConversation(
+  payload: CreateSupportConversationRequest,
+) {
+  return requestJson<SupportConversation>('/api/admin/support/conversations', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateSupportConversation(
+  id: string,
+  payload: UpdateSupportConversationRequest,
+) {
+  return requestJson<SupportConversation>(
+    `/api/admin/support/conversations/${encodeURIComponent(id)}`,
+    {
+      body: payload,
+      method: 'PUT',
+    },
+  );
+}
+
+export function replySupportConversation(id: string, payload: SupportReplyRequest) {
+  return requestJson<SupportConversation>(
+    `/api/admin/support/conversations/${encodeURIComponent(id)}/messages`,
+    {
+      body: payload,
+      method: 'POST',
+    },
+  );
 }
 
 export function fetchUsers(signal?: AbortSignal) {

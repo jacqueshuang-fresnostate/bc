@@ -12,6 +12,7 @@ import { PlayRulesPage } from './pages/PlayRulesPage';
 import { RebateManagementPage } from './pages/RebateManagementPage';
 import { RobotManagementPage } from './pages/RobotManagementPage';
 import { SettlementManagementPage } from './pages/SettlementManagementPage';
+import { SupportManagementPage } from './pages/SupportManagementPage';
 
 export function App() {
   const { data, loading, error, refresh } = useDashboard();
@@ -62,6 +63,8 @@ export function App() {
         <OrderManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'finance' ? (
         <FinanceManagementPage onDashboardRefresh={refresh} />
+      ) : activeKey === 'support' ? (
+        <SupportManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'play-rules' ? (
         <PlayRulesPage onDashboardRefresh={refresh} />
       ) : activeKey === 'settlements' ? (

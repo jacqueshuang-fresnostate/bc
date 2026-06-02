@@ -1863,3 +1863,163 @@ await updateInvitePolicy({
 ```
 
 前端只提交可编辑字段。
+
+---
+
+## 场景：在线客服会话管理接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改在线客服会话、工单状态、客服分配或后台回复接口。
+- 范围：后端客服领域模型、内存客服仓储、用户/管理员绑定校验、管理后台 API、前端 API client、`useSupportConversations` hook 和“在线客服”页面。
+
+### 2. 签名
+
+- `GET /api/admin/support/conversations`
+- `GET /api/admin/support/conversations/{id}`
+- `POST /api/admin/support/conversations`
+- `PUT /api/admin/support/conversations/{id}`
+- `POST /api/admin/support/conversations/{id}/messages`
+
+### 3. 契约
+
+所有接口继续使用统一 API 信封。客服会话字段：
+
+```json
+{
+  "id": "CS-10001",
+  "userId": "U10001",
+  "username": "demo_user",
+  "subject": "订单派奖咨询",
+  "status": "open",
+  "priority": "normal",
+  "assignedAdminId": "A10002",
+  "assignedAdminName": "locked_admin",
+  "unreadCount": 1,
+  "createdAt": "2026-06-02 09:20:00",
+  "updatedAt": "2026-06-02 09:22:00",
+  "messages": []
+}
+```
+
+创建请求字段：
+
+```json
+{
+  "id": "CS-NEW",
+  "userId": "U10001",
+  "subject": "充值咨询",
+  "priority": "urgent",
+  "content": "充值多久到账？"
+}
+```
+
+更新请求字段：
+
+```json
+{
+  "status": "pending",
+  "priority": "normal",
+  "assignedAdminId": "A10001"
+}
+```
+
+后台回复字段：
+
+```json
+{
+  "adminId": "A10001",
+  "content": "已为您核对订单。"
+}
+```
+
+字段契约：
+
+1. `status` 只允许 `open`、`pending`、`resolved`、`closed`。
+2. `priority` 只允许 `normal`、`urgent`。
+3. 创建会话时 `userId` 必须引用用户仓储中的已有用户，后端根据用户仓储回填 `username`。
+4. 更新会话时 `assignedAdminId` 可以为空；非空时必须引用管理员仓储中的已有管理员，后端回填 `assignedAdminName`。
+5. 后台回复时 `adminId` 必须引用已有管理员，消息作者为 `admin`。
+6. 本阶段只做后台会话/工单记录，不实现实时聊天、WebSocket、文件上传、站内推送或手机端客服入口。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 会话 ID 为空 | HTTP 400，返回 `support conversation id is required` |
+| 创建重复会话 ID | HTTP 409，返回重复会话错误 |
+| 创建时用户 ID 为空 | HTTP 400，返回 `support user id is required` |
+| 创建时用户不存在 | HTTP 404，返回用户不存在 |
+| 主题为空 | HTTP 400，返回 `support subject is required` |
+| 首条消息为空 | HTTP 400，返回 `support message content is required` |
+| 更新时分配管理员不存在 | HTTP 404，返回管理员不存在 |
+| 回复时管理员 ID 为空 | HTTP 400，返回 `support reply admin id is required` |
+| 回复时管理员不存在 | HTTP 404，返回管理员不存在 |
+| 回复内容为空 | HTTP 400，返回 `support reply content is required` |
+| 查询、更新、回复不存在会话 | HTTP 404，返回会话不存在 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：创建 `CS-API-001` 绑定 `U10001`，响应自动带上 `username=demo_user` 和首条用户消息。
+- Good：把会话分配给 `A10001`，响应自动带上 `assignedAdminName=admin`。
+- Good：客服回复后消息列表新增 `admin` 消息，`unreadCount` 清零。
+- Base：无数据库环境下使用内存客服仓储，服务重启后恢复种子会话。
+- Bad：前端直接提交 `username` 或 `assignedAdminName` 并让后端信任，会导致用户/管理员改名后数据漂移。
+- Bad：把在线客服基础阶段扩展成实时 IM 或 WebSocket，会把本阶段配置管理和复杂消息系统混在一起。
+
+### 6. 必要测试
+
+- 后端需要覆盖创建、更新分配和后台回复。
+- 后端需要覆盖创建时用户不存在拒绝。
+- 后端需要覆盖分配管理员不存在拒绝。
+- 后端需要覆盖空回复拒绝。
+- 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
+- 前端需要运行 `npm run build`，确认客服状态、优先级和 API client 类型一致。
+- API 冒烟需要创建会话、更新分配、追加回复、验证未知用户和未知管理员错误。
+- 浏览器验证需要进入“在线客服”入口，确认真实页面显示、保存状态无接口错误且控制台无错误。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+SupportConversation {
+    user_id: payload.user_id,
+    username: payload.username,
+    // ...
+}
+```
+
+这个写法信任前端提交的用户展示名，用户改名或伪造请求时会产生错误数据。
+
+```ts
+await createSupportConversation({
+  userId,
+  username,
+  subject,
+  content,
+});
+```
+
+这个写法把只读展示字段带入创建请求。
+
+#### 正确
+
+```rust
+let access = state.access.snapshot().await?;
+state.support.create(payload, &access.users).await?;
+```
+
+创建会话前从用户仓储校验并回填用户名。
+
+```ts
+await createSupportConversation({
+  id,
+  userId,
+  subject,
+  priority,
+  content,
+});
+```
+
+前端只提交可编辑和绑定字段，展示名由后端生成。

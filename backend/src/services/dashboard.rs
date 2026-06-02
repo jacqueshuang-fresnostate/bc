@@ -163,7 +163,7 @@ fn module_groups() -> Vec<ModuleGroup> {
                     "support",
                     "在线客服",
                     "客服会话和工单入口",
-                    ModuleStatus::Planned,
+                    ModuleStatus::Scaffolded,
                 ),
                 module(
                     "admins",
@@ -262,7 +262,7 @@ fn module_groups() -> Vec<ModuleGroup> {
                     "invite",
                     "邀请管理",
                     "代理邀请关系入口",
-                    ModuleStatus::Scaffolded,
+                    ModuleStatus::Planned,
                 ),
                 module(
                     "rebate",

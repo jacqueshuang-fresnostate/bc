@@ -7,4 +7,5 @@ pub mod play;
 pub mod rebate;
 pub mod robot;
 pub mod settlement;
+pub mod support;
 pub mod user;

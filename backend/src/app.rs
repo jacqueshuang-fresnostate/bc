@@ -14,6 +14,7 @@ use crate::{
         rebate::RebateRepository,
         robot::RobotRepository,
         scheduler::{spawn_draw_scheduler, DrawSchedulerConfig, DrawSchedulerRepository},
+        support::SupportRepository,
     },
 };
 
@@ -27,6 +28,7 @@ pub struct AppState {
     pub rebates: RebateRepository,
     pub robots: RobotRepository,
     pub scheduler: DrawSchedulerRepository,
+    pub support: SupportRepository,
 }
 
 impl AppState {
@@ -40,6 +42,7 @@ impl AppState {
             rebates: RebateRepository::memory_seeded(),
             robots: RobotRepository::memory_seeded(),
             scheduler,
+            support: SupportRepository::memory_seeded(),
         }
     }
 
@@ -63,6 +66,7 @@ impl AppState {
             rebates: RebateRepository::memory_seeded(),
             robots: RobotRepository::memory_seeded(),
             scheduler,
+            support: SupportRepository::memory_seeded(),
         })
     }
 }

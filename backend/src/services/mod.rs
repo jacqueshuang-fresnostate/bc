@@ -10,3 +10,4 @@ pub mod play_rules;
 pub mod rebate;
 pub mod robot;
 pub mod scheduler;
+pub mod support;
