@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
+- **Total Sessions**: 25
 - **Last Active**: 2026-06-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~799 | Active |
+| `journal-1.md` | ~832 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-06-02 | 在线客服仅保留回复入口 | `84bc6d5` | `main` |
 | 24 | 2026-06-02 | 客服会话使用 Semi Chat | `cf87370` | `main` |
 | 23 | 2026-06-02 | 用户权限维护侧边栏 | `3b93fd3` | `main` |
 | 22 | 2026-06-02 | 调度配置后台编辑 | `1baa1fb` | `main` |

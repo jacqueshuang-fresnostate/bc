@@ -797,3 +797,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: 在线客服仅保留回复入口
+
+**Date**: 2026-06-02
+**Task**: 在线客服仅保留回复入口
+**Branch**: `main`
+
+### Summary
+
+移除在线客服后台新建会话表单和创建逻辑，页面只保留用户会话列表、Semi Chat 消息记录、状态维护和后台回复入口；清理 hook 的创建函数与用户列表加载，并完成构建和浏览器验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `84bc6d5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
