@@ -698,3 +698,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: 调度配置后台编辑
+
+**Date**: 2026-06-02
+**Task**: 调度配置后台编辑
+**Branch**: `main`
+
+### Summary
+
+实现调度配置后台编辑：新增 PUT /api/admin/draw-scheduler/config，支持在后台保存启用状态、执行周期、未来期号缓冲和封盘提前秒数；已启动调度循环每轮读取最新配置；前端常驻调度卡片新增配置表单和保存能力；同步更新架构说明、TODO 和后端 API 规格，并通过格式、检查、测试、构建、API 冒烟和浏览器验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1baa1fb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
