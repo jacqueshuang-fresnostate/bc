@@ -26,3 +26,25 @@ textarea,
 select {
   font: inherit;
 }
+
+.form-input {
+  min-height: 40px;
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid #d8dee8;
+  background: #fff;
+  padding: 0 10px;
+  color: #182230;
+  outline: none;
+}
+
+.form-input:focus {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.form-input:disabled {
+  cursor: not-allowed;
+  background: #f1f5f9;
+  color: #64748b;
+}

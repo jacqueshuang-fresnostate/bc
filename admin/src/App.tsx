@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { AppShell, type NavigationItem } from './components/AppShell';
 import { useDashboard } from './hooks/useDashboard';
 import { DashboardPage } from './pages/DashboardPage';
+import { LotteryManagementPage } from './pages/LotteryManagementPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
 export function App() {
@@ -42,6 +43,8 @@ export function App() {
           onOpenModule={setActiveKey}
           onRefresh={refresh}
         />
+      ) : activeKey === 'lotteries' ? (
+        <LotteryManagementPage onDashboardRefresh={refresh} />
       ) : data ? (
         <PlaceholderPage moduleKey={activeKey} summary={data} />
       ) : (

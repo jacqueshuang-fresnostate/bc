@@ -1,9 +1,23 @@
-import type { ApiEnvelope, DashboardSummary } from '../types/dashboard';
+import type { ApiEnvelope, DashboardSummary, LotteryKind } from '../types/dashboard';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
-async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, { signal });
+interface JsonRequestOptions {
+  body?: unknown;
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  signal?: AbortSignal;
+}
+
+async function requestJson<T>(
+  path: string,
+  { body, method = 'GET', signal }: JsonRequestOptions = {},
+): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    method,
+    signal,
+  });
   const envelope = (await response.json()) as ApiEnvelope<T>;
 
   if (!response.ok || !envelope.success || envelope.data === null) {
@@ -14,5 +28,39 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 }
 
 export function fetchDashboard(signal?: AbortSignal) {
-  return getJson<DashboardSummary>('/api/admin/dashboard', signal);
+  return requestJson<DashboardSummary>('/api/admin/dashboard', { signal });
+}
+
+export function fetchLotteries(signal?: AbortSignal) {
+  return requestJson<LotteryKind[]>('/api/admin/lotteries', { signal });
+}
+
+export function createLottery(payload: LotteryKind) {
+  return requestJson<LotteryKind>('/api/admin/lotteries', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateLottery(id: string, payload: LotteryKind) {
+  return requestJson<LotteryKind>(`/api/admin/lotteries/${encodeURIComponent(id)}`, {
+    body: payload,
+    method: 'PUT',
+  });
+}
+
+export function deleteLottery(id: string) {
+  return requestJson<LotteryKind>(`/api/admin/lotteries/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export function setLotterySaleStatus(id: string, saleEnabled: boolean) {
+  return requestJson<LotteryKind>(
+    `/api/admin/lotteries/${encodeURIComponent(id)}/sale`,
+    {
+      body: { saleEnabled },
+      method: 'PATCH',
+    },
+  );
 }

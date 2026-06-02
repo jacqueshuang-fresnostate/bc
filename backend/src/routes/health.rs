@@ -1,9 +1,9 @@
 use axum::{routing::get, Json, Router};
 use serde::Serialize;
 
-use crate::{error::ApiResult, response::ApiEnvelope};
+use crate::{app::AppState, error::ApiResult, response::ApiEnvelope};
 
-pub fn router() -> Router {
+pub fn router() -> Router<AppState> {
     Router::new().route("/health", get(health))
 }
 

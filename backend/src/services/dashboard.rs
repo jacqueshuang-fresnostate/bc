@@ -2,10 +2,7 @@ use serde::Serialize;
 
 use crate::domain::{
     finance::{FinanceOverview, FinancialAccountSummary},
-    lottery::{
-        DrawMode, DrawSchedule, DrawSource, GroupBuyConfig, LotteryKind, LotteryNumberType,
-        PlayCategory,
-    },
+    lottery::{DrawMode, DrawSource, LotteryKind},
     order::{GroupBuyPlanSummary, OrderStatus, OrderSummary},
     permission::{AdminRole, PermissionScope, SystemSetting},
     rebate::{InvitePolicySummary, RebateMode},
@@ -67,16 +64,23 @@ pub enum ModuleStatus {
     Planned,
 }
 
-pub fn dashboard_summary() -> DashboardSummary {
+pub fn dashboard_summary(lotteries: Vec<LotteryKind>) -> DashboardSummary {
+    let lottery_count = lotteries.len();
+
     DashboardSummary {
         metrics: vec![
             metric("users", "用户总数", "128", "+12 今日新增"),
             metric("orders", "今日订单", "2,418", "示例数据"),
-            metric("lotteries", "已配置彩种", "4", "3 位与 5 位玩法"),
+            metric(
+                "lotteries",
+                "已配置彩种",
+                lottery_count.to_string(),
+                "3 位与 5 位玩法",
+            ),
             metric("finance", "平台余额", "¥83,240.00", "等待接入数据库"),
         ],
         module_groups: module_groups(),
-        lotteries: lotteries(),
+        lotteries,
         draw_sources: draw_sources(),
         recent_orders: recent_orders(),
         group_buy_plans: group_buy_plans(),
@@ -261,88 +265,6 @@ fn module(
         name: name.into(),
         description: description.into(),
         status,
-    }
-}
-
-fn lotteries() -> Vec<LotteryKind> {
-    vec![
-        LotteryKind {
-            id: "fc3d".to_string(),
-            name: "福彩 3D".to_string(),
-            number_type: LotteryNumberType::ThreeDigit,
-            draw_mode: DrawMode::Api,
-            schedule: DrawSchedule::Daily {
-                time: "21:00:15".to_string(),
-            },
-            sale_enabled: true,
-            group_buy: group_buy_config(),
-            play_categories: vec![
-                PlayCategory::Direct,
-                PlayCategory::GroupThree,
-                PlayCategory::GroupSix,
-            ],
-        },
-        LotteryKind {
-            id: "pl3".to_string(),
-            name: "排列 3".to_string(),
-            number_type: LotteryNumberType::ThreeDigit,
-            draw_mode: DrawMode::Api,
-            schedule: DrawSchedule::Daily {
-                time: "21:00:15".to_string(),
-            },
-            sale_enabled: true,
-            group_buy: group_buy_config(),
-            play_categories: vec![
-                PlayCategory::Direct,
-                PlayCategory::GroupThree,
-                PlayCategory::GroupSix,
-            ],
-        },
-        LotteryKind {
-            id: "ssc60".to_string(),
-            name: "60 秒时时彩".to_string(),
-            number_type: LotteryNumberType::FiveDigit,
-            draw_mode: DrawMode::Platform,
-            schedule: DrawSchedule::Periodic {
-                interval_seconds: 60,
-            },
-            sale_enabled: true,
-            group_buy: group_buy_config(),
-            play_categories: vec![
-                PlayCategory::Direct,
-                PlayCategory::DirectCombination,
-                PlayCategory::GroupThree,
-                PlayCategory::GroupSix,
-                PlayCategory::BigSmallOddEven,
-            ],
-        },
-        LotteryKind {
-            id: "manual-test".to_string(),
-            name: "指定号码测试彩".to_string(),
-            number_type: LotteryNumberType::FiveDigit,
-            draw_mode: DrawMode::Manual,
-            schedule: DrawSchedule::Weekly {
-                weekdays: vec!["Tuesday".to_string(), "Thursday".to_string()],
-                time: "21:00:00".to_string(),
-            },
-            sale_enabled: false,
-            group_buy: GroupBuyConfig {
-                enabled: false,
-                min_share_amount_minor: 100,
-                initiator_min_percent: 10,
-                participant_min_amount_minor: 1_000,
-            },
-            play_categories: vec![PlayCategory::Direct],
-        },
-    ]
-}
-
-fn group_buy_config() -> GroupBuyConfig {
-    GroupBuyConfig {
-        enabled: true,
-        min_share_amount_minor: 100,
-        initiator_min_percent: 10,
-        participant_min_amount_minor: 1_000,
     }
 }
 
@@ -553,10 +475,11 @@ fn settings() -> Vec<SystemSetting> {
 #[cfg(test)]
 mod tests {
     use super::dashboard_summary;
+    use crate::services::lottery::seed_lotteries;
 
     #[test]
     fn dashboard_includes_required_module_groups() {
-        let summary = dashboard_summary();
+        let summary = dashboard_summary(seed_lotteries());
         let keys = summary
             .module_groups
             .iter()

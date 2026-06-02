@@ -1,13 +1,13 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum LotteryNumberType {
     ThreeDigit,
     FiveDigit,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum DrawMode {
     Platform,
@@ -15,15 +15,15 @@ pub enum DrawMode {
     Manual,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum DrawSchedule {
     Periodic { interval_seconds: u32 },
     Daily { time: String },
     Weekly { weekdays: Vec<String>, time: String },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PlayCategory {
     Direct,
@@ -33,7 +33,7 @@ pub enum PlayCategory {
     BigSmallOddEven,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupBuyConfig {
     pub enabled: bool,
@@ -42,7 +42,7 @@ pub struct GroupBuyConfig {
     pub participant_min_amount_minor: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DrawSource {
     pub id: String,
@@ -51,7 +51,7 @@ pub struct DrawSource {
     pub reusable_for_lottery_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LotteryKind {
     pub id: String,
@@ -62,4 +62,36 @@ pub struct LotteryKind {
     pub sale_enabled: bool,
     pub group_buy: GroupBuyConfig,
     pub play_categories: Vec<PlayCategory>,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::DrawSchedule;
+
+    #[test]
+    fn draw_schedule_uses_camel_case_variant_fields() {
+        let schedule = DrawSchedule::Periodic {
+            interval_seconds: 60,
+        };
+
+        let value = serde_json::to_value(schedule).expect("schedule can be serialized");
+
+        assert_eq!(value, json!({ "periodic": { "intervalSeconds": 60 } }));
+    }
+
+    #[test]
+    fn draw_schedule_accepts_camel_case_variant_fields() {
+        let schedule: DrawSchedule =
+            serde_json::from_value(json!({ "periodic": { "intervalSeconds": 60 } }))
+                .expect("schedule can be deserialized");
+
+        assert_eq!(
+            schedule,
+            DrawSchedule::Periodic {
+                interval_seconds: 60
+            }
+        );
+    }
 }

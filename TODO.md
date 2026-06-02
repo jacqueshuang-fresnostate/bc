@@ -25,3 +25,10 @@
 - 解决问题：构建过程中发现 `tsc -b` 会生成 `vite.config.js`、`vite.config.d.ts` 和 `*.tsbuildinfo` 等副产物，已改为 `tsc --noEmit` 双配置检查，避免构建污染源码目录；前端错误提示也从固定 `8080` 改为检查 `VITE_API_BASE_URL`，适配非默认端口联调。
 - 验证结果：重新运行 `cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过。
 - 后续动作：项目根目录当前不是 Git 仓库，无法按 Trellis Phase 3.4 生成工作提交；后续如果需要完整任务归档和提交记录，需要先在项目根或包目录初始化/进入 Git 仓库。
+
+## 2026-06-02 14:16:33 HKT
+
+- 完成任务：实现 `06-02-lottery-management-crud` 彩种管理阶段，新增后端内存彩种仓储、彩种 CRUD 与销售开关接口，并把管理后台“彩种管理”入口替换为可新增、编辑、删除和切换销售状态的真实页面。
+- 解决问题：此前彩种只存在于 dashboard 静态演示数据中，无法维护配置；本次用共享 `LotteryStore` 让列表接口和 dashboard 使用同一份数据。接口联调时发现 `DrawSchedule` 枚举变体字段没有按前端契约接受 `intervalSeconds`，已通过 `rename_all_fields = "camelCase"` 修复，并新增序列化/反序列化测试。
+- 验证结果：HTTP 冒烟测试通过，确认 `GET/POST/PATCH/DELETE /api/admin/lotteries` 和 `/api/admin/dashboard` 数据一致；浏览器验证通过，彩种管理页从 4 条新增到 5 条再删除回 4 条；`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过。
+- 后续动作：提交 Git；下一阶段可进入数据库持久化、开奖源配置或鉴权权限。
