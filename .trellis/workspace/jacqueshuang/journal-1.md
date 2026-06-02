@@ -302,3 +302,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: 期号封盘投注校验
+
+**Date**: 2026-06-02
+**Task**: 期号封盘投注校验
+**Branch**: `main`
+
+### Summary
+
+完成订单创建接入开奖期号 open 状态校验，订单页期号改为 open 期号下拉；验证 open 期号可下单、closed 和不存在期号被拒绝，Rust/前端质量门通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bb193ea` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
