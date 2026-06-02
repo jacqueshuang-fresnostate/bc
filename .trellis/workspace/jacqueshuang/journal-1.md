@@ -170,3 +170,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: 开奖期号与开奖源基础
+
+**Date**: 2026-06-02
+**Task**: 开奖期号与开奖源基础
+**Branch**: `main`
+
+### Summary
+
+完成开奖期号与开奖源基础：新增后端开奖领域模型、内存仓储和开奖 API；管理后台新增开奖期号页面，支持创建、封盘、开奖、取消；同步架构、TODO 和 API 规格，并通过 Rust/前端构建测试及浏览器联调。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `77bfbc3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
