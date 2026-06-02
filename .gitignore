@@ -1,0 +1,8 @@
+backend/target/
+admin/node_modules/
+admin/dist/
+admin/*.tsbuildinfo
+admin/vite.config.js
+admin/vite.config.d.ts
+*.log
+.DS_Store
