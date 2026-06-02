@@ -533,3 +533,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: 机器人配置基础管理
+
+**Date**: 2026-06-02
+**Task**: 机器人配置基础管理
+**Branch**: `main`
+
+### Summary
+
+完成机器人配置基础管理：新增后端 RobotRepository 和机器人 CRUD/状态接口，dashboard 改为读取共享机器人仓储；管理后台新增机器人配置页面，接入合买机器人和购彩机器人入口，支持类型筛选、彩种绑定、启停、编辑和删除。同步更新架构设计、TODO 和后端 API 契约。验证 cargo fmt --check、cargo check、cargo test、npm run build 通过，并完成 API 与浏览器冒烟。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e2051ad` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
