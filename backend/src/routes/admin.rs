@@ -19,6 +19,7 @@ use crate::{
     response::ApiEnvelope,
     services::{
         dashboard::{dashboard_summary_with_orders, draw_sources, DashboardSummary},
+        order::validate_draw_issue_accepts_order,
         play_rules::{evaluate_play_rule, play_rule_summaries},
     },
 };
@@ -217,6 +218,11 @@ async fn create_order(
     Json(payload): Json<CreateOrderRequest>,
 ) -> ApiResult<Json<ApiEnvelope<OrderDetail>>> {
     let lottery = state.lotteries.get(&payload.lottery_id).await?;
+    let draw_issue = state
+        .draws
+        .get_by_lottery_issue(&payload.lottery_id, &payload.issue)
+        .await?;
+    validate_draw_issue_accepts_order(&draw_issue, &lottery, &payload.issue)?;
     let quote = state.orders.quote(&lottery, &payload).await?;
     state
         .finance

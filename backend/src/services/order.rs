@@ -18,6 +18,35 @@ use crate::{
 
 const ODDS_SCALE_BASIS_POINTS: i64 = 10_000;
 
+pub fn validate_draw_issue_accepts_order(
+    draw_issue: &DrawIssue,
+    lottery: &LotteryKind,
+    issue: &str,
+) -> ApiResult<()> {
+    if draw_issue.lottery_id != lottery.id {
+        return Err(ApiError::BadRequest(
+            "draw issue lottery does not match order lottery".to_string(),
+        ));
+    }
+    if draw_issue.issue != issue.trim() {
+        return Err(ApiError::BadRequest(
+            "draw issue number does not match order issue".to_string(),
+        ));
+    }
+    if draw_issue.number_type != lottery.number_type {
+        return Err(ApiError::BadRequest(
+            "draw issue number type does not match lottery".to_string(),
+        ));
+    }
+    if draw_issue.status != DrawIssueStatus::Open {
+        return Err(ApiError::BadRequest(
+            "draw issue is not open for order creation".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct OrderRepository {
     inner: Arc<RwLock<OrderStore>>,
@@ -677,6 +706,37 @@ mod tests {
             .expect_err("same issue cannot be settled twice")
             .to_string()
             .contains("already settled"));
+    }
+
+    #[test]
+    fn draw_issue_must_be_open_before_order_creation() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let open_issue = draw_issue(DrawIssueStatus::Open, None);
+
+        super::validate_draw_issue_accepts_order(&open_issue, &lottery, "2026156")
+            .expect("open issue can accept orders");
+
+        for status in [
+            DrawIssueStatus::Closed,
+            DrawIssueStatus::Drawn,
+            DrawIssueStatus::Cancelled,
+        ] {
+            let error = super::validate_draw_issue_accepts_order(
+                &draw_issue(status, None),
+                &lottery,
+                "2026156",
+            )
+            .expect_err("non-open issue cannot accept orders");
+            assert!(error
+                .to_string()
+                .contains("draw issue is not open for order creation"));
+        }
+
+        let error = super::validate_draw_issue_accepts_order(&open_issue, &lottery, "2026157")
+            .expect_err("mismatched issue cannot accept orders");
+        assert!(error
+            .to_string()
+            .contains("draw issue number does not match order issue"));
     }
 
     fn lottery_with_categories(play_categories: Vec<PlayCategory>) -> LotteryKind {

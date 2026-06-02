@@ -38,6 +38,17 @@ impl DrawRepository {
             .get(id)
     }
 
+    pub async fn get_by_lottery_issue(
+        &self,
+        lottery_id: &str,
+        issue: &str,
+    ) -> ApiResult<DrawIssue> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
+            .get_by_lottery_issue(lottery_id, issue)
+    }
+
     pub async fn create(
         &self,
         lottery: &LotteryKind,
@@ -87,6 +98,20 @@ impl DrawStore {
             .get(id)
             .cloned()
             .ok_or_else(|| ApiError::NotFound(format!("draw issue `{id}` not found")))
+    }
+
+    fn get_by_lottery_issue(&self, lottery_id: &str, issue: &str) -> ApiResult<DrawIssue> {
+        let lottery_id = lottery_id.trim();
+        let issue = issue.trim();
+        self.issues
+            .values()
+            .find(|draw_issue| draw_issue.lottery_id == lottery_id && draw_issue.issue == issue)
+            .cloned()
+            .ok_or_else(|| {
+                ApiError::NotFound(format!(
+                    "draw issue `{issue}` not found for lottery `{lottery_id}`"
+                ))
+            })
     }
 
     fn create(
@@ -330,9 +355,13 @@ mod tests {
         let issue = store
             .create(&lottery, create_request("2026156"))
             .expect("issue can be created");
+        let found = store
+            .get_by_lottery_issue("fc3d", "2026156")
+            .expect("issue can be found by lottery and issue");
         let closed = store.close(&issue.id).expect("issue can be closed");
 
         assert_eq!(issue.status, DrawIssueStatus::Open);
+        assert_eq!(found.id, issue.id);
         assert_eq!(closed.status, DrawIssueStatus::Closed);
     }
 

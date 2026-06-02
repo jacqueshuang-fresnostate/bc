@@ -480,7 +480,7 @@ let payout = matched_count * order.unit_amount_minor * order.odds_basis_points /
 ### 1. 范围 / 触发条件
 
 - 触发条件：新增或修改投注订单创建、订单列表、订单详情、订单取消、dashboard 最近订单。
-- 范围：后端订单领域模型、内存订单仓储、订单 API、玩法规则引擎复用、彩种配置校验、前端订单页面。
+- 范围：后端订单领域模型、内存订单仓储、订单 API、玩法规则引擎复用、彩种配置校验、开奖期号销售状态校验、前端订单页面。
 
 ### 2. 签名
 
@@ -493,6 +493,8 @@ let payout = matched_count * order.unit_amount_minor * order.odds_basis_points /
 ### 3. 契约
 
 所有接口继续使用统一 API 信封。订单金额字段必须使用最小货币单位整数，不使用浮点数。
+
+创建订单前必须存在同彩种、同 `issue` 的开奖期号，并且该期号状态必须为 `open`。`closed`、`drawn`、`cancelled` 期号都不能继续创建订单。
 
 创建订单请求：
 
@@ -555,6 +557,8 @@ let payout = matched_count * order.unit_amount_minor * order.odds_basis_points /
 | 彩种不存在 | HTTP 404，返回彩种不存在 |
 | 请求彩种 ID 与读取的彩种不一致 | HTTP 400，返回 `request lottery id does not match lottery` |
 | 期号为空 | HTTP 400，返回 `issue is required` |
+| 期号不存在 | HTTP 404，返回 `draw issue ... not found for lottery ...` |
+| 期号不是 `open` | HTTP 400，返回 `draw issue is not open for order creation` |
 | 单注金额小于等于 0 | HTTP 400，返回 `unit amount must be greater than zero` |
 | 彩种停售 | HTTP 400，返回 `lottery is not on sale` |
 | 玩法号码类型与彩种号码类型不匹配 | HTTP 400，返回 `rule code does not match lottery number type` |
@@ -568,19 +572,22 @@ let payout = matched_count * order.unit_amount_minor * order.odds_basis_points /
 ### 5. Good / Base / Bad Cases
 
 - Good：`fc3d` 创建 `threeDirect` 订单，选号 `247`、单注 `200` 分，后端返回 `stakeCount=1`、`amountMinor=200`、`oddsBasisPoints` 和 `expandedBets=["247"]`。
+- Good：订单创建前先创建 `fc3d` 的 open 期号 `2026155`，订单请求使用同一期号才能成功。
 - Good：创建订单后重新请求 `/api/admin/dashboard`，`recentOrders` 包含该订单，今日订单指标等于内存订单数量。
 - Base：订单仓储当前是内存模式，服务重启后订单清空；这适合当前后台功能验证。
+- Bad：前端手工输入一个不存在的期号仍然提交订单；订单必须从 open 期号中选择，后端也必须再次校验。
 - Bad：前端传 `amountMinor` 给后端并由后端直接保存；订单金额必须由后端根据注数和单注金额计算。
 - Bad：机器人购彩绕过订单接口直接写订单；后续机器人必须复用订单创建校验。
 
 ### 6. 必要测试
 
 - 后端需要覆盖订单创建时按玩法规则引擎计算注数、金额和展开投注。
+- 后端需要覆盖 open 期号允许投注，closed/drawn/cancelled 期号拒绝投注。
 - 后端需要覆盖彩种未配置或停用单玩法时拒绝创建订单。
 - 后端需要覆盖取消待开奖订单，以及重复取消被拒绝。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`。
-- 跨层联调需要创建订单、查询列表、取消订单，并在 dashboard 最近订单确认回流。
+- 跨层联调需要创建 open 期号、创建订单、关闭期号后确认同一期号拒绝新订单，并在 dashboard 最近订单确认回流。
 
 ### 7. Wrong vs Correct
 

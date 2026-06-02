@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import { useDraws } from '../hooks/useDraws';
 import { useLotteries } from '../hooks/useLotteries';
 import { useOrders } from '../hooks/useOrders';
 import { usePlayRules } from '../hooks/usePlayRules';
@@ -72,6 +73,12 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
     lotteries,
     refresh: refreshLotteries,
   } = useLotteries();
+  const {
+    error: drawsError,
+    loading: drawsLoading,
+    issues: drawIssues,
+    refresh: refreshDraws,
+  } = useDraws();
   const { error: rulesError, loading: rulesLoading, rules } = usePlayRules();
   const [createdOrder, setCreatedOrder] = useState<OrderDetail | null>(null);
   const [form, setForm] = useState<OrderFormState>(() => emptyForm());
@@ -94,6 +101,18 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
     () => availableRules.find((rule) => rule.code === form.ruleCode) ?? availableRules[0] ?? null,
     [availableRules, form.ruleCode],
   );
+  const availableDrawIssues = useMemo(() => {
+    if (!selectedLottery) {
+      return [];
+    }
+    return drawIssues.filter(
+      (issue) => issue.lotteryId === selectedLottery.id && issue.status === 'open',
+    );
+  }, [drawIssues, selectedLottery]);
+  const selectedDrawIssue = useMemo(
+    () => availableDrawIssues.find((issue) => issue.issue === form.issue) ?? null,
+    [availableDrawIssues, form.issue],
+  );
 
   useEffect(() => {
     if (!form.lotteryId && lotteries[0]) {
@@ -114,13 +133,27 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
     }
   }, [form.ruleCode, selectedRule]);
 
+  useEffect(() => {
+    const firstIssue = availableDrawIssues[0]?.issue ?? '';
+    if (
+      !availableDrawIssues.some((issue) => issue.issue === form.issue) &&
+      form.issue !== firstIssue
+    ) {
+      setForm((current) => ({
+        ...current,
+        issue: firstIssue,
+      }));
+    }
+  }, [availableDrawIssues, form.issue]);
+
   const refreshAll = () => {
+    refreshDraws();
     refreshOrders();
     refreshLotteries();
   };
 
   const submit = async () => {
-    if (!selectedLottery || !selectedRule) {
+    if (!selectedLottery || !selectedRule || !selectedDrawIssue) {
       return;
     }
     const payload: CreateOrderRequest = {
@@ -141,8 +174,8 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
     onDashboardRefresh();
   };
 
-  const loading = ordersLoading || lotteriesLoading || rulesLoading;
-  const error = orderError ?? lotteryError ?? rulesError;
+  const loading = ordersLoading || lotteriesLoading || rulesLoading || drawsLoading;
+  const error = orderError ?? lotteryError ?? drawsError ?? rulesError;
 
   return (
     <div className="space-y-5">
@@ -150,7 +183,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
         <div>
           <h1 className="text-xl font-semibold text-ink">订单管理</h1>
           <p className="mt-1 text-sm text-slate-500">
-            创建测试投注单，查看后端计算的注数、金额和投注展开。
+            创建测试投注单，后端会校验期号仍处于销售中，再计算注数、金额和投注展开。
           </p>
         </div>
         <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
@@ -269,7 +302,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
           <div className="mb-4">
             <h2 className="text-base font-semibold text-ink">创建投注单</h2>
             <p className="mt-1 text-sm text-slate-500">
-              后端会按玩法规则重新计算注数和订单金额。
+              后端会先校验期号销售状态，再按玩法规则计算注数和订单金额。
             </p>
           </div>
 
@@ -288,11 +321,22 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                 />
               </Field>
               <Field label="期号">
-                <input
+                <select
                   className="form-input"
+                  disabled={availableDrawIssues.length === 0}
                   value={form.issue}
                   onChange={(event) => setFormValue(setForm, 'issue', event.target.value)}
-                />
+                >
+                  {availableDrawIssues.length > 0 ? (
+                    availableDrawIssues.map((issue) => (
+                      <option key={issue.id} value={issue.issue}>
+                        {issue.issue}（封盘 {issue.saleClosedAt}）
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">暂无可投注期号</option>
+                  )}
+                </select>
               </Field>
             </div>
 
@@ -303,6 +347,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
+                    issue: '',
                     lotteryId: event.target.value,
                     ruleCode: '',
                   }))
@@ -349,13 +394,18 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
             </Field>
 
             <Button
-              disabled={!selectedLottery || !selectedRule || saving}
+              disabled={!selectedLottery || !selectedRule || !selectedDrawIssue || saving}
               icon={<Plus size={16} />}
               theme="solid"
               onClick={() => void submit()}
             >
               {saving ? '创建中' : '创建订单'}
             </Button>
+            {!selectedDrawIssue ? (
+              <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-700">
+                当前彩种没有 open 状态期号，请先到“开奖模式”或“开奖时间”页面创建期号。
+              </div>
+            ) : null}
           </form>
 
           {createdOrder ? (
