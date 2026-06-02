@@ -401,3 +401,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: 批量预生成期号和计划预览
+
+**Date**: 2026-06-02
+**Task**: 批量预生成期号和计划预览
+**Branch**: `main`
+
+### Summary
+
+实现开奖期号计划预览和批量生成，新增后端预览/批量接口，前端开奖期号页面新增数量输入、预览计划和批量生成入口，并同步中文架构、TODO 与 API 契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6f55bb3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

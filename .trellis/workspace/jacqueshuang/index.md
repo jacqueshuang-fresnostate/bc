@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
+- **Total Sessions**: 13
 - **Last Active**: 2026-06-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~403 | Active |
+| `journal-1.md` | ~436 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-06-02 | 批量预生成期号和计划预览 | `6f55bb3` | `main` |
 | 12 | 2026-06-02 | 自动创建下一期号基础 | `9f96356` | `main` |
 | 11 | 2026-06-02 | 自动封盘开奖结算基础 | `0e5930f` | `main` |
 | 10 | 2026-06-02 | 期号封盘投注校验 | `bb193ea` | `main` |
