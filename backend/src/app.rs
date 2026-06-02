@@ -10,7 +10,7 @@ use crate::{
         finance::FinanceRepository,
         lottery::LotteryRepository,
         order::OrderRepository,
-        scheduler::{spawn_draw_scheduler, DrawSchedulerConfig},
+        scheduler::{spawn_draw_scheduler, DrawSchedulerConfig, DrawSchedulerRepository},
     },
 };
 
@@ -20,22 +20,26 @@ pub struct AppState {
     pub finance: FinanceRepository,
     pub lotteries: LotteryRepository,
     pub orders: OrderRepository,
+    pub scheduler: DrawSchedulerRepository,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    fn new_with_scheduler(scheduler: DrawSchedulerRepository) -> Self {
         Self {
             draws: DrawRepository::memory(),
             finance: FinanceRepository::memory_seeded(),
             lotteries: LotteryRepository::memory_seeded(),
             orders: OrderRepository::memory(),
+            scheduler,
         }
     }
 
-    pub async fn from_env() -> Result<Self, Box<dyn Error + Send + Sync>> {
+    pub async fn from_env_with_scheduler(
+        scheduler: DrawSchedulerRepository,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let Ok(database_url) = std::env::var("DATABASE_URL") else {
             tracing::info!("DATABASE_URL not configured; using in-memory lottery repository");
-            return Ok(Self::new());
+            return Ok(Self::new_with_scheduler(scheduler));
         };
 
         let lotteries = LotteryRepository::postgres(&database_url).await?;
@@ -46,19 +50,22 @@ impl AppState {
             finance: FinanceRepository::memory_seeded(),
             lotteries,
             orders: OrderRepository::memory(),
+            scheduler,
         })
     }
 }
 
 pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
-    let state = AppState::from_env().await?;
     let scheduler_config = DrawSchedulerConfig::from_env()?;
+    let scheduler = DrawSchedulerRepository::new(scheduler_config.clone());
+    let state = AppState::from_env_with_scheduler(scheduler.clone()).await?;
     spawn_draw_scheduler(
         state.draws.clone(),
         state.lotteries.clone(),
         state.orders.clone(),
         state.finance.clone(),
         scheduler_config,
+        scheduler,
     );
 
     Ok(router_with_state(state))

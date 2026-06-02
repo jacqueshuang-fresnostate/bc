@@ -134,3 +134,10 @@
 - 解决问题：此前自动任务、单期生成和批量预生成都需要管理员手动点击，系统无法在服务运行期间自动推进期号生命周期；本次把常驻调度拆成可测试的单轮调度和后台 Tokio 循环，单轮先复用 `run_draw_automation` 处理到期事项，再复用 `generate_draw_issue_batch` 补齐未来期号，避免复制业务逻辑。调度默认关闭，避免本地开发和测试时后台任务自动改写内存数据；用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 55 个，覆盖调度默认关闭、环境变量解析、无效配置、销售开启彩种补期、未来缓冲满足不重复生成、到期自动任务先执行再补期。服务冒烟使用 `DRAW_SCHEDULER_ENABLED=true DRAW_SCHEDULER_INTERVAL_SECONDS=1 DRAW_SCHEDULER_FUTURE_ISSUE_COUNT=2 PORT=18086` 启动后，`GET /api/admin/draw-issues` 自动出现 `fc3d`、`pl3`、`ssc60` 各 2 个未来 open 期号，停售的 `manual-test` 未被补期。
 - 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议实现调度运行历史、后台可视化配置、失败重试、告警和分布式锁。
+
+## 2026-06-02 18:55:38 HKT
+
+- 完成任务：实现 `06-02-scheduler-history-visibility-foundation` 调度运行历史与后台可视化基础阶段，新增后端调度状态仓储、运行记录模型和 `GET /api/admin/draw-scheduler/status` 接口；管理后台“开奖期号与开奖源”页面新增“常驻调度”卡片，可查看启用状态、调度配置、最近一次运行摘要和最近运行历史。
+- 解决问题：此前常驻调度启用后只能通过日志或期号变化侧面判断是否在运行，管理员无法直接看到最近是否成功、补了多少期、是否跳过停售彩种或是否失败；本次让成功和失败都写入最近 20 条内存历史，并通过 typed API、`useDrawScheduler` hook 和页面状态块展示。手动点击“运行自动任务”仍不写入常驻调度历史，避免混淆自动循环来源；用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 58 个，覆盖调度历史成功记录、失败记录和最近 20 条保留上限。API 冒烟使用 `DRAW_SCHEDULER_ENABLED=true DRAW_SCHEDULER_INTERVAL_SECONDS=1 DRAW_SCHEDULER_FUTURE_ISSUE_COUNT=1 PORT=18087` 启动后，`GET /api/admin/draw-scheduler/status` 返回 `enabled=true`、最近运行 `SCH...` 和历史记录，`GET /api/admin/draw-issues` 自动出现 3 个未来 open 期号。浏览器验证 `http://127.0.0.1:5180/` 的“开奖期号与开奖源”页面已显示“常驻调度”“已启用”“最近运行”，控制台无错误。
+- 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议实现调度配置后台编辑、调度历史持久化、失败重试、告警、管理员审计和分布式锁。

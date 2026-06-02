@@ -1,10 +1,13 @@
 use std::{
+    collections::VecDeque,
     error::Error,
     io::{Error as IoError, ErrorKind},
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
 use chrono::Local;
+use serde::Serialize;
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::{
@@ -28,10 +31,12 @@ use crate::{
 
 const DEFAULT_SCHEDULER_INTERVAL_SECONDS: u64 = 60;
 const DEFAULT_FUTURE_ISSUE_COUNT: u32 = 1;
+const MAX_SCHEDULER_HISTORY: usize = 20;
 const MAX_FUTURE_ISSUE_COUNT: u32 = 50;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DrawSchedulerConfig {
     pub enabled: bool,
     pub interval_seconds: u64,
@@ -39,7 +44,8 @@ pub struct DrawSchedulerConfig {
     pub sale_close_lead_seconds: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DrawSchedulerSkippedLottery {
     pub lottery_id: String,
     pub reason: String,
@@ -53,6 +59,60 @@ pub struct DrawSchedulerRun {
     pub skipped_lotteries: Vec<DrawSchedulerSkippedLottery>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DrawSchedulerRunStatus {
+    Success,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DrawSchedulerRunTrigger {
+    Automatic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DrawSchedulerRunRecord {
+    pub id: String,
+    pub trigger: DrawSchedulerRunTrigger,
+    pub status: DrawSchedulerRunStatus,
+    pub started_at: String,
+    pub finished_at: String,
+    pub now: String,
+    pub error: Option<String>,
+    pub closed_issue_count: usize,
+    pub drawn_issue_count: usize,
+    pub settlement_run_count: usize,
+    pub ledger_entry_count: usize,
+    pub generated_issue_count: usize,
+    pub skipped_issue_count: usize,
+    pub skipped_lottery_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DrawSchedulerStatus {
+    pub enabled: bool,
+    pub config: DrawSchedulerConfig,
+    pub run_count: usize,
+    pub last_run: Option<DrawSchedulerRunRecord>,
+    pub recent_runs: Vec<DrawSchedulerRunRecord>,
+}
+
+#[derive(Clone)]
+pub struct DrawSchedulerRepository {
+    inner: Arc<RwLock<DrawSchedulerStore>>,
+}
+
+#[derive(Debug)]
+struct DrawSchedulerStore {
+    config: DrawSchedulerConfig,
+    next_sequence: u64,
+    runs: VecDeque<DrawSchedulerRunRecord>,
+}
+
 impl Default for DrawSchedulerConfig {
     fn default() -> Self {
         Self {
@@ -61,6 +121,132 @@ impl Default for DrawSchedulerConfig {
             future_issue_count: DEFAULT_FUTURE_ISSUE_COUNT,
             sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
         }
+    }
+}
+
+impl DrawSchedulerRepository {
+    pub fn new(config: DrawSchedulerConfig) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(DrawSchedulerStore {
+                config,
+                next_sequence: 0,
+                runs: VecDeque::new(),
+            })),
+        }
+    }
+
+    pub fn status(&self) -> ApiResult<DrawSchedulerStatus> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw scheduler store lock poisoned".to_string()))
+            .map(|store| store.status())
+    }
+
+    pub fn record_success(
+        &self,
+        trigger: DrawSchedulerRunTrigger,
+        started_at: String,
+        finished_at: String,
+        run: &DrawSchedulerRun,
+    ) -> ApiResult<DrawSchedulerRunRecord> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("draw scheduler store lock poisoned".to_string()))?
+            .record_success(trigger, started_at, finished_at, run)
+    }
+
+    pub fn record_failure(
+        &self,
+        trigger: DrawSchedulerRunTrigger,
+        started_at: String,
+        finished_at: String,
+        now: String,
+        error: String,
+    ) -> ApiResult<DrawSchedulerRunRecord> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("draw scheduler store lock poisoned".to_string()))?
+            .record_failure(trigger, started_at, finished_at, now, error)
+    }
+}
+
+impl DrawSchedulerStore {
+    fn status(&self) -> DrawSchedulerStatus {
+        let recent_runs = self.runs.iter().cloned().collect::<Vec<_>>();
+        DrawSchedulerStatus {
+            enabled: self.config.enabled,
+            config: self.config.clone(),
+            run_count: self.runs.len(),
+            last_run: recent_runs.first().cloned(),
+            recent_runs,
+        }
+    }
+
+    fn record_success(
+        &mut self,
+        trigger: DrawSchedulerRunTrigger,
+        started_at: String,
+        finished_at: String,
+        run: &DrawSchedulerRun,
+    ) -> ApiResult<DrawSchedulerRunRecord> {
+        let record = self.next_record(DrawSchedulerRunRecord {
+            id: String::new(),
+            trigger,
+            status: DrawSchedulerRunStatus::Success,
+            started_at,
+            finished_at,
+            now: run.now.clone(),
+            error: None,
+            closed_issue_count: run.automation_run.closed_issues.len(),
+            drawn_issue_count: run.automation_run.drawn_issues.len(),
+            settlement_run_count: run.automation_run.settlement_runs.len(),
+            ledger_entry_count: run.automation_run.ledger_entries.len(),
+            generated_issue_count: run.generated_issues.len(),
+            skipped_issue_count: run.automation_run.skipped_issues.len(),
+            skipped_lottery_count: run.skipped_lotteries.len(),
+        });
+        self.push_record(record)
+    }
+
+    fn record_failure(
+        &mut self,
+        trigger: DrawSchedulerRunTrigger,
+        started_at: String,
+        finished_at: String,
+        now: String,
+        error: String,
+    ) -> ApiResult<DrawSchedulerRunRecord> {
+        let record = self.next_record(DrawSchedulerRunRecord {
+            id: String::new(),
+            trigger,
+            status: DrawSchedulerRunStatus::Failed,
+            started_at,
+            finished_at,
+            now,
+            error: Some(error),
+            closed_issue_count: 0,
+            drawn_issue_count: 0,
+            settlement_run_count: 0,
+            ledger_entry_count: 0,
+            generated_issue_count: 0,
+            skipped_issue_count: 0,
+            skipped_lottery_count: 0,
+        });
+        self.push_record(record)
+    }
+
+    fn next_record(&mut self, mut record: DrawSchedulerRunRecord) -> DrawSchedulerRunRecord {
+        self.next_sequence += 1;
+        record.id = format!("SCH{:012}", self.next_sequence);
+        record
+    }
+
+    fn push_record(&mut self, record: DrawSchedulerRunRecord) -> ApiResult<DrawSchedulerRunRecord> {
+        self.runs.push_front(record.clone());
+        while self.runs.len() > MAX_SCHEDULER_HISTORY {
+            self.runs.pop_back();
+        }
+        Ok(record)
     }
 }
 
@@ -129,6 +315,7 @@ pub fn spawn_draw_scheduler(
     orders: OrderRepository,
     finance: FinanceRepository,
     config: DrawSchedulerConfig,
+    scheduler: DrawSchedulerRepository,
 ) -> Option<JoinHandle<()>> {
     if !config.enabled {
         tracing::info!("draw scheduler disabled");
@@ -148,7 +335,8 @@ pub fn spawn_draw_scheduler(
 
         loop {
             interval.tick().await;
-            let now = current_scheduler_timestamp();
+            let started_at = current_scheduler_timestamp();
+            let now = started_at.clone();
             match run_draw_scheduler_once(
                 &draws,
                 &lotteries,
@@ -160,6 +348,15 @@ pub fn spawn_draw_scheduler(
             .await
             {
                 Ok(run) => {
+                    let finished_at = current_scheduler_timestamp();
+                    if let Err(error) = scheduler.record_success(
+                        DrawSchedulerRunTrigger::Automatic,
+                        started_at,
+                        finished_at,
+                        &run,
+                    ) {
+                        tracing::error!(%error, "draw scheduler history record failed");
+                    }
                     tracing::info!(
                         now = %run.now,
                         closed_issues = run.automation_run.closed_issues.len(),
@@ -173,6 +370,16 @@ pub fn spawn_draw_scheduler(
                     );
                 }
                 Err(error) => {
+                    let finished_at = current_scheduler_timestamp();
+                    if let Err(record_error) = scheduler.record_failure(
+                        DrawSchedulerRunTrigger::Automatic,
+                        started_at,
+                        finished_at,
+                        now.clone(),
+                        error.to_string(),
+                    ) {
+                        tracing::error!(%record_error, "draw scheduler history record failed");
+                    }
                     tracing::error!(%now, %error, "draw scheduler cycle failed");
                 }
             }
@@ -345,6 +552,7 @@ mod tests {
             order::OrderRepository,
             scheduler::{
                 run_draw_scheduler_once, spawn_draw_scheduler, DrawSchedulerConfig,
+                DrawSchedulerRepository, DrawSchedulerRunStatus, DrawSchedulerRunTrigger,
                 DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             },
         },
@@ -465,9 +673,99 @@ mod tests {
             OrderRepository::memory(),
             FinanceRepository::memory_seeded(),
             DrawSchedulerConfig::default(),
+            DrawSchedulerRepository::new(DrawSchedulerConfig::default()),
         );
 
         assert!(handle.is_none());
+    }
+
+    #[tokio::test]
+    async fn scheduler_repository_records_success_summary() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let config = enabled_config(1);
+        let scheduler = DrawSchedulerRepository::new(config.clone());
+        let run = run_draw_scheduler_once(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &config,
+            "2026-06-02 20:00:00".to_string(),
+        )
+        .await
+        .expect("scheduler can run");
+
+        let record = scheduler
+            .record_success(
+                DrawSchedulerRunTrigger::Automatic,
+                "2026-06-02 20:00:00".to_string(),
+                "2026-06-02 20:00:01".to_string(),
+                &run,
+            )
+            .expect("success record can be saved");
+        let status = scheduler.status().expect("status can be read");
+
+        assert_eq!(record.status, DrawSchedulerRunStatus::Success);
+        assert_eq!(status.enabled, true);
+        assert_eq!(status.run_count, 1);
+        assert_eq!(
+            status.last_run.as_ref().map(|run| run.id.as_str()),
+            Some("SCH000000000001")
+        );
+        assert_eq!(
+            status
+                .last_run
+                .as_ref()
+                .map(|run| run.generated_issue_count),
+            Some(run.generated_issues.len())
+        );
+    }
+
+    #[test]
+    fn scheduler_repository_records_failure_summary() {
+        let config = enabled_config(1);
+        let scheduler = DrawSchedulerRepository::new(config);
+
+        let record = scheduler
+            .record_failure(
+                DrawSchedulerRunTrigger::Automatic,
+                "2026-06-02 20:00:00".to_string(),
+                "2026-06-02 20:00:01".to_string(),
+                "2026-06-02 20:00:00".to_string(),
+                "boom".to_string(),
+            )
+            .expect("failure record can be saved");
+        let status = scheduler.status().expect("status can be read");
+
+        assert_eq!(record.status, DrawSchedulerRunStatus::Failed);
+        assert_eq!(record.error.as_deref(), Some("boom"));
+        assert_eq!(status.run_count, 1);
+        assert_eq!(status.recent_runs[0].status, DrawSchedulerRunStatus::Failed);
+    }
+
+    #[test]
+    fn scheduler_repository_keeps_recent_history_limit() {
+        let scheduler = DrawSchedulerRepository::new(enabled_config(1));
+        for index in 0..25 {
+            scheduler
+                .record_failure(
+                    DrawSchedulerRunTrigger::Automatic,
+                    format!("2026-06-02 20:{index:02}:00"),
+                    format!("2026-06-02 20:{index:02}:01"),
+                    format!("2026-06-02 20:{index:02}:00"),
+                    format!("error-{index}"),
+                )
+                .expect("failure record can be saved");
+        }
+
+        let status = scheduler.status().expect("status can be read");
+
+        assert_eq!(status.run_count, 20);
+        assert_eq!(status.recent_runs[0].id, "SCH000000000025");
+        assert_eq!(status.recent_runs[19].id, "SCH000000000006");
     }
 
     #[test]

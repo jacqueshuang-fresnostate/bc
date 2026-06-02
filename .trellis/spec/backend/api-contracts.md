@@ -1289,22 +1289,30 @@ await previewDrawIssueGeneration({
 
 ### 1. 范围 / 触发条件
 
-- 触发条件：新增或修改服务启动后的常驻调度、自动补齐未来期号、自动封盘开奖结算循环。
-- 范围：后端运行环境变量、`app::router_from_env` 启动流程、调度服务、自动任务服务、期号生成服务和结构化日志。
+- 触发条件：新增或修改服务启动后的常驻调度、自动补齐未来期号、自动封盘开奖结算循环、调度状态接口或管理后台调度可视化。
+- 范围：后端运行环境变量、`app::router_from_env` 启动流程、调度服务、自动任务服务、期号生成服务、调度运行历史仓储、管理后台状态接口和结构化日志。
 
 ### 2. 签名
 
-本阶段不新增 HTTP 接口，调度通过服务启动时读取环境变量启用：
+调度通过服务启动时读取环境变量启用：
 
 - `DRAW_SCHEDULER_ENABLED`
 - `DRAW_SCHEDULER_INTERVAL_SECONDS`
 - `DRAW_SCHEDULER_FUTURE_ISSUE_COUNT`
 - `DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS`
 
+管理后台状态接口：
+
+- `GET /api/admin/draw-scheduler/status`
+
 后端内部入口：
 
 - `DrawSchedulerConfig::from_env()`
-- `spawn_draw_scheduler(draws, lotteries, orders, finance, config)`
+- `DrawSchedulerRepository::new(config)`
+- `DrawSchedulerRepository::status()`
+- `DrawSchedulerRepository::record_success(trigger, started_at, finished_at, run)`
+- `DrawSchedulerRepository::record_failure(trigger, started_at, finished_at, now, error)`
+- `spawn_draw_scheduler(draws, lotteries, orders, finance, config, scheduler)`
 - `run_draw_scheduler_once(draws, lotteries, orders, finance, config, now)`
 
 ### 3. 契约
@@ -1318,6 +1326,48 @@ DRAW_SCHEDULER_FUTURE_ISSUE_COUNT=1
 DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 ```
 
+`GET /api/admin/draw-scheduler/status` 继续返回统一 API 信封，`data` 字段形状如下：
+
+```json
+{
+  "enabled": true,
+  "config": {
+    "enabled": true,
+    "intervalSeconds": 60,
+    "futureIssueCount": 1,
+    "saleCloseLeadSeconds": 30
+  },
+  "runCount": 1,
+  "lastRun": {
+    "id": "SCH000000000001",
+    "trigger": "automatic",
+    "status": "success",
+    "startedAt": "2026-06-02 21:00:00",
+    "finishedAt": "2026-06-02 21:00:00",
+    "now": "2026-06-02 21:00:00",
+    "error": null,
+    "closedIssueCount": 0,
+    "drawnIssueCount": 0,
+    "settlementRunCount": 0,
+    "ledgerEntryCount": 0,
+    "generatedIssueCount": 3,
+    "skippedIssueCount": 0,
+    "skippedLotteryCount": 1
+  },
+  "recentRuns": []
+}
+```
+
+字段契约：
+
+1. 所有字段使用 `camelCase`，并与 `admin/src/types/scheduler.ts` 保持一致。
+2. `trigger` 当前只支持 `automatic`，用于区分常驻后台循环；手动点击 `POST /api/admin/draw-automation/run` 不写入常驻调度历史。
+3. `status` 只允许 `success` 或 `failed`。
+4. 成功记录的 `error` 必须为 `null`，失败记录的 `error` 必须包含错误摘要。
+5. `recentRuns` 按最新在前排序，内存仓储最多保留最近 20 条。
+6. `runCount` 表示当前内存仓储保留的运行记录数量，不是持久化后的全量审计总数。
+7. 调度未启用时，状态接口仍返回配置、`enabled=false`、`lastRun=null` 和空 `recentRuns`。
+
 行为契约：
 
 1. 未设置 `DRAW_SCHEDULER_ENABLED` 时，调度默认关闭，不会后台改写期号、订单或资金数据。
@@ -1328,7 +1378,8 @@ DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 6. 未来期号判断只统计同彩种、状态为 `open` 或 `closed`，并且 `scheduledAt >= now` 的期号。
 7. 补期继续调用 `generate_draw_issue_batch`，不在调度服务里重新实现开奖计划算法。
 8. `saleEnabled=false` 彩种不会自动补期，会记录为跳过彩种。
-9. 调度周期成功或失败都使用 `tracing` 结构化日志记录，不暴露原始请求体或敏感信息。
+9. 调度周期成功或失败都要写入调度运行历史，页面通过状态接口读取历史，而不是解析日志。
+10. 调度周期成功或失败都使用 `tracing` 结构化日志记录，不暴露原始请求体或敏感信息。
 
 ### 4. 校验与错误矩阵
 
@@ -1343,13 +1394,18 @@ DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 | `DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=0` | 启动失败，返回封盘提前秒数错误 |
 | 单轮调度 `now` 为空 | 返回 `draw scheduler time is required` |
 | 自动开奖或补期过程中发生业务错误 | 当前轮记录错误日志，后台任务继续下一轮 |
+| 调度未启用时查询状态 | HTTP 200，`enabled=false`，历史为空 |
+| 最近运行超过 20 条 | 只保留最新 20 条，旧记录从内存仓储移除 |
+| 状态仓储锁异常 | HTTP 500，返回统一错误信封 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：设置 `DRAW_SCHEDULER_ENABLED=true` 和 `DRAW_SCHEDULER_INTERVAL_SECONDS=1` 后，本地启动服务会自动为销售开启彩种补齐未来期号。
+- Good：调度跑过一轮后，`GET /api/admin/draw-scheduler/status` 返回最新 `SCH...` 记录，管理后台“常驻调度”显示成功状态和运行摘要。
 - Good：已有到期开奖期号时，单轮调度先执行封盘/开奖/结算，再补齐下一期期号。
 - Base：默认关闭适合本地开发和测试，不会让后台循环干扰手动 API 冒烟。
 - Bad：在调度服务里复制一套封盘、开奖、结算或开奖计划计算逻辑；这些必须继续复用 `run_draw_automation` 和 `generate_draw_issue_batch`。
+- Bad：管理后台为了显示调度状态去解析服务日志；页面必须调用 `GET /api/admin/draw-scheduler/status`。
 
 ### 6. 必要测试
 
@@ -1358,8 +1414,11 @@ DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 - 后端需要覆盖销售开启彩种自动补齐未来期号，销售关闭彩种跳过。
 - 后端需要覆盖未来期号缓冲已满足时不重复生成。
 - 后端需要覆盖到期期号先自动开奖，再补齐未来期号。
+- 后端需要覆盖调度历史成功记录、失败记录和最近 20 条保留上限。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 本地冒烟需要用短周期启用调度，确认 `/api/admin/draw-issues` 能看到自动补齐的 open 期号。
+- 本地冒烟需要请求 `/api/admin/draw-scheduler/status`，确认启用状态、配置和最近运行记录。
+- 前端需要运行 `npm run build`，并用浏览器确认“开奖期号与开奖源”页面显示“常驻调度”和“最近运行”。
 
 ### 7. Wrong vs Correct
 
@@ -1373,6 +1432,12 @@ tokio::spawn(async move {
 
 这个写法会让手动自动任务接口和常驻调度逐渐分叉。
 
+```ts
+const status = parseSchedulerLogs(rawLogText);
+```
+
+这个写法会让管理后台依赖日志格式，后续日志脱敏、截断或采集方式变化时页面会失真。
+
 #### 正确
 
 ```rust
@@ -1381,3 +1446,9 @@ generate_draw_issue_batch(draws, lottery, payload).await?;
 ```
 
 常驻调度只负责编排时机和缓冲数量，业务动作继续复用已有服务。
+
+```ts
+await fetchDrawSchedulerStatus();
+```
+
+管理后台通过明确的状态接口读取调度配置、最近运行和失败摘要。

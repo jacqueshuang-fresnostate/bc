@@ -21,6 +21,7 @@ import type {
   PlayRuleSummary,
 } from '../types/playRules';
 import type { CreateOrderRequest, OrderDetail } from '../types/orders';
+import type { DrawSchedulerStatus } from '../types/scheduler';
 import type { SettlementRun } from '../types/settlements';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -176,6 +177,12 @@ export function runDrawAutomation(payload: DrawAutomationRunRequest) {
   return requestJson<DrawAutomationRun>('/api/admin/draw-automation/run', {
     body: payload,
     method: 'POST',
+  });
+}
+
+export function fetchDrawSchedulerStatus(signal?: AbortSignal) {
+  return requestJson<DrawSchedulerStatus>('/api/admin/draw-scheduler/status', {
+    signal,
   });
 }
 

@@ -1,7 +1,9 @@
 import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
 import {
+  Activity,
   CalendarPlus,
   Clock3,
+  History,
   ListPlus,
   Lock,
   Play,
@@ -18,6 +20,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import { useDrawScheduler } from '../hooks/useDrawScheduler';
 import { useDraws } from '../hooks/useDraws';
 import { useLotteries } from '../hooks/useLotteries';
 import type { DrawMode, LotteryKind, LotteryNumberType } from '../types/dashboard';
@@ -28,6 +31,11 @@ import type {
   DrawIssueGenerationPreview,
   DrawIssueStatus,
 } from '../types/draws';
+import type {
+  DrawSchedulerRunRecord,
+  DrawSchedulerRunStatus,
+  DrawSchedulerStatus,
+} from '../types/scheduler';
 
 interface DrawManagementPageProps {
   onDashboardRefresh: () => void;
@@ -64,6 +72,12 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     lotteries,
     refresh: refreshLotteries,
   } = useLotteries();
+  const {
+    error: schedulerError,
+    loading: schedulerLoading,
+    refresh: refreshScheduler,
+    status: schedulerStatus,
+  } = useDrawScheduler();
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [automationNow, setAutomationNow] = useState(() => currentDateTimeLabel());
   const [automationResult, setAutomationResult] =
@@ -98,6 +112,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   const refreshAll = () => {
     refreshDraws();
     refreshLotteries();
+    refreshScheduler();
   };
 
   const createIssue = async () => {
@@ -125,6 +140,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     });
     setGenerationPreview([]);
     setSelectedIssueId(created.id);
+    refreshScheduler();
     onDashboardRefresh();
   };
 
@@ -163,6 +179,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     if (created[0]) {
       setSelectedIssueId(created[0].id);
     }
+    refreshScheduler();
     onDashboardRefresh();
   };
 
@@ -196,11 +213,12 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     if (focusIssue) {
       setSelectedIssueId(focusIssue.id);
     }
+    refreshScheduler();
     onDashboardRefresh();
   };
 
   const loading = drawsLoading || lotteriesLoading;
-  const error = drawError ?? lotteryError;
+  const error = drawError ?? lotteryError ?? schedulerError;
   const generationCountValue = parseGenerationCount(generationCount);
   const generationActionDisabled =
     !selectedLottery || saving || !automationNow.trim() || !generationCountValue;
@@ -361,6 +379,27 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
         </Card>
 
         <div className="space-y-4">
+          <Card className="rounded-md border border-line">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Activity size={17} className="text-accent" />
+                  <h2 className="text-base font-semibold text-ink">常驻调度</h2>
+                </div>
+                <p className="mt-1 text-sm text-slate-500">
+                  服务启动后按配置自动补期并执行到期任务。
+                </p>
+              </div>
+              {schedulerStatus ? (
+                <Tag color={schedulerStatus.enabled ? 'green' : 'grey'}>
+                  {schedulerStatus.enabled ? '已启用' : '未启用'}
+                </Tag>
+              ) : null}
+            </div>
+
+            <SchedulerStatusSummary loading={schedulerLoading} status={schedulerStatus} />
+          </Card>
+
           <Card className="rounded-md border border-line">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
@@ -650,6 +689,133 @@ function AutomationResultSummary({ run }: { run: DrawAutomationRun }) {
   );
 }
 
+function SchedulerStatusSummary({
+  loading,
+  status,
+}: {
+  loading: boolean;
+  status: DrawSchedulerStatus | null;
+}) {
+  if (loading) {
+    return (
+      <div className="grid min-h-36 place-items-center">
+        <Spin tip="正在加载调度状态" />
+      </div>
+    );
+  }
+
+  if (!status) {
+    return (
+      <div className="rounded-md border border-line p-3 text-sm text-slate-500">
+        暂无调度状态。
+      </div>
+    );
+  }
+
+  const recentRuns = status.recentRuns.slice(0, 5);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2">
+        <ResultMetric label="执行周期" value={`${status.config.intervalSeconds} 秒`} />
+        <ResultMetric label="未来期号" value={`${status.config.futureIssueCount} 期`} />
+        <ResultMetric
+          label="封盘提前"
+          value={`${status.config.saleCloseLeadSeconds} 秒`}
+        />
+        <ResultMetric label="保留历史" value={`${status.runCount} 条`} />
+      </div>
+
+      {status.lastRun ? (
+        <SchedulerLastRunSummary run={status.lastRun} />
+      ) : (
+        <div className="rounded-md border border-line p-3 text-sm text-slate-500">
+          暂无调度运行历史。
+        </div>
+      )}
+
+      {recentRuns.length > 0 ? <SchedulerRunHistory runs={recentRuns} /> : null}
+    </div>
+  );
+}
+
+function SchedulerLastRunSummary({ run }: { run: DrawSchedulerRunRecord }) {
+  return (
+    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-medium text-ink">{run.finishedAt}</div>
+          <div className="mt-1 truncate text-xs text-slate-400">
+            {run.id} · {schedulerTriggerText(run.trigger)} · {run.now}
+          </div>
+        </div>
+        <Tag color={schedulerRunStatusColor(run.status)}>
+          {schedulerRunStatusText(run.status)}
+        </Tag>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <ResultMetric label="补期" value={`${run.generatedIssueCount} 期`} />
+        <ResultMetric label="封盘" value={`${run.closedIssueCount} 期`} />
+        <ResultMetric label="开奖" value={`${run.drawnIssueCount} 期`} />
+        <ResultMetric label="结算" value={`${run.settlementRunCount} 批`} />
+        <ResultMetric label="入账" value={`${run.ledgerEntryCount} 笔`} />
+        <ResultMetric
+          label="跳过"
+          value={`${run.skippedIssueCount + run.skippedLotteryCount} 项`}
+        />
+      </div>
+
+      {run.error ? (
+        <div className="mt-3 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600">
+          {run.error}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SchedulerRunHistory({ runs }: { runs: DrawSchedulerRunRecord[] }) {
+  return (
+    <div className="rounded-md border border-line p-3">
+      <div className="mb-2 flex items-center gap-2 text-sm font-medium text-ink">
+        <History size={15} className="text-accent" />
+        最近运行
+      </div>
+      <div className="max-h-48 overflow-y-auto">
+        <table className="w-full text-left text-xs">
+          <thead className="border-b border-slate-200 text-slate-500">
+            <tr>
+              <th className="py-2 pr-2 font-medium">时间</th>
+              <th className="py-2 pr-2 font-medium">结果</th>
+              <th className="py-2 font-medium">摘要</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((run) => (
+              <tr key={run.id} className="border-b border-slate-200 last:border-0">
+                <td className="py-2 pr-2 align-top text-slate-500">
+                  <div>{run.finishedAt}</div>
+                  <div className="mt-1 text-slate-400">{run.id}</div>
+                </td>
+                <td className="py-2 pr-2 align-top">
+                  <Tag color={schedulerRunStatusColor(run.status)}>
+                    {schedulerRunStatusText(run.status)}
+                  </Tag>
+                </td>
+                <td className="py-2 align-top text-slate-500">
+                  补期 {run.generatedIssueCount}，开奖 {run.drawnIssueCount}，入账{' '}
+                  {run.ledgerEntryCount}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function GenerationPreviewList({
   plans,
 }: {
@@ -782,4 +948,16 @@ function statusColor(status: DrawIssueStatus) {
 
 function canCancel(status: DrawIssueStatus) {
   return status === 'open' || status === 'closed';
+}
+
+function schedulerRunStatusText(status: DrawSchedulerRunStatus) {
+  return status === 'success' ? '成功' : '失败';
+}
+
+function schedulerRunStatusColor(status: DrawSchedulerRunStatus) {
+  return status === 'success' ? 'green' : 'red';
+}
+
+function schedulerTriggerText(trigger: DrawSchedulerRunRecord['trigger']) {
+  return trigger === 'automatic' ? '自动运行' : trigger;
 }
