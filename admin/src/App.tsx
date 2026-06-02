@@ -57,7 +57,7 @@ export function App() {
       ) : activeKey === 'finance' ? (
         <FinanceManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'play-rules' ? (
-        <PlayRulesPage />
+        <PlayRulesPage onDashboardRefresh={refresh} />
       ) : activeKey === 'settlements' ? (
         <SettlementManagementPage onDashboardRefresh={refresh} />
       ) : data ? (

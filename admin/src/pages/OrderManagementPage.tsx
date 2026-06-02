@@ -11,7 +11,7 @@ import {
 import { useLotteries } from '../hooks/useLotteries';
 import { useOrders } from '../hooks/useOrders';
 import { usePlayRules } from '../hooks/usePlayRules';
-import type { LotteryKind, PlayCategory } from '../types/dashboard';
+import type { LotteryKind } from '../types/dashboard';
 import type { CreateOrderRequest, OrderDetail, OrderStatus } from '../types/orders';
 import type {
   BigSmallOddEvenPick,
@@ -20,6 +20,14 @@ import type {
   PlaySelection,
 } from '../types/playRules';
 import { formatMoney } from '../utils/format';
+import {
+  formatOdds,
+  isBankerRule,
+  isBigSmallOddEvenRule,
+  isDirectRule,
+  isGroupSixRule,
+  playCategoryForRule,
+} from '../utils/playRules';
 
 interface OrderManagementPageProps {
   onDashboardRefresh: () => void;
@@ -173,6 +181,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                     <th className="py-2 pr-4 font-medium">玩法</th>
                     <th className="py-2 pr-4 font-medium">注数</th>
                     <th className="py-2 pr-4 font-medium">金额</th>
+                    <th className="py-2 pr-4 font-medium">赔率</th>
                     <th className="py-2 pr-4 font-medium">开奖</th>
                     <th className="py-2 pr-4 font-medium">派奖</th>
                     <th className="py-2 pr-4 font-medium">状态</th>
@@ -194,6 +203,9 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                       <td className="py-3 pr-4 text-slate-600">{ruleLabel(order.ruleCode, rules)}</td>
                       <td className="py-3 pr-4 text-slate-600">{order.stakeCount} 注</td>
                       <td className="py-3 pr-4 text-slate-600">{formatMoney(order.amountMinor)}</td>
+                      <td className="py-3 pr-4 text-slate-600">
+                        {formatOdds(order.oddsBasisPoints)}
+                      </td>
                       <td className="py-3 pr-4">
                         {order.drawNumber ? (
                           <>
@@ -648,38 +660,6 @@ function numberField(value: string) {
 
 function ruleLabel(code: PlayRuleCode, rules: Array<{ code: PlayRuleCode; label: string }>) {
   return rules.find((rule) => rule.code === code)?.label ?? code;
-}
-
-function playCategoryForRule(code: PlayRuleCode): PlayCategory {
-  if (isDirectRule(code)) {
-    return 'direct';
-  }
-  if (code.endsWith('DirectCombination')) {
-    return 'directCombination';
-  }
-  if (code.includes('GroupThree')) {
-    return 'groupThree';
-  }
-  if (code.includes('GroupSix')) {
-    return 'groupSix';
-  }
-  return 'bigSmallOddEven';
-}
-
-function isDirectRule(code: PlayRuleCode) {
-  return code.endsWith('Direct') && !code.endsWith('DirectCombination');
-}
-
-function isBigSmallOddEvenRule(code: PlayRuleCode) {
-  return code === 'fiveBigSmallOddEven';
-}
-
-function isBankerRule(code: PlayRuleCode) {
-  return code.endsWith('Banker');
-}
-
-function isGroupSixRule(code: PlayRuleCode) {
-  return code.includes('GroupSix');
 }
 
 function statusText(status: OrderStatus) {

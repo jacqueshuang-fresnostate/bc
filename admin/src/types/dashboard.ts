@@ -1,3 +1,5 @@
+import type { PlayRuleCode } from './playRules';
+
 export interface ApiEnvelope<T> {
   success: boolean;
   data: T | null;
@@ -49,6 +51,12 @@ export interface GroupBuyConfig {
   participantMinAmountMinor: number;
 }
 
+export interface LotteryPlayConfig {
+  enabled: boolean;
+  oddsBasisPoints: number;
+  ruleCode: PlayRuleCode;
+}
+
 export interface LotteryKind {
   id: string;
   name: string;
@@ -58,6 +66,7 @@ export interface LotteryKind {
   saleEnabled: boolean;
   groupBuy: GroupBuyConfig;
   playCategories: PlayCategory[];
+  playConfigs: LotteryPlayConfig[];
 }
 
 export interface DrawSource {
@@ -77,6 +86,7 @@ export interface OrderSummary {
   ruleCode: string;
   stakeCount: number;
   amountMinor: number;
+  oddsBasisPoints: number;
   drawNumber: string | null;
   matchedBets: string[];
   payoutMinor: number;

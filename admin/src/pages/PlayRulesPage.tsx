@@ -1,5 +1,5 @@
 import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
-import { Calculator, CheckCircle2, XCircle } from 'lucide-react';
+import { Calculator, CheckCircle2, RefreshCcw, Save, XCircle } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -8,7 +8,14 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import { useLotteries } from '../hooks/useLotteries';
 import { usePlayRules } from '../hooks/usePlayRules';
+import type {
+  LotteryKind,
+  LotteryNumberType,
+  LotteryPlayConfig,
+  PlayCategory,
+} from '../types/dashboard';
 import type {
   BigSmallOddEvenPick,
   DigitAttribute,
@@ -16,6 +23,19 @@ import type {
   PlayRuleSummary,
   PlaySelection,
 } from '../types/playRules';
+import {
+  formatOdds,
+  isBankerRule,
+  isBigSmallOddEvenRule,
+  isDirectRule,
+  isGroupSixRule,
+  oddsBasisPointsToInput,
+  oddsInputToBasisPoints,
+} from '../utils/playRules';
+
+interface PlayRulesPageProps {
+  onDashboardRefresh: () => void;
+}
 
 interface FormState {
   bankerNumbers: string;
@@ -29,6 +49,11 @@ interface FormState {
   tensAttributes: DigitAttribute[];
 }
 
+interface OddsDraft {
+  enabled: boolean;
+  oddsInput: string;
+}
+
 const digitAttributeOptions: Array<{ label: string; value: DigitAttribute }> = [
   { label: '大', value: 'big' },
   { label: '小', value: 'small' },
@@ -36,32 +61,96 @@ const digitAttributeOptions: Array<{ label: string; value: DigitAttribute }> = [
   { label: '双', value: 'even' },
 ];
 
-export function PlayRulesPage() {
+export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
   const { error, evaluate, evaluation, loading, rules, saving } = usePlayRules();
+  const {
+    error: lotteryError,
+    loading: lotteriesLoading,
+    lotteries,
+    refresh: refreshLotteries,
+    saving: lotterySaving,
+    update,
+  } = useLotteries();
+  const [numberType, setNumberType] = useState<LotteryNumberType>('threeDigit');
   const [selectedCode, setSelectedCode] = useState<PlayRuleCode | null>(null);
+  const [selectedLotteryId, setSelectedLotteryId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(() => defaultForm(null));
-  const selectedRule = useMemo(
-    () => rules.find((rule) => rule.code === selectedCode) ?? rules[0] ?? null,
-    [rules, selectedCode],
+  const [oddsDrafts, setOddsDrafts] = useState<Record<string, OddsDraft>>({});
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  const filteredRules = useMemo(
+    () => rules.filter((rule) => rule.numberType === numberType),
+    [numberType, rules],
   );
+  const filteredLotteries = useMemo(
+    () => lotteries.filter((lottery) => lottery.numberType === numberType),
+    [lotteries, numberType],
+  );
+  const selectedRule = useMemo(
+    () => filteredRules.find((rule) => rule.code === selectedCode) ?? filteredRules[0] ?? null,
+    [filteredRules, selectedCode],
+  );
+  const selectedLottery = useMemo(
+    () =>
+      filteredLotteries.find((lottery) => lottery.id === selectedLotteryId) ??
+      filteredLotteries[0] ??
+      null,
+    [filteredLotteries, selectedLotteryId],
+  );
+  const visibleEvaluation =
+    evaluation && selectedRule && evaluation.ruleCode === selectedRule.code ? evaluation : null;
+  const combinedError = localError ?? error ?? lotteryError;
 
   useEffect(() => {
-    if (!selectedCode && rules[0]) {
-      setSelectedCode(rules[0].code);
-      setForm(defaultForm(rules[0]));
+    if (selectedRule && selectedCode !== selectedRule.code) {
+      setSelectedCode(selectedRule.code);
+      setForm(defaultForm(selectedRule));
     }
-  }, [rules, selectedCode]);
+  }, [selectedCode, selectedRule]);
+
+  useEffect(() => {
+    if (selectedLottery && selectedLotteryId !== selectedLottery.id) {
+      setSelectedLotteryId(selectedLottery.id);
+    }
+  }, [selectedLottery, selectedLotteryId]);
+
+  useEffect(() => {
+    if (!selectedLottery) {
+      setOddsDrafts({});
+      return;
+    }
+
+    setOddsDrafts(
+      Object.fromEntries(
+        filteredRules.map((rule) => [rule.code, defaultDraftForRule(rule, selectedLottery)]),
+      ),
+    );
+  }, [filteredRules, selectedLottery]);
+
+  const changeNumberType = (nextType: LotteryNumberType) => {
+    const nextRule = rules.find((rule) => rule.numberType === nextType) ?? null;
+    const nextLottery = lotteries.find((lottery) => lottery.numberType === nextType) ?? null;
+    setNumberType(nextType);
+    setSelectedCode(nextRule?.code ?? null);
+    setSelectedLotteryId(nextLottery?.id ?? null);
+    setForm(defaultForm(nextRule));
+    setLocalError(null);
+    setSaveMessage(null);
+  };
 
   const changeRule = (code: PlayRuleCode) => {
-    const nextRule = rules.find((rule) => rule.code === code) ?? null;
+    const nextRule = filteredRules.find((rule) => rule.code === code) ?? null;
     setSelectedCode(code);
     setForm(defaultForm(nextRule));
+    setLocalError(null);
   };
 
   const submit = async () => {
     if (!selectedRule) {
       return;
     }
+    setLocalError(null);
     await evaluate({
       drawNumber: form.drawNumber.trim(),
       numberType: selectedRule.numberType,
@@ -70,39 +159,108 @@ export function PlayRulesPage() {
     });
   };
 
+  const saveLotteryOdds = async () => {
+    if (!selectedLottery) {
+      setLocalError('请先选择一个彩种');
+      return;
+    }
+
+    const playConfigs = filteredRules.map((rule) => {
+      const draft = oddsDrafts[rule.code] ?? defaultDraftForRule(rule, selectedLottery);
+      return {
+        enabled: draft.enabled,
+        oddsBasisPoints: oddsInputToBasisPoints(draft.oddsInput),
+        ruleCode: rule.code,
+      };
+    });
+    const invalidConfig = playConfigs.find((config) => config.oddsBasisPoints <= 0);
+    if (invalidConfig) {
+      setLocalError('赔率必须大于 0');
+      return;
+    }
+
+    const playCategories = enabledPlayCategories(filteredRules, playConfigs);
+    if (playCategories.length === 0) {
+      setLocalError('至少需要启用一个玩法');
+      return;
+    }
+
+    setLocalError(null);
+    setSaveMessage(null);
+    await update(selectedLottery.id, {
+      ...selectedLottery,
+      playCategories,
+      playConfigs,
+    });
+    refreshLotteries();
+    onDashboardRefresh();
+    setSaveMessage('玩法赔率已保存');
+  };
+
+  const pageLoading = loading || lotteriesLoading;
+
   return (
     <div className="space-y-5">
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-ink">玩法规则</h1>
+          <h1 className="text-xl font-semibold text-ink">玩法规则与赔率</h1>
           <p className="mt-1 text-sm text-slate-500">
-            验证 3 位和 5 位玩法的注数计算、投注展开和中奖判断。
+            按 3 位和 5 位号码区分玩法，支持查看规则、试算注数并维护每个彩种的独立赔率。
           </p>
         </div>
-        {selectedRule ? (
-          <Tag color={selectedRule.numberType === 'threeDigit' ? 'cyan' : 'blue'}>
-            {selectedRule.numberType === 'threeDigit' ? '3 位玩法' : '5 位玩法'}
-          </Tag>
-        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            theme={numberType === 'threeDigit' ? 'solid' : 'light'}
+            onClick={() => changeNumberType('threeDigit')}
+          >
+            3 位玩法
+          </Button>
+          <Button
+            theme={numberType === 'fiveDigit' ? 'solid' : 'light'}
+            onClick={() => changeNumberType('fiveDigit')}
+          >
+            5 位玩法
+          </Button>
+          <Button
+            icon={<RefreshCcw size={16} />}
+            onClick={() => {
+              refreshLotteries();
+              setSaveMessage(null);
+              setLocalError(null);
+            }}
+          >
+            刷新
+          </Button>
+        </div>
       </section>
 
-      {error ? <Banner type="danger" title="玩法规则接口错误" description={error} /> : null}
+      {combinedError ? (
+        <Banner type="danger" title="玩法配置接口错误" description={combinedError} />
+      ) : null}
+      {saveMessage ? <Banner type="success" title={saveMessage} /> : null}
 
-      {loading ? (
+      {pageLoading ? (
         <div className="grid min-h-[360px] place-items-center">
-          <Spin tip="正在加载玩法规则" />
+          <Spin tip="正在加载玩法配置" />
         </div>
       ) : (
-        <section className="grid gap-4 xl:grid-cols-[420px_1fr]">
-          <Card className="rounded-md border border-line">
+        <section className="grid min-w-0 gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
+          <Card className="min-w-0 rounded-md border border-line">
             <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold text-ink">玩法试算</h2>
+                <Tag color={numberType === 'threeDigit' ? 'cyan' : 'blue'}>
+                  {numberTypeText(numberType)}
+                </Tag>
+              </div>
+
               <Field label="玩法">
                 <select
                   className="form-input"
                   value={selectedRule?.code ?? ''}
                   onChange={(event) => changeRule(event.target.value as PlayRuleCode)}
                 >
-                  {rules.map((rule) => (
+                  {filteredRules.map((rule) => (
                     <option key={rule.code} value={rule.code}>
                       {rule.label}
                     </option>
@@ -112,6 +270,10 @@ export function PlayRulesPage() {
 
               {selectedRule ? (
                 <div className="rounded-md bg-slate-50 p-3 text-sm leading-6 text-slate-600">
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    <Tag color="grey">{categoryLabel(selectedRule.category)}</Tag>
+                    <Tag color="blue">{windowLabel(selectedRule.window)}</Tag>
+                  </div>
                   {selectedRule.description}
                 </div>
               ) : null}
@@ -137,43 +299,175 @@ export function PlayRulesPage() {
             </div>
           </Card>
 
-          <div className="space-y-4">
-            <Card className="rounded-md border border-line">
+          <div className="min-w-0 space-y-4">
+            <Card className="min-w-0 rounded-md border border-line">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-ink">彩种玩法赔率</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    当前只展示 {numberTypeText(numberType)}，每个彩种可单独设置玩法启用状态和赔率。
+                  </p>
+                </div>
+                <Tag color="cyan">{filteredRules.length} 个玩法</Tag>
+              </div>
+
+              <div className="mb-4 grid gap-3 md:grid-cols-[260px_1fr_auto] md:items-end">
+                <Field label="彩种">
+                  <select
+                    className="form-input"
+                    value={selectedLottery?.id ?? ''}
+                    onChange={(event) => {
+                      setSelectedLotteryId(event.target.value);
+                      setSaveMessage(null);
+                      setLocalError(null);
+                    }}
+                  >
+                    {filteredLotteries.map((lottery) => (
+                      <option key={lottery.id} value={lottery.id}>
+                        {lottery.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                {selectedLottery ? (
+                  <div className="rounded-md border border-line px-3 py-2 text-sm text-slate-600">
+                    <div className="font-semibold text-ink">{selectedLottery.name}</div>
+                    <div className="mt-1">
+                      {selectedLottery.saleEnabled ? '销售中' : '已停售'} ·{' '}
+                      {selectedLottery.playConfigs.filter((config) => config.enabled).length}{' '}
+                      个玩法已启用
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-line px-3 py-2 text-sm text-slate-500">
+                    暂无可配置彩种
+                  </div>
+                )}
+                <Button
+                  disabled={!selectedLottery || lotterySaving}
+                  icon={<Save size={16} />}
+                  theme="solid"
+                  onClick={() => void saveLotteryOdds()}
+                >
+                  {lotterySaving ? '保存中' : '保存赔率'}
+                </Button>
+              </div>
+
+              <div className="min-w-0 overflow-x-auto">
+                <table className="w-full min-w-[860px] text-left text-sm">
+                  <thead className="border-b border-line text-xs text-slate-500">
+                    <tr>
+                      <th className="py-2 pr-4 font-medium">启用</th>
+                      <th className="py-2 pr-4 font-medium">玩法</th>
+                      <th className="py-2 pr-4 font-medium">分类</th>
+                      <th className="py-2 pr-4 font-medium">号码段</th>
+                      <th className="py-2 pr-4 font-medium">赔率</th>
+                      <th className="py-2 pr-4 font-medium">预览</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRules.map((rule) => {
+                      const draft =
+                        oddsDrafts[rule.code] ??
+                        defaultDraftForRule(rule, selectedLottery ?? undefined);
+                      const oddsBasisPoints = oddsInputToBasisPoints(draft.oddsInput);
+                      return (
+                        <tr key={rule.code} className="border-b border-slate-100">
+                          <td className="py-3 pr-4">
+                            <input
+                              checked={draft.enabled}
+                              type="checkbox"
+                              onChange={(event) =>
+                                setOddsDraft(rule, { enabled: event.target.checked }, setOddsDrafts)
+                              }
+                            />
+                          </td>
+                          <td className="py-3 pr-4">
+                            <button
+                              className="text-left font-semibold text-accent"
+                              type="button"
+                              onClick={() => changeRule(rule.code)}
+                            >
+                              {rule.label}
+                            </button>
+                            <div className="mt-1 max-w-[360px] text-xs text-slate-500">
+                              {rule.description}
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4">
+                            <Tag color={categoryColor(rule.category)}>
+                              {categoryLabel(rule.category)}
+                            </Tag>
+                          </td>
+                          <td className="py-3 pr-4 text-slate-600">
+                            {windowLabel(rule.window)}
+                          </td>
+                          <td className="py-3 pr-4">
+                            <input
+                              className="form-input w-28"
+                              min="0.01"
+                              step="0.01"
+                              type="number"
+                              value={draft.oddsInput}
+                              onChange={(event) =>
+                                setOddsDraft(rule, { oddsInput: event.target.value }, setOddsDrafts)
+                              }
+                            />
+                          </td>
+                          <td className="py-3 pr-4 text-slate-600">
+                            {oddsBasisPoints > 0 ? formatOdds(oddsBasisPoints) : '未设置'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            <Card className="min-w-0 rounded-md border border-line">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-base font-semibold text-ink">评估结果</h2>
-                {evaluation ? (
-                  <Tag color={evaluation.isWinning ? 'green' : 'red'}>
-                    {evaluation.isWinning ? '命中' : '未命中'}
+                {visibleEvaluation ? (
+                  <Tag color={visibleEvaluation.isWinning ? 'green' : 'red'}>
+                    {visibleEvaluation.isWinning ? '命中' : '未命中'}
                   </Tag>
                 ) : null}
               </div>
 
-              {evaluation ? (
+              {visibleEvaluation ? (
                 <div className="grid gap-3 md:grid-cols-3">
-                  <ResultBlock label="注数" value={`${evaluation.stakeCount} 注`} />
+                  <ResultBlock label="注数" value={`${visibleEvaluation.stakeCount} 注`} />
                   <ResultBlock
                     label="中奖状态"
-                    value={evaluation.isWinning ? '已命中' : '未命中'}
-                    tone={evaluation.isWinning ? 'success' : 'danger'}
+                    value={visibleEvaluation.isWinning ? '已命中' : '未命中'}
+                    tone={visibleEvaluation.isWinning ? 'success' : 'danger'}
                   />
-                  <ResultBlock label="命中投注" value={`${evaluation.matchedBets.length} 个`} />
+                  <ResultBlock
+                    label="命中投注"
+                    value={`${visibleEvaluation.matchedBets.length} 个`}
+                  />
                 </div>
               ) : (
                 <div className="text-sm text-slate-500">填写参数后点击计算，结果会显示在这里。</div>
               )}
             </Card>
 
-            {evaluation ? (
-              <Card className="rounded-md border border-line">
+            {visibleEvaluation ? (
+              <Card className="min-w-0 rounded-md border border-line">
                 <div className="grid gap-4 lg:grid-cols-2">
-                  <ResultList title="命中投注" items={evaluation.matchedBets} emptyText="暂无命中" />
+                  <ResultList
+                    title="命中投注"
+                    items={visibleEvaluation.matchedBets}
+                    emptyText="暂无命中"
+                  />
                   <ResultList
                     title="展开投注"
-                    items={evaluation.expandedBets.slice(0, 80)}
+                    items={visibleEvaluation.expandedBets.slice(0, 80)}
                     emptyText="暂无投注"
                     suffix={
-                      evaluation.expandedBets.length > 80
-                        ? `仅展示前 80 个，共 ${evaluation.expandedBets.length} 个`
+                      visibleEvaluation.expandedBets.length > 80
+                        ? `仅展示前 80 个，共 ${visibleEvaluation.expandedBets.length} 个`
                         : undefined
                     }
                   />
@@ -181,13 +475,13 @@ export function PlayRulesPage() {
               </Card>
             ) : null}
 
-            <Card className="rounded-md border border-line">
+            <Card className="min-w-0 rounded-md border border-line">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-base font-semibold text-ink">规则目录</h2>
-                <Tag color="grey">{rules.length} 个规则</Tag>
+                <h2 className="text-base font-semibold text-ink">玩法目录</h2>
+                <Tag color="grey">{filteredRules.length} 个规则</Tag>
               </div>
               <div className="grid gap-2 md:grid-cols-2">
-                {rules.map((rule) => (
+                {filteredRules.map((rule) => (
                   <button
                     key={rule.code}
                     className={`rounded-md border px-3 py-2 text-left text-sm ${
@@ -198,7 +492,12 @@ export function PlayRulesPage() {
                     type="button"
                     onClick={() => changeRule(rule.code)}
                   >
-                    <div className="font-semibold">{rule.label}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold">{rule.label}</span>
+                      <Tag color={categoryColor(rule.category)}>
+                        {categoryLabel(rule.category)}
+                      </Tag>
+                    </div>
                     <div className="mt-1 text-xs text-slate-500">{rule.description}</div>
                   </button>
                 ))}
@@ -529,18 +828,89 @@ function toggleAttribute(
   });
 }
 
-function isDirectRule(code: PlayRuleCode) {
-  return code.endsWith('Direct') && !code.endsWith('DirectCombination');
+function setOddsDraft(
+  rule: PlayRuleSummary,
+  patch: Partial<OddsDraft>,
+  setOddsDrafts: Dispatch<SetStateAction<Record<string, OddsDraft>>>,
+) {
+  setOddsDrafts((current) => ({
+    ...current,
+    [rule.code]: {
+      ...defaultDraftForRule(rule),
+      ...current[rule.code],
+      ...patch,
+    },
+  }));
 }
 
-function isBigSmallOddEvenRule(code: PlayRuleCode) {
-  return code === 'fiveBigSmallOddEven';
+function defaultDraftForRule(rule: PlayRuleSummary, lottery?: LotteryKind): OddsDraft {
+  const config = lottery?.playConfigs.find((item) => item.ruleCode === rule.code);
+  return {
+    enabled: config?.enabled ?? true,
+    oddsInput: oddsBasisPointsToInput(config?.oddsBasisPoints ?? defaultOddsForRule(rule)),
+  };
 }
 
-function isBankerRule(code: PlayRuleCode) {
-  return code.endsWith('Banker');
+function defaultOddsForRule(rule: PlayRuleSummary) {
+  if (rule.category === 'bigSmallOddEven') {
+    return 20_000;
+  }
+  if (rule.category === 'groupThree' || rule.category === 'groupSix') {
+    return 50_000;
+  }
+  return 100_000;
 }
 
-function isGroupSixRule(code: PlayRuleCode) {
-  return code.includes('GroupSix');
+function enabledPlayCategories(
+  rules: PlayRuleSummary[],
+  configs: LotteryPlayConfig[],
+): PlayCategory[] {
+  const enabledCodes = new Set(
+    configs.filter((config) => config.enabled).map((config) => config.ruleCode),
+  );
+  const categories: PlayCategory[] = [];
+
+  for (const rule of rules) {
+    if (enabledCodes.has(rule.code) && !categories.includes(rule.category)) {
+      categories.push(rule.category);
+    }
+  }
+
+  return categories;
+}
+
+function numberTypeText(numberType: LotteryNumberType) {
+  return numberType === 'threeDigit' ? '3 位玩法' : '5 位玩法';
+}
+
+function categoryLabel(category: PlayCategory) {
+  const labels: Record<PlayCategory, string> = {
+    bigSmallOddEven: '大小单双',
+    direct: '直选',
+    directCombination: '直选组合',
+    groupSix: '组六',
+    groupThree: '组三',
+  };
+  return labels[category];
+}
+
+function categoryColor(category: PlayCategory) {
+  const colors: Record<PlayCategory, 'blue' | 'cyan' | 'green' | 'orange' | 'purple'> = {
+    bigSmallOddEven: 'orange',
+    direct: 'blue',
+    directCombination: 'cyan',
+    groupSix: 'purple',
+    groupThree: 'green',
+  };
+  return colors[category];
+}
+
+function windowLabel(window: PlayRuleSummary['window']) {
+  const labels: Record<PlayRuleSummary['window'], string> = {
+    back: '后三',
+    front: '前三',
+    full: '全位',
+    middle: '中三',
+  };
+  return labels[window];
 }

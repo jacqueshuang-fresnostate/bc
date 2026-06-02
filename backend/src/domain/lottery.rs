@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::domain::play::PlayRuleCode;
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum LotteryNumberType {
@@ -42,6 +44,14 @@ pub struct GroupBuyConfig {
     pub participant_min_amount_minor: i64,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LotteryPlayConfig {
+    pub rule_code: PlayRuleCode,
+    pub enabled: bool,
+    pub odds_basis_points: i64,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DrawSource {
@@ -62,6 +72,8 @@ pub struct LotteryKind {
     pub sale_enabled: bool,
     pub group_buy: GroupBuyConfig,
     pub play_categories: Vec<PlayCategory>,
+    #[serde(default)]
+    pub play_configs: Vec<LotteryPlayConfig>,
 }
 
 #[cfg(test)]

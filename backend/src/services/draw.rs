@@ -398,6 +398,7 @@ mod tests {
                 participant_min_amount_minor: 1000,
             },
             play_categories: Vec::new(),
+            play_configs: Vec::new(),
         }
     }
 }

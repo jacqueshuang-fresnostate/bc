@@ -29,7 +29,7 @@ pub struct OrderSettlement {
     pub amount_minor: i64,
     pub is_winning: bool,
     pub matched_bets: Vec<String>,
-    pub payout_multiplier: i64,
+    pub odds_basis_points: i64,
     pub payout_minor: i64,
     pub status: OrderStatus,
 }

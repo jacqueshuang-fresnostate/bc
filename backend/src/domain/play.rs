@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::lottery::LotteryNumberType;
+use crate::domain::lottery::{LotteryNumberType, PlayCategory};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -93,6 +93,7 @@ pub struct PlayRuleSummary {
     pub code: PlayRuleCode,
     pub label: String,
     pub number_type: LotteryNumberType,
+    pub category: PlayCategory,
     pub window: ThreeDigitWindow,
     pub description: String,
 }

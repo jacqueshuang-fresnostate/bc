@@ -7,8 +7,10 @@ import type {
   DrawSchedule,
   LotteryKind,
   LotteryNumberType,
+  LotteryPlayConfig,
   PlayCategory,
 } from '../types/dashboard';
+import { playCategoryForRule } from '../utils/playRules';
 
 interface LotteryManagementPageProps {
   onDashboardRefresh: () => void;
@@ -27,6 +29,7 @@ interface LotteryFormState {
   numberType: LotteryNumberType;
   participantMinAmountMinor: string;
   playCategories: PlayCategory[];
+  playConfigs: LotteryPlayConfig[];
   saleEnabled: boolean;
   scheduleKind: ScheduleKind;
   time: string;
@@ -240,7 +243,12 @@ export function LotteryManagementPage({
                   className="form-input"
                   value={form.numberType}
                   onChange={(event) =>
-                    setFormValue(setForm, 'numberType', event.target.value as LotteryNumberType)
+                    setForm((current) => ({
+                      ...current,
+                      numberType: event.target.value as LotteryNumberType,
+                      playCategories: ['direct'],
+                      playConfigs: [],
+                    }))
                   }
                 >
                   <option value="threeDigit">3 位号码</option>
@@ -442,6 +450,7 @@ function emptyForm(): LotteryFormState {
     numberType: 'threeDigit',
     participantMinAmountMinor: '1000',
     playCategories: ['direct'],
+    playConfigs: [],
     saleEnabled: true,
     scheduleKind: 'periodic',
     time: '21:00:15',
@@ -463,6 +472,7 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
     numberType: lottery.numberType,
     participantMinAmountMinor: String(lottery.groupBuy.participantMinAmountMinor),
     playCategories: lottery.playCategories,
+    playConfigs: lottery.playConfigs,
     saleEnabled: lottery.saleEnabled,
     scheduleKind: schedule.scheduleKind,
     time: schedule.time,
@@ -483,9 +493,18 @@ function lotteryFromForm(form: LotteryFormState): LotteryKind {
     name: form.name.trim(),
     numberType: form.numberType,
     playCategories: form.playCategories,
+    playConfigs: playConfigsForForm(form),
     saleEnabled: form.saleEnabled,
     schedule: scheduleFromForm(form),
   };
+}
+
+function playConfigsForForm(form: LotteryFormState): LotteryPlayConfig[] {
+  return form.playConfigs
+    .map((config) => ({
+      ...config,
+      enabled: config.enabled && form.playCategories.includes(playCategoryForRule(config.ruleCode)),
+    }));
 }
 
 function scheduleFormFields(schedule: DrawSchedule) {

@@ -4,6 +4,7 @@ import { MetricCard } from '../components/MetricCard';
 import { ModulePanel } from '../components/ModulePanel';
 import type { DashboardSummary, DrawSchedule } from '../types/dashboard';
 import { formatMoney } from '../utils/format';
+import { formatOdds } from '../utils/playRules';
 
 interface DashboardPageProps {
   data: DashboardSummary | null;
@@ -156,6 +157,7 @@ export function DashboardPage({
                   <th className="py-2 pr-4 font-medium">玩法</th>
                   <th className="py-2 pr-4 font-medium">注数</th>
                   <th className="py-2 pr-4 font-medium">金额</th>
+                  <th className="py-2 pr-4 font-medium">赔率</th>
                   <th className="py-2 pr-4 font-medium">状态</th>
                 </tr>
               </thead>
@@ -172,6 +174,9 @@ export function DashboardPage({
                     <td className="py-3 pr-4 text-slate-600">{order.stakeCount} 注</td>
                     <td className="py-3 pr-4 text-slate-600">
                       {formatMoney(order.amountMinor)}
+                    </td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      {formatOdds(order.oddsBasisPoints)}
                     </td>
                     <td className="py-3 pr-4">
                       <Tag color={order.status === 'pendingDraw' ? 'blue' : 'grey'}>

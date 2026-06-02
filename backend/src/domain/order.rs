@@ -25,6 +25,7 @@ pub struct OrderSummary {
     pub rule_code: PlayRuleCode,
     pub stake_count: u32,
     pub amount_minor: i64,
+    pub odds_basis_points: i64,
     pub draw_number: Option<String>,
     pub matched_bets: Vec<String>,
     pub payout_minor: i64,
@@ -49,6 +50,7 @@ pub struct CreateOrderRequest {
 pub struct OrderQuote {
     pub stake_count: u32,
     pub amount_minor: i64,
+    pub odds_basis_points: i64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -65,6 +67,7 @@ pub struct OrderDetail {
     pub stake_count: u32,
     pub unit_amount_minor: i64,
     pub amount_minor: i64,
+    pub odds_basis_points: i64,
     pub expanded_bets: Vec<String>,
     pub draw_number: Option<String>,
     pub matched_bets: Vec<String>,
@@ -85,6 +88,7 @@ impl OrderDetail {
             rule_code: self.rule_code.clone(),
             stake_count: self.stake_count,
             amount_minor: self.amount_minor,
+            odds_basis_points: self.odds_basis_points,
             draw_number: self.draw_number.clone(),
             matched_bets: self.matched_bets.clone(),
             payout_minor: self.payout_minor,

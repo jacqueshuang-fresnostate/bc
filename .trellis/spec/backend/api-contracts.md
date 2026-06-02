@@ -163,9 +163,23 @@ export interface InvitePolicySummary {
     "initiatorMinPercent": 10,
     "participantMinAmountMinor": 1000
   },
-  "playCategories": ["direct", "groupThree", "groupSix"]
+  "playCategories": ["direct", "groupThree", "groupSix"],
+  "playConfigs": [
+    {
+      "ruleCode": "threeDirect",
+      "enabled": true,
+      "oddsBasisPoints": 104000
+    },
+    {
+      "ruleCode": "threeGroupThree",
+      "enabled": true,
+      "oddsBasisPoints": 52000
+    }
+  ]
 }
 ```
+
+`playConfigs` 是每个彩种的单玩法配置，`oddsBasisPoints` 使用整数基点赔率，`10000` 表示 `1.00 倍`，`104000` 表示 `10.40 倍`。后端保存彩种时会按 `numberType` 补齐该号码类型下所有玩法，并根据启用玩法反推 `playCategories`，避免粗分类和单玩法配置漂移。
 
 `schedule` 是单键枚举对象，只允许以下形状：
 
@@ -190,6 +204,8 @@ export interface InvitePolicySummary {
 | 彩种 ID 为空 | HTTP 400，返回 `lottery id is required` |
 | 彩种名称为空 | HTTP 400，返回 `lottery name is required` |
 | 玩法分类为空 | HTTP 400，返回 `at least one play category is required` |
+| 单玩法配置号码类型与彩种不匹配 | HTTP 400，返回玩法号码类型错误 |
+| 单玩法赔率小于等于 0 | HTTP 400，返回 `play odds basis points must be greater than zero` |
 | 周期开奖秒数为 0 | HTTP 400，返回 `periodic interval must be greater than zero` |
 | 每日开奖时间为空 | HTTP 400，返回 `daily draw time is required` |
 | 周开奖星期或时间为空 | HTTP 400，返回对应 weekly 错误 |
@@ -209,7 +225,7 @@ export interface InvitePolicySummary {
 
 - 后端需要覆盖 `LotteryStore` 的创建、重复 ID、无效开奖周期和销售开关。
 - 后端需要覆盖 `DrawSchedule` 对 `intervalSeconds` 的序列化和反序列化。
-- 跨层联调需要至少请求列表、创建、销售开关、删除和 dashboard，确认同一仓储数据一致。
+- 跨层联调需要至少请求列表、创建、销售开关、删除和 dashboard，确认同一仓储数据一致，并确认 `playConfigs` 随彩种列表和 dashboard 一起返回。
 - 前端需要运行 `npm run build`，并通过浏览器验证彩种管理页面能新增和删除彩种。
 
 ### 7. Wrong vs Correct
@@ -264,11 +280,14 @@ pub enum DrawSchedule {
     "code": "threeDirect",
     "label": "3 位直选",
     "numberType": "threeDigit",
+    "category": "direct",
     "window": "full",
     "description": "按百位、十位、个位顺序完全匹配"
   }
 ]
 ```
+
+规则目录必须包含 `category`，可选值与彩种 `playCategories` 一致：`direct`、`directCombination`、`groupThree`、`groupSix`、`bigSmallOddEven`。前端展示和赔率配置应读取该字段，不要通过玩法代码字符串自行推断分类。
 
 `POST /api/admin/play-rules/evaluate` 请求体：
 
@@ -356,6 +375,104 @@ const result = await evaluatePlayRule(payload);
 
 ---
 
+## 场景：玩法与赔率配置接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改彩种玩法配置、赔率维护、订单赔率快照、计奖赔率计算或管理后台“玩法规则与赔率”页面。
+- 范围：彩种 `playConfigs`、玩法目录 `category`、订单 `oddsBasisPoints`、结算 `oddsBasisPoints`、前端赔率编辑与展示。
+
+### 2. 签名
+
+- `GET /api/admin/play-rules`
+- `GET /api/admin/lotteries`
+- `PUT /api/admin/lotteries/{id}`
+- `POST /api/admin/orders`
+- `POST /api/admin/settlements/draw-issues/{id}`
+- `GET /api/admin/dashboard`
+
+### 3. 契约
+
+赔率统一使用整数基点字段 `oddsBasisPoints`，`10000` 表示 `1.00 倍`。前端展示时可以格式化为 `10.40 倍`，但接口和服务层不得使用浮点数保存赔率。
+
+彩种单玩法配置：
+
+```json
+{
+  "playConfigs": [
+    {
+      "ruleCode": "threeDirect",
+      "enabled": true,
+      "oddsBasisPoints": 104000
+    },
+    {
+      "ruleCode": "threeGroupSix",
+      "enabled": false,
+      "oddsBasisPoints": 50000
+    }
+  ]
+}
+```
+
+订单创建时必须从彩种 `playConfigs` 读取对应玩法配置：
+
+- 未配置该玩法：拒绝创建订单。
+- 配置存在但 `enabled=false`：拒绝创建订单。
+- 配置存在且启用：把当时的 `oddsBasisPoints` 保存进订单。
+
+结算派奖必须使用订单上的赔率快照，不能重新读取当前彩种赔率。派奖公式：
+
+```text
+命中投注数 × 单注金额 × oddsBasisPoints / 10000
+```
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 彩种提交了不属于当前号码类型的玩法 | HTTP 400，返回玩法号码类型错误 |
+| 彩种提交了小于等于 0 的赔率 | HTTP 400，返回 `play odds basis points must be greater than zero` |
+| 彩种保存后没有任何启用玩法 | HTTP 400，返回 `at least one play category is required` |
+| 订单玩法没有配置 | HTTP 400，返回 `lottery does not configure this play rule` |
+| 订单玩法被停用 | HTTP 400，返回 `lottery does not enable this play rule` |
+| 结算中奖订单赔率快照小于等于 0 | HTTP 400，返回派奖金额或赔率错误 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`fc3d.threeDirect` 设置为 `104000`，创建订单后订单响应包含 `oddsBasisPoints=104000`。
+- Good：管理员随后把 `fc3d.threeDirect` 改成 `98000`，旧订单结算仍按 `104000` 派奖。
+- Good：3 位页面只展示 3 位玩法和 3 位彩种，5 位页面只展示 5 位玩法和 5 位彩种。
+- Bad：结算时读取当前彩种赔率；这会导致历史订单派奖被后续调价影响。
+- Bad：前端用小数浮点提交赔率，例如 `10.4`；接口必须提交 `104000`。
+
+### 6. 必要测试
+
+- 后端需要覆盖彩种保存后补齐对应号码类型的所有 `playConfigs`。
+- 后端需要覆盖订单创建保存赔率快照，并拒绝停用玩法。
+- 后端需要覆盖结算按订单赔率快照计算派奖。
+- 前端需要运行 `npm run build`，确认玩法、彩种、订单和结算类型一致。
+- 跨层联调需要完成“修改彩种玩法赔率 → 创建订单 → 开奖结算 → 核对订单和结算赔率”。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+let payout = matched_count * unit_amount * current_lottery_odds(rule_code);
+```
+
+这个写法会让后续调价影响历史订单。
+
+#### 正确
+
+```rust
+let payout = matched_count * order.unit_amount_minor * order.odds_basis_points / 10_000;
+```
+
+订单创建时保存赔率快照，结算时只读取订单自身的赔率。
+
+---
+
 ## 场景：订单与投注基础接口
 
 ### 1. 范围 / 触发条件
@@ -411,6 +528,7 @@ const result = await evaluatePlayRule(payload);
   "stakeCount": 1,
   "unitAmountMinor": 200,
   "amountMinor": 200,
+  "oddsBasisPoints": 104000,
   "expandedBets": ["247"],
   "status": "pendingDraw",
   "createdAt": "unix:1780386834"
@@ -438,7 +556,8 @@ const result = await evaluatePlayRule(payload);
 | 单注金额小于等于 0 | HTTP 400，返回 `unit amount must be greater than zero` |
 | 彩种停售 | HTTP 400，返回 `lottery is not on sale` |
 | 玩法号码类型与彩种号码类型不匹配 | HTTP 400，返回 `rule code does not match lottery number type` |
-| 彩种未启用玩法分类 | HTTP 400，返回 `lottery does not enable this play category` |
+| 彩种未配置对应玩法 | HTTP 400，返回 `lottery does not configure this play rule` |
+| 彩种停用对应玩法 | HTTP 400，返回 `lottery does not enable this play rule` |
 | 玩法选号无效 | HTTP 400，透传玩法规则引擎的校验错误 |
 | 订单金额溢出 | HTTP 400，返回 `order amount is too large` |
 | 查询或取消不存在订单 | HTTP 404，返回订单不存在 |
@@ -446,7 +565,7 @@ const result = await evaluatePlayRule(payload);
 
 ### 5. Good / Base / Bad Cases
 
-- Good：`fc3d` 创建 `threeDirect` 订单，选号 `247`、单注 `200` 分，后端返回 `stakeCount=1`、`amountMinor=200`、`expandedBets=["247"]`。
+- Good：`fc3d` 创建 `threeDirect` 订单，选号 `247`、单注 `200` 分，后端返回 `stakeCount=1`、`amountMinor=200`、`oddsBasisPoints` 和 `expandedBets=["247"]`。
 - Good：创建订单后重新请求 `/api/admin/dashboard`，`recentOrders` 包含该订单，今日订单指标等于内存订单数量。
 - Base：订单仓储当前是内存模式，服务重启后订单清空；这适合当前后台功能验证。
 - Bad：前端传 `amountMinor` 给后端并由后端直接保存；订单金额必须由后端根据注数和单注金额计算。
@@ -455,7 +574,7 @@ const result = await evaluatePlayRule(payload);
 ### 6. 必要测试
 
 - 后端需要覆盖订单创建时按玩法规则引擎计算注数、金额和展开投注。
-- 后端需要覆盖彩种未启用玩法分类时拒绝创建订单。
+- 后端需要覆盖彩种未配置或停用单玩法时拒绝创建订单。
 - 后端需要覆盖取消待开奖订单，以及重复取消被拒绝。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`。
@@ -639,7 +758,7 @@ await drawIssueResult(issue.id, issue.drawMode === 'manual'
 
 ### 3. 契约
 
-所有接口继续使用统一 API 信封，金额字段必须使用最小货币单位整数。基础派奖倍数只用于本阶段链路验证，不代表真实生产赔率。
+所有接口继续使用统一 API 信封，金额字段必须使用最小货币单位整数。派奖金额使用订单创建时保存的 `oddsBasisPoints` 赔率快照计算，不能在结算时重新读取当前彩种赔率。
 
 执行结算：
 
@@ -671,8 +790,8 @@ POST /api/admin/settlements/draw-issues/D000000000001
       "amountMinor": 200,
       "isWinning": true,
       "matchedBets": ["023"],
-      "payoutMultiplier": 10,
-      "payoutMinor": 2000,
+      "oddsBasisPoints": 104000,
+      "payoutMinor": 2080,
       "status": "won"
     }
   ]
@@ -685,7 +804,8 @@ POST /api/admin/settlements/draw-issues/D000000000001
 {
   "drawNumber": "023",
   "matchedBets": ["023"],
-  "payoutMinor": 2000,
+  "oddsBasisPoints": 104000,
+  "payoutMinor": 2080,
   "settledAt": "unix:1780388582"
 }
 ```
@@ -711,7 +831,7 @@ POST /api/admin/settlements/draw-issues/D000000000001
 
 ### 5. Good / Base / Bad Cases
 
-- Good：`fc3d` 期号开奖 `023`，同期开奖的 `threeDirect` 订单选号 `023`，结算后订单状态为 `won`，`matchedBets=["023"]`，`payoutMinor=2000`。
+- Good：`fc3d` 期号开奖 `023`，同期开奖的 `threeDirect` 订单选号 `023`，订单赔率快照 `oddsBasisPoints=104000`，结算后订单状态为 `won`，`matchedBets=["023"]`，单注 `200` 分派发 `2080` 分。
 - Good：同期开奖的未命中订单结算后状态为 `lost`，`matchedBets=[]`，`payoutMinor=0`。
 - Good：同一期号存在已取消订单时，取消订单不参与结算且状态保持 `cancelled`。
 - Base：结算批次当前保存在内存订单仓储，服务重启后清空；这适合当前后台流程验证。
@@ -752,7 +872,7 @@ let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
 })?;
 ```
 
-结算服务复用玩法规则引擎，拿 `matchedBets` 决定订单中奖状态和基础派奖结果。
+结算服务复用玩法规则引擎，拿 `matchedBets` 决定订单中奖状态，并使用订单赔率快照计算派奖结果。
 
 ---
 

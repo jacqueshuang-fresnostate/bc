@@ -5,10 +5,15 @@ use serde_json::Value;
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 
 use crate::{
-    domain::lottery::{
-        DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType, PlayCategory,
+    domain::{
+        lottery::{
+            DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
+            LotteryPlayConfig, PlayCategory,
+        },
+        play::PlayRuleCode,
     },
     error::{ApiError, ApiResult},
+    services::play_rules::{number_type_for_rule, play_category_for_rule, play_rule_summaries},
 };
 
 #[derive(Clone)]
@@ -140,7 +145,7 @@ impl LotteryStore {
     }
 
     pub fn create(&mut self, lottery: LotteryKind) -> ApiResult<LotteryKind> {
-        validate_lottery(&lottery)?;
+        let lottery = normalize_lottery(lottery)?;
 
         if self.lotteries.contains_key(&lottery.id) {
             return Err(ApiError::Conflict(format!(
@@ -154,7 +159,7 @@ impl LotteryStore {
     }
 
     pub fn update(&mut self, id: &str, lottery: LotteryKind) -> ApiResult<LotteryKind> {
-        validate_lottery(&lottery)?;
+        let lottery = normalize_lottery(lottery)?;
 
         if id != lottery.id {
             return Err(ApiError::BadRequest(
@@ -210,7 +215,7 @@ impl PostgresLotteryStore {
 
     async fn list(&self) -> ApiResult<Vec<LotteryKind>> {
         let rows = sqlx::query(
-            "SELECT id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories
+            "SELECT id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              FROM lotteries
              ORDER BY id ASC",
         )
@@ -223,7 +228,7 @@ impl PostgresLotteryStore {
 
     async fn get(&self, id: &str) -> ApiResult<LotteryKind> {
         let row = sqlx::query(
-            "SELECT id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories
+            "SELECT id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              FROM lotteries
              WHERE id = $1",
         )
@@ -238,15 +243,15 @@ impl PostgresLotteryStore {
     }
 
     async fn create(&self, lottery: LotteryKind) -> ApiResult<LotteryKind> {
-        validate_lottery(&lottery)?;
+        let lottery = normalize_lottery(lottery)?;
 
         let created = sqlx::query(
             "INSERT INTO lotteries (
-                id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories
+                id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT (id) DO NOTHING
-             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories",
+             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(&lottery.id)
         .bind(&lottery.name)
@@ -256,6 +261,7 @@ impl PostgresLotteryStore {
         .bind(lottery.sale_enabled)
         .bind(json_value(&lottery.group_buy)?)
         .bind(json_value(&lottery.play_categories)?)
+        .bind(json_value(&lottery.play_configs)?)
         .fetch_optional(&self.pool)
         .await
         .map_err(database_error)?;
@@ -267,12 +273,14 @@ impl PostgresLotteryStore {
     }
 
     async fn insert_lottery(&self, lottery: LotteryKind) -> ApiResult<LotteryKind> {
+        let lottery = normalize_lottery(lottery)?;
+
         let row = sqlx::query(
             "INSERT INTO lotteries (
-                id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories
+                id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(&lottery.id)
         .bind(&lottery.name)
@@ -282,6 +290,7 @@ impl PostgresLotteryStore {
         .bind(lottery.sale_enabled)
         .bind(json_value(&lottery.group_buy)?)
         .bind(json_value(&lottery.play_categories)?)
+        .bind(json_value(&lottery.play_configs)?)
         .fetch_one(&self.pool)
         .await
         .map_err(database_error)?;
@@ -290,7 +299,7 @@ impl PostgresLotteryStore {
     }
 
     async fn update(&self, id: &str, lottery: LotteryKind) -> ApiResult<LotteryKind> {
-        validate_lottery(&lottery)?;
+        let lottery = normalize_lottery(lottery)?;
 
         if id != lottery.id {
             return Err(ApiError::BadRequest(
@@ -307,9 +316,10 @@ impl PostgresLotteryStore {
                  sale_enabled = $6,
                  group_buy = $7,
                  play_categories = $8,
+                 play_configs = $9,
                  updated_at = now()
              WHERE id = $1
-             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories",
+             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .bind(&lottery.name)
@@ -319,6 +329,7 @@ impl PostgresLotteryStore {
         .bind(lottery.sale_enabled)
         .bind(json_value(&lottery.group_buy)?)
         .bind(json_value(&lottery.play_categories)?)
+        .bind(json_value(&lottery.play_configs)?)
         .fetch_optional(&self.pool)
         .await
         .map_err(database_error)?;
@@ -333,7 +344,7 @@ impl PostgresLotteryStore {
         let deleted = sqlx::query(
             "DELETE FROM lotteries
              WHERE id = $1
-             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories",
+             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -352,7 +363,7 @@ impl PostgresLotteryStore {
              SET sale_enabled = $2,
                  updated_at = now()
              WHERE id = $1
-             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories",
+             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .bind(sale_enabled)
@@ -384,6 +395,21 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
                 PlayCategory::GroupThree,
                 PlayCategory::GroupSix,
             ],
+            play_configs: play_configs_with_overrides(
+                LotteryNumberType::ThreeDigit,
+                &[
+                    PlayCategory::Direct,
+                    PlayCategory::GroupThree,
+                    PlayCategory::GroupSix,
+                ],
+                &[
+                    (PlayRuleCode::ThreeDirect, 104_000),
+                    (PlayRuleCode::ThreeGroupThree, 52_000),
+                    (PlayRuleCode::ThreeGroupThreeBanker, 52_000),
+                    (PlayRuleCode::ThreeGroupSix, 50_000),
+                    (PlayRuleCode::ThreeGroupSixBanker, 50_000),
+                ],
+            ),
         },
         LotteryKind {
             id: "pl3".to_string(),
@@ -400,6 +426,21 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
                 PlayCategory::GroupThree,
                 PlayCategory::GroupSix,
             ],
+            play_configs: play_configs_with_overrides(
+                LotteryNumberType::ThreeDigit,
+                &[
+                    PlayCategory::Direct,
+                    PlayCategory::GroupThree,
+                    PlayCategory::GroupSix,
+                ],
+                &[
+                    (PlayRuleCode::ThreeDirect, 98_000),
+                    (PlayRuleCode::ThreeGroupThree, 49_000),
+                    (PlayRuleCode::ThreeGroupThreeBanker, 49_000),
+                    (PlayRuleCode::ThreeGroupSix, 48_000),
+                    (PlayRuleCode::ThreeGroupSixBanker, 48_000),
+                ],
+            ),
         },
         LotteryKind {
             id: "ssc60".to_string(),
@@ -418,6 +459,22 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
                 PlayCategory::GroupSix,
                 PlayCategory::BigSmallOddEven,
             ],
+            play_configs: play_configs_with_overrides(
+                LotteryNumberType::FiveDigit,
+                &[
+                    PlayCategory::Direct,
+                    PlayCategory::DirectCombination,
+                    PlayCategory::GroupThree,
+                    PlayCategory::GroupSix,
+                    PlayCategory::BigSmallOddEven,
+                ],
+                &[
+                    (PlayRuleCode::FiveFrontDirect, 95_000),
+                    (PlayRuleCode::FiveMiddleDirect, 96_000),
+                    (PlayRuleCode::FiveBackDirect, 97_000),
+                    (PlayRuleCode::FiveBigSmallOddEven, 19_000),
+                ],
+            ),
         },
         LotteryKind {
             id: "manual-test".to_string(),
@@ -436,11 +493,41 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
                 participant_min_amount_minor: 1_000,
             },
             play_categories: vec![PlayCategory::Direct],
+            play_configs: play_configs_with_overrides(
+                LotteryNumberType::FiveDigit,
+                &[PlayCategory::Direct],
+                &[
+                    (PlayRuleCode::FiveFrontDirect, 88_000),
+                    (PlayRuleCode::FiveMiddleDirect, 88_000),
+                    (PlayRuleCode::FiveBackDirect, 88_000),
+                ],
+            ),
         },
     ]
 }
 
-fn validate_lottery(lottery: &LotteryKind) -> ApiResult<()> {
+fn normalize_lottery(mut lottery: LotteryKind) -> ApiResult<LotteryKind> {
+    validate_lottery_base(&lottery)?;
+
+    let play_configs = normalize_play_configs(
+        &lottery.number_type,
+        &lottery.play_categories,
+        &lottery.play_configs,
+    )?;
+    let play_categories = enabled_play_categories(&play_configs);
+    if play_categories.is_empty() {
+        return Err(ApiError::BadRequest(
+            "at least one play config must be enabled".to_string(),
+        ));
+    }
+
+    lottery.play_categories = play_categories;
+    lottery.play_configs = play_configs;
+
+    Ok(lottery)
+}
+
+fn validate_lottery_base(lottery: &LotteryKind) -> ApiResult<()> {
     if lottery.id.trim().is_empty() {
         return Err(ApiError::BadRequest("lottery id is required".to_string()));
     }
@@ -502,6 +589,95 @@ fn validate_lottery(lottery: &LotteryKind) -> ApiResult<()> {
     Ok(())
 }
 
+fn normalize_play_configs(
+    number_type: &LotteryNumberType,
+    play_categories: &[PlayCategory],
+    submitted_configs: &[LotteryPlayConfig],
+) -> ApiResult<Vec<LotteryPlayConfig>> {
+    let mut configs = Vec::new();
+    let summaries = play_rule_summaries()
+        .into_iter()
+        .filter(|summary| summary.number_type == *number_type)
+        .collect::<Vec<_>>();
+
+    for submitted in submitted_configs {
+        if number_type_for_rule(&submitted.rule_code) != *number_type {
+            return Err(ApiError::BadRequest(
+                "play config rule does not match lottery number type".to_string(),
+            ));
+        }
+        if submitted.odds_basis_points <= 0 {
+            return Err(ApiError::BadRequest(
+                "play odds basis points must be greater than zero".to_string(),
+            ));
+        }
+    }
+
+    for summary in summaries {
+        let submitted = submitted_configs
+            .iter()
+            .find(|config| config.rule_code == summary.code);
+        let category_enabled = play_categories.contains(&summary.category);
+        let odds_basis_points = submitted
+            .map(|config| config.odds_basis_points)
+            .unwrap_or_else(|| default_odds_basis_points_for_rule(&summary.code));
+        let enabled = submitted
+            .map(|config| config.enabled && category_enabled)
+            .unwrap_or(category_enabled);
+
+        configs.push(LotteryPlayConfig {
+            rule_code: summary.code,
+            enabled,
+            odds_basis_points,
+        });
+    }
+
+    Ok(configs)
+}
+
+fn enabled_play_categories(play_configs: &[LotteryPlayConfig]) -> Vec<PlayCategory> {
+    let mut categories = Vec::new();
+    for config in play_configs.iter().filter(|config| config.enabled) {
+        let category = play_category_for_rule(&config.rule_code);
+        if !categories.contains(&category) {
+            categories.push(category);
+        }
+    }
+    categories
+}
+
+fn play_configs_with_overrides(
+    number_type: LotteryNumberType,
+    play_categories: &[PlayCategory],
+    overrides: &[(PlayRuleCode, i64)],
+) -> Vec<LotteryPlayConfig> {
+    play_rule_summaries()
+        .into_iter()
+        .filter(|summary| summary.number_type == number_type)
+        .map(|summary| {
+            let odds_basis_points = overrides
+                .iter()
+                .find(|(rule_code, _)| *rule_code == summary.code)
+                .map(|(_, odds)| *odds)
+                .unwrap_or_else(|| default_odds_basis_points_for_rule(&summary.code));
+
+            LotteryPlayConfig {
+                rule_code: summary.code,
+                enabled: play_categories.contains(&summary.category),
+                odds_basis_points,
+            }
+        })
+        .collect()
+}
+
+fn default_odds_basis_points_for_rule(rule_code: &PlayRuleCode) -> i64 {
+    match play_category_for_rule(rule_code) {
+        PlayCategory::Direct | PlayCategory::DirectCombination => 100_000,
+        PlayCategory::GroupThree | PlayCategory::GroupSix => 50_000,
+        PlayCategory::BigSmallOddEven => 20_000,
+    }
+}
+
 fn group_buy_config() -> GroupBuyConfig {
     GroupBuyConfig {
         enabled: true,
@@ -517,8 +693,9 @@ fn lottery_from_row(row: sqlx::postgres::PgRow) -> ApiResult<LotteryKind> {
     let schedule = json_from_value(row.try_get("schedule").map_err(database_error)?)?;
     let group_buy = json_from_value(row.try_get("group_buy").map_err(database_error)?)?;
     let play_categories = json_from_value(row.try_get("play_categories").map_err(database_error)?)?;
+    let play_configs = json_from_value(row.try_get("play_configs").map_err(database_error)?)?;
 
-    Ok(LotteryKind {
+    normalize_lottery(LotteryKind {
         id: row.try_get("id").map_err(database_error)?,
         name: row.try_get("name").map_err(database_error)?,
         number_type,
@@ -527,6 +704,7 @@ fn lottery_from_row(row: sqlx::postgres::PgRow) -> ApiResult<LotteryKind> {
         sale_enabled: row.try_get("sale_enabled").map_err(database_error)?,
         group_buy,
         play_categories,
+        play_configs,
     })
 }
 

@@ -1,4 +1,4 @@
-import type { LotteryNumberType } from './dashboard';
+import type { LotteryNumberType, PlayCategory } from './dashboard';
 
 export type PlayRuleCode =
   | 'threeDirect'
@@ -44,6 +44,7 @@ export interface PlaySelection {
 }
 
 export interface PlayRuleSummary {
+  category: PlayCategory;
   code: PlayRuleCode;
   description: string;
   label: string;

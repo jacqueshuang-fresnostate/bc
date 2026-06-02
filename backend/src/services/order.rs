@@ -7,14 +7,16 @@ use std::{
 use crate::{
     domain::{
         draw::{DrawIssue, DrawIssueStatus},
-        lottery::{LotteryKind, PlayCategory},
+        lottery::LotteryKind,
         order::{CreateOrderRequest, OrderDetail, OrderQuote, OrderStatus, OrderSummary},
-        play::{PlayRuleCode, PlayRuleEvaluateRequest},
+        play::PlayRuleEvaluateRequest,
         settlement::{OrderSettlement, SettlementRun},
     },
     error::{ApiError, ApiResult},
     services::play_rules::{evaluate_play_rule, expanded_bets_for_rule, number_type_for_rule},
 };
+
+const ODDS_SCALE_BASIS_POINTS: i64 = 10_000;
 
 #[derive(Clone)]
 pub struct OrderRepository {
@@ -61,6 +63,7 @@ impl OrderRepository {
         calculated_order(lottery, payload).map(|calculation| OrderQuote {
             stake_count: calculation.stake_count,
             amount_minor: calculation.amount_minor,
+            odds_basis_points: calculation.odds_basis_points,
         })
     }
 
@@ -147,6 +150,7 @@ impl OrderStore {
             stake_count: calculation.stake_count,
             unit_amount_minor: payload.unit_amount_minor,
             amount_minor: calculation.amount_minor,
+            odds_basis_points: calculation.odds_basis_points,
             expanded_bets: calculation.expanded_bets,
             draw_number: None,
             matched_bets: Vec::new(),
@@ -259,15 +263,15 @@ impl OrderStore {
             })?;
             let matched_bets = evaluation.matched_bets;
             let is_winning = !matched_bets.is_empty();
-            let payout_multiplier = if is_winning {
-                payout_multiplier_for_rule(&order.rule_code)
+            let odds_basis_points = if is_winning {
+                order.odds_basis_points
             } else {
                 0
             };
             let payout_minor = payout_amount_minor(
                 matched_bets.len(),
                 order.unit_amount_minor,
-                payout_multiplier,
+                odds_basis_points,
             )?;
             let status = if is_winning {
                 OrderStatus::Won
@@ -289,7 +293,7 @@ impl OrderStore {
                 amount_minor: order.amount_minor,
                 is_winning,
                 matched_bets,
-                payout_multiplier,
+                odds_basis_points,
                 payout_minor,
                 status,
             });
@@ -357,19 +361,13 @@ fn validate_order_request(lottery: &LotteryKind, payload: &CreateOrderRequest) -
         ));
     }
 
-    let required_category = play_category_for_rule(&payload.rule_code);
-    if !lottery.play_categories.contains(&required_category) {
-        return Err(ApiError::BadRequest(
-            "lottery does not enable this play category".to_string(),
-        ));
-    }
-
     Ok(())
 }
 
 struct CalculatedOrder {
     stake_count: u32,
     amount_minor: i64,
+    odds_basis_points: i64,
     expanded_bets: Vec<String>,
 }
 
@@ -378,6 +376,23 @@ fn calculated_order(
     payload: &CreateOrderRequest,
 ) -> ApiResult<CalculatedOrder> {
     validate_order_request(lottery, payload)?;
+    let play_config = lottery
+        .play_configs
+        .iter()
+        .find(|config| config.rule_code == payload.rule_code)
+        .ok_or_else(|| {
+            ApiError::BadRequest("lottery does not configure this play rule".to_string())
+        })?;
+    if !play_config.enabled {
+        return Err(ApiError::BadRequest(
+            "lottery does not enable this play rule".to_string(),
+        ));
+    }
+    if play_config.odds_basis_points <= 0 {
+        return Err(ApiError::BadRequest(
+            "play odds basis points must be greater than zero".to_string(),
+        ));
+    }
 
     let expanded_bets = expanded_bets_for_rule(&payload.rule_code, &payload.selection)?;
     if expanded_bets.is_empty() {
@@ -394,78 +409,22 @@ fn calculated_order(
     Ok(CalculatedOrder {
         stake_count,
         amount_minor,
+        odds_basis_points: play_config.odds_basis_points,
         expanded_bets,
     })
-}
-
-pub fn play_category_for_rule(rule_code: &PlayRuleCode) -> PlayCategory {
-    match rule_code {
-        PlayRuleCode::ThreeDirect
-        | PlayRuleCode::FiveFrontDirect
-        | PlayRuleCode::FiveMiddleDirect
-        | PlayRuleCode::FiveBackDirect => PlayCategory::Direct,
-        PlayRuleCode::FiveFrontDirectCombination
-        | PlayRuleCode::FiveMiddleDirectCombination
-        | PlayRuleCode::FiveBackDirectCombination => PlayCategory::DirectCombination,
-        PlayRuleCode::ThreeGroupThree
-        | PlayRuleCode::ThreeGroupThreeBanker
-        | PlayRuleCode::FiveFrontGroupThree
-        | PlayRuleCode::FiveMiddleGroupThree
-        | PlayRuleCode::FiveBackGroupThree
-        | PlayRuleCode::FiveFrontGroupThreeBanker
-        | PlayRuleCode::FiveMiddleGroupThreeBanker
-        | PlayRuleCode::FiveBackGroupThreeBanker => PlayCategory::GroupThree,
-        PlayRuleCode::ThreeGroupSix
-        | PlayRuleCode::ThreeGroupSixBanker
-        | PlayRuleCode::FiveFrontGroupSix
-        | PlayRuleCode::FiveMiddleGroupSix
-        | PlayRuleCode::FiveBackGroupSix
-        | PlayRuleCode::FiveFrontGroupSixBanker
-        | PlayRuleCode::FiveMiddleGroupSixBanker
-        | PlayRuleCode::FiveBackGroupSixBanker => PlayCategory::GroupSix,
-        PlayRuleCode::FiveBigSmallOddEven => PlayCategory::BigSmallOddEven,
-    }
-}
-
-fn payout_multiplier_for_rule(rule_code: &PlayRuleCode) -> i64 {
-    match rule_code {
-        PlayRuleCode::ThreeDirect
-        | PlayRuleCode::FiveFrontDirect
-        | PlayRuleCode::FiveMiddleDirect
-        | PlayRuleCode::FiveBackDirect
-        | PlayRuleCode::FiveFrontDirectCombination
-        | PlayRuleCode::FiveMiddleDirectCombination
-        | PlayRuleCode::FiveBackDirectCombination => 10,
-        PlayRuleCode::ThreeGroupThree
-        | PlayRuleCode::ThreeGroupThreeBanker
-        | PlayRuleCode::FiveFrontGroupThree
-        | PlayRuleCode::FiveMiddleGroupThree
-        | PlayRuleCode::FiveBackGroupThree
-        | PlayRuleCode::FiveFrontGroupThreeBanker
-        | PlayRuleCode::FiveMiddleGroupThreeBanker
-        | PlayRuleCode::FiveBackGroupThreeBanker
-        | PlayRuleCode::ThreeGroupSix
-        | PlayRuleCode::ThreeGroupSixBanker
-        | PlayRuleCode::FiveFrontGroupSix
-        | PlayRuleCode::FiveMiddleGroupSix
-        | PlayRuleCode::FiveBackGroupSix
-        | PlayRuleCode::FiveFrontGroupSixBanker
-        | PlayRuleCode::FiveMiddleGroupSixBanker
-        | PlayRuleCode::FiveBackGroupSixBanker => 5,
-        PlayRuleCode::FiveBigSmallOddEven => 2,
-    }
 }
 
 fn payout_amount_minor(
     matched_bet_count: usize,
     unit_amount_minor: i64,
-    payout_multiplier: i64,
+    odds_basis_points: i64,
 ) -> ApiResult<i64> {
     let matched_bet_count = i64::try_from(matched_bet_count)
         .map_err(|_| ApiError::BadRequest("payout amount is too large".to_string()))?;
     matched_bet_count
         .checked_mul(unit_amount_minor)
-        .and_then(|amount| amount.checked_mul(payout_multiplier))
+        .and_then(|amount| amount.checked_mul(odds_basis_points))
+        .map(|amount| amount / ODDS_SCALE_BASIS_POINTS)
         .ok_or_else(|| ApiError::BadRequest("payout amount is too large".to_string()))
 }
 
@@ -482,7 +441,10 @@ mod tests {
     use crate::{
         domain::{
             draw::{DrawIssue, DrawIssueStatus},
-            lottery::{DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType},
+            lottery::{
+                DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
+                LotteryPlayConfig, PlayCategory,
+            },
             order::{CreateOrderRequest, OrderStatus},
             play::{PlayRuleCode, PlaySelection},
         },
@@ -513,6 +475,7 @@ mod tests {
 
         assert_eq!(order.stake_count, 1);
         assert_eq!(order.amount_minor, 200);
+        assert_eq!(order.odds_basis_points, 100_000);
         assert_eq!(order.expanded_bets, vec!["247"]);
         assert_eq!(order.status, OrderStatus::PendingDraw);
         assert_eq!(order.draw_number, None);
@@ -545,7 +508,7 @@ mod tests {
 
         assert!(error
             .to_string()
-            .contains("lottery does not enable this play category"));
+            .contains("lottery does not enable this play rule"));
     }
 
     #[test]
@@ -629,6 +592,7 @@ mod tests {
         assert_eq!(run.total_stake_amount_minor, 400);
         assert_eq!(run.total_payout_minor, 2000);
         assert_eq!(run.orders.len(), 2);
+        assert_eq!(run.orders[0].odds_basis_points, 100_000);
 
         let winning = store.get(&winning.id).expect("winning order exists");
         assert_eq!(winning.status, OrderStatus::Won);
@@ -715,9 +679,35 @@ mod tests {
             .contains("already settled"));
     }
 
-    fn lottery_with_categories(
-        play_categories: Vec<crate::domain::lottery::PlayCategory>,
-    ) -> LotteryKind {
+    fn lottery_with_categories(play_categories: Vec<PlayCategory>) -> LotteryKind {
+        let play_configs = vec![
+            LotteryPlayConfig {
+                rule_code: PlayRuleCode::ThreeDirect,
+                enabled: play_categories.contains(&PlayCategory::Direct),
+                odds_basis_points: 100_000,
+            },
+            LotteryPlayConfig {
+                rule_code: PlayRuleCode::ThreeGroupThree,
+                enabled: play_categories.contains(&PlayCategory::GroupThree),
+                odds_basis_points: 50_000,
+            },
+            LotteryPlayConfig {
+                rule_code: PlayRuleCode::ThreeGroupThreeBanker,
+                enabled: play_categories.contains(&PlayCategory::GroupThree),
+                odds_basis_points: 50_000,
+            },
+            LotteryPlayConfig {
+                rule_code: PlayRuleCode::ThreeGroupSix,
+                enabled: play_categories.contains(&PlayCategory::GroupSix),
+                odds_basis_points: 50_000,
+            },
+            LotteryPlayConfig {
+                rule_code: PlayRuleCode::ThreeGroupSixBanker,
+                enabled: play_categories.contains(&PlayCategory::GroupSix),
+                odds_basis_points: 50_000,
+            },
+        ];
+
         LotteryKind {
             id: "fc3d".to_string(),
             name: "福彩 3D".to_string(),
@@ -734,6 +724,7 @@ mod tests {
                 participant_min_amount_minor: 1000,
             },
             play_categories,
+            play_configs,
         }
     }
 

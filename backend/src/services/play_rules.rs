@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        lottery::LotteryNumberType,
+        lottery::{LotteryNumberType, PlayCategory},
         play::{
             BigSmallOddEvenPick, BigSmallOddEvenPosition, DigitAttribute, PlayRuleCode,
             PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary, PlaySelection,
@@ -242,12 +242,43 @@ fn summary(
     window: ThreeDigitWindow,
     description: &str,
 ) -> PlayRuleSummary {
+    let category = play_category_for_rule(&code);
     PlayRuleSummary {
         code,
         label: label.to_string(),
         number_type,
+        category,
         window,
         description: description.to_string(),
+    }
+}
+
+pub fn play_category_for_rule(rule_code: &PlayRuleCode) -> PlayCategory {
+    match rule_code {
+        PlayRuleCode::ThreeDirect
+        | PlayRuleCode::FiveFrontDirect
+        | PlayRuleCode::FiveMiddleDirect
+        | PlayRuleCode::FiveBackDirect => PlayCategory::Direct,
+        PlayRuleCode::FiveFrontDirectCombination
+        | PlayRuleCode::FiveMiddleDirectCombination
+        | PlayRuleCode::FiveBackDirectCombination => PlayCategory::DirectCombination,
+        PlayRuleCode::ThreeGroupThree
+        | PlayRuleCode::ThreeGroupThreeBanker
+        | PlayRuleCode::FiveFrontGroupThree
+        | PlayRuleCode::FiveMiddleGroupThree
+        | PlayRuleCode::FiveBackGroupThree
+        | PlayRuleCode::FiveFrontGroupThreeBanker
+        | PlayRuleCode::FiveMiddleGroupThreeBanker
+        | PlayRuleCode::FiveBackGroupThreeBanker => PlayCategory::GroupThree,
+        PlayRuleCode::ThreeGroupSix
+        | PlayRuleCode::ThreeGroupSixBanker
+        | PlayRuleCode::FiveFrontGroupSix
+        | PlayRuleCode::FiveMiddleGroupSix
+        | PlayRuleCode::FiveBackGroupSix
+        | PlayRuleCode::FiveFrontGroupSixBanker
+        | PlayRuleCode::FiveMiddleGroupSixBanker
+        | PlayRuleCode::FiveBackGroupSixBanker => PlayCategory::GroupSix,
+        PlayRuleCode::FiveBigSmallOddEven => PlayCategory::BigSmallOddEven,
     }
 }
 

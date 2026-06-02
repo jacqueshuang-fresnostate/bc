@@ -6,6 +6,7 @@ import { useSettlements } from '../hooks/useSettlements';
 import type { DrawIssue } from '../types/draws';
 import type { SettlementRun } from '../types/settlements';
 import { formatMoney } from '../utils/format';
+import { formatOdds } from '../utils/playRules';
 
 interface SettlementManagementPageProps {
   onDashboardRefresh: () => void;
@@ -279,7 +280,7 @@ function SettlementDetail({ settlement }: { settlement: SettlementRun }) {
                 <th className="py-2 pr-4 font-medium">用户</th>
                 <th className="py-2 pr-4 font-medium">玩法</th>
                 <th className="py-2 pr-4 font-medium">命中</th>
-                <th className="py-2 pr-4 font-medium">倍数</th>
+                <th className="py-2 pr-4 font-medium">赔率</th>
                 <th className="py-2 pr-4 font-medium">派奖</th>
                 <th className="py-2 pr-4 font-medium">状态</th>
               </tr>
@@ -303,7 +304,9 @@ function SettlementDetail({ settlement }: { settlement: SettlementRun }) {
                       <span className="text-slate-400">未命中</span>
                     )}
                   </td>
-                  <td className="py-3 pr-4 text-slate-600">{order.payoutMultiplier} 倍</td>
+                  <td className="py-3 pr-4 text-slate-600">
+                    {formatOdds(order.oddsBasisPoints)}
+                  </td>
                   <td className="py-3 pr-4 text-slate-600">
                     {formatMoney(order.payoutMinor)}
                   </td>

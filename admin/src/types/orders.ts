@@ -24,6 +24,7 @@ export interface OrderDetail {
   ruleCode: PlayRuleCode;
   selection: PlaySelection;
   stakeCount: number;
+  oddsBasisPoints: number;
   drawNumber: string | null;
   matchedBets: string[];
   payoutMinor: number;

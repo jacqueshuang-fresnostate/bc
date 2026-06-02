@@ -74,6 +74,7 @@ YYYYMMDDHHMMSS_describe_change.sql
 - 环境变量：`DATABASE_URL`
 - 迁移目录：`backend/migrations/`
 - 首个迁移：`20260602150315_create_lotteries.sql`
+- 玩法赔率迁移：`20260602165000_add_lottery_play_configs.sql`
 - 表名：`lotteries`
 
 ### 3. 契约
@@ -99,6 +100,7 @@ YYYYMMDDHHMMSS_describe_change.sql
 | `sale_enabled` | `boolean not null` | 销售状态 |
 | `group_buy` | `jsonb not null` | 当前 API 契约中的合买配置 |
 | `play_categories` | `jsonb not null` | 当前 API 契约中的玩法数组 |
+| `play_configs` | `jsonb not null default '[]'::jsonb` | 单玩法启用状态和赔率配置数组 |
 | `created_at` | `timestamptz not null default now()` | 创建时间 |
 | `updated_at` | `timestamptz not null default now()` | 更新时间 |
 
@@ -121,7 +123,7 @@ YYYYMMDDHHMMSS_describe_change.sql
 ### 6. 必要测试
 
 - 无数据库模式需要运行 `cargo test` 并确认内存仓储仍返回种子彩种。
-- 数据库行映射需要测试枚举字符串、`schedule`、`group_buy`、`play_categories` 的序列化/反序列化。
+- 数据库行映射需要测试枚举字符串、`schedule`、`group_buy`、`play_categories`、`play_configs` 的序列化/反序列化。
 - 数据库集成测试只能在显式配置测试环境变量时运行，避免误写生产数据库。
 
 ### 7. Wrong vs Correct

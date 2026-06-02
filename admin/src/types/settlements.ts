@@ -9,7 +9,7 @@ export interface OrderSettlement {
   amountMinor: number;
   isWinning: boolean;
   matchedBets: string[];
-  payoutMultiplier: number;
+  oddsBasisPoints: number;
   payoutMinor: number;
   status: OrderStatus;
 }
