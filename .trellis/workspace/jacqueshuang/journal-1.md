@@ -632,3 +632,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: 邀请管理基础
+
+**Date**: 2026-06-02
+**Task**: 邀请管理基础
+**Branch**: `main`
+
+### Summary
+
+实现邀请管理基础能力：后端新增邀请关系模型、内存仓储和管理接口；前端新增邀请管理页面，可查看、创建和更新邀请关系状态、返利资格与备注；同步更新架构说明、TODO 和后端 API 规格，并通过格式、检查、测试、构建、API 冒烟和浏览器验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5dd2c05` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
