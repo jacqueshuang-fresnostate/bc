@@ -12,15 +12,24 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
+use super::draw_api::ApiDrawSourceRepository;
+
 #[derive(Clone)]
 pub struct DrawRepository {
     inner: Arc<RwLock<DrawStore>>,
+    api_sources: ApiDrawSourceRepository,
 }
 
 impl DrawRepository {
+    #[allow(dead_code)]
     pub fn memory() -> Self {
+        Self::memory_with_api_sources(ApiDrawSourceRepository::empty())
+    }
+
+    pub fn memory_with_api_sources(api_sources: ApiDrawSourceRepository) -> Self {
         Self {
             inner: Arc::new(RwLock::new(DrawStore::default())),
+            api_sources,
         }
     }
 
@@ -68,6 +77,8 @@ impl DrawRepository {
     }
 
     pub async fn draw(&self, id: &str, payload: DrawIssueResultRequest) -> ApiResult<DrawIssue> {
+        let payload = self.resolve_draw_payload(id, payload).await?;
+
         self.inner
             .write()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
@@ -79,6 +90,26 @@ impl DrawRepository {
             .write()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
             .cancel(id)
+    }
+
+    async fn resolve_draw_payload(
+        &self,
+        id: &str,
+        payload: DrawIssueResultRequest,
+    ) -> ApiResult<DrawIssueResultRequest> {
+        let issue = self.get(id).await?;
+
+        if issue.draw_mode != DrawMode::Api {
+            return Ok(payload);
+        }
+
+        if let Some(draw_number) = self.api_sources.draw_number_for(&issue).await? {
+            return Ok(DrawIssueResultRequest {
+                draw_number: Some(draw_number),
+            });
+        }
+
+        Ok(DrawIssueResultRequest::default())
     }
 }
 
@@ -192,9 +223,18 @@ impl DrawStore {
                     ApiError::BadRequest("manual draw requires draw number".to_string())
                 })?
                 .to_string(),
-            DrawMode::Platform | DrawMode::Api => {
+            DrawMode::Platform => {
                 generated_draw_number(&issue.number_type, &issue.lottery_id, &issue.issue)
             }
+            DrawMode::Api => payload
+                .draw_number
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| {
+                    generated_draw_number(&issue.number_type, &issue.lottery_id, &issue.issue)
+                }),
         };
 
         let draw_number = normalize_draw_number(&draw_number, &issue.number_type)?;
@@ -344,8 +384,23 @@ mod tests {
             draw::{CreateDrawIssueRequest, DrawIssueResultRequest, DrawIssueStatus},
             lottery::{DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType},
         },
-        services::draw::DrawStore,
+        services::{
+            draw::{DrawRepository, DrawStore},
+            draw_api::ApiDrawSourceRepository,
+        },
     };
+
+    const API68_SAMPLE: &str = r#"{
+        "errorCode": 0,
+        "message": "操作成功",
+        "result": {
+            "businessCode": 0,
+            "message": "操作成功",
+            "data": [
+                { "preDrawIssue": 2026143, "preDrawCode": "3,7,6", "preDrawTime": "2026-06-02 21:15:00" }
+            ]
+        }
+    }"#;
 
     #[test]
     fn store_creates_and_closes_draw_issue() {
@@ -433,6 +488,48 @@ mod tests {
             .expect_err("drawn issue cannot be drawn again")
             .to_string()
             .contains("draw issue cannot be drawn in current status"));
+    }
+
+    #[tokio::test]
+    async fn repository_uses_api68_source_for_api_draw() {
+        let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
+        let repository = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let issue = repository
+            .create(&lottery, create_request("2026143"))
+            .await
+            .expect("issue can be created");
+
+        let drawn = repository
+            .draw(&issue.id, DrawIssueResultRequest::default())
+            .await
+            .expect("api draw can be resolved");
+
+        assert_eq!(drawn.status, DrawIssueStatus::Drawn);
+        assert_eq!(drawn.draw_number.as_deref(), Some("3,7,6"));
+    }
+
+    #[tokio::test]
+    async fn repository_rejects_api_draw_when_source_misses_issue() {
+        let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
+        let repository = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let issue = repository
+            .create(&lottery, create_request("2099999"))
+            .await
+            .expect("issue can be created");
+
+        let error = repository
+            .draw(&issue.id, DrawIssueResultRequest::default())
+            .await
+            .expect_err("api draw without matching issue is rejected");
+        let stored = repository.get(&issue.id).await.expect("issue still exists");
+
+        assert!(error.to_string().contains("not found"));
+        assert_eq!(stored.status, DrawIssueStatus::Open);
+        assert!(stored.draw_number.is_none());
     }
 
     fn create_request(issue: &str) -> CreateDrawIssueRequest {

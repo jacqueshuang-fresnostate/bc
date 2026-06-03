@@ -661,7 +661,13 @@ await createOrder({
 }
 ```
 
-`platform` 和 `api` 开奖模式可以传空对象 `{}`，后端本地生成逗号分隔开奖号码。`manual` 开奖模式必须传 `drawNumber`，格式为英文逗号分隔数字，例如 `2,4,7` 或 `7,8,9,4,2`。后端兼容读取旧的紧凑数字串，但保存和返回统一使用逗号分隔格式。
+`platform` 开奖模式可以传空对象 `{}`，后端本地生成逗号分隔开奖号码。`api` 开奖模式可以传空对象 `{}`，后端按彩种查找外部开奖源；已配置外部源的彩种不能静默回退到本地生成器。`manual` 开奖模式必须传 `drawNumber`，格式为英文逗号分隔数字，例如 `2,4,7` 或 `7,8,9,4,2`。后端兼容读取旧的紧凑数字串，但保存和返回统一使用逗号分隔格式。
+
+当前已接入的外部开奖源：
+
+- `api68-fc3d`：`fc3d` 福彩 3D 使用 API68 全国彩接口，`lotCode=10041`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为开奖号码。
+- `preDrawCode` 必须继续经过后端开奖号码校验，保存和返回仍统一为英文逗号分隔格式。
+- 暂未配置外部源的 API 彩种仍保留本地生成器占位能力，仅用于当前内存演示阶段；生产接入时需要显式配置来源。
 
 开奖期号响应：
 
@@ -704,6 +710,8 @@ await createOrder({
 | 手动开奖缺少号码 | HTTP 400，返回 `manual draw requires draw number` |
 | 3 位彩种号码不是 3 位数字 | HTTP 400，返回号码长度或数字错误 |
 | 5 位彩种号码不是 5 位数字 | HTTP 400，返回号码长度或数字错误 |
+| 已配置外部源的 API 彩种未匹配到当前期号 | HTTP 404，返回 API 开奖号码未找到 |
+| 已配置外部源请求失败或响应结构异常 | HTTP 500，返回外部开奖源错误，不生成假号码 |
 | 已开奖或已取消期号再次开奖 | HTTP 400，返回 `draw issue cannot be drawn in current status` |
 | 已开奖期号取消 | HTTP 400，返回 `drawn draw issue cannot be cancelled` |
 | 已取消期号重复取消 | HTTP 400，返回 `draw issue is already cancelled` |
@@ -711,15 +719,16 @@ await createOrder({
 
 ### 5. Good / Base / Bad Cases
 
-- Good：`fc3d` 创建期号后调用 `PATCH /draw` 传 `{}`，后端按 `threeDigit` 生成 3 位数字并返回 `status="drawn"`。
+- Good：`fc3d` 创建期号 `2026143` 后调用 `PATCH /draw` 传 `{}`，后端从 API68 匹配 `preDrawIssue=2026143`，保存 `preDrawCode`，并返回 `status="drawn"`。
 - Good：`manual-test` 创建期号后传 `{"drawNumber":"7,8,9,4,2"}`，后端按 `fiveDigit` 校验并保存逗号分隔开奖结果。
-- Base：开奖期号仓储当前是内存模式，服务重启后期号清空；这适合当前后台流程验证。
+- Base：开奖期号仓储当前是内存模式，服务重启后期号清空；这适合当前后台流程验证。没有外部源配置的 API 彩种仍是占位生成，不代表生产能力。
 - Bad：前端为 `manual` 期号传空对象执行开奖；后端必须拒绝，不能静默生成号码。
+- Bad：`fc3d` API68 没有当前期号时继续本地生成号码；已配置外部源的 API 彩种必须返回错误，避免伪造开奖结果。
 - Bad：开奖后直接改订单状态或资金余额；本阶段还没有计奖、派奖和资金流水，开奖只记录结果事实。
 
 ### 6. 必要测试
 
-- 后端需要覆盖期号创建、关闭销售、平台/API 生成号码、手动开奖号码必填、号码长度和数字校验。
+- 后端需要覆盖期号创建、关闭销售、平台生成号码、API68 期号匹配、外部源失败、手动开奖号码必填、号码长度和数字校验。
 - 后端需要覆盖已开奖期号不能重复开奖或取消。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`。
@@ -746,7 +755,7 @@ await drawIssueResult(issue.id, issue.drawMode === 'manual'
 );
 ```
 
-后端根据彩种开奖模式决定是校验管理员录入号码，还是由平台/API 本地生成器生成号码。
+后端根据彩种开奖模式决定是校验管理员录入号码、由平台生成器生成号码，还是由已配置 API 开奖源拉取真实号码。
 
 ---
 
@@ -1071,7 +1080,7 @@ state.finance.credit_settlement(&settlement).await?;
 
 1. 扫描现有期号，`open` 且 `saleClosedAt <= now` 的期号自动封盘。
 2. 再次扫描现有期号，`open/closed` 且 `scheduledAt <= now` 的期号进入开奖判断。
-3. `platform` 和 `api` 期号由后端生成逗号分隔开奖号码，并把期号状态改为 `drawn`。
+3. `platform` 期号由后端生成逗号分隔开奖号码；已配置外部源的 `api` 期号由后端拉取真实开奖号码，并把成功开奖的期号状态改为 `drawn`。
 4. `manual` 期号不自动开奖，写入 `skippedIssues`。
 5. 本次自动开奖成功的期号会立即执行结算，并把中奖派奖写入资金流水。
 
@@ -1082,7 +1091,9 @@ state.finance.credit_settlement(&settlement).await?;
 | `now` 为空 | HTTP 400，返回 `automation time is required` |
 | 没有到期可处理期号 | HTTP 200，返回空数组 |
 | 到期 `open` 期号 | 自动关闭销售并出现在 `closedIssues` |
-| 到期 `platform/api` 期号 | 自动开奖、结算和派奖入账 |
+| 到期 `platform` 期号 | 自动开奖、结算和派奖入账 |
+| 到期且外部源可命中的 `api` 期号 | 自动开奖、结算和派奖入账 |
+| 到期但外部源未命中或请求失败的 `api` 期号 | 不开奖，出现在 `skippedIssues`，继续处理其他期号 |
 | 到期 `manual` 期号 | 不自动开奖，出现在 `skippedIssues` |
 | 自动结算重复 | 只处理本次新开奖成功期号，重复结算仍由结算服务拒绝 |
 | 中奖用户资金账户不存在 | 资金服务返回错误；后续需要事务化避免部分状态落地 |
@@ -1091,6 +1102,7 @@ state.finance.credit_settlement(&settlement).await?;
 
 - Good：`fc3d` 的 open 期号封盘时间和开奖时间都早于 `now`，执行后期号先封盘再开奖，生成结算批次和 `payoutCredit` 流水。
 - Good：手动开奖期号到期后只封盘，不自动伪造开奖号码，结果中包含跳过原因。
+- Good：API68 没有返回 `fc3d` 当前期号时，自动任务结果中包含跳过原因，其他到期期号继续执行。
 - Base：本阶段是后台触发式一次性执行器，适合内存仓储阶段验证状态链路。
 - Bad：自动任务直接修改订单状态或用户余额；必须复用订单结算服务和资金服务。
 - Bad：为 `manual` 期号静默生成号码；手动开奖必须由管理员录入号码。
@@ -1099,6 +1111,7 @@ state.finance.credit_settlement(&settlement).await?;
 
 - 后端需要覆盖到期自动封盘、自动开奖、自动结算和派奖入账。
 - 后端需要覆盖手动开奖缺少号码时被跳过。
+- 后端需要覆盖外部 API 开奖源未命中期号时被跳过，且整轮自动任务不失败。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`。
 - 跨层联调需要创建到期期号、创建订单、运行自动任务，再核对期号状态、结算批次和资金流水。

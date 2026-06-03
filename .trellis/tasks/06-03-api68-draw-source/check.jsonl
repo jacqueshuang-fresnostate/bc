@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/api-contracts.md","reason":"验收时确认 API68 期号匹配、未命中错误和自动任务跳过行为已写入契约。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"验收时确认没有对已配置 API 源的开奖结果做静默兜底。"}

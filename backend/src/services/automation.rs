@@ -51,9 +51,24 @@ pub async fn run_draw_automation(
             continue;
         }
 
-        let drawn = draws
+        let drawn = match draws
             .draw(&issue.id, DrawIssueResultRequest::default())
-            .await?;
+            .await
+        {
+            Ok(drawn) => drawn,
+            Err(error) => {
+                tracing::warn!(
+                    draw_issue_id = %issue.id,
+                    lottery_id = %issue.lottery_id,
+                    issue = %issue.issue,
+                    error = %error,
+                    "draw automation skipped issue after draw failure"
+                );
+                run.skipped_issues
+                    .push(skipped_issue(&issue, &error.to_string()));
+                continue;
+            }
+        };
         let settlement = orders.settle_draw_issue(&drawn).await?;
         let entries = finance.credit_settlement(&settlement).await?;
 
@@ -103,10 +118,22 @@ mod tests {
             play::{PlayRuleCode, PlaySelection},
         },
         services::{
-            automation::run_draw_automation, draw::DrawRepository, finance::FinanceRepository,
-            order::OrderRepository,
+            automation::run_draw_automation, draw::DrawRepository,
+            draw_api::ApiDrawSourceRepository, finance::FinanceRepository, order::OrderRepository,
         },
     };
+
+    const API68_SAMPLE: &str = r#"{
+        "errorCode": 0,
+        "message": "操作成功",
+        "result": {
+            "businessCode": 0,
+            "message": "操作成功",
+            "data": [
+                { "preDrawIssue": 2026143, "preDrawCode": "3,7,6", "preDrawTime": "2026-06-02 21:15:00" }
+            ]
+        }
+    }"#;
 
     #[tokio::test]
     async fn automation_closes_draws_settles_and_credits_due_issue() {
@@ -192,6 +219,39 @@ mod tests {
         assert!(run.skipped_issues[0]
             .reason
             .contains("administrator draw number"));
+    }
+
+    #[tokio::test]
+    async fn automation_skips_api_issue_when_draw_source_misses_issue() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let lottery = lottery(DrawMode::Api);
+        let issue = draws
+            .create(&lottery, create_request("2099999"))
+            .await
+            .expect("issue can be created");
+
+        let run = run_draw_automation(
+            &draws,
+            &orders,
+            &finance,
+            DrawAutomationRunRequest {
+                now: "2026-06-02 22:00:00".to_string(),
+            },
+        )
+        .await
+        .expect("automation can skip api issue");
+        let stored = draws.get(&issue.id).await.expect("issue still exists");
+
+        assert_eq!(run.closed_issues.len(), 1);
+        assert!(run.drawn_issues.is_empty());
+        assert_eq!(run.skipped_issues.len(), 1);
+        assert_eq!(stored.status, DrawIssueStatus::Closed);
+        assert!(stored.draw_number.is_none());
+        assert!(run.skipped_issues[0].reason.contains("not found"));
     }
 
     fn create_request(issue: &str) -> CreateDrawIssueRequest {

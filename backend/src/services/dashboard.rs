@@ -11,7 +11,7 @@ use crate::domain::{
     user::{AdminSummary, RegistrationConfig, UserSummary},
 };
 
-use super::access::AccessSnapshot;
+use super::{access::AccessSnapshot, draw_api::api_draw_source_summaries};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -420,20 +420,14 @@ fn module(
 }
 
 pub fn draw_sources() -> Vec<DrawSource> {
-    vec![
-        DrawSource {
-            id: "fc3d-api".to_string(),
-            name: "福彩 3D API".to_string(),
-            mode: DrawMode::Api,
-            reusable_for_lottery_ids: vec!["fc3d".to_string(), "pl3".to_string()],
-        },
-        DrawSource {
-            id: "platform-random-5d".to_string(),
-            name: "平台 5 位随机生成器".to_string(),
-            mode: DrawMode::Platform,
-            reusable_for_lottery_ids: vec!["ssc60".to_string()],
-        },
-    ]
+    let mut sources = api_draw_source_summaries();
+    sources.push(DrawSource {
+        id: "platform-random-5d".to_string(),
+        name: "平台 5 位随机生成器".to_string(),
+        mode: DrawMode::Platform,
+        reusable_for_lottery_ids: vec!["ssc60".to_string()],
+    });
+    sources
 }
 
 #[cfg(test)]

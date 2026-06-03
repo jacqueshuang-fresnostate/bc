@@ -8,6 +8,7 @@ use crate::{
     services::{
         access::AccessRepository,
         draw::DrawRepository,
+        draw_api::ApiDrawSourceRepository,
         finance::FinanceRepository,
         group_buy::GroupBuyRepository,
         invite::InviteRepository,
@@ -39,7 +40,7 @@ impl AppState {
     fn new_with_scheduler(scheduler: DrawSchedulerRepository) -> Self {
         Self {
             access: AccessRepository::memory_seeded(),
-            draws: DrawRepository::memory(),
+            draws: default_draw_repository(),
             finance: FinanceRepository::memory_seeded(),
             group_buys: GroupBuyRepository::memory_seeded(),
             invites: InviteRepository::memory_seeded(),
@@ -65,7 +66,7 @@ impl AppState {
         tracing::info!("DATABASE_URL configured; using PostgreSQL lottery repository");
         Ok(Self {
             access: AccessRepository::memory_seeded(),
-            draws: DrawRepository::memory(),
+            draws: default_draw_repository(),
             finance: FinanceRepository::memory_seeded(),
             group_buys: GroupBuyRepository::memory_seeded(),
             invites: InviteRepository::memory_seeded(),
@@ -77,6 +78,10 @@ impl AppState {
             support: SupportRepository::memory_seeded(),
         })
     }
+}
+
+fn default_draw_repository() -> DrawRepository {
+    DrawRepository::memory_with_api_sources(ApiDrawSourceRepository::api68_seeded())
 }
 
 pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
