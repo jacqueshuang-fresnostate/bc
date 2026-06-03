@@ -25,6 +25,11 @@ const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
     "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do";
 const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiDrawSourceLatestIssue {
+    pub issue: String,
+}
+
 #[derive(Clone)]
 pub struct ApiDrawSourceRepository {
     client: reqwest::Client,
@@ -134,6 +139,37 @@ impl ApiDrawSourceRepository {
         result.map(Some)
     }
 
+    pub async fn latest_issue_for_lottery(
+        &self,
+        lottery_id: &str,
+    ) -> ApiResult<Option<ApiDrawSourceLatestIssue>> {
+        let source = {
+            self.inner
+                .read()
+                .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?
+                .find_for_lottery(lottery_id)
+        };
+
+        let Some(source) = source else {
+            return Ok(None);
+        };
+
+        let result = match source.provider {
+            DrawSourceProvider::Api68 => self.fetch_api68_latest_issue(&source).await,
+        };
+
+        if let Err(error) = &result {
+            tracing::error!(
+                source_id = %source.id,
+                lottery_id = %lottery_id,
+                error = %error,
+                "api draw source latest issue failed"
+            );
+        }
+
+        result.map(Some)
+    }
+
     async fn fetch_api68_draw_number(
         &self,
         source: &ApiDrawSourceConfig,
@@ -164,6 +200,37 @@ impl ApiDrawSourceRepository {
             .map_err(|_| ApiError::Internal("api draw source response read failed".to_string()))?;
 
         parse_api68_draw_number(&response_body, issue)
+    }
+
+    async fn fetch_api68_latest_issue(
+        &self,
+        source: &ApiDrawSourceConfig,
+    ) -> ApiResult<ApiDrawSourceLatestIssue> {
+        if let Some(response_body) = self.static_responses.get(&source.id) {
+            return parse_api68_latest_issue(response_body);
+        }
+
+        let response = self
+            .client
+            .get(source.url())
+            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
+            .send()
+            .await
+            .map_err(|_| ApiError::Internal("api draw source request failed".to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ApiError::Internal(format!(
+                "api draw source returned http status {status}"
+            )));
+        }
+
+        let response_body = response
+            .text()
+            .await
+            .map_err(|_| ApiError::Internal("api draw source response read failed".to_string()))?;
+
+        parse_api68_latest_issue(&response_body)
     }
 }
 
@@ -444,6 +511,45 @@ pub(crate) fn parse_api68_draw_number(
         return Err(ApiError::BadRequest("issue is required".to_string()));
     }
 
+    let result = parse_api68_result(response_body)?;
+
+    let Some(draw) = result.data.into_iter().find(|draw| {
+        api68_issue_value(&draw.pre_draw_issue)
+            .as_deref()
+            .is_some_and(|issue| issue == expected_issue)
+    }) else {
+        return Err(ApiError::NotFound(format!(
+            "api draw number for issue `{expected_issue}` not found"
+        )));
+    };
+
+    let draw_code = draw.pre_draw_code.trim();
+    if draw_code.is_empty() {
+        return Err(ApiError::Internal(
+            "api draw source draw number is empty".to_string(),
+        ));
+    }
+
+    Ok(draw_code.to_string())
+}
+
+pub(crate) fn parse_api68_latest_issue(response_body: &str) -> ApiResult<ApiDrawSourceLatestIssue> {
+    let result = parse_api68_result(response_body)?;
+    let Some(issue) = result
+        .data
+        .into_iter()
+        .find_map(|draw| api68_issue_value(&draw.pre_draw_issue))
+        .filter(|issue| !issue.trim().is_empty())
+    else {
+        return Err(ApiError::Internal(
+            "api draw source latest issue is missing".to_string(),
+        ));
+    };
+
+    Ok(ApiDrawSourceLatestIssue { issue })
+}
+
+fn parse_api68_result(response_body: &str) -> ApiResult<Api68Result> {
     let envelope = serde_json::from_str::<Api68Envelope>(response_body)
         .map_err(|_| ApiError::Internal("api draw source response cannot be parsed".to_string()))?;
 
@@ -465,24 +571,7 @@ pub(crate) fn parse_api68_draw_number(
         )));
     }
 
-    let Some(draw) = result.data.into_iter().find(|draw| {
-        api68_issue_value(&draw.pre_draw_issue)
-            .as_deref()
-            .is_some_and(|issue| issue == expected_issue)
-    }) else {
-        return Err(ApiError::NotFound(format!(
-            "api draw number for issue `{expected_issue}` not found"
-        )));
-    };
-
-    let draw_code = draw.pre_draw_code.trim();
-    if draw_code.is_empty() {
-        return Err(ApiError::Internal(
-            "api draw source draw number is empty".to_string(),
-        ));
-    }
-
-    Ok(draw_code.to_string())
+    Ok(result)
 }
 
 fn api68_issue_value(value: &Value) -> Option<String> {
@@ -518,7 +607,10 @@ struct Api68Draw {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_api68_draw_number, ApiDrawSourceRepository, API68_FC3D_SOURCE_ID};
+    use super::{
+        parse_api68_draw_number, parse_api68_latest_issue, ApiDrawSourceRepository,
+        API68_FC3D_SOURCE_ID,
+    };
     use crate::{
         domain::lottery::{DrawSourceProvider, SaveDrawSourceRequest},
         services::lottery::seed_lotteries,
@@ -570,6 +662,32 @@ mod tests {
         .expect_err("business failure is rejected");
 
         assert!(error.to_string().contains("business code 1"));
+    }
+
+    #[test]
+    fn parse_api68_latest_issue_uses_first_result_issue() {
+        let latest = parse_api68_latest_issue(API68_SAMPLE).expect("latest issue can be parsed");
+
+        assert_eq!(latest.issue, "2026143");
+    }
+
+    #[tokio::test]
+    async fn seeded_static_source_returns_latest_issue_for_reused_lotteries() {
+        let repository = ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE);
+
+        let fc3d = repository
+            .latest_issue_for_lottery("fc3d")
+            .await
+            .expect("latest issue can be fetched")
+            .expect("fc3d has source");
+        let pl3 = repository
+            .latest_issue_for_lottery("pl3")
+            .await
+            .expect("latest issue can be fetched")
+            .expect("pl3 has source");
+
+        assert_eq!(fc3d.issue, "2026143");
+        assert_eq!(pl3.issue, "2026143");
     }
 
     #[tokio::test]

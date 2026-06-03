@@ -1232,11 +1232,11 @@ let entries = finance.credit_settlement(&settlement).await?;
   "id": "D000000000001",
   "lotteryId": "fc3d",
   "lotteryName": "福彩 3D",
-  "issue": "20260602210015",
+  "issue": "2026144",
   "numberType": "threeDigit",
   "drawMode": "api",
-  "scheduledAt": "2026-06-02 21:00:15",
-  "saleClosedAt": "2026-06-02 20:59:45",
+  "scheduledAt": "2026-06-03 21:00:15",
+  "saleClosedAt": "2026-06-03 20:59:45",
   "status": "open",
   "drawNumber": null,
   "drawnAt": null,
@@ -1251,11 +1251,11 @@ let entries = finance.credit_settlement(&settlement).await?;
   {
     "lotteryId": "fc3d",
     "lotteryName": "福彩 3D",
-    "issue": "20260602210015",
+    "issue": "2026144",
     "numberType": "threeDigit",
     "drawMode": "api",
-    "scheduledAt": "2026-06-02 21:00:15",
-    "saleClosedAt": "2026-06-02 20:59:45"
+    "scheduledAt": "2026-06-03 21:00:15",
+    "saleClosedAt": "2026-06-03 20:59:45"
   }
 ]
 ```
@@ -1267,9 +1267,11 @@ let entries = finance.credit_settlement(&settlement).await?;
 3. 周期开奖：`baseline + intervalSeconds`。
 4. 每日固定开奖：选择严格晚于基线的当天或次日配置时间。
 5. 周开奖：选择严格晚于基线的下一个配置星期和时间。
-6. 期号编码使用开奖时间格式化为 `YYYYMMDDHHMMSS`。
-7. 创建仍复用开奖期号仓储，保持重复期号、彩种匹配、开奖时间和封盘时间校验一致。
-8. 批量预览和批量生成必须在同一次计划中跳过已存在的同彩种同 `issue`，并继续寻找后续可用期号。
+6. 默认期号编码使用开奖时间格式化为 `YYYYMMDDHHMMSS`。
+7. 如果彩种绑定了 API68 开奖源，后端必须先读取外部源最新 `preDrawIssue`，并用该 7 位数字期号递增生成未来期号；例如 API68 最新 `2026143` 时，福彩 3D 和复用同源的排列 3 下一期为 `2026144`。
+8. API 来源已配置但无法解析最新 7 位期号时，生成和预览接口必须返回错误，不能静默回退为时间戳期号。
+9. 创建仍复用开奖期号仓储，保持重复期号、彩种匹配、开奖时间和封盘时间校验一致。
+10. 批量预览和批量生成必须在同一次计划中跳过已存在的同彩种同 `issue`，并继续寻找后续可用期号。
 
 ### 4. 校验与错误矩阵
 
@@ -1285,12 +1287,15 @@ let entries = finance.credit_settlement(&settlement).await?;
 | 周期开奖秒数为 0 | HTTP 400，返回 `periodic interval must be greater than zero` |
 | 每日或周开奖时间格式错误 | HTTP 400，返回 `... must use HH:mm:ss format` |
 | 周开奖星期为空或不支持 | HTTP 400，返回 weekday 错误 |
+| 已配置 API 来源但最新期号为空或不是 7 位数字 | HTTP 500，返回 API 来源最新期号错误，不生成错误期号 |
 | 计划尝试次数耗尽仍无法生成足量唯一期号 | HTTP 409，返回唯一期号生成失败 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：`ssc60` 配置 `periodic.intervalSeconds=60`，`now=2026-06-02 20:00:00`，生成 `scheduledAt=2026-06-02 20:01:00`。
-- Good：`fc3d` 配置每日 `21:00:15`，`now=2026-06-02 22:00:00`，生成次日 `2026-06-03 21:00:15`。
+- Good：`fc3d` 配置每日 `21:00:15`，API68 最新 `preDrawIssue=2026143`，`now=2026-06-02 22:00:00`，生成 `issue=2026144`、`scheduledAt=2026-06-03 21:00:15`。
+- Good：`pl3` 复用 `api68-fc3d` 来源时，生成下一期同样使用 `issue=2026144`。
+- Good：本地已有 `fc3d/2026144` 时，再次生成应得到 `2026145`。
 - Good：周二、周四 `21:00:00` 的彩种，在周二 22:00 后生成周四 21:00。
 - Good：`preview-generation` 请求 `count=3` 返回未来 3 期计划，但随后请求期号列表不会多出新期号。
 - Good：`generate-batch` 请求 `count=3` 创建 3 个 open 期号，并返回标准 `DrawIssue[]`。
@@ -1301,6 +1306,7 @@ let entries = finance.credit_settlement(&settlement).await?;
 
 - 后端需要覆盖周期、每日、周开奖三种计划。
 - 后端需要覆盖已有期号时从最新期号继续生成。
+- 后端需要覆盖 API68 最新 `preDrawIssue` 驱动福彩 3D/排列 3 真实期号生成。
 - 后端需要覆盖计划预览不写入仓储。
 - 后端需要覆盖批量生成和 `count` 边界。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。

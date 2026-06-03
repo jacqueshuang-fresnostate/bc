@@ -12,7 +12,7 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::draw_api::ApiDrawSourceRepository;
+use super::draw_api::{ApiDrawSourceLatestIssue, ApiDrawSourceRepository};
 
 #[derive(Clone)]
 pub struct DrawRepository {
@@ -117,6 +117,13 @@ impl DrawRepository {
 
     pub async fn delete_draw_source(&self, id: &str) -> ApiResult<DrawSource> {
         self.api_sources.delete(id).await
+    }
+
+    pub async fn latest_api_issue_for_lottery(
+        &self,
+        lottery_id: &str,
+    ) -> ApiResult<Option<ApiDrawSourceLatestIssue>> {
+        self.api_sources.latest_issue_for_lottery(lottery_id).await
     }
 
     async fn resolve_draw_payload(

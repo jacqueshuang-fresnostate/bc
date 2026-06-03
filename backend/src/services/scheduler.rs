@@ -487,7 +487,7 @@ async fn ensure_future_draw_issues(
         }
 
         let count = config.future_issue_count - existing_future_count;
-        let mut created = generate_draw_issue_batch(
+        let result = generate_draw_issue_batch(
             draws,
             &lottery,
             GenerateDrawIssuesRequest {
@@ -497,8 +497,22 @@ async fn ensure_future_draw_issues(
                 sale_close_lead_seconds: Some(config.sale_close_lead_seconds),
             },
         )
-        .await?;
-        generated_issues.append(&mut created);
+        .await;
+
+        match result {
+            Ok(mut created) => generated_issues.append(&mut created),
+            Err(error) => {
+                tracing::warn!(
+                    lottery_id = %lottery.id,
+                    error = %error,
+                    "draw scheduler skipped lottery after issue generation failure"
+                );
+                skipped_lotteries.push(DrawSchedulerSkippedLottery {
+                    lottery_id: lottery.id,
+                    reason: error.to_string(),
+                });
+            }
+        }
     }
 
     Ok((generated_issues, skipped_lotteries))
@@ -588,6 +602,7 @@ mod tests {
         },
         services::{
             draw::DrawRepository,
+            draw_api::ApiDrawSourceRepository,
             finance::FinanceRepository,
             lottery::LotteryRepository,
             order::OrderRepository,
@@ -629,6 +644,40 @@ mod tests {
             .skipped_lotteries
             .iter()
             .any(|lottery| lottery.lottery_id == "manual-test"));
+    }
+
+    #[tokio::test]
+    async fn scheduler_skips_lottery_when_api_issue_generation_fails() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(
+                r#"{"errorCode":0,"result":{"businessCode":0,"data":[]}}"#,
+            ),
+        );
+        let lotteries = LotteryRepository::memory_seeded();
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let config = enabled_config(1);
+
+        let run = run_draw_scheduler_once(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &config,
+            "2026-06-02 20:00:00".to_string(),
+        )
+        .await
+        .expect("scheduler can skip failed api generation");
+
+        assert!(run
+            .skipped_lotteries
+            .iter()
+            .any(|lottery| lottery.lottery_id == "fc3d"
+                && lottery.reason.contains("latest issue is missing")));
+        assert!(run
+            .generated_issues
+            .iter()
+            .any(|issue| issue.lottery_id == "ssc60"));
     }
 
     #[tokio::test]

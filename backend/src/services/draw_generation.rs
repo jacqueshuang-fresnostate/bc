@@ -108,12 +108,13 @@ async fn plan_draw_issue_generation(
         .filter(|existing| existing.lottery_id == lottery.id)
         .map(|existing| existing.issue.clone())
         .collect();
+    let mut issue_labeler = IssueLabeler::for_lottery(draws, lottery, &existing_issues).await?;
     let mut plans = Vec::with_capacity(payload.count as usize);
     let mut scheduled_at = next_scheduled_at(&lottery.schedule, baseline)?;
     let attempt_limit = payload.count.saturating_mul(MAX_UNIQUE_ATTEMPTS_PER_ISSUE);
 
     for _ in 0..attempt_limit {
-        let issue = format_issue(scheduled_at);
+        let issue = issue_labeler.next_issue(scheduled_at)?;
         if !known_issues.contains(&issue) {
             let sale_closed_at = scheduled_at
                 .checked_sub_signed(Duration::seconds(i64::from(sale_close_lead_seconds)))
@@ -277,11 +278,71 @@ fn format_issue(value: NaiveDateTime) -> String {
     value.format(ISSUE_FORMAT).to_string()
 }
 
+enum IssueLabeler {
+    Timestamp,
+    Sequential { next_issue: u32 },
+}
+
+impl IssueLabeler {
+    async fn for_lottery(
+        draws: &DrawRepository,
+        lottery: &LotteryKind,
+        existing_issues: &[DrawIssue],
+    ) -> ApiResult<Self> {
+        let Some(latest_api_issue) = draws.latest_api_issue_for_lottery(&lottery.id).await? else {
+            return Ok(Self::Timestamp);
+        };
+
+        let latest_external_issue =
+            parse_api_sequence_issue(&latest_api_issue.issue).ok_or_else(|| {
+                ApiError::Internal(format!(
+                    "api draw source latest issue `{}` is not a 7-digit numeric issue",
+                    latest_api_issue.issue
+                ))
+            })?;
+        let latest_local_issue = existing_issues
+            .iter()
+            .filter(|issue| issue.lottery_id == lottery.id)
+            .filter_map(|issue| parse_api_sequence_issue(&issue.issue))
+            .max();
+        let latest_issue = latest_local_issue
+            .map(|local_issue| local_issue.max(latest_external_issue))
+            .unwrap_or(latest_external_issue);
+        let next_issue = latest_issue.checked_add(1).ok_or_else(|| {
+            ApiError::Internal("api draw source latest issue is out of range".to_string())
+        })?;
+
+        Ok(Self::Sequential { next_issue })
+    }
+
+    fn next_issue(&mut self, scheduled_at: NaiveDateTime) -> ApiResult<String> {
+        match self {
+            Self::Timestamp => Ok(format_issue(scheduled_at)),
+            Self::Sequential { next_issue } => {
+                let issue = *next_issue;
+                *next_issue = (*next_issue).checked_add(1).ok_or_else(|| {
+                    ApiError::Internal("api draw source issue sequence is out of range".to_string())
+                })?;
+                Ok(issue.to_string())
+            }
+        }
+    }
+}
+
+fn parse_api_sequence_issue(value: &str) -> Option<u32> {
+    let value = value.trim();
+    if value.len() != 7 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    value.parse::<u32>().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         domain::{
-            draw::{GenerateDrawIssueRequest, GenerateDrawIssuesRequest},
+            draw::{CreateDrawIssueRequest, GenerateDrawIssueRequest, GenerateDrawIssuesRequest},
             lottery::{
                 DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
                 PlayCategory,
@@ -289,11 +350,25 @@ mod tests {
         },
         services::{
             draw::DrawRepository,
+            draw_api::ApiDrawSourceRepository,
             draw_generation::{
                 generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
             },
         },
     };
+
+    const API68_SAMPLE: &str = r#"{
+        "errorCode": 0,
+        "message": "操作成功",
+        "result": {
+            "businessCode": 0,
+            "message": "操作成功",
+            "data": [
+                { "preDrawIssue": 2026143, "preDrawCode": "3,7,6", "preDrawTime": "2026-06-02 21:15:00" },
+                { "preDrawIssue": "2026142", "preDrawCode": "8,9,4", "preDrawTime": "2026-06-01 21:15:00" }
+            ]
+        }
+    }"#;
 
     #[tokio::test]
     async fn periodic_schedule_generates_next_interval_after_now() {
@@ -342,6 +417,81 @@ mod tests {
 
         assert_eq!(issue.issue, "20260603210015");
         assert_eq!(issue.sale_closed_at, "2026-06-03 20:59:45");
+    }
+
+    #[tokio::test]
+    async fn api68_daily_schedule_uses_latest_external_issue() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let lottery = lottery(DrawSchedule::Daily {
+            time: "21:00:15".to_string(),
+        });
+
+        let plans = preview_draw_issue_generation(
+            &draws,
+            &lottery,
+            batch_request("2026-06-02 22:00:00", 2),
+        )
+        .await
+        .expect("plans can be previewed");
+
+        assert_eq!(
+            plans
+                .iter()
+                .map(|plan| plan.issue.as_str())
+                .collect::<Vec<_>>(),
+            vec!["2026144", "2026145"]
+        );
+        assert_eq!(plans[0].scheduled_at, "2026-06-03 21:00:15");
+    }
+
+    #[tokio::test]
+    async fn api68_daily_schedule_continues_after_existing_real_issue() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let lottery = lottery(DrawSchedule::Daily {
+            time: "21:00:15".to_string(),
+        });
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "2026144".to_string(),
+                    scheduled_at: "2026-06-03 21:00:15".to_string(),
+                    sale_closed_at: "2026-06-03 20:59:45".to_string(),
+                },
+            )
+            .await
+            .expect("existing issue can be created");
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-02 22:00:00"))
+            .await
+            .expect("issue can be generated");
+
+        assert_eq!(issue.issue, "2026145");
+        assert_eq!(issue.scheduled_at, "2026-06-04 21:00:15");
+    }
+
+    #[tokio::test]
+    async fn api68_reused_source_generates_real_issue_for_pl3() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let mut lottery = lottery(DrawSchedule::Daily {
+            time: "21:00:15".to_string(),
+        });
+        lottery.id = "pl3".to_string();
+        lottery.name = "排列 3".to_string();
+
+        let issue =
+            generate_next_draw_issue(&draws, &lottery, request_for("pl3", "2026-06-02 22:00:00"))
+                .await
+                .expect("issue can be generated");
+
+        assert_eq!(issue.issue, "2026144");
     }
 
     #[tokio::test]
@@ -508,8 +658,12 @@ mod tests {
     }
 
     fn request(now: &str) -> GenerateDrawIssueRequest {
+        request_for("fc3d", now)
+    }
+
+    fn request_for(lottery_id: &str, now: &str) -> GenerateDrawIssueRequest {
         GenerateDrawIssueRequest {
-            lottery_id: "fc3d".to_string(),
+            lottery_id: lottery_id.to_string(),
             now: now.to_string(),
             sale_close_lead_seconds: None,
         }
