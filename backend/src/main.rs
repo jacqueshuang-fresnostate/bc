@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         )
         .init();
 
-    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "18080".to_string());
     let address = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&address).await?;
 
