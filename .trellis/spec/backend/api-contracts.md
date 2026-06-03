@@ -1437,8 +1437,8 @@ DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 2. `DRAW_SCHEDULER_ENABLED=true` 时，服务启动后创建 Tokio 后台任务。
 3. 每轮调度使用服务器当前本地时间，格式为 `YYYY-MM-DD HH:mm:ss`。
 4. 每轮先调用既有 `run_draw_automation`，处理到期封盘、开奖、结算和派奖入账。
-5. 自动任务执行后，再扫描 `saleEnabled=true` 的彩种，确保每个彩种至少有 `DRAW_SCHEDULER_FUTURE_ISSUE_COUNT` 个未来 `open/closed` 期号。
-6. 未来期号判断只统计同彩种、状态为 `open` 或 `closed`，并且 `scheduledAt >= now` 的期号。
+5. 自动任务执行后，再扫描 `saleEnabled=true` 的彩种，确保每个彩种至少有 `DRAW_SCHEDULER_FUTURE_ISSUE_COUNT` 个未来可投注 `open` 期号。
+6. 未来期号判断只统计同彩种、状态为 `open`，并且 `scheduledAt > now` 的期号；`closed` 期号已经封盘，不能当作下一期缓冲，否则封盘后不会立即开盘下一期。
 7. 补期继续调用 `generate_draw_issue_batch`，不在调度服务里重新实现开奖计划算法。
 8. `saleEnabled=false` 彩种不会自动补期，会记录为跳过彩种。
 9. 调度周期成功或失败都要写入调度运行历史，页面通过状态接口读取历史，而不是解析日志。
@@ -1466,7 +1466,9 @@ DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 - Good：设置 `DRAW_SCHEDULER_ENABLED=true` 和 `DRAW_SCHEDULER_INTERVAL_SECONDS=1` 后，本地启动服务会自动为销售开启彩种补齐未来期号。
 - Good：调度跑过一轮后，`GET /api/admin/draw-scheduler/status` 返回最新 `SCH...` 记录，管理后台“常驻调度”显示成功状态和运行摘要。
 - Good：已有到期开奖期号时，单轮调度先执行封盘/开奖/结算，再补齐下一期期号。
+- Good：已有期号刚到封盘时间但未到开奖时间时，单轮调度先把当前期转为 `closed`，再生成下一期 `open`，保证销售链路继续有可投注期号。
 - Base：默认关闭适合本地开发和测试，不会让后台循环干扰手动 API 冒烟。
+- Bad：把 `closed` 期号算作未来缓冲；这会让当前期封盘后没有新的 `open` 期号可投注。
 - Bad：在调度服务里复制一套封盘、开奖、结算或开奖计划计算逻辑；这些必须继续复用 `run_draw_automation` 和 `generate_draw_issue_batch`。
 - Bad：管理后台为了显示调度状态去解析服务日志；页面必须调用 `GET /api/admin/draw-scheduler/status`。
 
@@ -1477,6 +1479,7 @@ DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 - 后端需要覆盖销售开启彩种自动补齐未来期号，销售关闭彩种跳过。
 - 后端需要覆盖未来期号缓冲已满足时不重复生成。
 - 后端需要覆盖到期期号先自动开奖，再补齐未来期号。
+- 后端需要覆盖当前期到封盘时间后会生成下一期 `open` 期号，不能因为当前期 `closed` 仍未开奖就跳过补期。
 - 后端需要覆盖调度历史成功记录、失败记录和最近 20 条保留上限。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 本地冒烟需要用短周期启用调度，确认 `/api/admin/draw-issues` 能看到自动补齐的 open 期号。

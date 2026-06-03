@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端服务层规范"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "开奖期号业务表持久化约束"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误处理约束"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "高风险开奖逻辑测试要求"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "调度到开奖数据流检查"}

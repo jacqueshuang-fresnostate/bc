@@ -795,11 +795,8 @@ fn future_issue_count(issues: &[DrawIssue], lottery: &LotteryKind, now: &str) ->
         .iter()
         .filter(|issue| {
             issue.lottery_id == lottery.id
-                && matches!(
-                    issue.status,
-                    DrawIssueStatus::Open | DrawIssueStatus::Closed
-                )
-                && issue.scheduled_at.as_str() >= now
+                && issue.status == DrawIssueStatus::Open
+                && issue.scheduled_at.as_str() > now
         })
         .count() as u32
 }
@@ -1025,6 +1022,48 @@ mod tests {
             .any(|issue| issue.lottery_id == "ssc60"
                 && issue.issue == "20260602200100"
                 && issue.draw_mode == DrawMode::Platform));
+    }
+
+    #[tokio::test]
+    async fn scheduler_opens_next_issue_after_current_issue_closes() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let config = enabled_config(1);
+        let lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        let current_issue = draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "20260602200100".to_string(),
+                    scheduled_at: "2026-06-02 20:01:00".to_string(),
+                    sale_closed_at: "2026-06-02 20:00:30".to_string(),
+                },
+            )
+            .await
+            .expect("current issue can be created");
+
+        let run = run_draw_scheduler_once(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &config,
+            "2026-06-02 20:00:30".to_string(),
+        )
+        .await
+        .expect("scheduler can run at sale close time");
+        let stored_current = draws.get(&current_issue.id).await.expect("issue exists");
+
+        assert_eq!(stored_current.status, DrawIssueStatus::Closed);
+        assert!(run
+            .generated_issues
+            .iter()
+            .any(|issue| issue.lottery_id == "ssc60"
+                && issue.issue == "20260602200200"
+                && issue.status == DrawIssueStatus::Open));
     }
 
     #[test]

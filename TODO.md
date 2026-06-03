@@ -383,3 +383,11 @@
 - 技术说明：旧 `20260603143000_create_state_documents.sql` 作为历史迁移保留，运行时不再读写 `state_documents`；复杂字段仍按业务表列使用 JSONB 保存当前 API 契约结构，例如角色权限、投注选择、展开投注、中奖匹配和开奖源复用彩种。
 - 验证结果：`cargo fmt`、`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端 124 个测试全部成功，新增返利策略关系表持久化测试在配置 `BC_TEST_DATABASE_URL` 时验证写入和重新加载恢复。前端构建仍只有既有 chunk size warning。
 - 后续动作：提交本阶段关系表迁移改动；下一阶段建议补跨模块数据库事务、管理员操作审计、分页查询、备份恢复和历史 `state_documents` 数据迁移脚本。
+
+## 2026-06-03 15:43 HKT 开奖后自动开盘下一期修复
+
+- 完成任务：启动并修复 `06-03-draw-next-issue-open` 开奖后自动开盘下一期问题，调整常驻调度未来期号缓冲判断。
+- 解决问题：此前调度补齐未来期号时把 `closed` 期号也算作未来缓冲；当前期到封盘时间后变为 `closed`，但还没到开奖时间，系统会误以为未来期足够，从而不生成下一期 `open` 期号，导致封盘后没有新期可投注。
+- 技术说明：未来缓冲现在只统计同彩种、状态为 `open` 且 `scheduledAt > now` 的期号；`closed` 期号已不可投注，不再占用开盘缓冲。新增测试覆盖当前期封盘后会自动生成下一期 `open` 期号。
+- 验证结果：`cargo test scheduler_ -- --nocapture` 已通过，12 个调度测试全部成功；`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过，后端 125 个测试全部成功。前端构建仍只有既有 chunk size warning。
+- 后续动作：提交本阶段修复改动；后续可继续补调度运行页面中“当前封盘后已开新期”的视觉提示和调度失败告警。
