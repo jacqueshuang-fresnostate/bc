@@ -5,6 +5,7 @@ use std::{
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 use crate::{
     domain::{
@@ -17,14 +18,12 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::state_document::StateDocumentRepository;
-
-const INVITE_STATE_NAMESPACE: &str = "invites";
+use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
 pub struct InviteRepository {
     inner: Arc<RwLock<InviteStore>>,
-    persistence: Option<StateDocumentRepository>,
+    persistence: Option<BusinessDatabase>,
 }
 
 impl InviteRepository {
@@ -35,10 +34,8 @@ impl InviteRepository {
         }
     }
 
-    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
-        let store = persistence
-            .load_or_seed(INVITE_STATE_NAMESPACE, InviteStore::seeded())
-            .await?;
+    pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
+        let store = load_invite_store(&persistence).await?;
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
@@ -96,7 +93,7 @@ impl InviteRepository {
 
     async fn persist(&self, store: &InviteStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence.save(INVITE_STATE_NAMESPACE, store).await?;
+            save_invite_store(persistence, store).await?;
         }
 
         Ok(())
@@ -106,6 +103,110 @@ impl InviteRepository {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct InviteStore {
     records: BTreeMap<String, InviteRecord>,
+}
+
+async fn load_invite_store(database: &BusinessDatabase) -> ApiResult<InviteStore> {
+    let mut records = BTreeMap::new();
+
+    for row in sqlx::query(
+        "SELECT id, inviter_user_id, inviter_username, invitee_user_id, invitee_username,
+                invite_code, status, rebate_enabled, note, created_at, updated_at
+         FROM invite_records
+         ORDER BY id ASC",
+    )
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?;
+        records.insert(
+            id.clone(),
+            InviteRecord {
+                id,
+                inviter_user_id: row
+                    .try_get("inviter_user_id")
+                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+                inviter_username: row
+                    .try_get("inviter_username")
+                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+                invitee_user_id: row
+                    .try_get("invitee_user_id")
+                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+                invitee_username: row
+                    .try_get("invitee_username")
+                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+                invite_code: row
+                    .try_get("invite_code")
+                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+                status: enum_from_string(
+                    row.try_get("status")
+                        .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+                )?,
+                rebate_enabled: row
+                    .try_get("rebate_enabled")
+                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+                note: row
+                    .try_get("note")
+                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+                updated_at: row
+                    .try_get("updated_at")
+                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+            },
+        );
+    }
+
+    if records.is_empty() {
+        let seeded = InviteStore::seeded();
+        save_invite_store(database, &seeded).await?;
+        return Ok(seeded);
+    }
+
+    Ok(InviteStore { records })
+}
+
+async fn save_invite_store(database: &BusinessDatabase, store: &InviteStore) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("邀请关系事务开启失败".to_string()))?;
+
+    sqlx::query("DELETE FROM invite_records")
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("邀请关系数据清理失败".to_string()))?;
+
+    for record in store.records.values() {
+        sqlx::query(
+            "INSERT INTO invite_records
+             (id, inviter_user_id, inviter_username, invitee_user_id, invitee_username,
+              invite_code, status, rebate_enabled, note, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        )
+        .bind(&record.id)
+        .bind(&record.inviter_user_id)
+        .bind(&record.inviter_username)
+        .bind(&record.invitee_user_id)
+        .bind(&record.invitee_username)
+        .bind(&record.invite_code)
+        .bind(enum_to_string(&record.status)?)
+        .bind(record.rebate_enabled)
+        .bind(&record.note)
+        .bind(&record.created_at)
+        .bind(&record.updated_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("邀请关系数据保存失败".to_string()))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("邀请关系事务提交失败".to_string()))
 }
 
 impl InviteStore {

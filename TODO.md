@@ -375,3 +375,11 @@
 - 技术说明：本阶段采用 JSONB 状态文档作为第一阶段持久化方案；彩种仍使用 `lotteries` 关系表。订单、资金流水、开奖期号、结算批次和管理员权限后续仍需要逐步拆分为独立关系表并补事务、索引、审计和并发保护。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端 124 个测试全部成功，新增状态文档仓储测试覆盖种子写入、保存和恢复。前端构建仍只有既有 chunk size warning。
 - 后续动作：完成最终质量检查、提交本阶段改动；下一阶段建议推进高风险模块关系表拆分、跨模块事务一致性、管理员操作审计和数据库备份恢复。
+
+## 2026-06-03 15:28 HKT 全业务关系表数据库持久化
+
+- 完成任务：实现 `06-03-relational-business-persistence` 全业务关系表持久化阶段，新增 `BusinessDatabase` 和 `20260603152000_create_business_tables.sql`，把用户权限、订单结算、开奖期号、开奖源、彩种控制台控制号码、资金账户、资金流水、合买、邀请、返利、机器人、客服和调度配置/历史全部迁移到独立业务表。
+- 解决问题：上一阶段虽然所有模块已能保存到 PostgreSQL，但使用的是 `state_documents` 单表 JSONB 状态文档，不符合“所有业务都数据库持久化，不使用 state_documents”的要求；本次删除运行时代码中的 `StateDocumentRepository`，应用启动后统一创建 `BusinessDatabase`，各仓储从业务表读取，写操作成功后通过事务保存对应业务表。
+- 技术说明：旧 `20260603143000_create_state_documents.sql` 作为历史迁移保留，运行时不再读写 `state_documents`；复杂字段仍按业务表列使用 JSONB 保存当前 API 契约结构，例如角色权限、投注选择、展开投注、中奖匹配和开奖源复用彩种。
+- 验证结果：`cargo fmt`、`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端 124 个测试全部成功，新增返利策略关系表持久化测试在配置 `BC_TEST_DATABASE_URL` 时验证写入和重新加载恢复。前端构建仍只有既有 chunk size warning。
+- 后续动作：提交本阶段关系表迁移改动；下一阶段建议补跨模块数据库事务、管理员操作审计、分页查询、备份恢复和历史 `state_documents` 数据迁移脚本。

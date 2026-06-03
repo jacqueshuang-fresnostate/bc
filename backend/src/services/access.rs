@@ -10,6 +10,7 @@ use argon2::{
 };
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 use crate::{
     domain::{
@@ -23,11 +24,10 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::state_document::StateDocumentRepository;
+use super::business_database::{enum_from_string, enum_to_string, to_json, BusinessDatabase};
 
 const DEFAULT_SEED_ADMIN_PASSWORD: &str = "admin123";
 const MIN_ADMIN_PASSWORD_LEN: usize = 8;
-const ACCESS_STATE_NAMESPACE: &str = "access";
 
 #[derive(Debug, Clone)]
 pub struct AccessSnapshot {
@@ -41,7 +41,7 @@ pub struct AccessSnapshot {
 #[derive(Clone)]
 pub struct AccessRepository {
     inner: Arc<RwLock<AccessStore>>,
-    persistence: Option<StateDocumentRepository>,
+    persistence: Option<BusinessDatabase>,
 }
 
 impl AccessRepository {
@@ -52,10 +52,8 @@ impl AccessRepository {
         }
     }
 
-    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
-        let store = persistence
-            .load_or_seed(ACCESS_STATE_NAMESPACE, AccessStore::seeded())
-            .await?;
+    pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
+        let store = load_access_store(&persistence).await?;
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
@@ -326,7 +324,7 @@ impl AccessRepository {
 
     async fn persist(&self, store: &AccessStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence.save(ACCESS_STATE_NAMESPACE, store).await?;
+            save_access_store(persistence, store).await?;
         }
 
         Ok(())
@@ -343,6 +341,337 @@ struct AccessStore {
     settings: BTreeMap<String, SystemSetting>,
     session_counter: u64,
     registration: RegistrationConfig,
+}
+
+async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore> {
+    let pool = database.pool();
+    let mut users = BTreeMap::new();
+    for row in sqlx::query(
+        "SELECT id, username, email, kind, status, balance_minor, agent_id, invite_code
+         FROM users
+         ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?;
+        users.insert(
+            id.clone(),
+            UserSummary {
+                id,
+                username: row
+                    .try_get("username")
+                    .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                email: row
+                    .try_get("email")
+                    .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                kind: enum_from_string(
+                    row.try_get("kind")
+                        .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                )?,
+                status: enum_from_string(
+                    row.try_get("status")
+                        .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                )?,
+                balance_minor: row
+                    .try_get("balance_minor")
+                    .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                agent_id: row
+                    .try_get("agent_id")
+                    .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                invite_code: row
+                    .try_get("invite_code")
+                    .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+            },
+        );
+    }
+
+    let mut roles = BTreeMap::new();
+    for row in sqlx::query("SELECT id, name, scopes FROM admin_roles ORDER BY id ASC")
+        .fetch_all(pool)
+        .await
+        .map_err(|_| ApiError::Internal("角色数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("角色数据读取失败".to_string()))?;
+        roles.insert(
+            id.clone(),
+            AdminRole {
+                id,
+                name: row
+                    .try_get("name")
+                    .map_err(|_| ApiError::Internal("角色数据读取失败".to_string()))?,
+                scopes: super::business_database::from_json(
+                    row.try_get("scopes")
+                        .map_err(|_| ApiError::Internal("角色数据读取失败".to_string()))?,
+                )?,
+            },
+        );
+    }
+
+    let mut admins = BTreeMap::new();
+    for row in
+        sqlx::query("SELECT id, username, role_id, role_name, status FROM admins ORDER BY id ASC")
+            .fetch_all(pool)
+            .await
+            .map_err(|_| ApiError::Internal("管理员数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("管理员数据读取失败".to_string()))?;
+        admins.insert(
+            id.clone(),
+            AdminSummary {
+                id,
+                username: row
+                    .try_get("username")
+                    .map_err(|_| ApiError::Internal("管理员数据读取失败".to_string()))?,
+                role_id: row
+                    .try_get("role_id")
+                    .map_err(|_| ApiError::Internal("管理员数据读取失败".to_string()))?,
+                role_name: row
+                    .try_get("role_name")
+                    .map_err(|_| ApiError::Internal("管理员数据读取失败".to_string()))?,
+                status: enum_from_string(
+                    row.try_get("status")
+                        .map_err(|_| ApiError::Internal("管理员数据读取失败".to_string()))?,
+                )?,
+            },
+        );
+    }
+
+    let admin_password_hashes =
+        sqlx::query("SELECT admin_id, password_hash FROM admin_password_hashes")
+            .fetch_all(pool)
+            .await
+            .map_err(|_| ApiError::Internal("管理员密码数据读取失败".to_string()))?
+            .into_iter()
+            .map(|row| {
+                let admin_id = row
+                    .try_get("admin_id")
+                    .map_err(|_| ApiError::Internal("管理员密码数据读取失败".to_string()))?;
+                let password_hash = row
+                    .try_get("password_hash")
+                    .map_err(|_| ApiError::Internal("管理员密码数据读取失败".to_string()))?;
+                Ok((admin_id, password_hash))
+            })
+            .collect::<ApiResult<BTreeMap<String, String>>>()?;
+
+    let sessions = sqlx::query("SELECT token, admin_id FROM admin_sessions")
+        .fetch_all(pool)
+        .await
+        .map_err(|_| ApiError::Internal("管理员会话数据读取失败".to_string()))?
+        .into_iter()
+        .map(|row| {
+            let token = row
+                .try_get("token")
+                .map_err(|_| ApiError::Internal("管理员会话数据读取失败".to_string()))?;
+            let admin_id = row
+                .try_get("admin_id")
+                .map_err(|_| ApiError::Internal("管理员会话数据读取失败".to_string()))?;
+            Ok((token, admin_id))
+        })
+        .collect::<ApiResult<BTreeMap<String, String>>>()?;
+
+    let mut settings = BTreeMap::new();
+    for row in sqlx::query("SELECT key, value, description FROM system_settings ORDER BY key ASC")
+        .fetch_all(pool)
+        .await
+        .map_err(|_| ApiError::Internal("系统设置数据读取失败".to_string()))?
+    {
+        let key: String = row
+            .try_get("key")
+            .map_err(|_| ApiError::Internal("系统设置数据读取失败".to_string()))?;
+        settings.insert(
+            key.clone(),
+            SystemSetting {
+                key,
+                value: row
+                    .try_get("value")
+                    .map_err(|_| ApiError::Internal("系统设置数据读取失败".to_string()))?,
+                description: row
+                    .try_get("description")
+                    .map_err(|_| ApiError::Internal("系统设置数据读取失败".to_string()))?,
+            },
+        );
+    }
+
+    let registration = sqlx::query(
+        "SELECT username_enabled, email_enabled, agent_invite_required
+         FROM registration_config
+         WHERE id = 'default'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::Internal("注册配置数据读取失败".to_string()))?
+    .map(|row| {
+        Ok(RegistrationConfig {
+            username_enabled: row
+                .try_get("username_enabled")
+                .map_err(|_| ApiError::Internal("注册配置数据读取失败".to_string()))?,
+            email_enabled: row
+                .try_get("email_enabled")
+                .map_err(|_| ApiError::Internal("注册配置数据读取失败".to_string()))?,
+            agent_invite_required: row
+                .try_get("agent_invite_required")
+                .map_err(|_| ApiError::Internal("注册配置数据读取失败".to_string()))?,
+        })
+    })
+    .transpose()?;
+
+    let session_counter = sqlx::query_scalar::<_, i64>(
+        "SELECT value FROM access_runtime WHERE key = 'session_counter'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::Internal("用户权限运行数据读取失败".to_string()))?
+    .unwrap_or_default();
+
+    let Some(registration) = registration else {
+        let seeded = AccessStore::seeded();
+        save_access_store(database, &seeded).await?;
+        return Ok(seeded);
+    };
+
+    if users.is_empty() && admins.is_empty() && roles.is_empty() && settings.is_empty() {
+        let seeded = AccessStore::seeded();
+        save_access_store(database, &seeded).await?;
+        return Ok(seeded);
+    }
+
+    Ok(AccessStore {
+        users,
+        admins,
+        admin_password_hashes,
+        roles,
+        sessions,
+        settings,
+        session_counter: u64::try_from(session_counter).unwrap_or_default(),
+        registration,
+    })
+}
+
+async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("用户权限事务开启失败".to_string()))?;
+
+    for table in [
+        "admin_sessions",
+        "admin_password_hashes",
+        "admins",
+        "admin_roles",
+        "system_settings",
+        "registration_config",
+        "access_runtime",
+        "users",
+    ] {
+        sqlx::query(&format!("DELETE FROM {table}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("用户权限数据清理失败".to_string()))?;
+    }
+
+    for user in store.users.values() {
+        sqlx::query(
+            "INSERT INTO users (id, username, email, kind, status, balance_minor, agent_id, invite_code)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(&user.id)
+        .bind(&user.username)
+        .bind(&user.email)
+        .bind(enum_to_string(&user.kind)?)
+        .bind(enum_to_string(&user.status)?)
+        .bind(user.balance_minor)
+        .bind(&user.agent_id)
+        .bind(&user.invite_code)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("用户数据保存失败".to_string()))?;
+    }
+
+    for role in store.roles.values() {
+        sqlx::query("INSERT INTO admin_roles (id, name, scopes) VALUES ($1, $2, $3)")
+            .bind(&role.id)
+            .bind(&role.name)
+            .bind(to_json(&role.scopes)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("角色数据保存失败".to_string()))?;
+    }
+
+    for admin in store.admins.values() {
+        sqlx::query(
+            "INSERT INTO admins (id, username, role_id, role_name, status)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(&admin.id)
+        .bind(&admin.username)
+        .bind(&admin.role_id)
+        .bind(&admin.role_name)
+        .bind(enum_to_string(&admin.status)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("管理员数据保存失败".to_string()))?;
+    }
+
+    for (admin_id, password_hash) in &store.admin_password_hashes {
+        sqlx::query("INSERT INTO admin_password_hashes (admin_id, password_hash) VALUES ($1, $2)")
+            .bind(admin_id)
+            .bind(password_hash)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("管理员密码数据保存失败".to_string()))?;
+    }
+
+    for (token, admin_id) in &store.sessions {
+        sqlx::query("INSERT INTO admin_sessions (token, admin_id) VALUES ($1, $2)")
+            .bind(token)
+            .bind(admin_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("管理员会话数据保存失败".to_string()))?;
+    }
+
+    for setting in store.settings.values() {
+        sqlx::query("INSERT INTO system_settings (key, value, description) VALUES ($1, $2, $3)")
+            .bind(&setting.key)
+            .bind(&setting.value)
+            .bind(&setting.description)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("系统设置数据保存失败".to_string()))?;
+    }
+
+    sqlx::query(
+        "INSERT INTO registration_config
+         (id, username_enabled, email_enabled, agent_invite_required)
+         VALUES ('default', $1, $2, $3)",
+    )
+    .bind(store.registration.username_enabled)
+    .bind(store.registration.email_enabled)
+    .bind(store.registration.agent_invite_required)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| ApiError::Internal("注册配置数据保存失败".to_string()))?;
+
+    let session_counter = i64::try_from(store.session_counter)
+        .map_err(|_| ApiError::Internal("管理员会话序号过大".to_string()))?;
+    sqlx::query("INSERT INTO access_runtime (key, value) VALUES ('session_counter', $1)")
+        .bind(session_counter)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("用户权限运行数据保存失败".to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("用户权限事务提交失败".to_string()))
 }
 
 impl AccessStore {

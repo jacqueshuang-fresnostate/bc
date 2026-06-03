@@ -5,6 +5,7 @@ use std::{
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 use crate::{
     domain::{
@@ -18,14 +19,12 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::state_document::StateDocumentRepository;
-
-const GROUP_BUY_STATE_NAMESPACE: &str = "group_buys";
+use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
 pub struct GroupBuyRepository {
     inner: Arc<RwLock<GroupBuyStore>>,
-    persistence: Option<StateDocumentRepository>,
+    persistence: Option<BusinessDatabase>,
 }
 
 impl GroupBuyRepository {
@@ -36,10 +35,8 @@ impl GroupBuyRepository {
         }
     }
 
-    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
-        let store = persistence
-            .load_or_seed(GROUP_BUY_STATE_NAMESPACE, GroupBuyStore::seeded())
-            .await?;
+    pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
+        let store = load_group_buy_store(&persistence).await?;
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
@@ -115,7 +112,7 @@ impl GroupBuyRepository {
 
     async fn persist(&self, store: &GroupBuyStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence.save(GROUP_BUY_STATE_NAMESPACE, store).await?;
+            save_group_buy_store(persistence, store).await?;
         }
 
         Ok(())
@@ -125,6 +122,196 @@ impl GroupBuyRepository {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct GroupBuyStore {
     plans: BTreeMap<String, GroupBuyPlan>,
+}
+
+async fn load_group_buy_store(database: &BusinessDatabase) -> ApiResult<GroupBuyStore> {
+    let pool = database.pool();
+    let mut plans = BTreeMap::new();
+
+    for row in sqlx::query(
+        "SELECT id, lottery_id, lottery_name, initiator_user_id, initiator_username,
+                total_amount_minor, filled_amount_minor, min_share_amount_minor,
+                participant_min_amount_minor, share_count, status, note, created_at, updated_at
+         FROM group_buy_plans
+         ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?;
+        let share_count: i32 = row
+            .try_get("share_count")
+            .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?;
+        plans.insert(
+            id.clone(),
+            GroupBuyPlan {
+                id,
+                lottery_id: row
+                    .try_get("lottery_id")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                lottery_name: row
+                    .try_get("lottery_name")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                initiator_user_id: row
+                    .try_get("initiator_user_id")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                initiator_username: row
+                    .try_get("initiator_username")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                total_amount_minor: row
+                    .try_get("total_amount_minor")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                filled_amount_minor: row
+                    .try_get("filled_amount_minor")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                min_share_amount_minor: row
+                    .try_get("min_share_amount_minor")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                participant_min_amount_minor: row
+                    .try_get("participant_min_amount_minor")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                share_count: u32::try_from(share_count)
+                    .map_err(|_| ApiError::Internal("合买计划份数数据无效".to_string()))?,
+                status: enum_from_string(
+                    row.try_get("status")
+                        .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                )?,
+                participants: Vec::new(),
+                note: row
+                    .try_get("note")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                updated_at: row
+                    .try_get("updated_at")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+            },
+        );
+    }
+
+    for row in sqlx::query(
+        "SELECT id, plan_id, user_id, username, amount_minor, share_count, note, created_at
+         FROM group_buy_participants
+         ORDER BY plan_id ASC, id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?
+    {
+        let plan_id: String = row
+            .try_get("plan_id")
+            .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?;
+        let share_count: i32 = row
+            .try_get("share_count")
+            .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?;
+        if let Some(plan) = plans.get_mut(&plan_id) {
+            plan.participants.push(GroupBuyParticipant {
+                id: row
+                    .try_get("id")
+                    .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?,
+                user_id: row
+                    .try_get("user_id")
+                    .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?,
+                username: row
+                    .try_get("username")
+                    .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?,
+                amount_minor: row
+                    .try_get("amount_minor")
+                    .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?,
+                share_count: u32::try_from(share_count)
+                    .map_err(|_| ApiError::Internal("合买参与人份数数据无效".to_string()))?,
+                note: row
+                    .try_get("note")
+                    .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?,
+            });
+        }
+    }
+
+    if plans.is_empty() {
+        let seeded = GroupBuyStore::seeded();
+        save_group_buy_store(database, &seeded).await?;
+        return Ok(seeded);
+    }
+
+    Ok(GroupBuyStore { plans })
+}
+
+async fn save_group_buy_store(database: &BusinessDatabase, store: &GroupBuyStore) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("合买事务开启失败".to_string()))?;
+
+    for table in ["group_buy_participants", "group_buy_plans"] {
+        sqlx::query(&format!("DELETE FROM {table}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("合买数据清理失败".to_string()))?;
+    }
+
+    for plan in store.plans.values() {
+        sqlx::query(
+            "INSERT INTO group_buy_plans
+             (id, lottery_id, lottery_name, initiator_user_id, initiator_username,
+              total_amount_minor, filled_amount_minor, min_share_amount_minor,
+              participant_min_amount_minor, share_count, status, note, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+        )
+        .bind(&plan.id)
+        .bind(&plan.lottery_id)
+        .bind(&plan.lottery_name)
+        .bind(&plan.initiator_user_id)
+        .bind(&plan.initiator_username)
+        .bind(plan.total_amount_minor)
+        .bind(plan.filled_amount_minor)
+        .bind(plan.min_share_amount_minor)
+        .bind(plan.participant_min_amount_minor)
+        .bind(
+            i32::try_from(plan.share_count)
+                .map_err(|_| ApiError::Internal("合买计划份数过大".to_string()))?,
+        )
+        .bind(enum_to_string(&plan.status)?)
+        .bind(&plan.note)
+        .bind(&plan.created_at)
+        .bind(&plan.updated_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("合买计划数据保存失败".to_string()))?;
+
+        for participant in &plan.participants {
+            sqlx::query(
+                "INSERT INTO group_buy_participants
+                 (id, plan_id, user_id, username, amount_minor, share_count, note, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            )
+            .bind(&participant.id)
+            .bind(&plan.id)
+            .bind(&participant.user_id)
+            .bind(&participant.username)
+            .bind(participant.amount_minor)
+            .bind(
+                i32::try_from(participant.share_count)
+                    .map_err(|_| ApiError::Internal("合买参与人份数过大".to_string()))?,
+            )
+            .bind(&participant.note)
+            .bind(&participant.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("合买参与人数据保存失败".to_string()))?;
+        }
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("合买事务提交失败".to_string()))
 }
 
 impl GroupBuyStore {

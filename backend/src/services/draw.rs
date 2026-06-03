@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 use crate::{
     domain::{
@@ -18,19 +19,16 @@ use crate::{
 };
 
 use super::{
+    business_database::{enum_from_string, enum_to_string, BusinessDatabase},
     draw_api::{ApiDrawSourceLatestIssue, ApiDrawSourceRepository},
-    state_document::StateDocumentRepository,
 };
-
-const DRAW_STATE_NAMESPACE: &str = "draw_issues";
-const DRAW_CONTROL_STATE_NAMESPACE: &str = "draw_controls";
 
 #[derive(Clone)]
 pub struct DrawRepository {
     inner: Arc<RwLock<DrawStore>>,
     api_sources: ApiDrawSourceRepository,
     controls: Arc<RwLock<DrawControlStore>>,
-    persistence: Option<StateDocumentRepository>,
+    persistence: Option<BusinessDatabase>,
 }
 
 impl DrawRepository {
@@ -50,14 +48,9 @@ impl DrawRepository {
 
     pub async fn persistent_with_api_sources(
         api_sources: ApiDrawSourceRepository,
-        persistence: StateDocumentRepository,
+        persistence: BusinessDatabase,
     ) -> ApiResult<Self> {
-        let store = persistence
-            .load_or_seed(DRAW_STATE_NAMESPACE, DrawStore::default())
-            .await?;
-        let controls = persistence
-            .load_or_seed(DRAW_CONTROL_STATE_NAMESPACE, DrawControlStore::default())
-            .await?;
+        let (store, controls) = load_draw_store(&persistence).await?;
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             api_sources,
@@ -277,7 +270,7 @@ impl DrawRepository {
 
     async fn persist_draws(&self, store: &DrawStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence.save(DRAW_STATE_NAMESPACE, store).await?;
+            save_draw_issues(persistence, store).await?;
         }
 
         Ok(())
@@ -285,9 +278,7 @@ impl DrawRepository {
 
     async fn persist_controls(&self, store: &DrawControlStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence
-                .save(DRAW_CONTROL_STATE_NAMESPACE, store)
-                .await?;
+            save_draw_controls(persistence, store).await?;
         }
 
         Ok(())
@@ -298,6 +289,180 @@ impl DrawRepository {
 struct DrawStore {
     next_sequence: u64,
     issues: BTreeMap<String, DrawIssue>,
+}
+
+async fn load_draw_store(database: &BusinessDatabase) -> ApiResult<(DrawStore, DrawControlStore)> {
+    let mut issues = BTreeMap::new();
+    for row in sqlx::query(
+        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         ORDER BY id ASC",
+    )
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?;
+        issues.insert(
+            id.clone(),
+            DrawIssue {
+                id,
+                lottery_id: row
+                    .try_get("lottery_id")
+                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+                lottery_name: row
+                    .try_get("lottery_name")
+                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+                issue: row
+                    .try_get("issue")
+                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+                number_type: enum_from_string(
+                    row.try_get("number_type")
+                        .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+                )?,
+                draw_mode: enum_from_string(
+                    row.try_get("draw_mode")
+                        .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+                )?,
+                scheduled_at: row
+                    .try_get("scheduled_at")
+                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+                sale_closed_at: row
+                    .try_get("sale_closed_at")
+                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+                status: enum_from_string(
+                    row.try_get("status")
+                        .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+                )?,
+                draw_number: row
+                    .try_get("draw_number")
+                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+                drawn_at: row
+                    .try_get("drawn_at")
+                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+            },
+        );
+    }
+
+    let mut controls = BTreeMap::new();
+    for row in sqlx::query("SELECT lottery_id, enabled, draw_number, updated_at FROM draw_controls")
+        .fetch_all(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("开奖控制数据读取失败".to_string()))?
+    {
+        let lottery_id: String = row
+            .try_get("lottery_id")
+            .map_err(|_| ApiError::Internal("开奖控制数据读取失败".to_string()))?;
+        controls.insert(
+            lottery_id.clone(),
+            DrawControlConfig {
+                lottery_id,
+                enabled: row
+                    .try_get("enabled")
+                    .map_err(|_| ApiError::Internal("开奖控制数据读取失败".to_string()))?,
+                draw_number: row
+                    .try_get("draw_number")
+                    .map_err(|_| ApiError::Internal("开奖控制数据读取失败".to_string()))?,
+                updated_at: row
+                    .try_get("updated_at")
+                    .map_err(|_| ApiError::Internal("开奖控制数据读取失败".to_string()))?,
+            },
+        );
+    }
+
+    Ok((
+        DrawStore {
+            next_sequence: max_sequence(issues.keys(), 'D'),
+            issues,
+        },
+        DrawControlStore { controls },
+    ))
+}
+
+async fn save_draw_issues(database: &BusinessDatabase, store: &DrawStore) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("开奖期号事务开启失败".to_string()))?;
+    sqlx::query("DELETE FROM draw_issues")
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("开奖期号数据清理失败".to_string()))?;
+
+    for issue in store.issues.values() {
+        sqlx::query(
+            "INSERT INTO draw_issues
+             (id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+              sale_closed_at, status, draw_number, drawn_at, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        )
+        .bind(&issue.id)
+        .bind(&issue.lottery_id)
+        .bind(&issue.lottery_name)
+        .bind(&issue.issue)
+        .bind(enum_to_string(&issue.number_type)?)
+        .bind(enum_to_string(&issue.draw_mode)?)
+        .bind(&issue.scheduled_at)
+        .bind(&issue.sale_closed_at)
+        .bind(enum_to_string(&issue.status)?)
+        .bind(&issue.draw_number)
+        .bind(&issue.drawn_at)
+        .bind(&issue.created_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("开奖期号数据保存失败".to_string()))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("开奖期号事务提交失败".to_string()))
+}
+
+async fn save_draw_controls(
+    database: &BusinessDatabase,
+    store: &DrawControlStore,
+) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("开奖控制事务开启失败".to_string()))?;
+    sqlx::query("DELETE FROM draw_controls")
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("开奖控制数据清理失败".to_string()))?;
+
+    for control in store.controls.values() {
+        sqlx::query(
+            "INSERT INTO draw_controls (lottery_id, enabled, draw_number, updated_at)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&control.lottery_id)
+        .bind(control.enabled)
+        .bind(&control.draw_number)
+        .bind(&control.updated_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("开奖控制数据保存失败".to_string()))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("开奖控制事务提交失败".to_string()))
+}
+
+fn max_sequence<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u64 {
+    ids.filter_map(|id| id.strip_prefix(prefix))
+        .filter_map(|value| value.parse::<u64>().ok())
+        .max()
+        .unwrap_or_default()
 }
 
 impl DrawStore {

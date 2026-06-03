@@ -8,6 +8,7 @@ use std::{
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::{
@@ -21,12 +22,12 @@ use crate::{
     error::{ApiError, ApiResult},
     services::{
         automation::run_draw_automation,
+        business_database::{enum_from_string, enum_to_string, BusinessDatabase},
         draw::DrawRepository,
         draw_generation::{generate_draw_issue_batch, DEFAULT_SALE_CLOSE_LEAD_SECONDS},
         finance::FinanceRepository,
         lottery::LotteryRepository,
         order::OrderRepository,
-        state_document::StateDocumentRepository,
     },
 };
 
@@ -35,7 +36,6 @@ const DEFAULT_FUTURE_ISSUE_COUNT: u32 = 1;
 const MAX_SCHEDULER_HISTORY: usize = 20;
 const MAX_FUTURE_ISSUE_COUNT: u32 = 50;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-const DRAW_SCHEDULER_STATE_NAMESPACE: &str = "draw_scheduler";
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -106,7 +106,7 @@ pub struct DrawSchedulerStatus {
 #[derive(Clone)]
 pub struct DrawSchedulerRepository {
     inner: Arc<RwLock<DrawSchedulerStore>>,
-    persistence: Option<StateDocumentRepository>,
+    persistence: Option<BusinessDatabase>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -137,14 +137,9 @@ impl DrawSchedulerRepository {
 
     pub async fn persistent(
         config: DrawSchedulerConfig,
-        persistence: StateDocumentRepository,
+        persistence: BusinessDatabase,
     ) -> ApiResult<Self> {
-        let store = persistence
-            .load_or_seed(
-                DRAW_SCHEDULER_STATE_NAMESPACE,
-                DrawSchedulerStore::new(config),
-            )
-            .await?;
+        let store = load_scheduler_store(&persistence, config).await?;
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
@@ -219,13 +214,225 @@ impl DrawSchedulerRepository {
 
     async fn persist(&self, store: &DrawSchedulerStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence
-                .save(DRAW_SCHEDULER_STATE_NAMESPACE, store)
-                .await?;
+            save_scheduler_store(persistence, store).await?;
         }
 
         Ok(())
     }
+}
+
+async fn load_scheduler_store(
+    database: &BusinessDatabase,
+    default_config: DrawSchedulerConfig,
+) -> ApiResult<DrawSchedulerStore> {
+    let pool = database.pool();
+    let config = sqlx::query(
+        "SELECT enabled, interval_seconds, future_issue_count, sale_close_lead_seconds
+         FROM draw_scheduler_config
+         WHERE id = 'default'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::Internal("开奖调度配置数据读取失败".to_string()))?
+    .map(|row| {
+        let interval_seconds: i64 = row
+            .try_get("interval_seconds")
+            .map_err(|_| ApiError::Internal("开奖调度配置数据读取失败".to_string()))?;
+        let future_issue_count: i32 = row
+            .try_get("future_issue_count")
+            .map_err(|_| ApiError::Internal("开奖调度配置数据读取失败".to_string()))?;
+        let sale_close_lead_seconds: i32 = row
+            .try_get("sale_close_lead_seconds")
+            .map_err(|_| ApiError::Internal("开奖调度配置数据读取失败".to_string()))?;
+        Ok(DrawSchedulerConfig {
+            enabled: row
+                .try_get("enabled")
+                .map_err(|_| ApiError::Internal("开奖调度配置数据读取失败".to_string()))?,
+            interval_seconds: u64::try_from(interval_seconds)
+                .map_err(|_| ApiError::Internal("开奖调度周期数据无效".to_string()))?,
+            future_issue_count: u32::try_from(future_issue_count)
+                .map_err(|_| ApiError::Internal("开奖调度预生成数量数据无效".to_string()))?,
+            sale_close_lead_seconds: u32::try_from(sale_close_lead_seconds)
+                .map_err(|_| ApiError::Internal("开奖调度封盘提前量数据无效".to_string()))?,
+        })
+    })
+    .transpose()?;
+
+    let Some(config) = config else {
+        let seeded = DrawSchedulerStore::new(default_config);
+        save_scheduler_store(database, &seeded).await?;
+        return Ok(seeded);
+    };
+    config.validate()?;
+
+    let mut runs = VecDeque::new();
+    let mut run_ids = Vec::new();
+    for row in sqlx::query(
+        "SELECT id, trigger, status, started_at, finished_at, now, error, closed_issue_count,
+                drawn_issue_count, settlement_run_count, ledger_entry_count,
+                generated_issue_count, skipped_issue_count, skipped_lottery_count
+         FROM draw_scheduler_runs
+         ORDER BY id DESC
+         LIMIT 20",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("开奖调度历史数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("开奖调度历史数据读取失败".to_string()))?;
+        run_ids.push(id.clone());
+        runs.push_back(DrawSchedulerRunRecord {
+            id,
+            trigger: enum_from_string(
+                row.try_get("trigger")
+                    .map_err(|_| ApiError::Internal("开奖调度历史数据读取失败".to_string()))?,
+            )?,
+            status: enum_from_string(
+                row.try_get("status")
+                    .map_err(|_| ApiError::Internal("开奖调度历史数据读取失败".to_string()))?,
+            )?,
+            started_at: row
+                .try_get("started_at")
+                .map_err(|_| ApiError::Internal("开奖调度历史数据读取失败".to_string()))?,
+            finished_at: row
+                .try_get("finished_at")
+                .map_err(|_| ApiError::Internal("开奖调度历史数据读取失败".to_string()))?,
+            now: row
+                .try_get("now")
+                .map_err(|_| ApiError::Internal("开奖调度历史数据读取失败".to_string()))?,
+            error: row
+                .try_get("error")
+                .map_err(|_| ApiError::Internal("开奖调度历史数据读取失败".to_string()))?,
+            closed_issue_count: read_usize_count(&row, "closed_issue_count")?,
+            drawn_issue_count: read_usize_count(&row, "drawn_issue_count")?,
+            settlement_run_count: read_usize_count(&row, "settlement_run_count")?,
+            ledger_entry_count: read_usize_count(&row, "ledger_entry_count")?,
+            generated_issue_count: read_usize_count(&row, "generated_issue_count")?,
+            skipped_issue_count: read_usize_count(&row, "skipped_issue_count")?,
+            skipped_lottery_count: read_usize_count(&row, "skipped_lottery_count")?,
+        });
+    }
+
+    let next_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT value FROM draw_scheduler_runtime WHERE key = 'next_sequence'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::Internal("开奖调度运行数据读取失败".to_string()))?
+    .unwrap_or_default();
+
+    Ok(DrawSchedulerStore {
+        config,
+        next_sequence: u64::try_from(next_sequence)
+            .unwrap_or_default()
+            .max(max_sequence(&run_ids)),
+        runs,
+    })
+}
+
+async fn save_scheduler_store(
+    database: &BusinessDatabase,
+    store: &DrawSchedulerStore,
+) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("开奖调度事务开启失败".to_string()))?;
+
+    for table in [
+        "draw_scheduler_runs",
+        "draw_scheduler_runtime",
+        "draw_scheduler_config",
+    ] {
+        sqlx::query(&format!("DELETE FROM {table}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("开奖调度数据清理失败".to_string()))?;
+    }
+
+    sqlx::query(
+        "INSERT INTO draw_scheduler_config
+         (id, enabled, interval_seconds, future_issue_count, sale_close_lead_seconds)
+         VALUES ('default', $1, $2, $3, $4)",
+    )
+    .bind(store.config.enabled)
+    .bind(
+        i64::try_from(store.config.interval_seconds)
+            .map_err(|_| ApiError::Internal("开奖调度周期过大".to_string()))?,
+    )
+    .bind(
+        i32::try_from(store.config.future_issue_count)
+            .map_err(|_| ApiError::Internal("开奖调度预生成数量过大".to_string()))?,
+    )
+    .bind(
+        i32::try_from(store.config.sale_close_lead_seconds)
+            .map_err(|_| ApiError::Internal("开奖调度封盘提前量过大".to_string()))?,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| ApiError::Internal("开奖调度配置数据保存失败".to_string()))?;
+
+    for run in &store.runs {
+        sqlx::query(
+            "INSERT INTO draw_scheduler_runs
+             (id, trigger, status, started_at, finished_at, now, error, closed_issue_count,
+              drawn_issue_count, settlement_run_count, ledger_entry_count, generated_issue_count,
+              skipped_issue_count, skipped_lottery_count)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+        )
+        .bind(&run.id)
+        .bind(enum_to_string(&run.trigger)?)
+        .bind(enum_to_string(&run.status)?)
+        .bind(&run.started_at)
+        .bind(&run.finished_at)
+        .bind(&run.now)
+        .bind(&run.error)
+        .bind(to_i32_count(run.closed_issue_count, "已封盘期号数量")?)
+        .bind(to_i32_count(run.drawn_issue_count, "已开奖期号数量")?)
+        .bind(to_i32_count(run.settlement_run_count, "结算批次数量")?)
+        .bind(to_i32_count(run.ledger_entry_count, "资金流水数量")?)
+        .bind(to_i32_count(run.generated_issue_count, "生成期号数量")?)
+        .bind(to_i32_count(run.skipped_issue_count, "跳过期号数量")?)
+        .bind(to_i32_count(run.skipped_lottery_count, "跳过彩种数量")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("开奖调度历史数据保存失败".to_string()))?;
+    }
+
+    sqlx::query("INSERT INTO draw_scheduler_runtime (key, value) VALUES ('next_sequence', $1)")
+        .bind(
+            i64::try_from(store.next_sequence)
+                .map_err(|_| ApiError::Internal("开奖调度序号过大".to_string()))?,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("开奖调度运行数据保存失败".to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("开奖调度事务提交失败".to_string()))
+}
+
+fn read_usize_count(row: &sqlx::postgres::PgRow, column: &str) -> ApiResult<usize> {
+    let value: i32 = row
+        .try_get(column)
+        .map_err(|_| ApiError::Internal("开奖调度数量数据读取失败".to_string()))?;
+    usize::try_from(value).map_err(|_| ApiError::Internal("开奖调度数量数据无效".to_string()))
+}
+
+fn to_i32_count(value: usize, label: &str) -> ApiResult<i32> {
+    i32::try_from(value).map_err(|_| ApiError::Internal(format!("{label}过大")))
+}
+
+fn max_sequence(ids: &[String]) -> u64 {
+    ids.iter()
+        .filter_map(|id| id.strip_prefix("SCH"))
+        .filter_map(|value| value.parse::<u64>().ok())
+        .max()
+        .unwrap_or_default()
 }
 
 impl DrawSchedulerStore {

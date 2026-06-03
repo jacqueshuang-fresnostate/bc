@@ -6,6 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sqlx::Row;
 
 use crate::{
     domain::{
@@ -15,7 +16,9 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::state_document::StateDocumentRepository;
+use super::business_database::{
+    enum_from_string, enum_to_string, from_json, to_json, BusinessDatabase,
+};
 
 pub const API68_FC3D_SOURCE_ID: &str = "api68-fc3d";
 pub const API68_FC3D_SOURCE_NAME: &str = "API68 福彩 3D/排列 3";
@@ -33,7 +36,6 @@ const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
 const DEFAULT_API68_CQSHICAI_ENDPOINT: &str =
     "https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do";
 const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
-const DRAW_SOURCE_STATE_NAMESPACE: &str = "draw_sources";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiDrawSourceLatestIssue {
@@ -45,7 +47,7 @@ pub struct ApiDrawSourceRepository {
     client: reqwest::Client,
     inner: Arc<RwLock<ApiDrawSourceStore>>,
     static_responses: Arc<BTreeMap<String, String>>,
-    persistence: Option<StateDocumentRepository>,
+    persistence: Option<BusinessDatabase>,
 }
 
 impl ApiDrawSourceRepository {
@@ -70,16 +72,8 @@ impl ApiDrawSourceRepository {
         }
     }
 
-    pub async fn persistent_api68_seeded(persistence: StateDocumentRepository) -> ApiResult<Self> {
-        let store = persistence
-            .load_or_seed(
-                DRAW_SOURCE_STATE_NAMESPACE,
-                ApiDrawSourceStore::new(vec![
-                    ApiDrawSourceConfig::api68_fc3d(),
-                    ApiDrawSourceConfig::api68_au5(),
-                ]),
-            )
-            .await?;
+    pub async fn persistent_api68_seeded(persistence: BusinessDatabase) -> ApiResult<Self> {
+        let store = load_draw_source_store(&persistence).await?;
         Ok(Self {
             client: reqwest::Client::new(),
             inner: Arc::new(RwLock::new(store)),
@@ -290,7 +284,7 @@ impl ApiDrawSourceRepository {
 
     async fn persist(&self, store: &ApiDrawSourceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence.save(DRAW_SOURCE_STATE_NAMESPACE, store).await?;
+            save_draw_source_store(persistence, store).await?;
         }
 
         Ok(())
@@ -300,6 +294,89 @@ impl ApiDrawSourceRepository {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct ApiDrawSourceStore {
     sources: BTreeMap<String, ApiDrawSourceConfig>,
+}
+
+async fn load_draw_source_store(database: &BusinessDatabase) -> ApiResult<ApiDrawSourceStore> {
+    let mut sources = Vec::new();
+    for row in sqlx::query(
+        "SELECT id, name, provider, lot_code, endpoint, reusable_for_lottery_ids
+         FROM draw_sources
+         ORDER BY id ASC",
+    )
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖源数据读取失败".to_string()))?
+    {
+        sources.push(ApiDrawSourceConfig {
+            id: row
+                .try_get("id")
+                .map_err(|_| ApiError::Internal("开奖源数据读取失败".to_string()))?,
+            name: row
+                .try_get("name")
+                .map_err(|_| ApiError::Internal("开奖源数据读取失败".to_string()))?,
+            provider: enum_from_string(
+                row.try_get("provider")
+                    .map_err(|_| ApiError::Internal("开奖源数据读取失败".to_string()))?,
+            )?,
+            lot_code: row
+                .try_get("lot_code")
+                .map_err(|_| ApiError::Internal("开奖源数据读取失败".to_string()))?,
+            endpoint: row
+                .try_get("endpoint")
+                .map_err(|_| ApiError::Internal("开奖源数据读取失败".to_string()))?,
+            reusable_for_lottery_ids: from_json(
+                row.try_get("reusable_for_lottery_ids")
+                    .map_err(|_| ApiError::Internal("开奖源数据读取失败".to_string()))?,
+            )?,
+        });
+    }
+
+    if sources.is_empty() {
+        let store = ApiDrawSourceStore::new(vec![
+            ApiDrawSourceConfig::api68_fc3d(),
+            ApiDrawSourceConfig::api68_au5(),
+        ]);
+        save_draw_source_store(database, &store).await?;
+        return Ok(store);
+    }
+
+    Ok(ApiDrawSourceStore::new(sources))
+}
+
+async fn save_draw_source_store(
+    database: &BusinessDatabase,
+    store: &ApiDrawSourceStore,
+) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("开奖源事务开启失败".to_string()))?;
+    sqlx::query("DELETE FROM draw_sources")
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("开奖源数据清理失败".to_string()))?;
+
+    for source in store.sources.values() {
+        sqlx::query(
+            "INSERT INTO draw_sources
+             (id, name, provider, lot_code, endpoint, reusable_for_lottery_ids)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(&source.id)
+        .bind(&source.name)
+        .bind(enum_to_string(&source.provider)?)
+        .bind(&source.lot_code)
+        .bind(&source.endpoint)
+        .bind(to_json(&source.reusable_for_lottery_ids)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("开奖源数据保存失败".to_string()))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("开奖源事务提交失败".to_string()))
 }
 
 impl ApiDrawSourceStore {

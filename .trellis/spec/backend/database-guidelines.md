@@ -6,7 +6,7 @@
 
 ## 概览
 
-后端支持两种运行模式：未配置 `DATABASE_URL` 时使用内存演示数据；配置 `DATABASE_URL` 时使用 PostgreSQL + SQLx migrations。彩种和玩法赔率使用关系表，其它已落地后台模块当前使用 JSONB 状态文档作为第一阶段持久化方案。
+后端支持两种运行模式：未配置 `DATABASE_URL` 时使用内存演示数据；配置 `DATABASE_URL` 时使用 PostgreSQL + SQLx migrations。彩种、玩法赔率和其它已落地后台模块都使用业务表持久化，运行时不再读写 `state_documents`。
 
 不要把数据库访问直接写进 HTTP 处理函数。路由处理函数调用服务，服务再调用仓储或查询模块。
 
@@ -88,7 +88,7 @@ YYYYMMDDHHMMSS_describe_change.sql
 - 如果 `lotteries` 表为空，写入种子彩种。
 - 如果 `lotteries` 表已有数据，不覆盖已有彩种。
 
-Docker Compose 本地部署必须提供 PostgreSQL 服务和持久化 volume，并把应用 `DATABASE_URL` 指向 Compose 网络内的数据库。彩种管理和玩法赔率配置使用 PostgreSQL `lotteries` 关系表；其它当前已落地业务模块使用 `state_documents` 状态文档表。运行日志和文档必须明确当前哪些模块是关系表、哪些模块是状态文档，不能把状态文档误写成已完成范式化业务表。
+Docker Compose 本地部署必须提供 PostgreSQL 服务和持久化 volume，并把应用 `DATABASE_URL` 指向 Compose 网络内的数据库。彩种管理和玩法赔率配置使用 PostgreSQL `lotteries` 关系表；其它当前已落地业务模块使用各自独立业务表。运行日志和文档必须明确所有运行时业务读写已经脱离 `state_documents`，旧状态文档迁移只作为历史迁移记录保留。
 
 `lotteries` 表字段：
 
@@ -155,18 +155,17 @@ let lotteries = LotteryRepository::postgres(&database_url).await?;
 
 ---
 
-## 场景：全后台状态文档持久化
+## 场景：全后台业务表持久化
 
 ### 1. 范围 / 触发条件
 
-- 触发条件：当前已落地的后台模块需要在配置 `DATABASE_URL` 后跨服务重启恢复数据。
-- 范围：`state_documents` 表、`StateDocumentRepository`、所有非彩种关系表的业务仓储。
+- 触发条件：当前已落地的后台模块需要在配置 `DATABASE_URL` 后跨服务重启恢复数据，并且不能再使用 `state_documents` 作为运行时业务状态入口。
+- 范围：`BusinessDatabase`、`backend/migrations/20260603152000_create_business_tables.sql`、所有业务仓储的业务表加载和保存逻辑。
 
 ### 2. 签名
 
-- 迁移文件：`backend/migrations/20260603143000_create_state_documents.sql`
-- 表名：`state_documents`
-- 仓储：`backend/src/services/state_document.rs`
+- 迁移文件：`backend/migrations/20260603152000_create_business_tables.sql`
+- 数据库包装：`backend/src/services/business_database.rs`
 - 测试数据库环境变量：`BC_TEST_DATABASE_URL`
 
 ### 3. 契约
@@ -176,58 +175,49 @@ let lotteries = LotteryRepository::postgres(&database_url).await?;
 `DATABASE_URL` 已配置时，后端必须：
 
 - 运行 SQLx migrations。
-- 使用 `state_documents` 保存当前非彩种关系表模块状态。
-- 数据库没有对应 `namespace` 时写入该模块原有种子状态。
-- 数据库已有对应 `namespace` 时恢复数据库状态，不覆盖为种子数据。
-- 写操作成功后保存对应模块快照。
+- 使用各业务表保存当前后台模块状态。
+- 数据库中对应业务表为空时写入该模块原有种子状态。
+- 数据库已有对应业务表数据时恢复数据库状态，不覆盖为种子数据。
+- 写操作成功后用事务保存对应模块涉及的业务表。
 - 启动连接或迁移失败时直接启动失败，不静默降级。
 
-`state_documents` 表字段：
+当前业务表：
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `namespace` | `text primary key` | 业务状态命名空间 |
-| `payload` | `jsonb not null` | 模块状态快照 |
-| `created_at` | `timestamptz not null default now()` | 创建时间 |
-| `updated_at` | `timestamptz not null default now()` | 更新时间 |
-
-当前命名空间：
-
-| 命名空间 | 内容 |
+| 模块 | 表 |
 |------|------|
-| `access` | 用户、管理员、管理员密码哈希、角色、系统设置、注册配置和管理员会话 |
-| `orders` | 订单、结算批次和编号序列 |
-| `draw_issues` | 开奖期号、状态、开奖号码和编号序列 |
-| `draw_controls` | 彩种控制台控制开奖号码配置 |
-| `draw_sources` | API 开奖源配置 |
-| `finance` | 资金账户、资金流水和流水编号序列 |
-| `group_buys` | 合买计划和参与记录 |
-| `invites` | 邀请关系、邀请码、返利资格和状态 |
-| `rebates` | 邀请返利策略 |
-| `robots` | 机器人配置 |
-| `support` | 客服会话、消息、分配状态和未读数 |
-| `draw_scheduler` | 调度配置、运行序号和最近运行历史 |
+| 用户权限 | `users`、`admin_roles`、`admins`、`admin_password_hashes`、`admin_sessions`、`system_settings`、`registration_config`、`access_runtime` |
+| 开奖 | `draw_issues`、`draw_controls`、`draw_sources` |
+| 订单结算 | `orders`、`order_settlement_runs`、`order_settlements`、`order_runtime` |
+| 资金 | `financial_accounts`、`ledger_entries`、`finance_runtime` |
+| 合买 | `group_buy_plans`、`group_buy_participants` |
+| 邀请返利 | `invite_records`、`rebate_policy` |
+| 机器人 | `robot_configs`、`robot_lottery_bindings` |
+| 客服 | `support_conversations`、`support_messages` |
+| 调度 | `draw_scheduler_config`、`draw_scheduler_runs`、`draw_scheduler_runtime` |
+
+复杂业务字段可以继续用 JSONB 列保存当前 API 契约中的结构，例如角色权限范围、投注选择、展开投注、中奖匹配和 API 开奖源复用彩种；不得把整个模块重新塞回单张状态文档表。
 
 ### 4. 校验与错误矩阵
 
 | 条件 | 预期行为 |
 |------|----------|
-| `namespace` 为空 | 返回 `BadRequest` |
-| JSON 序列化失败 | 返回内部错误，不暴露结构细节 |
-| JSON 反序列化失败 | 返回内部错误，不继续用种子覆盖 |
-| 状态保存失败 | 当前接口返回内部错误 |
+| 业务表为空 | 写入原有种子数据 |
+| 业务表已有数据 | 恢复数据库状态，不写入种子覆盖 |
+| 枚举字符串或 JSONB 字段反序列化失败 | 返回内部错误，不继续用种子覆盖 |
+| 事务保存失败 | 当前接口返回内部错误 |
 | 未配置 `DATABASE_URL` | 所有业务仓储继续内存模式 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：后台新增订单、调整资金、保存开奖控制号码后重启服务，配置 `DATABASE_URL` 时数据仍可恢复。
 - Base：本地未配置数据库时，全部页面仍可使用种子内存数据。
-- Bad：数据库已有状态时重新写入种子，导致用户、订单、资金或控制号码被覆盖。
+- Bad：数据库已有业务表数据时重新写入种子，导致用户、订单、资金或控制号码被覆盖。
+- Bad：运行时继续引用 `StateDocumentRepository` 或向 `state_documents` 写入业务状态。
 
 ### 6. 必要测试
 
 - 无数据库模式必须继续通过 `cargo test`。
-- 状态文档仓储需要测试空状态种子写入、保存和重新加载恢复。
+- 业务表仓储需要测试至少一个模块的保存和重新加载恢复。
 - 数据库集成测试只能在显式配置 `BC_TEST_DATABASE_URL` 时运行，避免误写生产数据库。
 
 ### 7. Wrong vs Correct
@@ -236,7 +226,7 @@ let lotteries = LotteryRepository::postgres(&database_url).await?;
 
 ```rust
 let store = AccessStore::seeded();
-persistence.save("access", &store).await?;
+save_access_store(&database, &store).await?;
 ```
 
 服务每次启动都直接保存种子状态，会覆盖数据库中已经存在的真实用户、管理员密码哈希、会话和权限配置。
@@ -244,13 +234,11 @@ persistence.save("access", &store).await?;
 #### 正确
 
 ```rust
-let store = persistence
-    .load_or_seed("access", AccessStore::seeded())
-    .await?;
+let store = load_access_store(&database).await?;
 ```
 
-先尝试读取已有状态；只有状态不存在时才写入种子，避免重启覆盖真实业务数据。
+先尝试读取已有业务表数据；只有业务表为空时才写入种子，避免重启覆盖真实业务数据。
 
-### 8. 后续拆表要求
+### 8. 后续增强要求
 
-状态文档是第一阶段“全模块可持久化”的过渡方案。订单、资金流水、开奖期号、结算批次、管理员权限和高风险开奖控制后续拆成关系表时，必须同步补事务、索引、审计字段、分页查询和迁移说明。
+所有运行时业务模块已经迁移为业务表。订单、资金流水、开奖期号、结算批次、管理员权限和高风险开奖控制后续增强时，必须继续补事务一致性、索引、审计字段、分页查询、备份恢复和从历史 `state_documents` 迁移数据的说明。

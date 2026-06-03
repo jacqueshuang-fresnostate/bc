@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 use crate::{
     domain::{
@@ -18,10 +19,11 @@ use crate::{
     services::play_rules::{evaluate_play_rule, expanded_bets_for_rule, number_type_for_rule},
 };
 
-use super::state_document::StateDocumentRepository;
+use super::business_database::{
+    enum_from_string, enum_to_string, from_json, to_json, BusinessDatabase,
+};
 
 const ODDS_SCALE_BASIS_POINTS: i64 = 10_000;
-const ORDER_STATE_NAMESPACE: &str = "orders";
 
 pub fn validate_draw_issue_accepts_order(
     draw_issue: &DrawIssue,
@@ -55,7 +57,7 @@ pub fn validate_draw_issue_accepts_order(
 #[derive(Clone)]
 pub struct OrderRepository {
     inner: Arc<RwLock<OrderStore>>,
-    persistence: Option<StateDocumentRepository>,
+    persistence: Option<BusinessDatabase>,
 }
 
 impl OrderRepository {
@@ -66,10 +68,8 @@ impl OrderRepository {
         }
     }
 
-    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
-        let store = persistence
-            .load_or_seed(ORDER_STATE_NAMESPACE, OrderStore::default())
-            .await?;
+    pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
+        let store = load_order_store(&persistence).await?;
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
@@ -181,7 +181,7 @@ impl OrderRepository {
 
     async fn persist(&self, store: &OrderStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence.save(ORDER_STATE_NAMESPACE, store).await?;
+            save_order_store(persistence, store).await?;
         }
 
         Ok(())
@@ -194,6 +194,368 @@ struct OrderStore {
     next_settlement_sequence: u64,
     orders: BTreeMap<String, OrderDetail>,
     settlement_runs: BTreeMap<String, SettlementRun>,
+}
+
+async fn load_order_store(database: &BusinessDatabase) -> ApiResult<OrderStore> {
+    let pool = database.pool();
+    let mut orders = BTreeMap::new();
+    for row in sqlx::query(
+        "SELECT id, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+                stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
+                draw_number, matched_bets, payout_minor, status, settled_at, created_at
+         FROM orders
+         ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?;
+        let stake_count: i32 = row
+            .try_get("stake_count")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?;
+        orders.insert(
+            id.clone(),
+            OrderDetail {
+                id,
+                user_id: row
+                    .try_get("user_id")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                lottery_id: row
+                    .try_get("lottery_id")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                lottery_name: row
+                    .try_get("lottery_name")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                issue: row
+                    .try_get("issue")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                rule_code: enum_from_string(
+                    row.try_get("rule_code")
+                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                )?,
+                number_type: enum_from_string(
+                    row.try_get("number_type")
+                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                )?,
+                selection: from_json(
+                    row.try_get("selection")
+                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                )?,
+                stake_count: u32::try_from(stake_count)
+                    .map_err(|_| ApiError::Internal("订单注数数据无效".to_string()))?,
+                unit_amount_minor: row
+                    .try_get("unit_amount_minor")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                amount_minor: row
+                    .try_get("amount_minor")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                odds_basis_points: row
+                    .try_get("odds_basis_points")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                expanded_bets: from_json(
+                    row.try_get("expanded_bets")
+                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                )?,
+                draw_number: row
+                    .try_get("draw_number")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                matched_bets: from_json(
+                    row.try_get("matched_bets")
+                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                )?,
+                payout_minor: row
+                    .try_get("payout_minor")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                status: enum_from_string(
+                    row.try_get("status")
+                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                )?,
+                settled_at: row
+                    .try_get("settled_at")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+            },
+        );
+    }
+
+    let mut settlement_orders = BTreeMap::<String, Vec<OrderSettlement>>::new();
+    for row in sqlx::query(
+        "SELECT settlement_id, order_id, user_id, rule_code, stake_count, amount_minor, is_winning,
+                matched_bets, odds_basis_points, payout_minor, status
+         FROM order_settlements
+         ORDER BY settlement_id ASC, order_id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?
+    {
+        let settlement_id: String = row
+            .try_get("settlement_id")
+            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?;
+        let stake_count: i32 = row
+            .try_get("stake_count")
+            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?;
+        settlement_orders
+            .entry(settlement_id)
+            .or_default()
+            .push(OrderSettlement {
+                order_id: row
+                    .try_get("order_id")
+                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+                user_id: row
+                    .try_get("user_id")
+                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+                rule_code: enum_from_string(
+                    row.try_get("rule_code")
+                        .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+                )?,
+                stake_count: u32::try_from(stake_count)
+                    .map_err(|_| ApiError::Internal("结算订单注数数据无效".to_string()))?,
+                amount_minor: row
+                    .try_get("amount_minor")
+                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+                is_winning: row
+                    .try_get("is_winning")
+                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+                matched_bets: from_json(
+                    row.try_get("matched_bets")
+                        .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+                )?,
+                odds_basis_points: row
+                    .try_get("odds_basis_points")
+                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+                payout_minor: row
+                    .try_get("payout_minor")
+                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+                status: enum_from_string(
+                    row.try_get("status")
+                        .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+                )?,
+            });
+    }
+
+    let mut settlement_runs = BTreeMap::new();
+    for row in sqlx::query(
+        "SELECT id, draw_issue_id, lottery_id, lottery_name, issue, draw_number,
+                settled_order_count, winning_order_count, total_stake_amount_minor,
+                total_payout_minor, created_at
+         FROM order_settlement_runs
+         ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?;
+        let settled_order_count: i32 = row
+            .try_get("settled_order_count")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?;
+        let winning_order_count: i32 = row
+            .try_get("winning_order_count")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?;
+        settlement_runs.insert(
+            id.clone(),
+            SettlementRun {
+                id: id.clone(),
+                draw_issue_id: row
+                    .try_get("draw_issue_id")
+                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+                lottery_id: row
+                    .try_get("lottery_id")
+                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+                lottery_name: row
+                    .try_get("lottery_name")
+                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+                issue: row
+                    .try_get("issue")
+                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+                draw_number: row
+                    .try_get("draw_number")
+                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+                settled_order_count: u32::try_from(settled_order_count)
+                    .map_err(|_| ApiError::Internal("结算订单数量无效".to_string()))?,
+                winning_order_count: u32::try_from(winning_order_count)
+                    .map_err(|_| ApiError::Internal("中奖订单数量无效".to_string()))?,
+                total_stake_amount_minor: row
+                    .try_get("total_stake_amount_minor")
+                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+                total_payout_minor: row
+                    .try_get("total_payout_minor")
+                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+                orders: settlement_orders.remove(&id).unwrap_or_default(),
+            },
+        );
+    }
+
+    let next_sequence =
+        sqlx::query_scalar::<_, i64>("SELECT value FROM order_runtime WHERE key = 'next_sequence'")
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| ApiError::Internal("订单运行数据读取失败".to_string()))?
+            .unwrap_or_default();
+    let next_settlement_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT value FROM order_runtime WHERE key = 'next_settlement_sequence'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::Internal("订单运行数据读取失败".to_string()))?
+    .unwrap_or_default();
+
+    Ok(OrderStore {
+        next_sequence: u64::try_from(next_sequence)
+            .unwrap_or_default()
+            .max(max_sequence(orders.keys(), 'O')),
+        next_settlement_sequence: u64::try_from(next_settlement_sequence)
+            .unwrap_or_default()
+            .max(max_sequence(settlement_runs.keys(), 'S')),
+        orders,
+        settlement_runs,
+    })
+}
+
+async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("订单事务开启失败".to_string()))?;
+
+    for table in [
+        "order_settlements",
+        "order_settlement_runs",
+        "orders",
+        "order_runtime",
+    ] {
+        sqlx::query(&format!("DELETE FROM {table}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("订单数据清理失败".to_string()))?;
+    }
+
+    for order in store.orders.values() {
+        sqlx::query(
+            "INSERT INTO orders
+             (id, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+              stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
+              draw_number, matched_bets, payout_minor, status, settled_at, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
+        )
+        .bind(&order.id)
+        .bind(&order.user_id)
+        .bind(&order.lottery_id)
+        .bind(&order.lottery_name)
+        .bind(&order.issue)
+        .bind(enum_to_string(&order.rule_code)?)
+        .bind(enum_to_string(&order.number_type)?)
+        .bind(to_json(&order.selection)?)
+        .bind(i32::try_from(order.stake_count).map_err(|_| {
+            ApiError::Internal("订单注数过大".to_string())
+        })?)
+        .bind(order.unit_amount_minor)
+        .bind(order.amount_minor)
+        .bind(order.odds_basis_points)
+        .bind(to_json(&order.expanded_bets)?)
+        .bind(&order.draw_number)
+        .bind(to_json(&order.matched_bets)?)
+        .bind(order.payout_minor)
+        .bind(enum_to_string(&order.status)?)
+        .bind(&order.settled_at)
+        .bind(&order.created_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("订单数据保存失败".to_string()))?;
+    }
+
+    for run in store.settlement_runs.values() {
+        sqlx::query(
+            "INSERT INTO order_settlement_runs
+             (id, draw_issue_id, lottery_id, lottery_name, issue, draw_number, settled_order_count,
+              winning_order_count, total_stake_amount_minor, total_payout_minor, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        )
+        .bind(&run.id)
+        .bind(&run.draw_issue_id)
+        .bind(&run.lottery_id)
+        .bind(&run.lottery_name)
+        .bind(&run.issue)
+        .bind(&run.draw_number)
+        .bind(
+            i32::try_from(run.settled_order_count)
+                .map_err(|_| ApiError::Internal("结算订单数量过大".to_string()))?,
+        )
+        .bind(
+            i32::try_from(run.winning_order_count)
+                .map_err(|_| ApiError::Internal("中奖订单数量过大".to_string()))?,
+        )
+        .bind(run.total_stake_amount_minor)
+        .bind(run.total_payout_minor)
+        .bind(&run.created_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("结算批次数据保存失败".to_string()))?;
+
+        for order in &run.orders {
+            sqlx::query(
+                "INSERT INTO order_settlements
+                 (settlement_id, order_id, user_id, rule_code, stake_count, amount_minor,
+                  is_winning, matched_bets, odds_basis_points, payout_minor, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            )
+            .bind(&run.id)
+            .bind(&order.order_id)
+            .bind(&order.user_id)
+            .bind(enum_to_string(&order.rule_code)?)
+            .bind(
+                i32::try_from(order.stake_count)
+                    .map_err(|_| ApiError::Internal("结算订单注数过大".to_string()))?,
+            )
+            .bind(order.amount_minor)
+            .bind(order.is_winning)
+            .bind(to_json(&order.matched_bets)?)
+            .bind(order.odds_basis_points)
+            .bind(order.payout_minor)
+            .bind(enum_to_string(&order.status)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("结算订单数据保存失败".to_string()))?;
+        }
+    }
+
+    for (key, value) in [
+        ("next_sequence", store.next_sequence),
+        ("next_settlement_sequence", store.next_settlement_sequence),
+    ] {
+        sqlx::query("INSERT INTO order_runtime (key, value) VALUES ($1, $2)")
+            .bind(key)
+            .bind(
+                i64::try_from(value)
+                    .map_err(|_| ApiError::Internal("订单运行序号过大".to_string()))?,
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("订单运行数据保存失败".to_string()))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("订单事务提交失败".to_string()))
+}
+
+fn max_sequence<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u64 {
+    ids.filter_map(|id| id.strip_prefix(prefix))
+        .filter_map(|value| value.parse::<u64>().ok())
+        .max()
+        .unwrap_or_default()
 }
 
 impl OrderStore {

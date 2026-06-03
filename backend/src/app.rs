@@ -7,6 +7,7 @@ use crate::{
     routes,
     services::{
         access::AccessRepository,
+        business_database::BusinessDatabase,
         draw::DrawRepository,
         draw_api::ApiDrawSourceRepository,
         finance::FinanceRepository,
@@ -17,7 +18,6 @@ use crate::{
         rebate::RebateRepository,
         robot::RobotRepository,
         scheduler::{spawn_draw_scheduler, DrawSchedulerConfig, DrawSchedulerRepository},
-        state_document::StateDocumentRepository,
         support::SupportRepository,
     },
 };
@@ -63,30 +63,30 @@ impl AppState {
         };
 
         let lotteries = LotteryRepository::postgres(&database_url).await?;
-        let state_documents = StateDocumentRepository::postgres(&database_url).await?;
+        let business_database = BusinessDatabase::postgres(&database_url).await?;
         let api_sources =
-            ApiDrawSourceRepository::persistent_api68_seeded(state_documents.clone()).await?;
+            ApiDrawSourceRepository::persistent_api68_seeded(business_database.clone()).await?;
         let scheduler =
-            DrawSchedulerRepository::persistent(scheduler.config()?, state_documents.clone())
+            DrawSchedulerRepository::persistent(scheduler.config()?, business_database.clone())
                 .await?;
 
         tracing::info!("已配置 DATABASE_URL，使用 PostgreSQL 持久化所有后台业务仓储");
         Ok(Self {
-            access: AccessRepository::persistent(state_documents.clone()).await?,
+            access: AccessRepository::persistent(business_database.clone()).await?,
             draws: DrawRepository::persistent_with_api_sources(
                 api_sources,
-                state_documents.clone(),
+                business_database.clone(),
             )
             .await?,
-            finance: FinanceRepository::persistent(state_documents.clone()).await?,
-            group_buys: GroupBuyRepository::persistent(state_documents.clone()).await?,
-            invites: InviteRepository::persistent(state_documents.clone()).await?,
+            finance: FinanceRepository::persistent(business_database.clone()).await?,
+            group_buys: GroupBuyRepository::persistent(business_database.clone()).await?,
+            invites: InviteRepository::persistent(business_database.clone()).await?,
             lotteries,
-            orders: OrderRepository::persistent(state_documents.clone()).await?,
-            rebates: RebateRepository::persistent(state_documents.clone()).await?,
-            robots: RobotRepository::persistent(state_documents.clone()).await?,
+            orders: OrderRepository::persistent(business_database.clone()).await?,
+            rebates: RebateRepository::persistent(business_database.clone()).await?,
+            robots: RobotRepository::persistent(business_database.clone()).await?,
             scheduler,
-            support: SupportRepository::persistent(state_documents).await?,
+            support: SupportRepository::persistent(business_database).await?,
         })
     }
 }

@@ -5,6 +5,7 @@ use std::{
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 use crate::{
     domain::{
@@ -18,14 +19,12 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::state_document::StateDocumentRepository;
-
-const SUPPORT_STATE_NAMESPACE: &str = "support";
+use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
 pub struct SupportRepository {
     inner: Arc<RwLock<SupportStore>>,
-    persistence: Option<StateDocumentRepository>,
+    persistence: Option<BusinessDatabase>,
 }
 
 impl SupportRepository {
@@ -36,10 +35,8 @@ impl SupportRepository {
         }
     }
 
-    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
-        let store = persistence
-            .load_or_seed(SUPPORT_STATE_NAMESPACE, SupportStore::seeded())
-            .await?;
+    pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
+        let store = load_support_store(&persistence).await?;
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
@@ -115,7 +112,7 @@ impl SupportRepository {
 
     async fn persist(&self, store: &SupportStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence.save(SUPPORT_STATE_NAMESPACE, store).await?;
+            save_support_store(persistence, store).await?;
         }
 
         Ok(())
@@ -125,6 +122,172 @@ impl SupportRepository {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct SupportStore {
     conversations: BTreeMap<String, SupportConversation>,
+}
+
+async fn load_support_store(database: &BusinessDatabase) -> ApiResult<SupportStore> {
+    let pool = database.pool();
+    let mut conversations = BTreeMap::new();
+
+    for row in sqlx::query(
+        "SELECT id, user_id, username, subject, status, priority, assigned_admin_id,
+                assigned_admin_name, unread_count, created_at, updated_at
+         FROM support_conversations
+         ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?;
+        let unread_count: i32 = row
+            .try_get("unread_count")
+            .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?;
+        conversations.insert(
+            id.clone(),
+            SupportConversation {
+                id,
+                user_id: row
+                    .try_get("user_id")
+                    .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
+                username: row
+                    .try_get("username")
+                    .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
+                subject: row
+                    .try_get("subject")
+                    .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
+                status: enum_from_string(
+                    row.try_get("status")
+                        .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
+                )?,
+                priority: enum_from_string(
+                    row.try_get("priority")
+                        .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
+                )?,
+                assigned_admin_id: row
+                    .try_get("assigned_admin_id")
+                    .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
+                assigned_admin_name: row
+                    .try_get("assigned_admin_name")
+                    .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
+                unread_count: u16::try_from(unread_count)
+                    .map_err(|_| ApiError::Internal("客服未读数量数据无效".to_string()))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
+                updated_at: row
+                    .try_get("updated_at")
+                    .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
+                messages: Vec::new(),
+            },
+        );
+    }
+
+    for row in sqlx::query(
+        "SELECT id, conversation_id, author, author_id, author_name, content, created_at
+         FROM support_messages
+         ORDER BY conversation_id ASC, id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?
+    {
+        let conversation_id: String = row
+            .try_get("conversation_id")
+            .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?;
+        if let Some(conversation) = conversations.get_mut(&conversation_id) {
+            conversation.messages.push(SupportMessage {
+                id: row
+                    .try_get("id")
+                    .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?,
+                author: enum_from_string(
+                    row.try_get("author")
+                        .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?,
+                )?,
+                author_id: row
+                    .try_get("author_id")
+                    .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?,
+                author_name: row
+                    .try_get("author_name")
+                    .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?,
+                content: row
+                    .try_get("content")
+                    .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?,
+            });
+        }
+    }
+
+    if conversations.is_empty() {
+        let seeded = SupportStore::seeded();
+        save_support_store(database, &seeded).await?;
+        return Ok(seeded);
+    }
+
+    Ok(SupportStore { conversations })
+}
+
+async fn save_support_store(database: &BusinessDatabase, store: &SupportStore) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("客服事务开启失败".to_string()))?;
+
+    for table in ["support_messages", "support_conversations"] {
+        sqlx::query(&format!("DELETE FROM {table}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("客服数据清理失败".to_string()))?;
+    }
+
+    for conversation in store.conversations.values() {
+        sqlx::query(
+            "INSERT INTO support_conversations
+             (id, user_id, username, subject, status, priority, assigned_admin_id,
+              assigned_admin_name, unread_count, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        )
+        .bind(&conversation.id)
+        .bind(&conversation.user_id)
+        .bind(&conversation.username)
+        .bind(&conversation.subject)
+        .bind(enum_to_string(&conversation.status)?)
+        .bind(enum_to_string(&conversation.priority)?)
+        .bind(&conversation.assigned_admin_id)
+        .bind(&conversation.assigned_admin_name)
+        .bind(i32::from(conversation.unread_count))
+        .bind(&conversation.created_at)
+        .bind(&conversation.updated_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("客服会话数据保存失败".to_string()))?;
+
+        for message in &conversation.messages {
+            sqlx::query(
+                "INSERT INTO support_messages
+                 (id, conversation_id, author, author_id, author_name, content, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            )
+            .bind(&message.id)
+            .bind(&conversation.id)
+            .bind(enum_to_string(&message.author)?)
+            .bind(&message.author_id)
+            .bind(&message.author_name)
+            .bind(&message.content)
+            .bind(&message.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("客服消息数据保存失败".to_string()))?;
+        }
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("客服事务提交失败".to_string()))
 }
 
 impl SupportStore {

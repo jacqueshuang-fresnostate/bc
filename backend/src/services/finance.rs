@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 use crate::{
     domain::{
@@ -18,14 +19,12 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::state_document::StateDocumentRepository;
-
-const FINANCE_STATE_NAMESPACE: &str = "finance";
+use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
 pub struct FinanceRepository {
     inner: Arc<RwLock<FinanceStore>>,
-    persistence: Option<StateDocumentRepository>,
+    persistence: Option<BusinessDatabase>,
 }
 
 impl FinanceRepository {
@@ -36,10 +35,8 @@ impl FinanceRepository {
         }
     }
 
-    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
-        let store = persistence
-            .load_or_seed(FINANCE_STATE_NAMESPACE, FinanceStore::seeded())
-            .await?;
+    pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
+        let store = load_finance_store(&persistence).await?;
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
@@ -141,7 +138,7 @@ impl FinanceRepository {
 
     async fn persist(&self, store: &FinanceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence.save(FINANCE_STATE_NAMESPACE, store).await?;
+            save_finance_store(persistence, store).await?;
         }
 
         Ok(())
@@ -153,6 +150,155 @@ struct FinanceStore {
     accounts: BTreeMap<String, FinancialAccountSummary>,
     ledger_entries: Vec<LedgerEntry>,
     next_sequence: u64,
+}
+
+async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceStore> {
+    let pool = database.pool();
+    let mut accounts = BTreeMap::new();
+    for row in sqlx::query(
+        "SELECT user_id, available_balance_minor, frozen_balance_minor
+         FROM financial_accounts
+         ORDER BY user_id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("资金账户数据读取失败".to_string()))?
+    {
+        let user_id: String = row
+            .try_get("user_id")
+            .map_err(|_| ApiError::Internal("资金账户数据读取失败".to_string()))?;
+        accounts.insert(
+            user_id.clone(),
+            FinancialAccountSummary {
+                user_id,
+                available_balance_minor: row
+                    .try_get("available_balance_minor")
+                    .map_err(|_| ApiError::Internal("资金账户数据读取失败".to_string()))?,
+                frozen_balance_minor: row
+                    .try_get("frozen_balance_minor")
+                    .map_err(|_| ApiError::Internal("资金账户数据读取失败".to_string()))?,
+            },
+        );
+    }
+
+    let mut ledger_entries = Vec::new();
+    for row in sqlx::query(
+        "SELECT id, user_id, kind, amount_minor, balance_after_minor, reference_id, description, created_at
+         FROM ledger_entries
+         ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?
+    {
+        ledger_entries.push(LedgerEntry {
+            id: row
+                .try_get("id")
+                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+            user_id: row
+                .try_get("user_id")
+                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+            kind: enum_from_string(
+                row.try_get("kind")
+                    .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+            )?,
+            amount_minor: row
+                .try_get("amount_minor")
+                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+            balance_after_minor: row
+                .try_get("balance_after_minor")
+                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+            reference_id: row
+                .try_get("reference_id")
+                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+            description: row
+                .try_get("description")
+                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+            created_at: row
+                .try_get("created_at")
+                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+        });
+    }
+
+    let next_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT value FROM finance_runtime WHERE key = 'next_sequence'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::Internal("资金运行数据读取失败".to_string()))?
+    .unwrap_or_default();
+
+    if accounts.is_empty() && ledger_entries.is_empty() {
+        let seeded = FinanceStore::seeded();
+        save_finance_store(database, &seeded).await?;
+        return Ok(seeded);
+    }
+
+    Ok(FinanceStore {
+        accounts,
+        ledger_entries,
+        next_sequence: u64::try_from(next_sequence).unwrap_or_default(),
+    })
+}
+
+async fn save_finance_store(database: &BusinessDatabase, store: &FinanceStore) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("资金事务开启失败".to_string()))?;
+
+    for table in ["ledger_entries", "financial_accounts", "finance_runtime"] {
+        sqlx::query(&format!("DELETE FROM {table}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("资金数据清理失败".to_string()))?;
+    }
+
+    for account in store.accounts.values() {
+        sqlx::query(
+            "INSERT INTO financial_accounts
+             (user_id, available_balance_minor, frozen_balance_minor)
+             VALUES ($1, $2, $3)",
+        )
+        .bind(&account.user_id)
+        .bind(account.available_balance_minor)
+        .bind(account.frozen_balance_minor)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("资金账户数据保存失败".to_string()))?;
+    }
+
+    for entry in &store.ledger_entries {
+        sqlx::query(
+            "INSERT INTO ledger_entries
+             (id, user_id, kind, amount_minor, balance_after_minor, reference_id, description, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(&entry.id)
+        .bind(&entry.user_id)
+        .bind(enum_to_string(&entry.kind)?)
+        .bind(entry.amount_minor)
+        .bind(entry.balance_after_minor)
+        .bind(&entry.reference_id)
+        .bind(&entry.description)
+        .bind(&entry.created_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("资金流水数据保存失败".to_string()))?;
+    }
+
+    let next_sequence = i64::try_from(store.next_sequence)
+        .map_err(|_| ApiError::Internal("资金流水序号过大".to_string()))?;
+    sqlx::query("INSERT INTO finance_runtime (key, value) VALUES ('next_sequence', $1)")
+        .bind(next_sequence)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("资金运行数据保存失败".to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("资金事务提交失败".to_string()))
 }
 
 impl FinanceStore {

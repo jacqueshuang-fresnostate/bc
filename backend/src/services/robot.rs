@@ -4,6 +4,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 use crate::{
     domain::{
@@ -13,14 +14,12 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::state_document::StateDocumentRepository;
-
-const ROBOT_STATE_NAMESPACE: &str = "robots";
+use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
 pub struct RobotRepository {
     inner: Arc<RwLock<RobotStore>>,
-    persistence: Option<StateDocumentRepository>,
+    persistence: Option<BusinessDatabase>,
 }
 
 impl RobotRepository {
@@ -31,10 +30,8 @@ impl RobotRepository {
         }
     }
 
-    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
-        let store = persistence
-            .load_or_seed(ROBOT_STATE_NAMESPACE, RobotStore::seeded())
-            .await?;
+    pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
+        let store = load_robot_store(&persistence).await?;
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
@@ -118,7 +115,7 @@ impl RobotRepository {
 
     async fn persist(&self, store: &RobotStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            persistence.save(ROBOT_STATE_NAMESPACE, store).await?;
+            save_robot_store(persistence, store).await?;
         }
 
         Ok(())
@@ -128,6 +125,121 @@ impl RobotRepository {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct RobotStore {
     robots: BTreeMap<String, RobotConfigSummary>,
+}
+
+async fn load_robot_store(database: &BusinessDatabase) -> ApiResult<RobotStore> {
+    let pool = database.pool();
+    let mut lottery_bindings = BTreeMap::<String, Vec<String>>::new();
+    for row in sqlx::query(
+        "SELECT robot_id, lottery_id
+         FROM robot_lottery_bindings
+         ORDER BY robot_id ASC, lottery_id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("机器人彩种绑定数据读取失败".to_string()))?
+    {
+        let robot_id: String = row
+            .try_get("robot_id")
+            .map_err(|_| ApiError::Internal("机器人彩种绑定数据读取失败".to_string()))?;
+        let lottery_id: String = row
+            .try_get("lottery_id")
+            .map_err(|_| ApiError::Internal("机器人彩种绑定数据读取失败".to_string()))?;
+        lottery_bindings
+            .entry(robot_id)
+            .or_default()
+            .push(lottery_id);
+    }
+
+    let mut robots = BTreeMap::new();
+    for row in sqlx::query(
+        "SELECT id, name, kind, status, description
+         FROM robot_configs
+         ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?
+    {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?;
+        robots.insert(
+            id.clone(),
+            RobotConfigSummary {
+                id: id.clone(),
+                name: row
+                    .try_get("name")
+                    .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?,
+                kind: enum_from_string(
+                    row.try_get("kind")
+                        .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?,
+                )?,
+                lottery_ids: lottery_bindings.remove(&id).unwrap_or_default(),
+                status: enum_from_string(
+                    row.try_get("status")
+                        .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?,
+                )?,
+                description: row
+                    .try_get("description")
+                    .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?,
+            },
+        );
+    }
+
+    if robots.is_empty() {
+        let seeded = RobotStore::seeded();
+        save_robot_store(database, &seeded).await?;
+        return Ok(seeded);
+    }
+
+    Ok(RobotStore { robots })
+}
+
+async fn save_robot_store(database: &BusinessDatabase, store: &RobotStore) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("机器人事务开启失败".to_string()))?;
+
+    for table in ["robot_lottery_bindings", "robot_configs"] {
+        sqlx::query(&format!("DELETE FROM {table}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("机器人数据清理失败".to_string()))?;
+    }
+
+    for robot in store.robots.values() {
+        sqlx::query(
+            "INSERT INTO robot_configs (id, name, kind, status, description)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(&robot.id)
+        .bind(&robot.name)
+        .bind(enum_to_string(&robot.kind)?)
+        .bind(enum_to_string(&robot.status)?)
+        .bind(&robot.description)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("机器人配置数据保存失败".to_string()))?;
+
+        for lottery_id in &robot.lottery_ids {
+            sqlx::query(
+                "INSERT INTO robot_lottery_bindings (robot_id, lottery_id)
+                 VALUES ($1, $2)",
+            )
+            .bind(&robot.id)
+            .bind(lottery_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("机器人彩种绑定数据保存失败".to_string()))?;
+        }
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("机器人事务提交失败".to_string()))
 }
 
 impl RobotStore {
