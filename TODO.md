@@ -1,5 +1,15 @@
 # TODO
 
+## 2026-06-03 23:46 HKT SQL 字段注释补齐
+
+- 完成任务：为数据库迁移 SQL 全量补齐字段级注释，并整理为新迁移 `backend/migrations/20260603234000_add_all_column_comments.sql`。
+- 解决问题：项目中历史迁移新增的多个表及字段未统一注释，维护排查数据库时无法快速识别字段语义。
+- 技术说明：
+  - 读取全部建表迁移 `20260602150315_create_lotteries.sql`、`20260602165000_add_lottery_play_configs.sql`、`20260603143000_create_state_documents.sql`、`20260603152000_create_business_tables.sql`、`20260603180500_add_scheduler_skip_details.sql`。
+  - 逐表逐字段补齐 `COMMENT ON TABLE` 与 `COMMENT ON COLUMN`，覆盖彩种、开奖、订单、财务、管理员、客服、调度、合买、机器人等核心表。
+  - 补充已存在约束的字段级说明：如 `lotteries`、`registration_config`、`rebate_policy`、`draw_scheduler_config` 的检查约束。
+- 当前状态：脚本已重写为纯 `COMMENT ON` 语法，移除重复与非法语句；待执行数据库迁移时将一次性同步注释信息。
+
 ## 2026-06-03 21:46 HKT 后台方法注释具体化
 
 - 完成任务：把后端 `backend/src` 的公共方法注释从占位语句统一改为“具体做什么”的中文说明。
