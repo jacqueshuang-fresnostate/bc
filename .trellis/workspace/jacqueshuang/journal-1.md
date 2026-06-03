@@ -1224,3 +1224,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 36: Docker 单镜像打包与 GitHub 上传
+
+**Date**: 2026-06-03
+**Task**: Docker 单镜像打包与 GitHub 上传
+**Branch**: `main`
+
+### Summary
+
+新增前后端同项目 Docker 单镜像部署方案，使用 Nginx 服务管理后台并反向代理后端 API；补充中文部署说明和容器部署 code-spec；完成本地质量检查、Docker 构建和临时容器健康检查。GitHub 上传等待配置远端仓库。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d33c04a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
