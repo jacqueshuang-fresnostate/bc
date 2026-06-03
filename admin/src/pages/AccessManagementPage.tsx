@@ -50,6 +50,12 @@ interface UserFormState {
   username: string;
 }
 
+interface SystemSettingItem {
+  description: string;
+  key: string;
+  value: string;
+}
+
 interface AdminFormState {
   id: string;
   password: string;
@@ -980,6 +986,19 @@ function SettingsSection({
     Boolean(imageBedUploadUrl.trim()) &&
     Boolean(imageBedUploadToken.trim()) &&
     Boolean(imageBedFile);
+  const [settingKeyword, setSettingKeyword] = useState('');
+
+  const filteredSettings = settings.filter((setting) => {
+    const keyword = settingKeyword.trim().toLowerCase();
+    if (!keyword) {
+      return true;
+    }
+    return (
+      setting.key.toLowerCase().includes(keyword) ||
+      setting.description.toLowerCase().includes(keyword)
+    );
+  });
+  const groupedSettings = settingsGroups(filteredSettings);
 
   const onTestImageBedUpload = async () => {
     if (!imageBedFile) {
@@ -1009,43 +1028,67 @@ function SettingsSection({
           <h2 className="text-base font-semibold text-ink">系统设置</h2>
           <Tag color="cyan">{settings.length} 项</Tag>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left text-sm">
-            <thead className="border-b border-line text-xs text-slate-500">
-              <tr>
-                <th className="py-2 pr-4 font-medium">配置</th>
-                <th className="py-2 pr-4 font-medium">值</th>
-                <th className="py-2 pr-4 font-medium">说明</th>
-                <th className="py-2 pr-4 font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {settings.map((setting) => (
-                <tr key={setting.key} className="border-b border-slate-100">
-                  <td className="py-3 pr-4 font-semibold text-ink">{setting.key}</td>
-                  <td className="py-3 pr-4">
+        <div className="mb-3">
+          <input
+            className="form-input"
+            placeholder="搜索配置项 / 说明"
+            value={settingKeyword}
+            onChange={(event) => setSettingKeyword(event.target.value)}
+          />
+        </div>
+        <div className="space-y-3">
+          {groupedSettings.length === 0 ? (
+            <div className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+              未找到匹配的系统配置项，可清空关键字后重试。
+            </div>
+          ) : (
+            groupedSettings.map(([groupName, items]) => (
+            <div
+              key={groupName}
+              className="rounded-lg border border-slate-200 bg-white p-3"
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-sm font-medium text-slate-700">{groupName}</h3>
+                <Tag color="grey">{items.length} 项</Tag>
+              </div>
+              <div className="space-y-3">
+                {items.map((setting) => (
+                  <div
+                    key={setting.key}
+                    className="grid gap-2 rounded border border-slate-100 p-2"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-ink">
+                          {setting.key}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {setting.description}
+                        </p>
+                      </div>
+                      <div>
+                        <Button
+                          disabled={saving}
+                          size="small"
+                          onClick={() => onSaveSetting(setting.key)}
+                        >
+                          保存
+                        </Button>
+                      </div>
+                    </div>
                     <input
-                      className="form-input min-w-40"
+                      className="form-input"
                       value={drafts[setting.key] ?? setting.value}
                       onChange={(event) =>
                         onDraftChange(setting.key, event.target.value)
                       }
                     />
-                  </td>
-                  <td className="py-3 pr-4 text-slate-600">{setting.description}</td>
-                  <td className="py-3 pr-4">
-                    <Button
-                      disabled={saving}
-                      size="small"
-                      onClick={() => onSaveSetting(setting.key)}
-                    >
-                      保存
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                ))}
+              </div>
+            </div>
+            ))
+          )}
         </div>
       </Card>
 
@@ -1185,6 +1228,39 @@ function Field({ children, label }: { children: ReactNode; label: string }) {
       {children}
     </label>
   );
+}
+
+function settingGroupName(key: string): string {
+  if (key.startsWith('image_bed_')) {
+    return '图床设置';
+  }
+  if (key.includes('email') || key.includes('registration')) {
+    return '注册与安全';
+  }
+  if (key.includes('recharge') || key.includes('rebate')) {
+    return '返利设置';
+  }
+  return '基础设置';
+}
+
+function settingsGroups(
+  settings: SystemSettingItem[],
+): Array<[string, SystemSettingItem[]]> {
+  const groups = new Map<string, SystemSettingItem[]>();
+  for (const setting of settings) {
+    const name = settingGroupName(setting.key);
+    const list = groups.get(name);
+    if (list) {
+      list.push(setting);
+    } else {
+      groups.set(name, [setting]);
+    }
+  }
+
+  const priority = ['图床设置', '注册与安全', '返利设置', '基础设置'];
+  return priority
+    .filter((name) => (groups.get(name)?.length ?? 0) > 0)
+    .map((name) => [name, groups.get(name) ?? []]);
 }
 
 function ToggleRow({
