@@ -475,6 +475,28 @@ impl AccessRepository {
             .map(|store| store.settings())
     }
 
+    /// 读取单个系统设置项，按 key 返回完整信息。
+    pub async fn get_setting(&self, key: &str) -> ApiResult<SystemSetting> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .setting(key)
+    }
+
+    /// 读取单个系统设置项的值文本。
+    pub async fn setting_value(&self, key: &str) -> ApiResult<String> {
+        Ok(self.get_setting(key).await?.value)
+    }
+
+    /// 读取单个系统设置项的值文本，不存在时返回 None。
+    pub async fn setting_value_optional(&self, key: &str) -> ApiResult<Option<String>> {
+        match self.get_setting(key).await {
+            Ok(setting) => Ok(Some(setting.value)),
+            Err(ApiError::NotFound(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     /// 更新系统设置项。
     pub async fn update_setting(
         &self,
@@ -846,6 +868,8 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
         );
     }
 
+    let _has_missing_settings = fill_missing_system_settings(&mut settings);
+
     let registration = sqlx::query(
         "SELECT username_enabled, email_enabled, agent_invite_required
          FROM registration_config
@@ -905,7 +929,7 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
         return Ok(seeded);
     }
 
-    Ok(AccessStore {
+    let access_store = AccessStore {
         users: users.clone(),
         admins,
         admin_password_hashes,
@@ -924,7 +948,14 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
             next_user_id_from_users(&users)
         },
         registration,
-    })
+    };
+
+    if !_has_missing_settings {
+        return Ok(access_store);
+    }
+
+    save_access_store(database, &access_store).await?;
+    Ok(access_store)
 }
 
 async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> ApiResult<()> {
@@ -1825,6 +1856,14 @@ impl AccessStore {
         self.settings.values().cloned().collect()
     }
 
+    /// 处理 setting 的具体内部流程。
+    fn setting(&self, key: &str) -> ApiResult<SystemSetting> {
+        self.settings
+            .get(key)
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound(format!("setting `{key}` not found")))
+    }
+
     /// 处理 update_setting 的具体内部流程。
     fn update_setting(
         &mut self,
@@ -2317,11 +2356,39 @@ fn seed_settings() -> Vec<SystemSetting> {
             description: "是否开启邮箱注册".to_string(),
         },
         SystemSetting {
+            key: "image_bed_upload_url".to_string(),
+            value: "https://oss.moonight.cc.cd/api/v1/upload".to_string(),
+            description: "图床上传接口地址".to_string(),
+        },
+        SystemSetting {
+            key: "image_bed_authorization_token".to_string(),
+            value: "kvault_5qBXczZB0h2v_BGjpUgMAKfhAazZNhDL2bD1uXQ3Cr9zrdJp9scEZ".to_string(),
+            description: "图床请求 Authorization Token（不含 Bearer 前缀）".to_string(),
+        },
+        SystemSetting {
+            key: "image_bed_upload_field".to_string(),
+            value: "file".to_string(),
+            description: "图床上传字段名".to_string(),
+        },
+        SystemSetting {
             key: "recharge_rebate_mode".to_string(),
             value: "immediate".to_string(),
             description: "代理充值返利模式".to_string(),
         },
     ]
+}
+
+fn fill_missing_system_settings(settings: &mut BTreeMap<String, SystemSetting>) -> bool {
+    let mut changed = false;
+
+    for setting in seed_settings() {
+        if !settings.contains_key(&setting.key) {
+            settings.insert(setting.key.clone(), setting);
+            changed = true;
+        }
+    }
+
+    changed
 }
 
 #[cfg(test)]

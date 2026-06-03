@@ -1,5 +1,25 @@
 # TODO
 
+## 2026-06-04 22:12 HKT 图床上传接口配置能力补齐
+
+- 完成任务：新增管理员后台可配置图床上传接口能力，并提供服务端统一代理接口 `POST /api/admin/image-bed/upload`，将前端上传文件转发到数据库配置的第三方图床。
+- 解决问题：图床地址/Token/字段名此前写死在环境里，不够可运维；后续更换供应商或账户时不能即时调整，且上传逻辑与权限链路也缺失。
+- 技术实现：
+  - 后端：
+    - `backend/src/services/access.rs` 在系统设置种子中新增三项图床配置：`image_bed_upload_url`、`image_bed_authorization_token`、`image_bed_upload_field`，并在初始化时自动补齐缺失项。
+    - `backend/src/services/access.rs` 新增 `get_setting/setting_value/setting_value_optional`，便于按 key 读取运行时配置。
+    - `backend/src/routes/admin.rs` 新增常量与路由 `POST /api/admin/image-bed/upload`，并接入 `SystemSettings` 权限；处理 `multipart/form-data` 文件字段、按配置构建上游请求头（`Authorization: Bearer <token>`）与表单字段名后透传响应。
+    - `backend/src/routes/admin.rs` 测试中补充 `image-bed/upload` 对应的权限映射断言。
+    - `backend/Cargo.toml` 开启 `axum` 的 `multipart` 与 `reqwest` 的 `multipart` 特性。
+  - 配置默认值：
+    - 上传地址默认 `https://oss.moonight.cc.cd/api/v1/upload`
+    - 上传字段默认 `file`
+    - Token 默认按你提供的示例值预填（仅示例示范，可在系统设置中更新）。
+- 验证结果：
+  - `cargo check -q` 通过。
+  - `cargo test -q` 通过（144/144）。
+  - `cd admin && npm run build` 通过。
+
 ## 2026-06-04 11:20 HKT 用户资金流水接口补齐
 
 - 完成任务：补齐用户端“资金流水列表”接口，新增 `GET /api/user/ledger-entries`，用于查询当前登录用户的资金流水。

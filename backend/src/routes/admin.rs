@@ -1,7 +1,7 @@
 //! 管理后台 API 路由总控，汇总和注册所有后台接口
 
 use axum::{
-    extract::{Path, Query, Request, State},
+    extract::{Multipart, Path, Query, Request, State},
     http::header::AUTHORIZATION,
     middleware::{self, Next},
     response::Response,
@@ -10,6 +10,7 @@ use axum::{
 };
 use chrono::Local;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::{
     app::AppState,
@@ -61,6 +62,10 @@ use crate::{
 };
 
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+const IMAGE_BED_UPLOAD_URL_SETTING: &str = "image_bed_upload_url";
+const IMAGE_BED_AUTHORIZATION_TOKEN_SETTING: &str = "image_bed_authorization_token";
+const IMAGE_BED_UPLOAD_FIELD_SETTING: &str = "image_bed_upload_field";
+const IMAGE_BED_UPLOAD_FIELD_DEFAULT: &str = "file";
 
 /// 组装并返回当前模块对应的路由树。
 pub fn router(state: AppState) -> Router<AppState> {
@@ -115,6 +120,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/system-settings", get(list_system_settings))
         .route("/system-settings/{key}", patch(update_system_setting))
+        .route("/image-bed/upload", post(upload_image_bed_file))
         .route(
             "/registration",
             get(get_registration_config).put(update_registration_config),
@@ -244,6 +250,9 @@ fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
         return Some(PermissionScope::Roles);
     }
     if path.starts_with("system-settings") {
+        return Some(PermissionScope::SystemSettings);
+    }
+    if path.starts_with("image-bed") {
         return Some(PermissionScope::SystemSettings);
     }
     if path.starts_with("orders") || path.starts_with("settlements") {
@@ -915,6 +924,101 @@ async fn update_system_setting(
     Ok(Json(ApiEnvelope::success(setting)))
 }
 
+/// 处理管理员图片上传请求：读取图床配置后透传 multipart 文件到第三方服务。
+async fn upload_image_bed_file(
+    State(state): State<AppState>,
+    mut payload: Multipart,
+) -> ApiResult<Json<ApiEnvelope<Value>>> {
+    let upload_url = state
+        .access
+        .setting_value(IMAGE_BED_UPLOAD_URL_SETTING)
+        .await?
+        .trim()
+        .to_string();
+    if upload_url.is_empty() {
+        return Err(ApiError::BadRequest("图床上传接口地址未配置".to_string()));
+    }
+
+    let authorization_token = state
+        .access
+        .setting_value(IMAGE_BED_AUTHORIZATION_TOKEN_SETTING)
+        .await?
+        .trim()
+        .to_string();
+    if authorization_token.is_empty() {
+        return Err(ApiError::BadRequest("图床上传 Token 未配置".to_string()));
+    }
+
+    let upload_field = state
+        .access
+        .setting_value_optional(IMAGE_BED_UPLOAD_FIELD_SETTING)
+        .await?
+        .unwrap_or_else(|| IMAGE_BED_UPLOAD_FIELD_DEFAULT.to_string())
+        .trim()
+        .to_string();
+
+    let mut upload_part = None;
+    while let Some(field) = payload
+        .next_field()
+        .await
+        .map_err(|_| ApiError::BadRequest("上传内容解析失败".to_string()))?
+    {
+        if field.name() == Some(upload_field.as_str()) {
+            let file_name = field.file_name().unwrap_or("upload.bin").to_string();
+            let content_type: Option<String> =
+                field.content_type().map(std::string::ToString::to_string);
+            let bytes = field
+                .bytes()
+                .await
+                .map_err(|_| ApiError::BadRequest("读取上传文件内容失败".to_string()))?
+                .to_vec();
+
+            let mut part = reqwest::multipart::Part::bytes(bytes).file_name(file_name);
+            if let Some(content_type) = content_type {
+                part = part
+                    .mime_str(&content_type)
+                    .map_err(|_| ApiError::BadRequest("文件类型格式异常".to_string()))?;
+            }
+
+            upload_part = Some(part);
+            break;
+        }
+    }
+
+    let Some(part) = upload_part else {
+        return Err(ApiError::BadRequest("未检测到图片文件字段".to_string()));
+    };
+
+    let form = reqwest::multipart::Form::new().part(upload_field, part);
+    let response = reqwest::Client::new()
+        .post(upload_url)
+        .header("Authorization", format!("Bearer {authorization_token}"))
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|_| ApiError::Internal("图床请求发送失败".to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let message = response
+            .text()
+            .await
+            .map_err(|_| ApiError::Internal("图床响应读取失败".to_string()))?;
+        return Err(ApiError::Internal(format!(
+            "图床服务返回失败：HTTP {status}，响应内容 {message}"
+        )));
+    }
+
+    let response_body = response
+        .text()
+        .await
+        .map_err(|_| ApiError::Internal("图床响应读取失败".to_string()))?;
+    let response_body = serde_json::from_str::<Value>(&response_body)
+        .unwrap_or_else(|_| Value::String(response_body));
+
+    Ok(Json(ApiEnvelope::success(response_body)))
+}
+
 async fn get_registration_config(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<RegistrationConfig>>> {
@@ -1229,6 +1333,10 @@ mod tests {
         assert_eq!(
             required_scope_for_path("/draw-issues"),
             Some(PermissionScope::Lotteries)
+        );
+        assert_eq!(
+            required_scope_for_path("/image-bed/upload"),
+            Some(PermissionScope::SystemSettings)
         );
         assert_eq!(
             required_scope_for_path("/settlements"),
