@@ -1,3 +1,5 @@
+//! 开奖期号与开奖控制领域模型，定义状态与开奖请求参数
+
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
@@ -96,6 +98,16 @@ pub struct DrawIssue {
     pub draw_number: Option<String>,
     pub drawn_at: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DrawIssuePage {
+    pub items: Vec<DrawIssue>,
+    pub total_count: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub total_pages: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

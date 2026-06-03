@@ -1,5 +1,28 @@
 # TODO
 
+## 2026-06-03 期号列表分页支持
+
+- 完成任务：为“开奖期号与开奖源”页的期号管理补齐分页能力，支持按彩种筛选后保留分页查询，并显示总期号数。
+- 解决问题：在期号量较大时页面列表无分页导致加载缓慢和查找效率低；分页参数未落入持久化查询，调度刷新后也缺少总量与页码展示。
+- 技术说明：
+  - 后端 `GET /api/admin/draw-issues` 新增分页响应 `DrawIssuePage`，返回 `items/totalCount/page/pageSize/totalPages`。
+  - `DrawIssueListQuery` 增加 `page/pageSize`，并在查询参数均未提供时默认返回全部期号（为兼容历史全量调用）。
+  - 前端 `admin/src/types/draws.ts` 增加分页类型，`admin/src/api/client.ts` 支持 `page/pageSize` 查询。
+  - `admin/src/hooks/useDraws.ts` 解析分页响应并暴露 `issuePage/pageSize/totalCount/totalPages`，`LotteryConsole` 与非期号管理页面继续使用 `items` 进行展示。
+  - `admin/src/pages/DrawManagementPage.tsx` 增加分页状态、每页条数选择、上一页/下一页及总数展示，并在筛选彩种变更时回退到第一页。
+- 验证记录：`admin` 执行 `npm run build`、`backend` 执行 `cargo check`、`cargo test`，均通过。
+- 后续动作：后续可补充“状态字段筛选 + 跳转指定页码 + 分页参数在 URL 同步”，当前先完成基础分页交互。
+
+## 2026-06-03 20:56 HKT 彩种控制台最近开奖号码显示修复
+
+- 完成任务：修复彩种控制台“最近开奖未刷新”表现异常。调整了期号列表聚合规则，`currentIssue` 不再固定取最早 `closed` 期号，而是按“open → 最新 closed → 最新 drawn → 最新 cancelled”顺序回退；并把“开奖号码显示”从“当前期有号码就优先”改为“仅当当前期状态是 `drawn` 且有号码时才标记为本期号码”，否则使用“最近开奖号码”。
+- 解决问题：修复后开奖后控制台不会再被历史一期锁死显示，`最近开奖`会实时跟随最新开奖数据更新，避免误判为调度停摆。
+- 技术说明：
+  - `admin/src/pages/LotteryConsolePage.tsx` 中 `lotteryConsoleItem` 增加按状态分组与时间倒序取最新期号逻辑。
+  - 新增 `pickLatestIssue` 辅助函数，避免旧期号（按升序选择）误占“当前期”展示位。
+  - `LotteryConsoleCard` 增加 `currentIssueDrawNumber` 判断，明确区分“本期开奖号码”与“最近开奖号码”来源。
+  - `admin/src/hooks/useLotteryConsole.ts` 新增页面可见和窗口聚焦后自动触发一次刷新，减少“开奖后等待轮询周期”造成的感知延迟。
+- 验证记录：执行 `cd admin && npm run build`，TypeScript 与前端打包通过，未出现编译或打包错误。
 
 ## 2026-06-03 23:05 HKT API开售自动对齐期号与时间
 
@@ -39,6 +62,13 @@
 - 技术说明：在 `backend/src` 的所有 `.rs` 文件顶部新增 `//!` 中文模块说明，覆盖 `app/main/routes/domain/services` 与其子模块；并针对 `routes/mod.rs`、`services/mod.rs`、`domain/mod.rs` 修正为准确模块聚合职责。
 - 影响范围：后端代码可读性、交接和后续维护。
 - 后续动作：继续补充函数级中文注释（如关键公共方法、复杂条件分支），按页面对接状态逐步补齐到“每个逻辑点都可直接读懂”。
+
+## 2026-06-03 20:49 HKT 开奖调度器执行日志中文化
+
+- 完成任务：将常驻调度执行成功日志中的英文统计字段（如 `now`、`closed_issues`、`drawn_issues`）统一替换为中文字段名（如“当前时间”“封盘期数”“开奖期数”）。
+- 解决问题：日志平台可读性不一致，运维在中文场景下难以快速识别调度结果；现在将 `INFO` 摘要日志改为中文键值，便于一眼判断一轮执行效果。
+- 技术说明：`backend/src/services/scheduler.rs` 的 `tracing::info!` 已将结构化字段重命名为中文标签；字段值来源与原有统计逻辑一致。
+- 验证记录：`cargo fmt --check`、`cargo test -q`（138 个测试）均通过。
 
 ## 2026-06-03 20:12 HKT 开奖等待原因可视化与控制台当前期修正
 

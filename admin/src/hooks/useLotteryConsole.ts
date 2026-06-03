@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   fetchDrawIssues,
+  fetchDrawSchedulerStatus,
   fetchLotteries,
   fetchLotteryDrawControls,
   saveLotteryDrawControl,
@@ -11,11 +12,14 @@ import type {
   LotteryDrawControl,
   SaveLotteryDrawControlRequest,
 } from '../types/draws';
+import type { DrawSchedulerStatus } from '../types/scheduler';
 
 export function useLotteryConsole(pollIntervalMs = 10_000) {
   const [lotteries, setLotteries] = useState<LotteryKind[]>([]);
   const [issues, setIssues] = useState<DrawIssue[]>([]);
   const [drawControls, setDrawControls] = useState<LotteryDrawControl[]>([]);
+  const [schedulerStatus, setSchedulerStatus] =
+    useState<DrawSchedulerStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -34,11 +38,13 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
       fetchLotteries(controller.signal),
       fetchDrawIssues(controller.signal),
       fetchLotteryDrawControls(controller.signal),
+      fetchDrawSchedulerStatus(controller.signal),
     ])
-      .then(([lotteryList, drawIssues, controls]) => {
+      .then(([lotteryList, drawIssuePage, controls, scheduler]) => {
         setLotteries(lotteryList);
-        setIssues(drawIssues);
+        setIssues(drawIssuePage.items);
         setDrawControls(controls);
+        setSchedulerStatus(scheduler);
       })
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) {
@@ -67,6 +73,25 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
     };
   }, [pollIntervalMs, refresh]);
 
+  useEffect(() => {
+    const onWindowFocus = () => {
+      refresh();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refresh();
+      }
+    };
+
+    window.addEventListener('focus', onWindowFocus);
+    window.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', onWindowFocus);
+      window.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [refresh]);
+
   const saveDrawControl = useCallback(
     async (lotteryId: string, payload: SaveLotteryDrawControlRequest) => {
       const saved = await saveLotteryDrawControl(lotteryId, payload);
@@ -91,6 +116,7 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
     loading,
     lotteries,
     refresh,
+    schedulerStatus,
     saveDrawControl,
   };
 }

@@ -132,7 +132,10 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     previewGeneration,
     refresh: refreshDraws,
     refreshWithFilter,
+    issuePage,
     runAutomation,
+    totalCount: issueTotalCount,
+    totalPages: issueTotalPages,
     saving,
     updateSource,
   } = useDraws();
@@ -170,6 +173,8 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   const [sourceSheetVisible, setSourceSheetVisible] = useState(false);
   const [schedulerSheetVisible, setSchedulerSheetVisible] = useState(false);
   const [issueLotteryFilter, setIssueLotteryFilter] = useState('');
+  const [issueCurrentPage, setIssueCurrentPage] = useState(1);
+  const [issueCurrentPageSize, setIssueCurrentPageSize] = useState(20);
 
   const selectedLottery = useMemo(
     () => lotteries.find((lottery) => lottery.id === form.lotteryId) ?? lotteries[0] ?? null,
@@ -204,6 +209,14 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
       handleIssueLotteryFilterChange('');
     }
   }, [issueLotteryFilter, lotteries]);
+
+  useEffect(() => {
+    refreshWithFilter({
+      lotteryId: issueLotteryFilter || undefined,
+      page: issueCurrentPage,
+      pageSize: issueCurrentPageSize,
+    });
+  }, [issueCurrentPage, issueCurrentPageSize, issueLotteryFilter, refreshWithFilter]);
 
   useEffect(() => {
     if (schedulerStatus) {
@@ -248,7 +261,17 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
 
   const handleIssueLotteryFilterChange = (lotteryId: string) => {
     setIssueLotteryFilter(lotteryId);
-    refreshWithFilter(lotteryId ? { lotteryId } : undefined);
+    setIssueCurrentPage(1);
+  };
+
+  const handleIssuePageChange = (nextPage: number) => {
+    const safeNextPage = Math.max(1, Math.min(nextPage, issueTotalPages || 1));
+    setIssueCurrentPage(safeNextPage);
+  };
+
+  const handleIssuePageSizeChange = (nextPageSize: number) => {
+    setIssueCurrentPage(1);
+    setIssueCurrentPageSize(nextPageSize);
   };
 
   const refreshAll = () => {
@@ -452,7 +475,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
         <MetricCard
           label="期号总数"
           trend={`${overview.openCount} 个销售中，${overview.closedCount} 个已封盘`}
-          value={`${issues.length}`}
+          value={`${issueTotalCount}`}
         />
         <MetricCard
           label="待开奖"
@@ -484,6 +507,12 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
           saving={saving}
           selectedIssue={selectedIssue}
           onIssueLotteryFilterChange={handleIssueLotteryFilterChange}
+          onIssuePageChange={handleIssuePageChange}
+          onIssuePageSizeChange={handleIssuePageSizeChange}
+          page={issuePage}
+          pageSize={issueCurrentPageSize}
+          totalCount={issueTotalCount}
+          totalPages={issueTotalPages}
           onCancelIssue={(issue) => void cancelIssue(issue)}
           onCloseIssue={(issue) => void closeIssue(issue)}
           onCreateIssue={() => setCreateIssueSheetVisible(true)}
@@ -621,9 +650,15 @@ function IssueManagementSection({
   loading,
   lotteryFilter,
   lotteryFilterOptions,
+  page,
+  pageSize,
+  totalCount,
+  totalPages,
   onCancelIssue,
   onCloseIssue,
   onCreateIssue,
+  onIssuePageChange,
+  onIssuePageSizeChange,
   onOpenDraw,
   onIssueLotteryFilterChange,
   onSelectIssue,
@@ -634,9 +669,15 @@ function IssueManagementSection({
   loading: boolean;
   lotteryFilter: string;
   lotteryFilterOptions: Array<{ value: string; label: string }>;
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
   onCancelIssue: (issue: DrawIssue) => void;
   onCloseIssue: (issue: DrawIssue) => void;
   onCreateIssue: () => void;
+  onIssuePageChange: (page: number) => void;
+  onIssuePageSizeChange: (pageSize: number) => void;
   onOpenDraw: (issue: DrawIssue) => void;
   onIssueLotteryFilterChange: (lotteryId: string) => void;
   onSelectIssue: (id: string) => void;
@@ -653,7 +694,7 @@ function IssueManagementSection({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Tag color="cyan">{issues.length} 个期号</Tag>
+          <Tag color="cyan">{totalCount} 个期号</Tag>
           <select
             className="form-input min-w-[220px]"
             value={lotteryFilter}
@@ -666,6 +707,40 @@ function IssueManagementSection({
               </option>
             ))}
           </select>
+          <label className="text-xs text-slate-500">
+            每页
+            <select
+              className="ml-1 form-input min-w-[90px]"
+              value={pageSize}
+              onChange={(event) => onIssuePageSizeChange(Number(event.target.value))}
+            >
+              {[10, 20, 50, 100].map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+            条
+          </label>
+          <div className="flex items-center gap-2 text-xs">
+            <Button
+              size="small"
+              disabled={loading || page <= 1 || totalPages === 0}
+              onClick={() => onIssuePageChange(page - 1)}
+            >
+              上一页
+            </Button>
+            <span>
+              第 {totalPages === 0 ? 0 : page} / {totalPages} 页
+            </span>
+            <Button
+              size="small"
+              disabled={loading || page >= totalPages || totalPages === 0}
+              onClick={() => onIssuePageChange(page + 1)}
+            >
+              下一页
+            </Button>
+          </div>
           <Button icon={<Plus size={16} />} theme="solid" onClick={onCreateIssue}>
             创建期号
           </Button>

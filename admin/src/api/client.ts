@@ -27,6 +27,7 @@ import type {
   DrawAutomationRun,
   DrawAutomationRunRequest,
   DrawIssue,
+  DrawIssuePage,
   DrawIssueQuery,
   DrawIssueGenerationPreview,
   DrawIssueResultRequest,
@@ -490,12 +491,18 @@ export function fetchDrawIssues(signal?: AbortSignal, query?: DrawIssueQuery) {
   if (query?.lotteryId) {
     params.set('lotteryId', query.lotteryId);
   }
+  if (query?.page && query.page > 0) {
+    params.set('page', String(query.page));
+  }
+  if (query?.pageSize && query.pageSize > 0) {
+    params.set('pageSize', String(query.pageSize));
+  }
 
   const path = params.toString()
     ? `/api/admin/draw-issues?${params.toString()}`
     : '/api/admin/draw-issues';
 
-  return requestJson<DrawIssue[]>(path, { signal });
+  return requestJson<DrawIssuePage>(path, { signal });
 }
 
 export function fetchLotteryDrawControls(signal?: AbortSignal) {

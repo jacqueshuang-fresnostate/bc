@@ -17,7 +17,7 @@ use crate::{
         auth::{AdminAuthSession, AdminLoginRequest, AdminLogoutResponse, CurrentAdminProfile},
         draw::{
             CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest, DrawIssue,
-            DrawIssueGenerationPreview, DrawIssueResultRequest, DrawIssueStatus,
+            DrawIssueGenerationPreview, DrawIssuePage, DrawIssueResultRequest, DrawIssueStatus,
             GenerateDrawIssueRequest, GenerateDrawIssuesRequest, LotteryDrawControl,
             SaveLotteryDrawControlRequest,
         },
@@ -408,7 +408,7 @@ async fn save_lottery_draw_control(
 async fn list_draw_issues(
     State(state): State<AppState>,
     Query(query): Query<DrawIssueListQuery>,
-) -> ApiResult<Json<ApiEnvelope<Vec<DrawIssue>>>> {
+) -> ApiResult<Json<ApiEnvelope<DrawIssuePage>>> {
     let issues = if let Some(lottery_id) = query.lottery_id {
         let lottery_id = lottery_id.trim().to_string();
         if lottery_id.is_empty() {
@@ -420,13 +420,43 @@ async fn list_draw_issues(
         state.draws.list().await?
     };
 
-    Ok(Json(ApiEnvelope::success(issues)))
+    let total_count = issues.len();
+    let (page, page_size, start, end) = if query.page.is_none() && query.page_size.is_none() {
+        (1usize, total_count.max(1), 0usize, total_count)
+    } else {
+        let page_size = query.page_size.unwrap_or(20).max(1);
+        let max_page = if total_count == 0 {
+            1
+        } else {
+            total_count.div_ceil(page_size)
+        };
+        let page = query.page.unwrap_or(1).max(1).min(max_page);
+        let start = (page - 1).saturating_mul(page_size);
+        let end = (start + page_size).min(total_count);
+        (page, page_size, start, end)
+    };
+    let total_pages = if total_count == 0 {
+        0
+    } else {
+        total_count.div_ceil(page_size)
+    };
+    let items = issues[start..end].to_vec();
+
+    Ok(Json(ApiEnvelope::success(DrawIssuePage {
+        items,
+        page,
+        page_size,
+        total_count,
+        total_pages,
+    })))
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DrawIssueListQuery {
     lottery_id: Option<String>,
+    page: Option<usize>,
+    page_size: Option<usize>,
 }
 
 async fn get_draw_issue(

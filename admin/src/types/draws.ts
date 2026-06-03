@@ -13,6 +13,8 @@ export interface CreateDrawIssueRequest {
 
 export interface DrawIssueQuery {
   lotteryId?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 export interface GenerateDrawIssueRequest {
@@ -69,6 +71,14 @@ export interface DrawIssue {
   drawNumber: string | null;
   drawnAt: string | null;
   createdAt: string;
+}
+
+export interface DrawIssuePage {
+  items: DrawIssue[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 export interface DrawAutomationRunRequest {

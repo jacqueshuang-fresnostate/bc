@@ -30,6 +30,10 @@ export function useDraws() {
   const [drawSources, setDrawSources] = useState<DrawSource[]>([]);
   const [issues, setIssues] = useState<DrawIssue[]>([]);
   const [query, setQuery] = useState<DrawIssueQuery>({});
+  const [issuePage, setIssuePage] = useState(1);
+  const [pageSize, setPageSize] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +44,7 @@ export function useDraws() {
   }, []);
 
   const refreshWithFilter = useCallback((nextQuery?: DrawIssueQuery) => {
-    setQuery(nextQuery ?? {});
+    setQuery((current) => ({ ...current, ...(nextQuery ?? {}) }));
     setRefreshToken((current) => current + 1);
   }, []);
 
@@ -54,9 +58,13 @@ export function useDraws() {
       fetchDrawSources(controller.signal),
       fetchDrawIssues(controller.signal, query),
     ])
-      .then(([sources, drawIssues]) => {
+      .then(([sources, drawIssuePage]) => {
         setDrawSources(sources);
-        setIssues(drawIssues);
+        setIssuePage(drawIssuePage.page);
+        setPageSize(drawIssuePage.pageSize);
+        setTotalCount(drawIssuePage.totalCount);
+        setTotalPages(drawIssuePage.totalPages);
+        setIssues(drawIssuePage.items);
       })
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) {
@@ -243,7 +251,11 @@ export function useDraws() {
       try {
         const run = await runDrawAutomation(payload);
         const latestIssues = await fetchDrawIssues(undefined, issueQuery ?? query);
-        setIssues(latestIssues);
+        setIssuePage(latestIssues.page);
+        setPageSize(latestIssues.pageSize);
+        setTotalCount(latestIssues.totalCount);
+        setTotalPages(latestIssues.totalPages);
+        setIssues(latestIssues.items);
         return run;
       } catch (requestError) {
         setError(errorMessage(requestError));
@@ -271,6 +283,10 @@ export function useDraws() {
     previewGeneration,
     refresh,
     refreshWithFilter,
+    issuePage,
+    pageSize,
+    totalCount,
+    totalPages,
     runAutomation,
     saving,
     updateSource,
