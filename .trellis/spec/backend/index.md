@@ -22,6 +22,7 @@
 | [错误处理](./error-handling.md) | 错误类型和处理策略 | 初始 |
 | [质量规范](./quality-guidelines.md) | 代码标准和禁用模式 | 初始 |
 | [日志规范](./logging-guidelines.md) | 结构化日志和日志级别 | 初始 |
+| [容器部署规范](./deployment-guidelines.md) | Docker 单镜像、Nginx 反代和运行环境变量 | 当前 |
 
 ---
 

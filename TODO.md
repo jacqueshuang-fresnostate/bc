@@ -300,3 +300,16 @@
 - 解决问题：此前用户管理的邀请码来自邀请关系聚合，不能保证每个用户都有自己的邀请码，也会让同一代理因多条邀请关系显示多个码；本次改为每个用户固定单个 `inviteCode`，新建用户自动生成邀请码且校验唯一。邀请关系创建时邀请码必须属于代理用户，普通用户码或不存在的码返回“邀请码无效”，同一个代理码可用于多个不同被邀请人。后台 `tracing`/`panic!` 日志 message 已改为中文。新增 `au5` 澳洲 5 分彩和默认 `api68-au5` 来源，endpoint 为 `https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do`、`lotCode=10010`，并支持 8 位数字 API 期号递增。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 117 个，覆盖重复邀请码拒绝、普通用户邀请码无效、代理码复用、澳洲 5 分彩种子彩种、`api68-au5` 默认来源和 8 位 API 期号生成。API 冒烟使用 `PORT=18104` 登录后确认三个种子用户均返回 `inviteCode`，普通用户码 `USER10001` 创建邀请关系返回 `bad request: 邀请码无效`，代理码 `AGENT10001` 可创建新邀请关系；`GET /api/admin/draw-sources` 返回 `api68-au5`，`GET /api/admin/lotteries/au5` 返回 300 秒 API 彩种；真实 API68 最新期号 `51320851` 回填开奖号码 `7,0,1,3,9`。
 - 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议推进邀请码生成/重置/冻结审计、澳洲 5 分彩开奖源持久化和 API68 原始响应留痕。
+
+## 2026-06-03 11:48:23 HKT
+
+- 完成任务：启动 `06-03-06-03-docker-github-publish` Docker 单镜像打包与 GitHub 上传阶段，补充任务 PRD 与检查上下文。
+- 解决问题：明确部署目标为前后端同一个项目镜像，使用 Nginx 服务前端并反向代理后端 `/api`；GitHub 上传当前缺少 remote，需要后续提供远端仓库地址或创建仓库后再推送。
+- 后续动作：新增 Dockerfile、Nginx 配置、启动脚本、Compose 和部署说明，验证镜像构建/运行后提交；拿到 GitHub remote 后执行推送。
+
+## 2026-06-03 12:00:54 HKT
+
+- 完成任务：实现 `06-03-06-03-docker-github-publish` Docker 单镜像打包阶段，新增根目录 `Dockerfile`、`.dockerignore`、`docker/nginx.conf`、`docker/entrypoint.sh`、`docker-compose.yml`、中文 `部署说明.md`，并新增 `.trellis/spec/backend/deployment-guidelines.md` 容器部署规范。
+- 解决问题：此前项目没有统一容器部署入口，前端、后端需要分别启动；本次改为单镜像多阶段构建，前端使用 Node 构建静态资源，后端使用 Rust 构建 release 二进制，运行时由 Nginx 对外服务前端并反向代理 `/api/` 到同容器后端。入口脚本会按 `BACKEND_PORT` 动态渲染 Nginx 反代端口，并校验端口必须为数字，避免后端端口环境变量与 Nginx 配置不一致。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；`docker build -t bc-platform:latest .` 成功生成 `bc-platform:latest` 镜像，镜像大小约 216MB。临时容器使用 `docker run -d --name bc-platform-smoke -p 18085:80 bc-platform:latest` 启动后状态为 `healthy`，`curl -I http://127.0.0.1:18085/` 返回 200，`curl http://127.0.0.1:18085/api/health` 返回后端健康检查成功；临时容器已清理。
+- 后续动作：提交本阶段 Docker 与部署文档改动；当前仓库尚未配置 GitHub remote，需要提供 GitHub 仓库地址或允许创建仓库后再执行 `git push -u origin main`。

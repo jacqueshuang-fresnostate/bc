@@ -1,0 +1,12 @@
+.git
+.idea
+.trellis/workspace
+.trellis/tasks/archive
+.DS_Store
+*.log
+
+admin/node_modules
+admin/dist
+admin/*.tsbuildinfo
+
+backend/target
