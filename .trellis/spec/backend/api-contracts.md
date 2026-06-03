@@ -2493,6 +2493,7 @@ await addGroupBuyParticipant(id, {
 4. `saleCloseLeadSeconds` 控制自动生成期号时开奖前多少秒封盘。
 5. 如果服务启动时调度为关闭，保存 `enabled=true` 后无需重启；常驻后台循环会在短周期轮询中读取新配置并开始执行。
 6. 如果保存 `enabled=false`，下一轮循环会跳过自动任务且不写运行历史。
+7. 管理后台必须在“自动任务与调度”页面提供“启动调度”和“关闭调度”直接操作按钮；按钮仍调用 `PUT /api/admin/draw-scheduler/config`，只切换 `enabled`，其它配置保持当前状态值。
 
 ### 4. 校验与错误矩阵
 
@@ -2508,6 +2509,7 @@ await addGroupBuyParticipant(id, {
 ### 5. Good / Base / Bad Cases
 
 - Good：后台保存 `enabled=true, intervalSeconds=5, futureIssueCount=3, saleCloseLeadSeconds=20`，状态接口立即回显新配置。
+- Good：点击“启动调度”后，页面提交当前配置加 `enabled=true`，状态接口回显已启用；点击“关闭调度”后提交当前配置加 `enabled=false`，状态接口回显未启用。
 - Good：服务启动时配置为禁用，后台保存 `enabled=true` 后无需重启即可开始自动补期。
 - Good：已启动调度循环每轮读取 `DrawSchedulerRepository::config()`，所以 `futureIssueCount` 和 `saleCloseLeadSeconds` 不需要重启进程即可生效。
 - Base：数据库中没有调度配置时，服务写入后端默认配置并等待后台启用。

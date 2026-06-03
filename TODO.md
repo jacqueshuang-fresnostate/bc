@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-03 19:10 HKT 开奖调度后台控制入口
+
+- 完成任务：在管理后台“开奖期号与开奖源”的“自动任务与调度”页签中，为“常驻调度”卡片新增“启动调度”和“关闭调度”直接操作按钮，并保留“修改配置”入口。
+- 解决问题：此前调度启停需要进入配置 SideSheet 修改启用复选框，不够直观；现在管理员可以在调度卡片上直接启动或关闭调度，同时仍可进入 SideSheet 调整执行周期、未来期号缓冲和封盘提前秒数。
+- 技术说明：启动/关闭按钮复用 `PUT /api/admin/draw-scheduler/config`，只切换 `enabled`，其它调度配置保持当前数据库状态；保存成功后刷新调度状态和 dashboard。
+- 后续动作：继续补调度开关二次确认、操作审计、变更原因和多实例分布式锁。
+
 ## 2026-06-03 19:09 HKT 开奖调度配置数据库修正
 
 - 完成任务：移除 `DRAW_SCHEDULER_ENABLED`、`DRAW_SCHEDULER_INTERVAL_SECONDS`、`DRAW_SCHEDULER_FUTURE_ISSUE_COUNT` 和 `DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS` 本地 env 配置入口。

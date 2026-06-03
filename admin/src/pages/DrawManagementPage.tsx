@@ -376,6 +376,20 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     onDashboardRefresh();
   };
 
+  const toggleSchedulerEnabled = async (enabled: boolean) => {
+    if (!schedulerStatus) {
+      return;
+    }
+
+    const nextStatus = await saveSchedulerConfigRequest({
+      ...schedulerStatus.config,
+      enabled,
+    });
+    setSchedulerConfigForm(configFormFromStatus(nextStatus));
+    refreshScheduler();
+    onDashboardRefresh();
+  };
+
   const loading = drawsLoading || lotteriesLoading;
   const error = drawError ?? lotteryError ?? schedulerError;
   const generationCountValue = parseGenerationCount(generationCount);
@@ -456,10 +470,13 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
           automationResult={automationResult}
           saving={saving}
           schedulerLoading={schedulerLoading}
+          schedulerSaving={schedulerSaving}
           schedulerStatus={schedulerStatus}
           onAutomationNowChange={setAutomationNow}
           onConfigureScheduler={() => setSchedulerSheetVisible(true)}
           onRunAutomation={() => void runDueAutomation()}
+          onStartScheduler={() => void toggleSchedulerEnabled(true)}
+          onStopScheduler={() => void toggleSchedulerEnabled(false)}
         />
       ) : null}
 
@@ -802,8 +819,11 @@ function AutomationManagementSection({
   onAutomationNowChange,
   onConfigureScheduler,
   onRunAutomation,
+  onStartScheduler,
+  onStopScheduler,
   saving,
   schedulerLoading,
+  schedulerSaving,
   schedulerStatus,
 }: {
   automationNow: string;
@@ -811,10 +831,16 @@ function AutomationManagementSection({
   onAutomationNowChange: (value: string) => void;
   onConfigureScheduler: () => void;
   onRunAutomation: () => void;
+  onStartScheduler: () => void;
+  onStopScheduler: () => void;
   saving: boolean;
   schedulerLoading: boolean;
+  schedulerSaving: boolean;
   schedulerStatus: DrawSchedulerStatus | null;
 }) {
+  const schedulerEnabled = schedulerStatus?.enabled ?? false;
+  const schedulerActionDisabled = schedulerLoading || schedulerSaving || !schedulerStatus;
+
   return (
     <section className="grid gap-4 xl:grid-cols-[420px_1fr]">
       <Card className="rounded-md border border-line">
@@ -865,11 +891,33 @@ function AutomationManagementSection({
               </Tag>
             ) : null}
             <Button
-              icon={<Save size={15} />}
+              disabled={schedulerActionDisabled || schedulerEnabled}
+              icon={<Play size={15} />}
+              loading={schedulerSaving && !schedulerEnabled}
               size="small"
+              theme="solid"
+              onClick={onStartScheduler}
+            >
+              启动调度
+            </Button>
+            <Button
+              disabled={schedulerActionDisabled || !schedulerEnabled}
+              icon={<XCircle size={15} />}
+              loading={schedulerSaving && schedulerEnabled}
+              size="small"
+              type="danger"
+              onClick={onStopScheduler}
+            >
+              关闭调度
+            </Button>
+            <Button
+              icon={<Save size={15} />}
+              loading={schedulerSaving}
+              size="small"
+              disabled={schedulerLoading || schedulerSaving || !schedulerStatus}
               onClick={onConfigureScheduler}
             >
-              配置
+              修改配置
             </Button>
           </div>
         </div>
