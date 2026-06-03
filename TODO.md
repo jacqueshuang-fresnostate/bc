@@ -319,3 +319,16 @@
 - 完成任务：完成 GitHub 上传阶段，使用已登录的 GitHub 账号 `sydneypoole` 创建私有仓库 `sydneypoole/bc`，配置 `origin` 并推送 `main` 分支。
 - 解决问题：此前仓库没有 remote，无法执行上传；本次确认 `origin=https://github.com/sydneypoole/bc.git`，并完成 `main -> origin/main` 的首次推送。
 - 后续动作：如后续需要把 Docker image 推到 GitHub Container Registry，可在仓库中继续补 GitHub Actions 和 GHCR 发布配置。
+
+## 2026-06-03 12:10:30 HKT
+
+- 完成任务：启动 `06-03-github-workflow-ci-ghcr` GitHub Actions CI 与 Docker 镜像发布阶段，补充任务 PRD 和部署规范上下文。
+- 解决问题：确认仓库缺少 `.github/workflows`，无法在 push/PR 时自动检查，也无法把 Docker 单镜像发布到 GHCR。
+- 后续动作：新增 CI workflow，更新架构设计、部署说明和容器部署规范，并在本地完成基础检查后提交推送。
+
+## 2026-06-03 12:12:03 HKT
+
+- 完成任务：实现 `06-03-github-workflow-ci-ghcr` GitHub Actions CI 与 Docker 镜像发布阶段，新增 `.github/workflows/ci.yml`。
+- 解决问题：此前 GitHub 仓库没有自动化流水线；本次 workflow 在 `push`、`pull_request` 和手动触发时运行前后端质量检查，并构建 Docker 单镜像。`main` 分支 push 时使用 `GITHUB_TOKEN` 登录 GHCR，推送 `ghcr.io/sydneypoole/bc:latest` 和 `sha-<提交短哈希>` 标签；PR 只构建不推送，避免未合并代码覆盖发布镜像。
+- 验证结果：workflow YAML 解析通过；`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；`docker build -t bc-platform:latest .` 通过并命中缓存。前端构建仍保留既有 chunk size warning。
+- 后续动作：提交并推送本阶段 workflow；推送后在 GitHub Actions 页面确认 `CI` 工作流通过，并在 GHCR 包页面确认镜像标签生成。
