@@ -1521,3 +1521,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 45: 澳洲 5 分彩端到端开奖流程跑通
+
+**Date**: 2026-06-03
+**Task**: 澳洲 5 分彩端到端开奖流程跑通
+**Branch**: `main`
+
+### Summary
+
+重建最新 Docker Compose 镜像并补齐 PostgreSQL 迁移后，通过后台 API 登录、创建澳洲 5 分彩到期期号和中奖订单、启用常驻调度，验证 API68 自动开奖、订单结算、资金入账和下一期 open 期号补齐全部跑通。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2e245d0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
