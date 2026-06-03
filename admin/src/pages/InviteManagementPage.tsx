@@ -59,6 +59,10 @@ export function InviteManagementPage({
     () => users.filter((user) => user.id !== createForm.inviterUserId),
     [createForm.inviterUserId, users],
   );
+  const selectedInviter = useMemo(
+    () => users.find((user) => user.id === createForm.inviterUserId) ?? null,
+    [createForm.inviterUserId, users],
+  );
   const selectedInvitation = useMemo(
     () =>
       invitations.find((invitation) => invitation.id === selectedId) ??
@@ -72,10 +76,20 @@ export function InviteManagementPage({
     if (!createForm.inviterUserId && inviterCandidates[0]) {
       setCreateForm((current) => ({
         ...current,
+        inviteCode: inviterCandidates[0].inviteCode,
         inviterUserId: inviterCandidates[0].id,
       }));
     }
   }, [createForm.inviterUserId, inviterCandidates]);
+
+  useEffect(() => {
+    if (selectedInviter && createForm.inviteCode !== selectedInviter.inviteCode) {
+      setCreateForm((current) => ({
+        ...current,
+        inviteCode: selectedInviter.inviteCode,
+      }));
+    }
+  }, [createForm.inviteCode, selectedInviter]);
 
   useEffect(() => {
     if (!createForm.inviteeUserId && inviteeCandidates[0]) {
@@ -119,8 +133,13 @@ export function InviteManagementPage({
   const submitCreate = async () => {
     const created = await create(createPayload(createForm));
     setSelectedId(created.id);
+    const nextInviter = inviterCandidates[0];
     setCreateForm(
-      emptyCreateForm(inviterCandidates[0]?.id, inviteeCandidates[0]?.id),
+      emptyCreateForm(
+        nextInviter?.id,
+        inviteeCandidates[0]?.id,
+        nextInviter?.inviteCode,
+      ),
     );
     onDashboardRefresh();
   };
@@ -248,28 +267,25 @@ export function InviteManagementPage({
                 </Field>
                 <Field label="邀请码">
                   <input
-                    className="h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-teal-500"
+                    className="h-10 w-full rounded-md border border-line bg-slate-50 px-3 text-sm text-slate-600 outline-none"
+                    readOnly
                     value={createForm.inviteCode}
-                    onChange={(event) =>
-                      setCreateFormValue(
-                        setCreateForm,
-                        'inviteCode',
-                        event.target.value,
-                      )
-                    }
                   />
                 </Field>
                 <Field label="邀请人">
                   <select
                     className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
                     value={createForm.inviterUserId}
-                    onChange={(event) =>
-                      setCreateFormValue(
-                        setCreateForm,
-                        'inviterUserId',
-                        event.target.value,
-                      )
-                    }
+                    onChange={(event) => {
+                      const inviter = inviterCandidates.find(
+                        (user) => user.id === event.target.value,
+                      );
+                      setCreateForm((current) => ({
+                        ...current,
+                        inviteCode: inviter?.inviteCode ?? '',
+                        inviterUserId: event.target.value,
+                      }));
+                    }}
                   >
                     {inviterCandidates.map((user) => (
                       <option key={user.id} value={user.id}>
@@ -459,10 +475,14 @@ function InfoRow({ label, value }: InfoRowProps) {
   );
 }
 
-function emptyCreateForm(inviterUserId = '', inviteeUserId = ''): CreateFormState {
+function emptyCreateForm(
+  inviterUserId = '',
+  inviteeUserId = '',
+  inviteCode = '',
+): CreateFormState {
   return {
     id: 'INV-NEW',
-    inviteCode: 'INVITE-NEW',
+    inviteCode,
     inviteeUserId,
     inviterUserId,
     note: '',
@@ -509,12 +529,10 @@ function permittedInviters(
   users: UserSummary[],
   invitePolicy: InvitePolicySummary | null,
 ) {
-  return users.filter((user) => {
-    if (user.kind === 'agent') {
-      return invitePolicy?.agentsCanInvite ?? true;
-    }
-    return invitePolicy?.regularUsersCanInvite ?? false;
-  });
+  if (invitePolicy && !invitePolicy.agentsCanInvite) {
+    return [];
+  }
+  return users.filter((user) => user.kind === 'agent');
 }
 
 function inviteTotals(invitations: InviteRecord[]) {

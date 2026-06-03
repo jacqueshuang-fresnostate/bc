@@ -42,6 +42,7 @@ interface UserFormState {
   balanceMinor: string;
   email: string;
   id: string;
+  inviteCode: string;
   kind: UserKind;
   status: UserStatus;
   username: string;
@@ -571,6 +572,16 @@ function UserSection({
               value={form.agentId}
               onChange={(event) =>
                 setFormValue(onSetForm, 'agentId', event.target.value)
+              }
+            />
+          </Field>
+          <Field label="邀请码">
+            <input
+              className="form-input"
+              placeholder="留空时后端自动生成"
+              value={form.inviteCode}
+              onChange={(event) =>
+                setFormValue(onSetForm, 'inviteCode', event.target.value)
               }
             />
           </Field>
@@ -1120,6 +1131,7 @@ function emptyUserForm(): UserFormState {
     balanceMinor: '0',
     email: '',
     id: 'U20001',
+    inviteCode: '',
     kind: 'regular',
     status: 'active',
     username: 'new_user',
@@ -1132,6 +1144,7 @@ function userFormFromSummary(user: UserSummary): UserFormState {
     balanceMinor: `${user.balanceMinor}`,
     email: user.email ?? '',
     id: user.id,
+    inviteCode: user.inviteCode,
     kind: user.kind,
     status: user.status,
     username: user.username,
@@ -1144,7 +1157,7 @@ function userPayload(form: UserFormState): UserSummary {
     balanceMinor: numberField(form.balanceMinor),
     email: optionalText(form.email),
     id: form.id.trim(),
-    inviteCode: '',
+    inviteCode: form.inviteCode.trim(),
     kind: form.kind,
     status: form.status,
     username: form.username.trim(),

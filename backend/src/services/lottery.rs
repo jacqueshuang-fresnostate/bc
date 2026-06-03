@@ -747,14 +747,17 @@ fn enum_value<T: Serialize>(value: &T) -> ApiResult<String> {
 
     value.as_str().map(ToString::to_string).ok_or_else(|| {
         tracing::error!("彩种枚举没有序列化为字符串");
-        ApiError::Internal("lottery enum serialization failed".to_string())
+        ApiError::Internal("彩种枚举序列化失败".to_string())
     })
 }
 
 fn enum_from_string<T: DeserializeOwned>(value: String) -> ApiResult<T> {
-    serde_json::from_value(Value::String(value)).map_err(|error| {
-        tracing::error!(%error, "数据库中的彩种枚举无效");
-        ApiError::Internal("invalid lottery data in database".to_string())
+    serde_json::from_value(Value::String(value)).map_err(|_| {
+        tracing::error!(
+            error = "错误详情已按中文日志规则隐藏",
+            "数据库中的彩种枚举无效"
+        );
+        ApiError::Internal("数据库中的彩种枚举无效".to_string())
     })
 }
 
@@ -763,20 +766,26 @@ fn json_value<T: Serialize>(value: &T) -> ApiResult<Value> {
 }
 
 fn json_from_value<T: DeserializeOwned>(value: Value) -> ApiResult<T> {
-    serde_json::from_value(value).map_err(|error| {
-        tracing::error!(%error, "数据库中的彩种 JSON 无效");
-        ApiError::Internal("invalid lottery data in database".to_string())
+    serde_json::from_value(value).map_err(|_| {
+        tracing::error!(
+            error = "错误详情已按中文日志规则隐藏",
+            "数据库中的彩种 JSON 无效"
+        );
+        ApiError::Internal("数据库中的彩种 JSON 无效".to_string())
     })
 }
 
-fn serde_error(error: serde_json::Error) -> ApiError {
-    tracing::error!(%error, "彩种 JSON 序列化失败");
-    ApiError::Internal("lottery data serialization failed".to_string())
+fn serde_error(_: serde_json::Error) -> ApiError {
+    tracing::error!(
+        error = "错误详情已按中文日志规则隐藏",
+        "彩种 JSON 序列化失败"
+    );
+    ApiError::Internal("彩种 JSON 序列化失败".to_string())
 }
 
-fn database_error(error: sqlx::Error) -> ApiError {
-    tracing::error!(%error, "彩种数据库操作失败");
-    ApiError::Internal("lottery database operation failed".to_string())
+fn database_error(_: sqlx::Error) -> ApiError {
+    tracing::error!(error = "错误详情已按中文日志规则隐藏", "彩种数据库操作失败");
+    ApiError::Internal("彩种数据库操作失败".to_string())
 }
 
 #[cfg(test)]

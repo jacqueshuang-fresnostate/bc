@@ -361,7 +361,7 @@ pub fn spawn_draw_scheduler(
             let current_config = match scheduler.config() {
                 Ok(current_config) => current_config,
                 Err(error) => {
-                    tracing::error!(%error, "开奖调度器配置读取失败");
+                    tracing::error!(error = %error.log_message(), "开奖调度器配置读取失败");
                     config.clone()
                 }
             };
@@ -396,7 +396,7 @@ pub fn spawn_draw_scheduler(
                         finished_at,
                         &run,
                     ) {
-                        tracing::error!(%error, "开奖调度器历史记录写入失败");
+                        tracing::error!(error = %error.log_message(), "开奖调度器历史记录写入失败");
                     }
                     tracing::info!(
                         now = %run.now,
@@ -419,9 +419,16 @@ pub fn spawn_draw_scheduler(
                         now.clone(),
                         error.to_string(),
                     ) {
-                        tracing::error!(%record_error, "开奖调度器历史记录写入失败");
+                        tracing::error!(
+                            error = %record_error.log_message(),
+                            "开奖调度器历史记录写入失败"
+                        );
                     }
-                    tracing::error!(%now, %error, "开奖调度器本轮执行失败");
+                    tracing::error!(
+                        %now,
+                        error = %error.log_message(),
+                        "开奖调度器本轮执行失败"
+                    );
                 }
             }
         }
@@ -504,7 +511,7 @@ async fn ensure_future_draw_issues(
             Err(error) => {
                 tracing::warn!(
                     lottery_id = %lottery.id,
-                    error = %error,
+                    error = %error.log_message(),
                     "开奖调度器因期号生成失败跳过彩种"
                 );
                 skipped_lotteries.push(DrawSchedulerSkippedLottery {

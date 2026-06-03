@@ -351,3 +351,11 @@
 - 解决问题：本机 `8080` 和 `18080` 已被其它进程占用，固定端口会干扰本地部署验证；本次把 Compose 端口改为 `${APP_PORT:-8080}:80`，默认不变，冲突时可以切换端口。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；Compose 中应用和 PostgreSQL 均为 healthy，`/api/health` 返回成功，PostgreSQL 已生成 `_sqlx_migrations` 和 `lotteries` 表，并能查询到 `au5`、`fc3d`、`pl3`、`ssc60` 等彩种。
 - 后续动作：提交并推送本阶段改动；下一阶段继续把用户、订单、开奖期号、开奖源、资金、权限等内存仓储分批迁移到 PostgreSQL。
+
+## 2026-06-03 13:07 HKT 邀请码、中文日志与澳洲 5 分彩采集修正
+
+- 完成任务：启动 `06-03-invite-au5-collection` 修正阶段，针对最新要求复查全员邀请码、普通用户邀请码无效、后台中文日志和澳洲 5 分彩采集接口。
+- 解决问题：用户维护 SideSheet 保存用户时此前没有携带 `inviteCode`，编辑已有用户会把原邀请码覆盖为后端自动生成值；邀请管理新增关系仍需手填邀请码，容易填错普通用户码或临时码；开奖源新建表单没有澳洲 5 分彩采集预设。
+- 已完成修正：用户维护表单新增邀请码字段并保留原值；邀请管理按所选邀请人自动带出邀请码且只展示代理邀请人；后端日志错误字段改为中文化 `ApiError::log_message()`；开奖源维护新增“澳洲 5 分彩采集”预设，自动填入 `CQShiCai/getBaseCQShiCaiList.do`、`lotCode=10010` 和 `au5`。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 119 个，新增覆盖 `ApiError` 中文日志描述；前端构建仍只有既有 chunk size warning。
+- 后续动作：提交并推送本阶段改动；后续可继续补邀请码重置审计、开奖源连通性测试和 API68 原始响应留痕。

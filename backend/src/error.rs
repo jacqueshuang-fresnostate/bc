@@ -33,17 +33,61 @@ impl ApiError {
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
+
+    pub fn log_message(&self) -> String {
+        match self {
+            Self::BadRequest(message) => format!("请求错误：{}", log_detail(message)),
+            Self::Unauthorized(message) => format!("未授权：{}", log_detail(message)),
+            Self::Forbidden(message) => format!("权限不足：{}", log_detail(message)),
+            Self::NotFound(message) => format!("资源不存在：{}", log_detail(message)),
+            Self::Conflict(message) => format!("资源冲突：{}", log_detail(message)),
+            Self::Internal(message) => format!("内部错误：{}", log_detail(message)),
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let status = self.status_code();
+        let log_message = self.log_message();
         let message = self.to_string();
 
         if status.is_server_error() {
-            tracing::error!(%message, "接口错误");
+            tracing::error!(message = %log_message, "接口错误");
         }
 
         (status, Json(ApiEnvelope::error(message))).into_response()
+    }
+}
+
+fn log_detail(message: &str) -> &str {
+    if message
+        .chars()
+        .any(|character| character.is_ascii_alphabetic())
+    {
+        "错误详情已按中文日志规则隐藏"
+    } else {
+        message
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApiError;
+
+    #[test]
+    fn api_error_log_message_uses_chinese_prefixes() {
+        let message = ApiError::BadRequest("邀请码无效".to_string()).log_message();
+
+        assert_eq!(message, "请求错误：邀请码无效");
+    }
+
+    #[test]
+    fn api_error_log_message_hides_english_internal_details() {
+        let message =
+            ApiError::Internal("api draw source request failed".to_string()).log_message();
+
+        assert_eq!(message, "内部错误：错误详情已按中文日志规则隐藏");
+        assert!(!message.contains("api draw source request failed"));
     }
 }

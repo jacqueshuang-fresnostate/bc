@@ -61,7 +61,7 @@ pub async fn run_draw_automation(
                     draw_issue_id = %issue.id,
                     lottery_id = %issue.lottery_id,
                     issue = %issue.issue,
-                    error = %error,
+                    error = %error.log_message(),
                     "自动开奖因开奖失败跳过期号"
                 );
                 run.skipped_issues

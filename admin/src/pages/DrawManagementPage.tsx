@@ -79,6 +79,31 @@ interface SchedulerConfigFormState {
   saleCloseLeadSeconds: string;
 }
 
+const API68_SOURCE_PRESETS: Array<{ label: string; form: DrawSourceFormState }> = [
+  {
+    label: '澳洲 5 分彩采集',
+    form: {
+      endpoint: 'https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do',
+      id: 'api68-au5',
+      lotCode: '10010',
+      name: 'API68 澳洲 5 分彩',
+      provider: 'api68',
+      reusableForLotteryIds: ['au5'],
+    },
+  },
+  {
+    label: '福彩 3D/排列 3 采集',
+    form: {
+      endpoint: 'https://api.api68.com/QuanGuoCai/getLotteryInfoList.do',
+      id: 'api68-fc3d',
+      lotCode: '10041',
+      name: 'API68 福彩 3D/排列 3',
+      provider: 'api68',
+      reusableForLotteryIds: ['fc3d', 'pl3'],
+    },
+  },
+];
+
 export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPageProps) {
   const {
     cancel,
@@ -1135,6 +1160,18 @@ function DrawSourceSideSheet({
       onCancel={onClose}
     >
       <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
+        <div className="flex flex-wrap gap-2">
+          {API68_SOURCE_PRESETS.map((preset) => (
+            <Button
+              key={preset.label}
+              disabled={saving}
+              onClick={() => onFormChange(preset.form)}
+            >
+              {preset.label}
+            </Button>
+          ))}
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="来源 ID">
             <input
@@ -1635,14 +1672,7 @@ function emptyForm(): DrawIssueFormState {
 }
 
 function emptySourceForm(): DrawSourceFormState {
-  return {
-    endpoint: 'https://api.api68.com/QuanGuoCai/getLotteryInfoList.do',
-    id: 'api68-custom',
-    lotCode: '10041',
-    name: 'API68 自定义来源',
-    provider: 'api68',
-    reusableForLotteryIds: [],
-  };
+  return API68_SOURCE_PRESETS[0].form;
 }
 
 function sourceFormFromSource(source: DrawSource): DrawSourceFormState {

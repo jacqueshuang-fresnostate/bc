@@ -144,7 +144,7 @@ impl ApiDrawSourceRepository {
                 source_id = %source.id,
                 lottery_id = %issue.lottery_id,
                 issue = %issue.issue,
-                error = %error,
+                error = %error.log_message(),
                 "API 开奖源获取开奖号码失败"
             );
         }
@@ -175,7 +175,7 @@ impl ApiDrawSourceRepository {
             tracing::error!(
                 source_id = %source.id,
                 lottery_id = %lottery_id,
-                error = %error,
+                error = %error.log_message(),
                 "API 开奖源获取最新期号失败"
             );
         }

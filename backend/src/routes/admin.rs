@@ -971,7 +971,7 @@ async fn create_order(
         if let Err(rollback_error) = state.orders.remove_unfunded(&order.id).await {
             tracing::error!(
                 order_id = %order.id,
-                error = %rollback_error,
+                error = %rollback_error.log_message(),
                 "扣款失败后移除未入账订单失败"
             );
         }
