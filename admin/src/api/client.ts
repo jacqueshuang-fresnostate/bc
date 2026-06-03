@@ -31,6 +31,8 @@ import type {
   DrawIssueResultRequest,
   GenerateDrawIssueRequest,
   GenerateDrawIssuesRequest,
+  LotteryDrawControl,
+  SaveLotteryDrawControlRequest,
 } from '../types/draws';
 import type {
   FinancialAccountSummary,
@@ -484,6 +486,30 @@ export function deleteDrawSource(id: string) {
 
 export function fetchDrawIssues(signal?: AbortSignal) {
   return requestJson<DrawIssue[]>('/api/admin/draw-issues', { signal });
+}
+
+export function fetchLotteryDrawControls(signal?: AbortSignal) {
+  return requestJson<LotteryDrawControl[]>('/api/admin/draw-controls', { signal });
+}
+
+export function fetchLotteryDrawControl(lotteryId: string, signal?: AbortSignal) {
+  return requestJson<LotteryDrawControl>(
+    `/api/admin/draw-controls/${encodeURIComponent(lotteryId)}`,
+    { signal },
+  );
+}
+
+export function saveLotteryDrawControl(
+  lotteryId: string,
+  payload: SaveLotteryDrawControlRequest,
+) {
+  return requestJson<LotteryDrawControl>(
+    `/api/admin/draw-controls/${encodeURIComponent(lotteryId)}`,
+    {
+      body: payload,
+      method: 'PUT',
+    },
+  );
 }
 
 export function createDrawIssue(payload: CreateDrawIssueRequest) {

@@ -2956,3 +2956,138 @@ if !has_scope(scopes, &PermissionScope::Finance) {
 ```
 
 无权限时保持顶层字段结构，但不暴露真实财务数据。
+
+---
+
+## 场景：彩种控制台控制开奖号码接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改彩种控制台的开奖号码控制、开奖服务控制优先级、自动开奖控制逻辑。
+- 范围：后端开奖控制配置 API、开奖服务读取控制号码、自动开奖手动彩种跳过规则、前端控制台类型和 SideSheet 表单。
+- 本阶段控制配置为内存仓储；后续接入 PostgreSQL 时接口契约不应变化。
+
+### 2. 签名
+
+- `GET /api/admin/draw-controls`
+- `GET /api/admin/draw-controls/{lotteryId}`
+- `PUT /api/admin/draw-controls/{lotteryId}`
+
+所有接口需要 `lotteries` 权限，并继续使用统一 API 信封。
+
+### 3. 契约
+
+`GET /api/admin/draw-controls` 返回每个彩种的控制状态；未配置过控制的彩种返回默认关闭状态：
+
+```json
+[
+  {
+    "lotteryId": "fc3d",
+    "lotteryName": "福彩 3D",
+    "numberType": "threeDigit",
+    "enabled": false,
+    "drawNumber": null,
+    "updatedAt": null
+  }
+]
+```
+
+`PUT /api/admin/draw-controls/{lotteryId}` 请求体：
+
+```json
+{
+  "enabled": true,
+  "drawNumber": "2,4,7"
+}
+```
+
+保存成功后返回完整 `LotteryDrawControl`：
+
+```json
+{
+  "lotteryId": "fc3d",
+  "lotteryName": "福彩 3D",
+  "numberType": "threeDigit",
+  "enabled": true,
+  "drawNumber": "2,4,7",
+  "updatedAt": "unix:1780475520"
+}
+```
+
+开奖号码继续使用英文逗号分隔格式。后端保存时会规范化号码，例如 `247` 保存为 `2,4,7`；中文逗号输入也会被规范化为英文逗号。
+
+开奖优先级：
+
+1. 如果彩种控制配置 `enabled=true` 且有合法 `drawNumber`，手动触发开奖和自动开奖都优先使用控制号码。
+2. 如果控制关闭，`platform` 彩种使用平台生成器。
+3. 如果控制关闭，`api` 彩种使用已绑定的 API 开奖源。
+4. 如果控制关闭，`manual` 彩种自动任务缺少管理员号码时继续跳过。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `lotteryId` 不存在 | HTTP 404，返回彩种不存在 |
+| `enabled=true` 且 `drawNumber` 为空 | HTTP 400，返回控制开奖号码必填 |
+| 3 位彩种号码不是 3 个数字 | HTTP 400，返回号码长度错误 |
+| 5 位彩种号码不是 5 个数字 | HTTP 400，返回号码长度错误 |
+| 号码包含非数字内容 | HTTP 400，返回号码格式错误 |
+| `enabled=false` 且 `drawNumber` 为空 | HTTP 200，保存关闭状态 |
+| 手动彩种启用控制号码后到期自动任务 | 自动开奖成功，不写入跳过期号 |
+| API 彩种启用控制号码后开奖 | 不请求或不采用 API 结果，使用控制号码 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`fc3d` 开启控制号码 `2,4,7`，期号到期后自动开奖保存 `drawNumber=2,4,7`，随后结算使用该号码。
+- Good：`au5` 开启控制号码 `7,8,9,4,2`，即使 API68 返回其它结果，本次开奖仍使用控制号码。
+- Base：控制关闭时，现有平台生成器和 API68 来源行为保持不变。
+- Bad：只在前端保存控制状态，不让后端开奖服务读取；这会导致页面看起来控制成功但自动开奖仍按原来源开奖。
+- Bad：前端直接绕过后端校验写入不符合彩种号码类型的号码。
+
+### 6. 必要测试
+
+- 后端需要覆盖平台开奖使用控制号码。
+- 后端需要覆盖 API 开奖源被控制号码覆盖。
+- 后端需要覆盖控制号码按号码类型校验。
+- 后端需要覆盖手动彩种自动任务在控制号码启用时不跳过并完成开奖。
+- 前端需要运行 `npm run build`，确认 `LotteryDrawControl` 和保存请求类型与接口字段一致。
+- 跨层联调需要在“彩种控制台”保存控制号码，再执行或等待对应期号开奖，确认期号列表和控制台回显的开奖号码一致。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```ts
+setLocalControl(lotteryId, drawNumber);
+```
+
+这个写法只改变页面状态，自动开奖服务不会使用该号码。
+
+#### 正确
+
+```ts
+await saveLotteryDrawControl(lotteryId, {
+  enabled: true,
+  drawNumber: "2,4,7",
+});
+```
+
+控制配置必须提交后端，由开奖服务作为唯一事实来源读取。
+
+#### 错误
+
+```rust
+let draw_number = api_source.draw_number_for(issue).await?;
+```
+
+这个写法会让 API 开奖源优先于后台控制号码。
+
+#### 正确
+
+```rust
+if let Some(draw_number) = active_draw_control_number(&issue.lottery_id)? {
+    return Ok(DrawIssueResultRequest { draw_number: Some(draw_number) });
+}
+```
+
+开奖服务必须先检查控制号码，再按原开奖模式读取 API 或平台生成器。

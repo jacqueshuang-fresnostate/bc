@@ -43,7 +43,9 @@ pub async fn run_draw_automation(
         if !should_draw(&issue, &now) {
             continue;
         }
-        if issue.draw_mode == DrawMode::Manual {
+        if issue.draw_mode == DrawMode::Manual
+            && !draws.has_active_draw_control(&issue.lottery_id).await?
+        {
             run.skipped_issues.push(skipped_issue(
                 &issue,
                 "manual draw requires administrator draw number",
@@ -109,7 +111,10 @@ fn skipped_issue(issue: &DrawIssue, reason: &str) -> DrawAutomationSkippedIssue 
 mod tests {
     use crate::{
         domain::{
-            draw::{CreateDrawIssueRequest, DrawAutomationRunRequest, DrawIssueStatus},
+            draw::{
+                CreateDrawIssueRequest, DrawAutomationRunRequest, DrawIssueStatus,
+                SaveLotteryDrawControlRequest,
+            },
             lottery::{
                 DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
                 LotteryPlayConfig, PlayCategory,
@@ -219,6 +224,46 @@ mod tests {
         assert!(run.skipped_issues[0]
             .reason
             .contains("administrator draw number"));
+    }
+
+    #[tokio::test]
+    async fn automation_draws_due_manual_issue_with_control_number() {
+        let draws = DrawRepository::memory();
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let lottery = lottery(DrawMode::Manual);
+        draws
+            .save_draw_control(
+                &lottery,
+                SaveLotteryDrawControlRequest {
+                    enabled: true,
+                    draw_number: Some("2,4,7".to_string()),
+                },
+            )
+            .await
+            .expect("draw control can be saved");
+        let issue = draws
+            .create(&lottery, create_request("MANUAL20260602002"))
+            .await
+            .expect("issue can be created");
+
+        let run = run_draw_automation(
+            &draws,
+            &orders,
+            &finance,
+            DrawAutomationRunRequest {
+                now: "2026-06-02 22:00:00".to_string(),
+            },
+        )
+        .await
+        .expect("automation can draw controlled manual issue");
+        let stored = draws.get(&issue.id).await.expect("issue still exists");
+
+        assert_eq!(run.closed_issues.len(), 1);
+        assert_eq!(run.drawn_issues.len(), 1);
+        assert!(run.skipped_issues.is_empty());
+        assert_eq!(stored.status, DrawIssueStatus::Drawn);
+        assert_eq!(stored.draw_number.as_deref(), Some("2,4,7"));
     }
 
     #[tokio::test]

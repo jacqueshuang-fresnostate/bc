@@ -6,7 +6,10 @@ use std::{
 
 use crate::{
     domain::{
-        draw::{CreateDrawIssueRequest, DrawIssue, DrawIssueResultRequest, DrawIssueStatus},
+        draw::{
+            CreateDrawIssueRequest, DrawIssue, DrawIssueResultRequest, DrawIssueStatus,
+            LotteryDrawControl, SaveLotteryDrawControlRequest,
+        },
         lottery::{DrawMode, DrawSource, LotteryKind, LotteryNumberType, SaveDrawSourceRequest},
     },
     error::{ApiError, ApiResult},
@@ -18,6 +21,7 @@ use super::draw_api::{ApiDrawSourceLatestIssue, ApiDrawSourceRepository};
 pub struct DrawRepository {
     inner: Arc<RwLock<DrawStore>>,
     api_sources: ApiDrawSourceRepository,
+    controls: Arc<RwLock<DrawControlStore>>,
 }
 
 impl DrawRepository {
@@ -30,6 +34,7 @@ impl DrawRepository {
         Self {
             inner: Arc::new(RwLock::new(DrawStore::default())),
             api_sources,
+            controls: Arc::new(RwLock::new(DrawControlStore::default())),
         }
     }
 
@@ -77,12 +82,12 @@ impl DrawRepository {
     }
 
     pub async fn draw(&self, id: &str, payload: DrawIssueResultRequest) -> ApiResult<DrawIssue> {
-        let payload = self.resolve_draw_payload(id, payload).await?;
+        let (payload, uses_control_number) = self.resolve_draw_payload(id, payload).await?;
 
         self.inner
             .write()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
-            .draw(id, payload)
+            .draw(id, payload, uses_control_number)
     }
 
     pub async fn cancel(&self, id: &str) -> ApiResult<DrawIssue> {
@@ -96,6 +101,48 @@ impl DrawRepository {
         let mut sources = self.api_sources.list().await?;
         sources.extend(super::draw_api::platform_draw_source_summaries());
         Ok(sources)
+    }
+
+    pub async fn list_draw_controls(
+        &self,
+        lotteries: &[LotteryKind],
+    ) -> ApiResult<Vec<LotteryDrawControl>> {
+        self.controls
+            .read()
+            .map_err(|_| ApiError::Internal("draw control store lock poisoned".to_string()))
+            .map(|store| {
+                lotteries
+                    .iter()
+                    .map(|lottery| store.summary_for(lottery))
+                    .collect()
+            })
+    }
+
+    pub async fn get_draw_control(&self, lottery: &LotteryKind) -> ApiResult<LotteryDrawControl> {
+        self.controls
+            .read()
+            .map_err(|_| ApiError::Internal("draw control store lock poisoned".to_string()))?
+            .get(lottery)
+    }
+
+    pub async fn save_draw_control(
+        &self,
+        lottery: &LotteryKind,
+        payload: SaveLotteryDrawControlRequest,
+    ) -> ApiResult<LotteryDrawControl> {
+        let draw_number = normalize_control_draw_number(lottery, &payload)?;
+        let mut store = self
+            .controls
+            .write()
+            .map_err(|_| ApiError::Internal("draw control store lock poisoned".to_string()))?;
+
+        store.save(DrawControlConfig {
+            lottery_id: lottery.id.clone(),
+            enabled: payload.enabled,
+            draw_number,
+            updated_at: current_timestamp_label(),
+        });
+        store.get(lottery)
     }
 
     pub async fn create_draw_source(
@@ -119,6 +166,13 @@ impl DrawRepository {
         self.api_sources.delete(id).await
     }
 
+    pub async fn has_active_draw_control(&self, lottery_id: &str) -> ApiResult<bool> {
+        self.controls
+            .read()
+            .map_err(|_| ApiError::Internal("draw control store lock poisoned".to_string()))
+            .map(|store| store.active_draw_number(lottery_id).is_some())
+    }
+
     pub async fn latest_api_issue_for_lottery(
         &self,
         lottery_id: &str,
@@ -130,20 +184,39 @@ impl DrawRepository {
         &self,
         id: &str,
         payload: DrawIssueResultRequest,
-    ) -> ApiResult<DrawIssueResultRequest> {
+    ) -> ApiResult<(DrawIssueResultRequest, bool)> {
         let issue = self.get(id).await?;
 
+        if let Some(draw_number) = self.active_draw_control_number(&issue.lottery_id).await? {
+            return Ok((
+                DrawIssueResultRequest {
+                    draw_number: Some(draw_number),
+                },
+                true,
+            ));
+        }
+
         if issue.draw_mode != DrawMode::Api {
-            return Ok(payload);
+            return Ok((payload, false));
         }
 
         if let Some(draw_number) = self.api_sources.draw_number_for(&issue).await? {
-            return Ok(DrawIssueResultRequest {
-                draw_number: Some(draw_number),
-            });
+            return Ok((
+                DrawIssueResultRequest {
+                    draw_number: Some(draw_number),
+                },
+                false,
+            ));
         }
 
-        Ok(DrawIssueResultRequest::default())
+        Ok((DrawIssueResultRequest::default(), false))
+    }
+
+    async fn active_draw_control_number(&self, lottery_id: &str) -> ApiResult<Option<String>> {
+        self.controls
+            .read()
+            .map_err(|_| ApiError::Internal("draw control store lock poisoned".to_string()))
+            .map(|store| store.active_draw_number(lottery_id))
     }
 }
 
@@ -232,7 +305,12 @@ impl DrawStore {
         Ok(issue.clone())
     }
 
-    fn draw(&mut self, id: &str, payload: DrawIssueResultRequest) -> ApiResult<DrawIssue> {
+    fn draw(
+        &mut self,
+        id: &str,
+        payload: DrawIssueResultRequest,
+        uses_control_number: bool,
+    ) -> ApiResult<DrawIssue> {
         let issue = self
             .issues
             .get_mut(id)
@@ -256,6 +334,13 @@ impl DrawStore {
                 .ok_or_else(|| {
                     ApiError::BadRequest("manual draw requires draw number".to_string())
                 })?
+                .to_string(),
+            DrawMode::Platform if uses_control_number => payload
+                .draw_number
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| ApiError::BadRequest("control draw number is required".to_string()))?
                 .to_string(),
             DrawMode::Platform => {
                 generated_draw_number(&issue.number_type, &issue.lottery_id, &issue.issue)
@@ -301,6 +386,51 @@ impl DrawStore {
     }
 }
 
+#[derive(Debug, Clone)]
+struct DrawControlConfig {
+    lottery_id: String,
+    enabled: bool,
+    draw_number: Option<String>,
+    updated_at: String,
+}
+
+#[derive(Debug, Default)]
+struct DrawControlStore {
+    controls: BTreeMap<String, DrawControlConfig>,
+}
+
+impl DrawControlStore {
+    fn get(&self, lottery: &LotteryKind) -> ApiResult<LotteryDrawControl> {
+        Ok(self.summary_for(lottery))
+    }
+
+    fn save(&mut self, config: DrawControlConfig) {
+        self.controls.insert(config.lottery_id.clone(), config);
+    }
+
+    fn active_draw_number(&self, lottery_id: &str) -> Option<String> {
+        self.controls.get(lottery_id).and_then(|config| {
+            if config.enabled {
+                config.draw_number.clone()
+            } else {
+                None
+            }
+        })
+    }
+
+    fn summary_for(&self, lottery: &LotteryKind) -> LotteryDrawControl {
+        let config = self.controls.get(&lottery.id);
+        LotteryDrawControl {
+            lottery_id: lottery.id.clone(),
+            lottery_name: lottery.name.clone(),
+            number_type: lottery.number_type.clone(),
+            enabled: config.is_some_and(|value| value.enabled),
+            draw_number: config.and_then(|value| value.draw_number.clone()),
+            updated_at: config.map(|value| value.updated_at.clone()),
+        }
+    }
+}
+
 fn validate_create_request(
     lottery: &LotteryKind,
     payload: &CreateDrawIssueRequest,
@@ -327,6 +457,27 @@ fn validate_create_request(
         ));
     }
     Ok(())
+}
+
+fn normalize_control_draw_number(
+    lottery: &LotteryKind,
+    payload: &SaveLotteryDrawControlRequest,
+) -> ApiResult<Option<String>> {
+    let draw_number = payload
+        .draw_number
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if payload.enabled && draw_number.is_none() {
+        return Err(ApiError::BadRequest(
+            "control draw number is required".to_string(),
+        ));
+    }
+
+    draw_number
+        .map(|value| normalize_draw_number(value, &lottery.number_type))
+        .transpose()
 }
 
 fn normalize_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> ApiResult<String> {
@@ -415,7 +566,10 @@ fn current_timestamp_label() -> String {
 mod tests {
     use crate::{
         domain::{
-            draw::{CreateDrawIssueRequest, DrawIssueResultRequest, DrawIssueStatus},
+            draw::{
+                CreateDrawIssueRequest, DrawIssueResultRequest, DrawIssueStatus,
+                SaveLotteryDrawControlRequest,
+            },
             lottery::{DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType},
         },
         services::{
@@ -463,7 +617,11 @@ mod tests {
             .expect("issue can be created");
 
         assert!(store
-            .draw(&issue.id, DrawIssueResultRequest { draw_number: None })
+            .draw(
+                &issue.id,
+                DrawIssueResultRequest { draw_number: None },
+                false
+            )
             .expect_err("manual draw without number is invalid")
             .to_string()
             .contains("manual draw requires draw number"));
@@ -474,6 +632,7 @@ mod tests {
                 DrawIssueResultRequest {
                     draw_number: Some("7,8,9,4,2".to_string()),
                 },
+                false,
             )
             .expect("manual draw can be recorded");
 
@@ -490,7 +649,7 @@ mod tests {
             .expect("issue can be created");
 
         let drawn = store
-            .draw(&issue.id, DrawIssueResultRequest::default())
+            .draw(&issue.id, DrawIssueResultRequest::default(), false)
             .expect("platform draw can be generated");
 
         let draw_number = drawn.draw_number.expect("draw number exists");
@@ -498,6 +657,28 @@ mod tests {
         assert!(draw_number
             .split(',')
             .all(|part| part.len() == 1 && part.bytes().all(|byte| byte.is_ascii_digit())));
+    }
+
+    #[test]
+    fn platform_draw_uses_control_number_when_resolved() {
+        let lottery = lottery(DrawMode::Platform, LotteryNumberType::FiveDigit);
+        let mut store = DrawStore::default();
+        let issue = store
+            .create(&lottery, create_request("20260602-control"))
+            .expect("issue can be created");
+
+        let drawn = store
+            .draw(
+                &issue.id,
+                DrawIssueResultRequest {
+                    draw_number: Some("7,8,9,4,2".to_string()),
+                },
+                true,
+            )
+            .expect("platform control draw can be recorded");
+
+        assert_eq!(drawn.status, DrawIssueStatus::Drawn);
+        assert_eq!(drawn.draw_number.as_deref(), Some("7,8,9,4,2"));
     }
 
     #[test]
@@ -509,7 +690,7 @@ mod tests {
             .expect("issue can be created");
 
         store
-            .draw(&issue.id, DrawIssueResultRequest::default())
+            .draw(&issue.id, DrawIssueResultRequest::default(), false)
             .expect("issue can be drawn");
 
         assert!(store
@@ -518,7 +699,7 @@ mod tests {
             .to_string()
             .contains("drawn draw issue cannot be cancelled"));
         assert!(store
-            .draw(&issue.id, DrawIssueResultRequest::default())
+            .draw(&issue.id, DrawIssueResultRequest::default(), false)
             .expect_err("drawn issue cannot be drawn again")
             .to_string()
             .contains("draw issue cannot be drawn in current status"));
@@ -542,6 +723,55 @@ mod tests {
 
         assert_eq!(drawn.status, DrawIssueStatus::Drawn);
         assert_eq!(drawn.draw_number.as_deref(), Some("3,7,6"));
+    }
+
+    #[tokio::test]
+    async fn repository_control_number_overrides_api_source() {
+        let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
+        let repository = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        repository
+            .save_draw_control(
+                &lottery,
+                SaveLotteryDrawControlRequest {
+                    enabled: true,
+                    draw_number: Some("2,4,7".to_string()),
+                },
+            )
+            .await
+            .expect("draw control can be saved");
+        let issue = repository
+            .create(&lottery, create_request("2026143"))
+            .await
+            .expect("issue can be created");
+
+        let drawn = repository
+            .draw(&issue.id, DrawIssueResultRequest::default())
+            .await
+            .expect("api draw can be controlled");
+
+        assert_eq!(drawn.status, DrawIssueStatus::Drawn);
+        assert_eq!(drawn.draw_number.as_deref(), Some("2,4,7"));
+    }
+
+    #[tokio::test]
+    async fn repository_save_draw_control_validates_number_type() {
+        let lottery = lottery(DrawMode::Platform, LotteryNumberType::FiveDigit);
+        let repository = DrawRepository::memory();
+
+        let error = repository
+            .save_draw_control(
+                &lottery,
+                SaveLotteryDrawControlRequest {
+                    enabled: true,
+                    draw_number: Some("2,4,7".to_string()),
+                },
+            )
+            .await
+            .expect_err("short draw control number is rejected");
+
+        assert!(error.to_string().contains("draw number must be 5 digits"));
     }
 
     #[tokio::test]

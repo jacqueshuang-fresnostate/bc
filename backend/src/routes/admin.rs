@@ -15,7 +15,7 @@ use crate::{
         draw::{
             CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest, DrawIssue,
             DrawIssueGenerationPreview, DrawIssueResultRequest, GenerateDrawIssueRequest,
-            GenerateDrawIssuesRequest,
+            GenerateDrawIssuesRequest, LotteryDrawControl, SaveLotteryDrawControlRequest,
         },
         finance::{FinancialAccountSummary, LedgerEntry, ManualBalanceAdjustmentRequest},
         group_buy::{
@@ -129,6 +129,11 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/draw-sources/{id}",
             put(update_draw_source).delete(delete_draw_source),
+        )
+        .route("/draw-controls", get(list_lottery_draw_controls))
+        .route(
+            "/draw-controls/{lottery_id}",
+            get(get_lottery_draw_control).put(save_lottery_draw_control),
         )
         .route(
             "/draw-issues",
@@ -355,6 +360,36 @@ async fn delete_draw_source(
     let source = state.draws.delete_draw_source(&id).await?;
 
     Ok(Json(ApiEnvelope::success(source)))
+}
+
+async fn list_lottery_draw_controls(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<LotteryDrawControl>>>> {
+    let lotteries = state.lotteries.list().await?;
+    let controls = state.draws.list_draw_controls(&lotteries).await?;
+
+    Ok(Json(ApiEnvelope::success(controls)))
+}
+
+async fn get_lottery_draw_control(
+    State(state): State<AppState>,
+    Path(lottery_id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<LotteryDrawControl>>> {
+    let lottery = state.lotteries.get(&lottery_id).await?;
+    let control = state.draws.get_draw_control(&lottery).await?;
+
+    Ok(Json(ApiEnvelope::success(control)))
+}
+
+async fn save_lottery_draw_control(
+    State(state): State<AppState>,
+    Path(lottery_id): Path<String>,
+    Json(payload): Json<SaveLotteryDrawControlRequest>,
+) -> ApiResult<Json<ApiEnvelope<LotteryDrawControl>>> {
+    let lottery = state.lotteries.get(&lottery_id).await?;
+    let control = state.draws.save_draw_control(&lottery, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(control)))
 }
 
 async fn list_draw_issues(

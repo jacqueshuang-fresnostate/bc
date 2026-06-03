@@ -1,17 +1,19 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Banner, Button, Card, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
 import {
   Activity,
   Clock3,
   Hash,
   Radio,
   RefreshCcw,
+  Save,
+  Settings2,
   Timer,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
 import { useLotteryConsole } from '../hooks/useLotteryConsole';
 import type { DrawMode, LotteryKind, LotteryNumberType } from '../types/dashboard';
-import type { DrawIssue, DrawIssueStatus } from '../types/draws';
+import type { DrawIssue, DrawIssueStatus, LotteryDrawControl } from '../types/draws';
 
 interface LotteryConsolePageProps {
   onDashboardRefresh: () => void;
@@ -20,8 +22,14 @@ interface LotteryConsolePageProps {
 interface LotteryConsoleItem {
   lottery: LotteryKind;
   currentIssue: DrawIssue | null;
+  drawControl: LotteryDrawControl | null;
   recentDrawnIssue: DrawIssue | null;
   issueCount: number;
+}
+
+interface LotteryDrawControlFormState {
+  enabled: boolean;
+  drawNumber: string;
 }
 
 type LotteryConsoleStatusFilter =
@@ -42,10 +50,25 @@ interface LotteryConsoleStatusFilterOption {
 export function LotteryConsolePage({
   onDashboardRefresh,
 }: LotteryConsolePageProps) {
-  const { error, issues, loading, lotteries, refresh } = useLotteryConsole();
+  const {
+    drawControls,
+    error,
+    issues,
+    loading,
+    lotteries,
+    refresh,
+    saveDrawControl,
+  } = useLotteryConsole();
   const [now, setNow] = useState(() => new Date());
   const [statusFilter, setStatusFilter] =
     useState<LotteryConsoleStatusFilter>('all');
+  const [selectedControlItem, setSelectedControlItem] =
+    useState<LotteryConsoleItem | null>(null);
+  const [controlForm, setControlForm] = useState<LotteryDrawControlFormState>(
+    () => emptyDrawControlForm(),
+  );
+  const [controlSaving, setControlSaving] = useState(false);
+  const [controlError, setControlError] = useState<string | null>(null);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -57,9 +80,21 @@ export function LotteryConsolePage({
     };
   }, []);
 
+  const drawControlByLotteryId = useMemo(
+    () =>
+      new Map(drawControls.map((control) => [control.lotteryId, control] as const)),
+    [drawControls],
+  );
   const items = useMemo(
-    () => lotteries.map((lottery) => lotteryConsoleItem(lottery, issues)),
-    [issues, lotteries],
+    () =>
+      lotteries.map((lottery) =>
+        lotteryConsoleItem(
+          lottery,
+          issues,
+          drawControlByLotteryId.get(lottery.id) ?? null,
+        ),
+      ),
+    [drawControlByLotteryId, issues, lotteries],
   );
   const statusFilterOptions = useMemo(
     () => lotteryConsoleStatusFilterOptions(items),
@@ -78,7 +113,9 @@ export function LotteryConsolePage({
     const waitingDrawCount = items.filter(
       (item) => item.currentIssue?.status === 'closed',
     ).length;
-    const drawnCount = items.filter((item) => item.recentDrawnIssue).length;
+    const controlEnabledCount = items.filter(
+      (item) => item.drawControl?.enabled,
+    ).length;
 
     return [
       {
@@ -102,11 +139,44 @@ export function LotteryConsolePage({
       {
         key: 'waitingDraw',
         label: '待开奖',
-        trend: `${drawnCount} 个彩种已有结果`,
+        trend: `${controlEnabledCount} 个彩种控制中`,
         value: `${waitingDrawCount}`,
       },
     ];
   }, [items, lotteries]);
+
+  const openControlSheet = (item: LotteryConsoleItem) => {
+    setSelectedControlItem(item);
+    setControlForm(drawControlFormFromControl(item.drawControl));
+    setControlError(null);
+  };
+
+  const closeControlSheet = () => {
+    setSelectedControlItem(null);
+    setControlError(null);
+  };
+
+  const submitDrawControl = async () => {
+    if (!selectedControlItem) {
+      return;
+    }
+
+    setControlSaving(true);
+    setControlError(null);
+    try {
+      const trimmedDrawNumber = controlForm.drawNumber.trim();
+      await saveDrawControl(selectedControlItem.lottery.id, {
+        enabled: controlForm.enabled,
+        drawNumber: controlForm.enabled ? trimmedDrawNumber || null : null,
+      });
+      closeControlSheet();
+      refresh();
+    } catch (requestError) {
+      setControlError(errorMessage(requestError));
+    } finally {
+      setControlSaving(false);
+    }
+  };
 
   const refreshAll = () => {
     refresh();
@@ -168,7 +238,12 @@ export function LotteryConsolePage({
       {filteredItems.length > 0 ? (
         <section className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
           {filteredItems.map((item) => (
-            <LotteryConsoleCard key={item.lottery.id} item={item} now={now} />
+            <LotteryConsoleCard
+              key={item.lottery.id}
+              item={item}
+              now={now}
+              onOpenControl={openControlSheet}
+            />
           ))}
         </section>
       ) : (
@@ -178,6 +253,17 @@ export function LotteryConsolePage({
           </div>
         </Card>
       )}
+
+      <DrawControlSideSheet
+        error={controlError}
+        form={controlForm}
+        item={selectedControlItem}
+        saving={controlSaving}
+        visible={Boolean(selectedControlItem)}
+        onChange={setControlForm}
+        onClose={closeControlSheet}
+        onSubmit={() => void submitDrawControl()}
+      />
     </div>
   );
 }
@@ -225,13 +311,16 @@ function LotteryConsoleStatusFilterBar({
 function LotteryConsoleCard({
   item,
   now,
+  onOpenControl,
 }: {
   item: LotteryConsoleItem;
   now: Date;
+  onOpenControl: (item: LotteryConsoleItem) => void;
 }) {
-  const { currentIssue, lottery, recentDrawnIssue } = item;
+  const { currentIssue, drawControl, lottery, recentDrawnIssue } = item;
   const drawNumber = currentIssue?.drawNumber ?? recentDrawnIssue?.drawNumber ?? null;
   const drawNumberLabel = currentIssue?.drawNumber ? '本期开奖号码' : '最近开奖号码';
+  const controlEnabled = Boolean(drawControl?.enabled);
 
   return (
     <Card shadows="hover" className="rounded-md border border-line">
@@ -257,6 +346,9 @@ function LotteryConsoleCard({
         ) : (
           <Tag color="grey">暂无当前期</Tag>
         )}
+        <Tag color={controlEnabled ? 'red' : 'grey'}>
+          {controlEnabled ? '控制开奖' : '未控制'}
+        </Tag>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -317,6 +409,32 @@ function LotteryConsoleCard({
         ) : null}
       </div>
 
+      <div className="mt-3 rounded-md border border-line p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+              <Settings2 size={14} />
+              开奖号码控制
+            </div>
+            <div className="mt-2 font-mono text-lg font-semibold text-ink">
+              {controlEnabled ? drawControl?.drawNumber ?? '-' : '未启用'}
+            </div>
+            {drawControl?.updatedAt ? (
+              <div className="mt-1 text-xs text-slate-500">
+                更新 {drawControl.updatedAt}
+              </div>
+            ) : null}
+          </div>
+          <Button
+            icon={<Settings2 size={15} />}
+            size="small"
+            onClick={() => onOpenControl(item)}
+          >
+            控制
+          </Button>
+        </div>
+      </div>
+
       <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
         <span className="flex items-center gap-1">
           <Activity size={13} />
@@ -325,6 +443,116 @@ function LotteryConsoleCard({
         <span>{scheduleText(lottery)}</span>
       </div>
     </Card>
+  );
+}
+
+function DrawControlSideSheet({
+  error,
+  form,
+  item,
+  onChange,
+  onClose,
+  onSubmit,
+  saving,
+  visible,
+}: {
+  error: string | null;
+  form: LotteryDrawControlFormState;
+  item: LotteryConsoleItem | null;
+  onChange: (form: LotteryDrawControlFormState) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+  saving: boolean;
+  visible: boolean;
+}) {
+  const lottery = item?.lottery ?? null;
+  const inputMaxLength = lottery?.numberType === 'fiveDigit' ? 9 : 5;
+  const placeholder = lottery?.numberType === 'fiveDigit' ? '7,8,9,4,2' : '2,4,7';
+  const saveDisabled = saving || (form.enabled && !form.drawNumber.trim());
+
+  return (
+    <SideSheet
+      aria-label="控制开奖号码"
+      title="控制开奖号码"
+      visible={visible}
+      width={520}
+      onCancel={onClose}
+    >
+      {lottery ? (
+        <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
+          <div className="rounded-md border border-line p-3">
+            <div className="text-base font-semibold text-ink">{lottery.name}</div>
+            <div className="mt-1 flex flex-wrap gap-2">
+              <Tag color="cyan">{numberTypeText(lottery.numberType)}</Tag>
+              <Tag color={drawModeColor(lottery.drawMode)}>
+                {drawModeText(lottery.drawMode)}
+              </Tag>
+            </div>
+          </div>
+
+          {error ? (
+            <Banner
+              type="danger"
+              title="保存控制失败"
+              description={error}
+            />
+          ) : null}
+
+          <label className="flex min-h-10 items-center gap-2 rounded border border-line px-3 py-2 text-sm text-slate-700">
+            <input
+              checked={form.enabled}
+              className="h-4 w-4 rounded border-line text-teal-600"
+              type="checkbox"
+              onChange={(event) =>
+                onChange({ ...form, enabled: event.target.checked })
+              }
+            />
+            <span>启用控制开奖</span>
+          </label>
+
+          <Field label={`开奖号码（${numberTypeText(lottery.numberType)}）`}>
+            <input
+              className="form-input font-mono"
+              disabled={!form.enabled}
+              maxLength={inputMaxLength}
+              placeholder={placeholder}
+              value={form.drawNumber}
+              onChange={(event) =>
+                onChange({ ...form, drawNumber: event.target.value })
+              }
+            />
+          </Field>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={saveDisabled}
+              icon={<Save size={15} />}
+              loading={saving}
+              theme="solid"
+              onClick={onSubmit}
+            >
+              保存控制
+            </Button>
+            <Button disabled={saving} onClick={onClose}>
+              关闭
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+          暂无可维护彩种。
+        </div>
+      )}
+    </SideSheet>
+  );
+}
+
+function Field({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium text-slate-500">{label}</span>
+      <div className="mt-1">{children}</div>
+    </label>
   );
 }
 
@@ -411,6 +639,7 @@ function lotteryConsoleItemMatchesFilter(
 function lotteryConsoleItem(
   lottery: LotteryKind,
   allIssues: DrawIssue[],
+  drawControl: LotteryDrawControl | null,
 ): LotteryConsoleItem {
   const issues = allIssues.filter((issue) => issue.lotteryId === lottery.id);
   const currentIssue =
@@ -425,9 +654,26 @@ function lotteryConsoleItem(
 
   return {
     currentIssue,
+    drawControl,
     issueCount: issues.length,
     lottery,
     recentDrawnIssue,
+  };
+}
+
+function emptyDrawControlForm(): LotteryDrawControlFormState {
+  return {
+    enabled: false,
+    drawNumber: '',
+  };
+}
+
+function drawControlFormFromControl(
+  control: LotteryDrawControl | null,
+): LotteryDrawControlFormState {
+  return {
+    enabled: control?.enabled ?? false,
+    drawNumber: control?.drawNumber ?? '',
   };
 }
 
@@ -551,4 +797,8 @@ function scheduleText(lottery: LotteryKind) {
     return `每日 ${schedule.daily.time}`;
   }
   return `${schedule.weekly.weekdays.join('、')} ${schedule.weekly.time}`;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : '接口请求失败';
 }

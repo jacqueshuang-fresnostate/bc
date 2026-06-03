@@ -64,6 +64,25 @@ pub struct DrawIssueResultRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct SaveLotteryDrawControlRequest {
+    pub enabled: bool,
+    #[serde(default)]
+    pub draw_number: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LotteryDrawControl {
+    pub lottery_id: String,
+    pub lottery_name: String,
+    pub number_type: LotteryNumberType,
+    pub enabled: bool,
+    pub draw_number: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct DrawIssue {
     pub id: String,
     pub lottery_id: String,

@@ -38,6 +38,20 @@ export interface DrawIssueResultRequest {
   drawNumber?: string;
 }
 
+export interface SaveLotteryDrawControlRequest {
+  enabled: boolean;
+  drawNumber?: string | null;
+}
+
+export interface LotteryDrawControl {
+  lotteryId: string;
+  lotteryName: string;
+  numberType: LotteryNumberType;
+  enabled: boolean;
+  drawNumber: string | null;
+  updatedAt: string | null;
+}
+
 export interface DrawIssue {
   id: string;
   lotteryId: string;
