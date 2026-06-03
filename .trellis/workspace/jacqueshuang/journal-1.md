@@ -1488,3 +1488,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 44: 后台动态启用开奖调度器
+
+**Date**: 2026-06-03
+**Task**: 后台动态启用开奖调度器
+**Branch**: `main`
+
+### Summary
+
+开奖调度器改为服务启动时始终创建后台任务，禁用时短轮询等待后台启用；后台保存 enabled=true 后无需环境变量或重启即可执行，并同步测试和中文文档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d0c243c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
