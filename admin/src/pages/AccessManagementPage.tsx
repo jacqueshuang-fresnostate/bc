@@ -3,6 +3,7 @@ import {
   RefreshCcw,
   Save,
   Settings,
+  Upload,
   ShieldCheck,
   Trash2,
   UserPlus,
@@ -17,6 +18,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { MetricCard } from '../components/MetricCard';
+import { uploadImageBedFile } from '../api/client';
 import { useAccessManagement } from '../hooks/useAccessManagement';
 import type { AdminSaveRequest } from '../types/access';
 import type {
@@ -964,6 +966,42 @@ function SettingsSection({
   saving: boolean;
   settings: Array<{ description: string; key: string; value: string }>;
 }) {
+  const imageBedUploadUrl = readSettingValue(settings, 'image_bed_upload_url');
+  const imageBedUploadToken = readSettingValue(settings, 'image_bed_authorization_token');
+  const imageBedUploadField =
+    (drafts['image_bed_upload_field'] ?? '').trim() ||
+    readSettingValue(settings, 'image_bed_upload_field') ||
+    'file';
+  const [imageBedFile, setImageBedFile] = useState<File | null>(null);
+  const [imageBedUploadError, setImageBedUploadError] = useState<string | null>(null);
+  const [imageBedUploadResult, setImageBedUploadResult] = useState<unknown>(null);
+  const [imageBedUploading, setImageBedUploading] = useState(false);
+  const canTestImageBedUpload =
+    Boolean(imageBedUploadUrl.trim()) &&
+    Boolean(imageBedUploadToken.trim()) &&
+    Boolean(imageBedFile);
+
+  const onTestImageBedUpload = async () => {
+    if (!imageBedFile) {
+      setImageBedUploadError('请先选择要上传的图片');
+      return;
+    }
+    setImageBedUploading(true);
+    setImageBedUploadError(null);
+    setImageBedUploadResult(null);
+    try {
+      const response = await uploadImageBedFile(
+        imageBedFile,
+        imageBedUploadField || 'file',
+      );
+      setImageBedUploadResult(response);
+    } catch (requestError: unknown) {
+      setImageBedUploadError(errorMessage(requestError));
+    } finally {
+      setImageBedUploading(false);
+    }
+  };
+
   return (
     <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
       <Card className="rounded-md border border-line">
@@ -1011,54 +1049,120 @@ function SettingsSection({
         </div>
       </Card>
 
-      <Card className="rounded-md border border-line">
-        <PanelTitle icon={<Settings size={18} />} title="注册配置" />
-        {registration ? (
+      <div className="space-y-4">
+        <Card className="rounded-md border border-line">
+          <PanelTitle icon={<Settings size={18} />} title="注册配置" />
+          {registration ? (
+            <div className="space-y-4">
+              <ToggleRow
+                checked={registration.usernameEnabled}
+                label="用户名注册"
+                onChange={(checked) =>
+                  onRegistrationChange((current) =>
+                    current ? { ...current, usernameEnabled: checked } : current,
+                  )
+                }
+              />
+              <ToggleRow
+                checked={registration.emailEnabled}
+                label="邮箱注册"
+                onChange={(checked) =>
+                  onRegistrationChange((current) =>
+                    current ? { ...current, emailEnabled: checked } : current,
+                  )
+                }
+              />
+              <ToggleRow
+                checked={registration.agentInviteRequired}
+                label="代理邀请必填"
+                onChange={(checked) =>
+                  onRegistrationChange((current) =>
+                    current ? { ...current, agentInviteRequired: checked } : current,
+                  )
+                }
+              />
+              <Button
+                disabled={
+                  saving || (!registration.usernameEnabled && !registration.emailEnabled)
+                }
+                icon={<Save size={16} />}
+                theme="solid"
+                onClick={onSaveRegistration}
+              >
+                保存注册配置
+              </Button>
+            </div>
+          ) : (
+            <div className="rounded-md border border-line p-3 text-sm text-slate-500">
+              暂无注册配置。
+            </div>
+          )}
+        </Card>
+        <Card className="rounded-md border border-line">
+          <PanelTitle icon={<Upload size={18} />} title="图床上传测试" />
           <div className="space-y-4">
-            <ToggleRow
-              checked={registration.usernameEnabled}
-              label="用户名注册"
-              onChange={(checked) =>
-                onRegistrationChange((current) =>
-                  current ? { ...current, usernameEnabled: checked } : current,
-                )
-              }
-            />
-            <ToggleRow
-              checked={registration.emailEnabled}
-              label="邮箱注册"
-              onChange={(checked) =>
-                onRegistrationChange((current) =>
-                  current ? { ...current, emailEnabled: checked } : current,
-                )
-              }
-            />
-            <ToggleRow
-              checked={registration.agentInviteRequired}
-              label="代理邀请必填"
-              onChange={(checked) =>
-                onRegistrationChange((current) =>
-                  current ? { ...current, agentInviteRequired: checked } : current,
-                )
-              }
-            />
-            <Button
-              disabled={
-                saving || (!registration.usernameEnabled && !registration.emailEnabled)
-              }
-              icon={<Save size={16} />}
-              theme="solid"
-              onClick={onSaveRegistration}
-            >
-              保存注册配置
-            </Button>
+            <Field label="当前生效上传字段名">
+              <input
+                className="form-input"
+                readOnly
+                value={imageBedUploadField || 'file'}
+              />
+            </Field>
+            <Field label="测试文件">
+              <input
+                accept="image/*"
+                className="form-input"
+                type="file"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  setImageBedFile(file ?? null);
+                  setImageBedUploadError(null);
+                  setImageBedUploadResult(null);
+                }}
+              />
+            </Field>
+            <div className="space-y-1 text-sm text-slate-600">
+              <p>说明：请先在上方保存图床地址、Token 和上传字段名。</p>
+              <p>当前地址：{imageBedUploadUrl || '未配置'}</p>
+            </div>
+            <div>
+              <Button
+                disabled={saving || imageBedUploading || !canTestImageBedUpload}
+                icon={<Upload size={16} />}
+                loading={imageBedUploading}
+                onClick={() => {
+                  void onTestImageBedUpload();
+                }}
+              >
+                测试上传
+              </Button>
+              {imageBedUploading ? (
+                <span className="ml-2 text-sm text-slate-500">正在上传...</span>
+              ) : null}
+              {imageBedFile ? (
+                <span className="ml-2 text-sm text-slate-500">
+                  已选择：{imageBedFile.name}
+                </span>
+              ) : null}
+            </div>
+            {imageBedUploadError ? (
+              <Banner
+                description={imageBedUploadError}
+                title="图床上传失败"
+                type="danger"
+              />
+            ) : null}
+            {imageBedUploadResult ? (
+              <div>
+                <p className="mb-2 text-sm text-slate-600">上传返回内容</p>
+                <pre className="max-h-48 overflow-auto rounded bg-slate-50 p-3 text-xs text-slate-700">
+                  {JSON.stringify(imageBedUploadResult, null, 2)}
+                </pre>
+              </div>
+            ) : null}
           </div>
-        ) : (
-          <div className="rounded-md border border-line p-3 text-sm text-slate-500">
-            暂无注册配置。
-          </div>
-        )}
-      </Card>
+        </Card>
+      </div>
     </section>
   );
 }
@@ -1115,6 +1219,20 @@ function sectionForModule(moduleKey: string): AccessSection {
     return 'settings';
   }
   return 'users';
+}
+
+function readSettingValue(
+  settings: Array<{ key: string; value: string }>,
+  key: string,
+) {
+  return settings.find((item) => item.key === key)?.value ?? '';
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message || '请求失败';
+  }
+  return '请求失败';
 }
 
 function accessTotals(users: UserSummary[], admins: AdminSummary[]) {

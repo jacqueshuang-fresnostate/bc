@@ -372,6 +372,33 @@ export function updateSystemSetting(
   );
 }
 
+export async function uploadImageBedFile(
+  file: File,
+  uploadFieldName: string = 'file',
+) {
+  const token = getStoredAuthToken();
+  const headers = new Headers();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const body = new FormData();
+  body.append(uploadFieldName, file);
+
+  const response = await fetch(`${API_BASE_URL}/api/admin/image-bed/upload`, {
+    body,
+    headers,
+    method: 'POST',
+  });
+  const envelope = (await response.json()) as ApiEnvelope<unknown>;
+
+  if (!response.ok || !envelope.success || envelope.data === null) {
+    throw new Error(envelope.message || '图片上传请求失败');
+  }
+
+  return envelope.data;
+}
+
 export function fetchRegistrationConfig(signal?: AbortSignal) {
   return requestJson<RegistrationConfig>('/api/admin/registration', { signal });
 }
