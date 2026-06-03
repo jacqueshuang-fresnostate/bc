@@ -1323,3 +1323,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 39: 邀请码与澳洲5分彩采集修正
+
+**Date**: 2026-06-03
+**Task**: 邀请码与澳洲5分彩采集修正
+**Branch**: `main`
+
+### Summary
+
+修正用户维护保存时邀请码被覆盖的问题，邀请管理按代理自动带出邀请码并只展示代理邀请人；新增 API68 澳洲 5 分彩采集预设；后端日志错误字段改为中文化 ApiError::log_message；同步架构设计和 TODO，并通过 cargo fmt/check/test 与 npm run build。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9602fab` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
