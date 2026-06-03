@@ -1158,3 +1158,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 34: 用户管理显示邀请码
+
+**Date**: 2026-06-03
+**Task**: 用户管理显示邀请码
+**Branch**: `main`
+
+### Summary
+
+用户管理接口新增只读 inviteCodes，后端按邀请人聚合邀请码，前端用户列表新增邀请码列并同步契约文档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b37bbb9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
