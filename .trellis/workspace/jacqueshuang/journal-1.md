@@ -962,3 +962,44 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: API68 福彩 3D 开奖源接入
+
+**Date**: 2026-06-03
+**Task**: API68 福彩 3D 开奖源接入
+**Branch**: `main`
+
+### Summary
+
+完成 API68 福彩 3D 开奖源接入：新增 `ApiDrawSourceRepository` 和 API68 响应解析，应用启动时为 `fc3d` 注入 `api68-fc3d`，手动开奖和自动任务共用外部源结果；API68 未命中期号或请求失败时不生成假号码，手动开奖返回统一错误，自动任务写入 `skippedIssues` 后继续处理其他期号。已更新 `架构设计.md`、`TODO.md` 和后端 API 契约规范。
+
+### Main Changes
+
+- 新增 `backend/src/services/draw_api.rs`，支持 API68 `preDrawIssue` 匹配和 `preDrawCode` 解析。
+- `DrawRepository` 支持注入 API 开奖源，生产应用默认注入 API68，测试内存仓储保持可无网络运行。
+- 自动封盘开奖任务捕获开奖失败并记录跳过原因，避免单个外部源失败拖垮整轮任务。
+- `GET /api/admin/draw-sources` 展示 `API68 福彩 3D`，可复用彩种为 `fc3d`。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7fb3a9e` | feat: 接入 API68 福彩 3D 开奖源 |
+| `112c205` | chore(task): archive 06-03-api68-draw-source |
+
+### Testing
+
+- [OK] `cargo fmt --check`
+- [OK] `cargo check`
+- [OK] `cargo test`，101 个测试通过
+- [OK] `npm run build`
+- [OK] API 冒烟：`fc3d/2026143` 开奖返回 `3,7,6`；`fc3d/2099999` 返回 404 且不写入号码；自动任务将未命中 API 期号写入 `skippedIssues` 并继续处理平台期号。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 开奖源配置 CRUD、API68 原始响应留痕、失败重试队列、排列 3 复用福彩 3D 结果映射和开奖期号持久化。
