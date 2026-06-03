@@ -1,5 +1,18 @@
 # TODO
 
+
+## 2026-06-03 23:05 HKT API开售自动对齐期号与时间
+
+- 完成任务：在 `set_lottery_sale` 中实现 API 彩种开售后的自动对齐补期开盘。
+- 解决问题：当管理员将 API 彩种从停售切为开售时，系统未立即补齐未来期号，导致刚开售后仍需等待常驻调度下一轮；现在会依据调度配置 `future_issueCount` 和 `saleCloseLeadSeconds` 立即补齐缺口期号。
+- 技术说明：
+  - `backend/src/routes/admin.rs` 的 `set_lottery_sale` 新增：仅当彩种从停售切到开售且为 `DrawMode::Api` 时触发 `align_api_draw_issue_plan_after_sale_on`。
+  - 该方法读取调度配置 `state.scheduler.config()`，统计当前彩种 `status=Open` 且 `scheduledAt > now` 的未来期号数量，按差值调用 `generate_draw_issue_batch`。
+  - `generate_draw_issue_batch` 会自动走 API 源期号/开奖时间对齐逻辑，确保新开盘期号与最新外部期号时间一致。
+  - 若补齐失败不回滚销售状态变更，并写入中文警告日志，避免管理员无法开售。
+- 验证记录：执行 `cargo test`（后端）138 个测试通过。
+- 后续动作：补充一条“开售接口返回补齐结果字段”用于前端显示补齐失败原因（当前先保留日志告警）。
+
 ## 2026-06-03 22:12 HKT 期号按玩法筛选与停售不调度
 
 - 完成任务：在“开奖期号与开奖源”期号列表页新增玩法筛选入口（按彩种），可按单一玩法或全部玩法查看期号；筛选项默认显示“全部玩法”。

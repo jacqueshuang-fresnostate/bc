@@ -8,6 +8,7 @@ use axum::{
     routing::{get, patch, post, put},
     Extension, Json, Router,
 };
+use chrono::Local;
 use serde::Deserialize;
 
 use crate::{
@@ -16,8 +17,9 @@ use crate::{
         auth::{AdminAuthSession, AdminLoginRequest, AdminLogoutResponse, CurrentAdminProfile},
         draw::{
             CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest, DrawIssue,
-            DrawIssueGenerationPreview, DrawIssueResultRequest, GenerateDrawIssueRequest,
-            GenerateDrawIssuesRequest, LotteryDrawControl, SaveLotteryDrawControlRequest,
+            DrawIssueGenerationPreview, DrawIssueResultRequest, DrawIssueStatus,
+            GenerateDrawIssueRequest, GenerateDrawIssuesRequest, LotteryDrawControl,
+            SaveLotteryDrawControlRequest,
         },
         finance::{FinancialAccountSummary, LedgerEntry, ManualBalanceAdjustmentRequest},
         group_buy::{
@@ -25,7 +27,7 @@ use crate::{
             GroupBuyPlanSummary, UpdateGroupBuyPlanRequest,
         },
         invite::{CreateInviteRecordRequest, InviteRecord, UpdateInviteRecordRequest},
-        lottery::{DrawSource, LotteryKind, SaveDrawSourceRequest},
+        lottery::{DrawMode, DrawSource, LotteryKind, SaveDrawSourceRequest},
         order::{CreateOrderRequest, OrderDetail},
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
@@ -57,6 +59,8 @@ use crate::{
         scheduler::DrawSchedulerStatus,
     },
 };
+
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 pub fn router(state: AppState) -> Router<AppState> {
     let protected_routes = Router::new()
@@ -1103,12 +1107,63 @@ async fn set_lottery_sale(
     Path(id): Path<String>,
     Json(payload): Json<SaleStatusRequest>,
 ) -> ApiResult<Json<ApiEnvelope<LotteryKind>>> {
+    let before = state.lotteries.get(&id).await?;
+    let need_align =
+        before.draw_mode == DrawMode::Api && !before.sale_enabled && payload.sale_enabled;
+
     let lottery = state
         .lotteries
         .set_sale_enabled(&id, payload.sale_enabled)
         .await?;
 
+    if need_align {
+        if let Err(error) = align_api_draw_issue_plan_after_sale_on(&state, &lottery).await {
+            tracing::warn!(
+                lottery_id = %lottery.id,
+                error = %error.log_message(),
+                "开售后补齐期号失败，已保留销售状态切换结果"
+            );
+        }
+    }
+
     Ok(Json(ApiEnvelope::success(lottery)))
+}
+
+async fn align_api_draw_issue_plan_after_sale_on(
+    state: &AppState,
+    lottery: &LotteryKind,
+) -> ApiResult<()> {
+    let config = state.scheduler.config()?;
+    let now = Local::now()
+        .naive_local()
+        .format(TIMESTAMP_FORMAT)
+        .to_string();
+    let existing_issues = state.draws.list_by_lottery_id(&lottery.id).await?;
+    let existing_future_count = existing_issues
+        .into_iter()
+        .filter(|issue| {
+            issue.status == DrawIssueStatus::Open && issue.scheduled_at.as_str() > now.as_str()
+        })
+        .count() as u32;
+
+    if existing_future_count >= config.future_issue_count {
+        return Ok(());
+    }
+
+    let count = config.future_issue_count - existing_future_count;
+    let _ = generate_draw_issue_batch(
+        &state.draws,
+        lottery,
+        GenerateDrawIssuesRequest {
+            lottery_id: lottery.id.clone(),
+            now,
+            count,
+            sale_close_lead_seconds: Some(config.sale_close_lead_seconds),
+        },
+    )
+    .await?;
+
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
