@@ -2371,6 +2371,11 @@ fn seed_settings() -> Vec<SystemSetting> {
             description: "图床上传字段名".to_string(),
         },
         SystemSetting {
+            key: "image_bed_result_url_field".to_string(),
+            value: "links.download".to_string(),
+            description: "图床返回中的图片链接字段（支持点号路径）".to_string(),
+        },
+        SystemSetting {
             key: "recharge_rebate_mode".to_string(),
             value: "immediate".to_string(),
             description: "代理充值返利模式".to_string(),

@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-04 23:55 HKT 图床返回链接字段可配置
+
+- 完成任务：图床上传返回为图片链接时，可通过配置项 `image_bed_result_url_field` 指定返回字段路径（如 `links.download`），避免前端拿到不稳定的原始回包。
+- 解决问题：此前接口默认将整段回包透传，遇到返回直接为链接时运维无法直接在统一字段里读取；同时不同图床结构差异（如直接返回 `{"file":{"url":...}}`）也导致联调困难。
+- 具体实现：
+  - `backend/src/services/access.rs` 在系统设置种子中新增 `image_bed_result_url_field`，并给出默认值 `links.download`。
+  - `backend/src/routes/admin.rs` 的 `POST /api/admin/image-bed/upload` 新增：
+    - 读取 `image_bed_result_url_field`，按“点号路径”从图床响应 JSON 取值；
+    - 取值失败时返回中文提示，确保字段缺失可快速定位；
+    - 未配置该字段时兼容返回原始响应。
+  - `admin/src/pages/AccessManagementPage.tsx` 的图床设置会显示该配置项，运维可直接在系统设置里修改生效。
+- 验证记录：
+  - `cargo check -q` 通过。
+
 ## 2026-06-04 23:24 HKT 系统设置页面体验优化
 
 - 完成任务：优化“系统设置”页面的编辑体验，减少配置查找和编辑负担。

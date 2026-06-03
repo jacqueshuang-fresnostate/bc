@@ -978,6 +978,10 @@ function SettingsSection({
     (drafts['image_bed_upload_field'] ?? '').trim() ||
     readSettingValue(settings, 'image_bed_upload_field') ||
     'file';
+  const imageBedResultUrlField =
+    (drafts['image_bed_result_url_field'] ?? '').trim() ||
+    readSettingValue(settings, 'image_bed_result_url_field') ||
+    'links.download';
   const [imageBedFile, setImageBedFile] = useState<File | null>(null);
   const [imageBedUploadError, setImageBedUploadError] = useState<string | null>(null);
   const [imageBedUploadResult, setImageBedUploadResult] = useState<unknown>(null);
@@ -1149,6 +1153,13 @@ function SettingsSection({
                 className="form-input"
                 readOnly
                 value={imageBedUploadField || 'file'}
+              />
+            </Field>
+            <Field label="当前生效返回链接字段（支持 . 分割）">
+              <input
+                className="form-input"
+                readOnly
+                value={imageBedResultUrlField}
               />
             </Field>
             <Field label="测试文件">

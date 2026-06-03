@@ -66,6 +66,10 @@ const IMAGE_BED_UPLOAD_URL_SETTING: &str = "image_bed_upload_url";
 const IMAGE_BED_AUTHORIZATION_TOKEN_SETTING: &str = "image_bed_authorization_token";
 const IMAGE_BED_UPLOAD_FIELD_SETTING: &str = "image_bed_upload_field";
 const IMAGE_BED_UPLOAD_FIELD_DEFAULT: &str = "file";
+// 图床返回中用于提取可直接展示图片链接的 JSON 字段路径（支持 `a.b.c`）。
+const IMAGE_BED_RESULT_URL_FIELD_SETTING: &str = "image_bed_result_url_field";
+// 默认优先读取 `links.download`，与目前 `moonight` 图床响应保持一致。
+const IMAGE_BED_RESULT_URL_FIELD_DEFAULT: &str = "links.download";
 
 /// 组装并返回当前模块对应的路由树。
 pub fn router(state: AppState) -> Router<AppState> {
@@ -1013,10 +1017,59 @@ async fn upload_image_bed_file(
         .text()
         .await
         .map_err(|_| ApiError::Internal("图床响应读取失败".to_string()))?;
-    let response_body = serde_json::from_str::<Value>(&response_body)
+    // 将图床响应解析为 JSON，支持原始文本回退，避免解析失败直接失败。
+    let response_json = serde_json::from_str::<Value>(&response_body)
         .unwrap_or_else(|_| Value::String(response_body));
+    // 按配置读取返回字段路径；为空时兼容返回原始对象，适配未来图床返回结构变更。
+    let result_url_field = state
+        .access
+        .setting_value_optional(IMAGE_BED_RESULT_URL_FIELD_SETTING)
+        .await?
+        .unwrap_or_else(|| IMAGE_BED_RESULT_URL_FIELD_DEFAULT.to_string())
+        .trim()
+        .to_string();
 
-    Ok(Json(ApiEnvelope::success(response_body)))
+    let output = if result_url_field.is_empty() {
+        response_json
+    } else {
+        extract_image_bed_result_field(&response_json, &result_url_field)?
+    };
+
+    Ok(Json(ApiEnvelope::success(output)))
+}
+
+fn extract_image_bed_result_field(response: &Value, field_path: &str) -> ApiResult<Value> {
+    // 根据配置路径从上游响应里找图片链接，返回缺失时给出可读错误。
+    let Some(value) = resolve_json_path(response, field_path) else {
+        return Err(ApiError::BadRequest(format!(
+            "图床返回结构中未找到图片链接字段 `{field_path}`"
+        )));
+    };
+
+    if let Some(url) = value.as_str().filter(|item| !item.trim().is_empty()) {
+        Ok(Value::String(url.to_string()))
+    } else {
+        Err(ApiError::BadRequest(format!(
+            "图床返回字段 `{field_path}` 不是有效图片链接文本：{value}"
+        )))
+    }
+}
+
+fn resolve_json_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    // 支持 `.` 分隔的嵌套对象路径，如 `links.download`。
+    let mut current = value;
+    for segment in path.split('.') {
+        if segment.is_empty() {
+            return None;
+        }
+        match current {
+            Value::Object(map) => {
+                current = map.get(segment)?;
+            }
+            _ => return None,
+        }
+    }
+    Some(current)
 }
 
 async fn get_registration_config(
