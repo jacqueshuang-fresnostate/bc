@@ -69,6 +69,7 @@ pub struct DrawSource {
 #[serde(rename_all = "camelCase")]
 pub enum DrawSourceProvider {
     Api68,
+    KjApi,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

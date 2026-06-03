@@ -79,7 +79,18 @@ interface SchedulerConfigFormState {
   saleCloseLeadSeconds: string;
 }
 
-const API68_SOURCE_PRESETS: Array<{ label: string; form: DrawSourceFormState }> = [
+const DRAW_SOURCE_PRESETS: Array<{ label: string; form: DrawSourceFormState }> = [
+  {
+    label: '腾讯分分彩采集',
+    form: {
+      endpoint: 'https://kjapi.net/hall/hallajax/getLotteryInfo',
+      id: 'kj-txffc',
+      lotCode: 'txffc',
+      name: 'KJAPI-腾讯分分彩',
+      provider: 'kjApi',
+      reusableForLotteryIds: ['txffc'],
+    },
+  },
   {
     label: '澳洲 5 分彩采集',
     form: {
@@ -1209,7 +1220,7 @@ function DrawSourceSideSheet({
     >
       <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
         <div className="flex flex-wrap gap-2">
-          {API68_SOURCE_PRESETS.map((preset) => (
+          {DRAW_SOURCE_PRESETS.map((preset) => (
             <Button
               key={preset.label}
               disabled={saving}
@@ -1256,9 +1267,10 @@ function DrawSourceSideSheet({
               }
             >
               <option value="api68">API68</option>
+              <option value="kjApi">KJAPI</option>
             </select>
           </Field>
-          <Field label="lotCode">
+          <Field label="lotCode / lotKey">
             <input
               className="form-input font-mono"
               value={form.lotCode}
@@ -1720,7 +1732,7 @@ function emptyForm(): DrawIssueFormState {
 }
 
 function emptySourceForm(): DrawSourceFormState {
-  return API68_SOURCE_PRESETS[0].form;
+  return DRAW_SOURCE_PRESETS[0].form;
 }
 
 function sourceFormFromSource(source: DrawSource): DrawSourceFormState {
@@ -1861,6 +1873,7 @@ function drawModeColor(mode: DrawMode) {
 function drawSourceProviderText(provider: DrawSourceProvider) {
   const labels: Record<DrawSourceProvider, string> = {
     api68: 'API68',
+    kjApi: 'KJAPI',
   };
   return labels[provider];
 }

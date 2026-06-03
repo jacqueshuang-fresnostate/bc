@@ -44,7 +44,7 @@ impl LotteryRepository {
         sqlx::migrate!("./migrations").run(&pool).await?;
 
         let store = PostgresLotteryStore { pool };
-        store.seed_if_empty().await?;
+        store.seed_missing_defaults().await?;
 
         Ok(Self {
             inner: Arc::new(LotteryRepositoryKind::Postgres(store)),
@@ -197,17 +197,9 @@ struct PostgresLotteryStore {
 }
 
 impl PostgresLotteryStore {
-    async fn seed_if_empty(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lotteries")
-            .fetch_one(&self.pool)
-            .await?;
-
-        if count > 0 {
-            return Ok(());
-        }
-
+    async fn seed_missing_defaults(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         for lottery in seed_lotteries() {
-            self.insert_lottery(lottery).await?;
+            self.insert_seed_lottery(lottery).await?;
         }
 
         Ok(())
@@ -272,15 +264,15 @@ impl PostgresLotteryStore {
             .ok_or_else(|| ApiError::Conflict(format!("lottery `{}` already exists", lottery.id)))
     }
 
-    async fn insert_lottery(&self, lottery: LotteryKind) -> ApiResult<LotteryKind> {
+    async fn insert_seed_lottery(&self, lottery: LotteryKind) -> ApiResult<()> {
         let lottery = normalize_lottery(lottery)?;
 
-        let row = sqlx::query(
+        sqlx::query(
             "INSERT INTO lotteries (
                 id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              )
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             ON CONFLICT (id) DO NOTHING",
         )
         .bind(&lottery.id)
         .bind(&lottery.name)
@@ -291,11 +283,11 @@ impl PostgresLotteryStore {
         .bind(json_value(&lottery.group_buy)?)
         .bind(json_value(&lottery.play_categories)?)
         .bind(json_value(&lottery.play_configs)?)
-        .fetch_one(&self.pool)
+        .execute(&self.pool)
         .await
         .map_err(database_error)?;
 
-        lottery_from_row(row)
+        Ok(())
     }
 
     async fn update(&self, id: &str, lottery: LotteryKind) -> ApiResult<LotteryKind> {
@@ -449,6 +441,40 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             draw_mode: DrawMode::Api,
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 300,
+            },
+            sale_enabled: true,
+            group_buy: group_buy_config(),
+            play_categories: vec![
+                PlayCategory::Direct,
+                PlayCategory::DirectCombination,
+                PlayCategory::GroupThree,
+                PlayCategory::GroupSix,
+                PlayCategory::BigSmallOddEven,
+            ],
+            play_configs: play_configs_with_overrides(
+                LotteryNumberType::FiveDigit,
+                &[
+                    PlayCategory::Direct,
+                    PlayCategory::DirectCombination,
+                    PlayCategory::GroupThree,
+                    PlayCategory::GroupSix,
+                    PlayCategory::BigSmallOddEven,
+                ],
+                &[
+                    (PlayRuleCode::FiveFrontDirect, 95_000),
+                    (PlayRuleCode::FiveMiddleDirect, 96_000),
+                    (PlayRuleCode::FiveBackDirect, 97_000),
+                    (PlayRuleCode::FiveBigSmallOddEven, 19_000),
+                ],
+            ),
+        },
+        LotteryKind {
+            id: "txffc".to_string(),
+            name: "腾讯分分彩".to_string(),
+            number_type: LotteryNumberType::FiveDigit,
+            draw_mode: DrawMode::Api,
+            schedule: DrawSchedule::Periodic {
+                interval_seconds: 60,
             },
             sale_enabled: true,
             group_buy: group_buy_config(),
@@ -830,6 +856,24 @@ mod tests {
     }
 
     #[test]
+    fn seeded_lotteries_include_txffc_api_lottery() {
+        let lottery = seed_lotteries()
+            .into_iter()
+            .find(|item| item.id == "txffc")
+            .expect("txffc seed lottery exists");
+
+        assert_eq!(lottery.name, "腾讯分分彩");
+        assert_eq!(lottery.number_type, LotteryNumberType::FiveDigit);
+        assert_eq!(lottery.draw_mode, DrawMode::Api);
+        assert_eq!(
+            lottery.schedule,
+            DrawSchedule::Periodic {
+                interval_seconds: 60
+            }
+        );
+    }
+
+    #[test]
     fn store_rejects_duplicate_id() {
         let mut store = LotteryStore::seeded();
         let lottery = store.get("fc3d").expect("seed lottery exists");
@@ -907,7 +951,7 @@ mod tests {
 
         let lotteries = repository.list().await.expect("lotteries can be listed");
 
-        assert_eq!(lotteries.len(), 5);
+        assert_eq!(lotteries.len(), 6);
     }
 
     #[tokio::test]

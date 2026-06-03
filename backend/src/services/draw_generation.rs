@@ -179,9 +179,11 @@ fn latest_scheduled_at(issues: &[DrawIssue], lottery_id: &str) -> ApiResult<Opti
 
 #[derive(Debug, Clone, Copy)]
 struct ApiIssueAnchor {
-    latest_external_issue: u32,
-    latest_issue: u32,
+    latest_external_issue: u64,
+    latest_issue: u64,
     latest_draw_time: Option<NaiveDateTime>,
+    next_external_issue: Option<u64>,
+    next_draw_time: Option<NaiveDateTime>,
 }
 
 fn api_issue_anchor(
@@ -212,11 +214,29 @@ fn api_issue_anchor(
         .as_deref()
         .map(|value| parse_timestamp(value, "api latest draw time"))
         .transpose()?;
+    let next_external_issue = latest_api_issue
+        .next_issue
+        .as_deref()
+        .map(|value| {
+            parse_api_sequence_issue(value).ok_or_else(|| {
+                ApiError::Internal(format!(
+                    "api draw source next issue `{value}` is not a numeric issue"
+                ))
+            })
+        })
+        .transpose()?;
+    let next_draw_time = latest_api_issue
+        .next_draw_time
+        .as_deref()
+        .map(|value| parse_timestamp(value, "api next draw time"))
+        .transpose()?;
 
     Ok(Some(ApiIssueAnchor {
         latest_external_issue,
         latest_issue,
         latest_draw_time,
+        next_external_issue,
+        next_draw_time,
     }))
 }
 
@@ -232,15 +252,32 @@ fn generation_baseline(
             latest_external_issue,
             latest_issue,
             latest_draw_time: Some(latest_draw_time),
+            next_external_issue,
+            next_draw_time,
         }),
     ) = (&lottery.schedule, api_anchor)
     {
+        if let (Some(next_external_issue), Some(next_draw_time)) =
+            (next_external_issue, next_draw_time)
+        {
+            let offset_seconds = if latest_issue >= next_external_issue {
+                i64::from(*interval_seconds)
+                    * issue_offset_count(latest_issue - next_external_issue)?
+            } else {
+                -i64::from(*interval_seconds)
+                    * issue_offset_count(next_external_issue - latest_issue)?
+            };
+            return next_draw_time
+                .checked_add_signed(Duration::seconds(offset_seconds))
+                .ok_or_else(|| ApiError::BadRequest("scheduled time is out of range".to_string()));
+        }
+
         let issue_offset = latest_issue
             .checked_sub(*latest_external_issue)
             .ok_or_else(|| {
                 ApiError::Internal("api draw source issue sequence is invalid".to_string())
             })?;
-        let offset_seconds = i64::from(*interval_seconds) * i64::from(issue_offset);
+        let offset_seconds = i64::from(*interval_seconds) * issue_offset_count(issue_offset)?;
         return latest_draw_time
             .checked_add_signed(Duration::seconds(offset_seconds))
             .ok_or_else(|| ApiError::BadRequest("scheduled time is out of range".to_string()));
@@ -248,6 +285,11 @@ fn generation_baseline(
 
     let baseline = latest_scheduled_at(existing_issues, &lottery.id)?.unwrap_or(now);
     Ok(if baseline > now { baseline } else { now })
+}
+
+fn issue_offset_count(issue_offset: u64) -> ApiResult<i64> {
+    i64::try_from(issue_offset)
+        .map_err(|_| ApiError::Internal("api draw source issue offset is out of range".to_string()))
 }
 
 fn next_scheduled_at(schedule: &DrawSchedule, baseline: NaiveDateTime) -> ApiResult<NaiveDateTime> {
@@ -352,7 +394,7 @@ fn format_issue(value: NaiveDateTime) -> String {
 
 enum IssueLabeler {
     Timestamp,
-    Sequential { next_issue: u32 },
+    Sequential { next_issue: u64 },
 }
 
 impl IssueLabeler {
@@ -381,13 +423,13 @@ impl IssueLabeler {
     }
 }
 
-fn parse_api_sequence_issue(value: &str) -> Option<u32> {
+fn parse_api_sequence_issue(value: &str) -> Option<u64> {
     let value = value.trim();
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
 
-    value.parse::<u32>().ok()
+    value.parse::<u64>().ok()
 }
 
 #[cfg(test)]
@@ -430,6 +472,23 @@ mod tests {
             "data": [
                 { "preDrawIssue": 51320849, "preDrawCode": "4,5,4,3,0", "preDrawTime": "2026-06-03 11:18:40" }
             ]
+        }
+    }"#;
+    const KJ_TXFFC_SAMPLE: &str = r#"{
+        "errorCode": 0,
+        "message": "",
+        "result": {
+            "businessCode": "202606031178",
+            "message": "",
+            "data": {
+                "lotKey": "txffc",
+                "lotName": "腾讯分分彩",
+                "preDrawIssue": "202606031178",
+                "preDrawCode": "9,9,8,7,2",
+                "preDrawTime": "2026-06-03 19:38:01",
+                "drawIssue": 202606031179,
+                "drawTime": "2026-06-03 19:39:00"
+            }
         }
     }"#;
 
@@ -631,6 +690,54 @@ mod tests {
 
         assert_eq!(issue.issue, "51320851");
         assert_eq!(issue.scheduled_at, "2026-06-03 11:28:40");
+    }
+
+    #[tokio::test]
+    async fn kj_txffc_source_generates_provider_next_issue() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::kj_seeded_with_static_response(KJ_TXFFC_SAMPLE),
+        );
+        let mut lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+        lottery.id = "txffc".to_string();
+        lottery.name = "腾讯分分彩".to_string();
+        lottery.number_type = LotteryNumberType::FiveDigit;
+
+        let issue = generate_next_draw_issue(
+            &draws,
+            &lottery,
+            request_for("txffc", "2026-06-03 19:38:20"),
+        )
+        .await
+        .expect("issue can be generated");
+
+        assert_eq!(issue.issue, "202606031179");
+        assert_eq!(issue.scheduled_at, "2026-06-03 19:39:00");
+    }
+
+    #[tokio::test]
+    async fn kj_txffc_source_skips_closed_provider_next_issue() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::kj_seeded_with_static_response(KJ_TXFFC_SAMPLE),
+        );
+        let mut lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+        lottery.id = "txffc".to_string();
+        lottery.name = "腾讯分分彩".to_string();
+        lottery.number_type = LotteryNumberType::FiveDigit;
+
+        let issue = generate_next_draw_issue(
+            &draws,
+            &lottery,
+            request_for("txffc", "2026-06-03 19:38:40"),
+        )
+        .await
+        .expect("issue can be generated");
+
+        assert_eq!(issue.issue, "202606031180");
+        assert_eq!(issue.scheduled_at, "2026-06-03 19:40:00");
     }
 
     #[tokio::test]

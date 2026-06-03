@@ -32,7 +32,7 @@ export interface ModuleGroup {
 
 export type LotteryNumberType = 'threeDigit' | 'fiveDigit';
 export type DrawMode = 'platform' | 'api' | 'manual';
-export type DrawSourceProvider = 'api68';
+export type DrawSourceProvider = 'api68' | 'kjApi';
 
 export type DrawSchedule =
   | { periodic: { intervalSeconds: number } }

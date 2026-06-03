@@ -670,6 +670,7 @@ await createOrder({
 
 - `api68-fc3d`：`fc3d` 福彩 3D 和 `pl3` 排列 3 默认复用 API68 全国彩接口，`lotCode=10041`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为开奖号码。
 - `api68-au5`：`au5` 澳洲 5 分彩默认使用 API68 CQShiCai 接口，`lotCode=10010`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为英文逗号分隔开奖号码。
+- `kj-txffc`：`txffc` 腾讯分分彩默认使用 KJAPI 接口，`lotKey=txffc`，响应中按 `result.data.preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为英文逗号分隔开奖号码；生成下一期时优先读取 `result.data.drawIssue` 和 `result.data.drawTime`。
 - `preDrawCode` 必须继续经过后端开奖号码校验，保存和返回仍统一为英文逗号分隔格式。
 - 暂未配置外部源的 API 彩种仍保留本地生成器占位能力，仅用于当前内存演示阶段；生产接入时需要显式配置来源。
 
@@ -701,7 +702,9 @@ await createOrder({
 }
 ```
 
-`endpoint` 可为空；为空时后端写入默认 API68 全国彩 endpoint。福彩 3D/排列 3 默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfoList.do`；澳洲 5 分彩默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do`。后续修改 endpoint 必须通过后台“开奖源配置”或开奖源 API 写入数据库，不通过环境变量覆盖。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
+`endpoint` 可为空；为空时后端按供应商写入默认 endpoint。福彩 3D/排列 3 默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfoList.do`；澳洲 5 分彩默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do`；腾讯分分彩默认来源写入 `draw_sources` 表，endpoint 为 `https://kjapi.net/hall/hallajax/getLotteryInfo`。后续修改 endpoint 必须通过后台“开奖源配置”或开奖源 API 写入数据库，不通过环境变量覆盖。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
+
+KJAPI 来源的 `lotCode` 字段在当前跨层模型中复用为 `lotKey`，例如腾讯分分彩保存 `lotCode="txffc"`；后端请求时会按供应商自动拼接 `lotKey=txffc`，不是 `lotCode=txffc`。后台展示标签可写为 `lotCode / lotKey`。
 
 开奖期号响应：
 
@@ -1269,12 +1272,13 @@ let entries = finance.credit_settlement(&settlement).await?;
 4. 每日固定开奖：选择严格晚于基线的当天或次日配置时间。
 5. 周开奖：选择严格晚于基线的下一个配置星期和时间。
 6. 默认期号编码使用开奖时间格式化为 `YYYYMMDDHHMMSS`。
-7. 如果彩种绑定了 API68 开奖源，后端必须先读取外部源最新 `preDrawIssue`，并用该数字期号递增生成未来期号；例如 API68 最新 `2026143` 时，福彩 3D 和复用同源的排列 3 下一期为 `2026144`。
-8. 如果 API68 周期彩种返回 `preDrawTime`，期号生成必须使用 `preDrawTime + 周期间隔 * 期号偏移` 对齐外部开奖节奏，不能用服务器当前秒数直接推导开奖时间。
-9. 生成计划必须跳过 `saleClosedAt <= now` 的候选期号，避免创建已经封盘却显示为 `open` 的期号；期号递增也要同步跳过这些候选期。
-10. API 来源已配置但无法解析最新数字期号时，生成和预览接口必须返回错误，不能静默回退为时间戳期号。
-11. 创建仍复用开奖期号仓储，保持重复期号、彩种匹配、开奖时间和封盘时间校验一致。
-12. 批量预览和批量生成必须在同一次计划中跳过已存在的同彩种同 `issue`，并继续寻找后续可用期号。
+7. 如果彩种绑定了外部 API 开奖源，后端必须先读取外部源最新 `preDrawIssue`，并用该数字期号递增生成未来期号；例如 API68 最新 `2026143` 时，福彩 3D 和复用同源的排列 3 下一期为 `2026144`。
+8. 如果外部 API 周期彩种返回 `preDrawTime`，期号生成必须使用 `preDrawTime + 周期间隔 * 期号偏移` 对齐外部开奖节奏，不能用服务器当前秒数直接推导开奖时间。
+9. 如果外部 API 周期彩种返回下一期 `drawIssue` 和 `drawTime`，例如 KJAPI 的腾讯分分彩，后端应优先使用这两个字段作为下一期锚点；当 `drawIssue` 已过封盘时间时，应继续递增到后续可销售期号。
+10. 生成计划必须跳过 `saleClosedAt <= now` 的候选期号，避免创建已经封盘却显示为 `open` 的期号；期号递增也要同步跳过这些候选期。
+11. API 来源已配置但无法解析最新数字期号时，生成和预览接口必须返回错误，不能静默回退为时间戳期号；期号可能超过 32 位整数范围，后端必须按 64 位整数处理。
+12. 创建仍复用开奖期号仓储，保持重复期号、彩种匹配、开奖时间和封盘时间校验一致。
+13. 批量预览和批量生成必须在同一次计划中跳过已存在的同彩种同 `issue`，并继续寻找后续可用期号。
 
 ### 4. 校验与错误矩阵
 
@@ -1290,7 +1294,7 @@ let entries = finance.credit_settlement(&settlement).await?;
 | 周期开奖秒数为 0 | HTTP 400，返回 `periodic interval must be greater than zero` |
 | 每日或周开奖时间格式错误 | HTTP 400，返回 `... must use HH:mm:ss format` |
 | 周开奖星期为空或不支持 | HTTP 400，返回 weekday 错误 |
-| 已配置 API 来源但最新期号为空或不是 7 位数字 | HTTP 500，返回 API 来源最新期号错误，不生成错误期号 |
+| 已配置 API 来源但最新期号为空或不是数字 | HTTP 500，返回 API 来源最新期号错误，不生成错误期号 |
 | 计划尝试次数耗尽仍无法生成足量唯一期号 | HTTP 409，返回唯一期号生成失败 |
 
 ### 5. Good / Base / Bad Cases
@@ -1300,6 +1304,8 @@ let entries = finance.credit_settlement(&settlement).await?;
 - Good：`pl3` 复用 `api68-fc3d` 来源时，生成下一期同样使用 `issue=2026144`。
 - Good：`au5` 配置 `periodic.intervalSeconds=300`，API68 最新 `preDrawIssue=51320849`、`preDrawTime=2026-06-03 11:18:40`，`now=2026-06-03 11:20:00`，生成 `issue=51320850`、`scheduledAt=2026-06-03 11:23:40`。
 - Good：同样的 `au5` 在 `now=2026-06-03 11:23:30` 且 `51320850` 已过封盘时间时，生成应跳到 `issue=51320851`、`scheduledAt=2026-06-03 11:28:40`，不能生成已封盘的 open 期。
+- Good：`txffc` 配置 `periodic.intervalSeconds=60`，KJAPI 返回 `drawIssue=202606031179`、`drawTime=2026-06-03 19:39:00`，`now=2026-06-03 19:38:20`，生成 `issue=202606031179`、`scheduledAt=2026-06-03 19:39:00`。
+- Good：同样的 `txffc` 在 `now=2026-06-03 19:38:40` 且 `202606031179` 已过封盘时间时，生成应跳到 `issue=202606031180`、`scheduledAt=2026-06-03 19:40:00`。
 - Good：本地已有 `fc3d/2026144` 时，再次生成应得到 `2026145`。
 - Good：周二、周四 `21:00:00` 的彩种，在周二 22:00 后生成周四 21:00。
 - Good：`preview-generation` 请求 `count=3` 返回未来 3 期计划，但随后请求期号列表不会多出新期号。
@@ -1313,6 +1319,7 @@ let entries = finance.credit_settlement(&settlement).await?;
 - 后端需要覆盖已有期号时从最新期号继续生成。
 - 后端需要覆盖 API68 最新 `preDrawIssue` 驱动福彩 3D/排列 3 真实期号生成。
 - 后端需要覆盖 API68 周期彩种使用 `preDrawTime` 对齐开奖时间，并跳过已过封盘时间的候选期。
+- 后端需要覆盖 KJAPI 的 `preDrawIssue/preDrawCode/preDrawTime/drawIssue/drawTime` 解析、12 位期号生成和已封盘候选期跳过。
 - 后端需要覆盖计划预览不写入仓储。
 - 后端需要覆盖批量生成和 `count` 边界。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。

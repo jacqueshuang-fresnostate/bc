@@ -29,16 +29,23 @@ pub const API68_AU5_SOURCE_ID: &str = "api68-au5";
 pub const API68_AU5_SOURCE_NAME: &str = "API68 澳洲 5 分彩";
 pub const API68_AU5_LOTTERY_ID: &str = "au5";
 pub const API68_AU5_LOT_CODE: &str = "10010";
+pub const KJ_TXFFC_SOURCE_ID: &str = "kj-txffc";
+pub const KJ_TXFFC_SOURCE_NAME: &str = "KJAPI 腾讯分分彩";
+pub const KJ_TXFFC_LOTTERY_ID: &str = "txffc";
+pub const KJ_TXFFC_LOT_KEY: &str = "txffc";
 const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
     "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do";
 const DEFAULT_API68_CQSHICAI_ENDPOINT: &str =
     "https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do";
+const DEFAULT_KJ_ENDPOINT: &str = "https://kjapi.net/hall/hallajax/getLotteryInfo";
 const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiDrawSourceLatestIssue {
     pub issue: String,
     pub draw_time: Option<String>,
+    pub next_issue: Option<String>,
+    pub next_draw_time: Option<String>,
 }
 
 #[derive(Clone)]
@@ -59,6 +66,7 @@ impl ApiDrawSourceRepository {
         Self::new(vec![
             ApiDrawSourceConfig::api68_fc3d(),
             ApiDrawSourceConfig::api68_au5(),
+            ApiDrawSourceConfig::kj_txffc(),
         ])
     }
 
@@ -93,6 +101,24 @@ impl ApiDrawSourceRepository {
             inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(vec![
                 ApiDrawSourceConfig::api68_fc3d(),
                 ApiDrawSourceConfig::api68_au5(),
+                ApiDrawSourceConfig::kj_txffc(),
+            ]))),
+            static_responses: Arc::new(static_responses),
+            persistence: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn kj_seeded_with_static_response(response_body: impl Into<String>) -> Self {
+        let mut static_responses = BTreeMap::new();
+        static_responses.insert(KJ_TXFFC_SOURCE_ID.to_string(), response_body.into());
+
+        Self {
+            client: reqwest::Client::new(),
+            inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(vec![
+                ApiDrawSourceConfig::api68_fc3d(),
+                ApiDrawSourceConfig::api68_au5(),
+                ApiDrawSourceConfig::kj_txffc(),
             ]))),
             static_responses: Arc::new(static_responses),
             persistence: None,
@@ -172,6 +198,7 @@ impl ApiDrawSourceRepository {
 
         let result = match source.provider {
             DrawSourceProvider::Api68 => self.fetch_api68_draw_number(&source, &issue.issue).await,
+            DrawSourceProvider::KjApi => self.fetch_kj_draw_number(&source, &issue.issue).await,
         };
 
         if let Err(error) = &result {
@@ -204,6 +231,7 @@ impl ApiDrawSourceRepository {
 
         let result = match source.provider {
             DrawSourceProvider::Api68 => self.fetch_api68_latest_issue(&source).await,
+            DrawSourceProvider::KjApi => self.fetch_kj_latest_issue(&source).await,
         };
 
         if let Err(error) = &result {
@@ -281,6 +309,69 @@ impl ApiDrawSourceRepository {
         parse_api68_latest_issue(&response_body)
     }
 
+    async fn fetch_kj_draw_number(
+        &self,
+        source: &ApiDrawSourceConfig,
+        issue: &str,
+    ) -> ApiResult<String> {
+        if let Some(response_body) = self.static_responses.get(&source.id) {
+            return parse_kj_draw_number(response_body, issue);
+        }
+
+        let response = self
+            .client
+            .get(source.url())
+            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
+            .send()
+            .await
+            .map_err(|_| ApiError::Internal("api draw source request failed".to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ApiError::Internal(format!(
+                "api draw source returned http status {status}"
+            )));
+        }
+
+        let response_body = response
+            .text()
+            .await
+            .map_err(|_| ApiError::Internal("api draw source response read failed".to_string()))?;
+
+        parse_kj_draw_number(&response_body, issue)
+    }
+
+    async fn fetch_kj_latest_issue(
+        &self,
+        source: &ApiDrawSourceConfig,
+    ) -> ApiResult<ApiDrawSourceLatestIssue> {
+        if let Some(response_body) = self.static_responses.get(&source.id) {
+            return parse_kj_latest_issue(response_body);
+        }
+
+        let response = self
+            .client
+            .get(source.url())
+            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
+            .send()
+            .await
+            .map_err(|_| ApiError::Internal("api draw source request failed".to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ApiError::Internal(format!(
+                "api draw source returned http status {status}"
+            )));
+        }
+
+        let response_body = response
+            .text()
+            .await
+            .map_err(|_| ApiError::Internal("api draw source response read failed".to_string()))?;
+
+        parse_kj_latest_issue(&response_body)
+    }
+
     async fn persist(&self, store: &ApiDrawSourceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_draw_source_store(persistence, store).await?;
@@ -330,16 +421,20 @@ async fn load_draw_source_store(database: &BusinessDatabase) -> ApiResult<ApiDra
         });
     }
 
-    if sources.is_empty() {
-        let store = ApiDrawSourceStore::new(vec![
-            ApiDrawSourceConfig::api68_fc3d(),
-            ApiDrawSourceConfig::api68_au5(),
-        ]);
-        save_draw_source_store(database, &store).await?;
-        return Ok(store);
+    let mut store = ApiDrawSourceStore::new(sources);
+    let mut changed = false;
+    for source in default_api_draw_sources() {
+        if !store.sources.contains_key(&source.id) {
+            store.sources.insert(source.id.clone(), source);
+            changed = true;
+        }
     }
 
-    Ok(ApiDrawSourceStore::new(sources))
+    if changed {
+        save_draw_source_store(database, &store).await?;
+    }
+
+    Ok(store)
 }
 
 async fn save_draw_source_store(
@@ -488,9 +583,12 @@ impl ApiDrawSourceStore {
         if lot_code.is_empty() {
             return Err(ApiError::BadRequest("lot code is required".to_string()));
         }
-        if !lot_code.bytes().all(|byte| byte.is_ascii_digit()) {
+        if !lot_code
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
             return Err(ApiError::BadRequest(
-                "lot code can only contain digits".to_string(),
+                "lot code can only contain letters, numbers, hyphen and underscore".to_string(),
             ));
         }
 
@@ -498,7 +596,7 @@ impl ApiDrawSourceStore {
         validate_reusable_lotteries(&reusable_for_lottery_ids, lotteries)?;
 
         Ok(ApiDrawSourceConfig {
-            endpoint: normalized_endpoint(payload.endpoint.as_deref()),
+            endpoint: normalized_endpoint(payload.endpoint.as_deref(), &payload.provider),
             id,
             lot_code,
             name,
@@ -566,8 +664,22 @@ impl ApiDrawSourceConfig {
         }
     }
 
+    fn kj_txffc() -> Self {
+        Self {
+            id: KJ_TXFFC_SOURCE_ID.to_string(),
+            name: KJ_TXFFC_SOURCE_NAME.to_string(),
+            provider: DrawSourceProvider::KjApi,
+            lot_code: KJ_TXFFC_LOT_KEY.to_string(),
+            endpoint: default_kj_endpoint(),
+            reusable_for_lottery_ids: vec![KJ_TXFFC_LOTTERY_ID.to_string()],
+        }
+    }
+
     fn url(&self) -> String {
-        api68_url(&self.endpoint, &self.lot_code)
+        match self.provider {
+            DrawSourceProvider::Api68 => source_url(&self.endpoint, "lotCode", &self.lot_code),
+            DrawSourceProvider::KjApi => source_url(&self.endpoint, "lotKey", &self.lot_code),
+        }
     }
 
     fn summary(&self) -> DrawSource {
@@ -605,16 +717,35 @@ fn default_api68_cqshicai_endpoint() -> String {
     DEFAULT_API68_CQSHICAI_ENDPOINT.to_string()
 }
 
-fn normalized_endpoint(endpoint: Option<&str>) -> String {
+fn default_kj_endpoint() -> String {
+    DEFAULT_KJ_ENDPOINT.to_string()
+}
+
+fn normalized_endpoint(endpoint: Option<&str>, provider: &DrawSourceProvider) -> String {
     endpoint
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(default_api68_quanguocai_endpoint)
+        .unwrap_or_else(|| match provider {
+            DrawSourceProvider::Api68 => default_api68_quanguocai_endpoint(),
+            DrawSourceProvider::KjApi => default_kj_endpoint(),
+        })
 }
 
-fn api68_url(endpoint: &str, lot_code: &str) -> String {
-    format!("{endpoint}?lotCode={lot_code}")
+fn default_api_draw_sources() -> Vec<ApiDrawSourceConfig> {
+    vec![
+        ApiDrawSourceConfig::api68_fc3d(),
+        ApiDrawSourceConfig::api68_au5(),
+        ApiDrawSourceConfig::kj_txffc(),
+    ]
+}
+
+fn source_url(endpoint: &str, query_key: &str, lot_code: &str) -> String {
+    if endpoint.contains(&format!("{query_key}=")) {
+        return endpoint.to_string();
+    }
+    let separator = if endpoint.contains('?') { '&' } else { '?' };
+    format!("{endpoint}{separator}{query_key}={lot_code}")
 }
 
 fn reusable_lottery_ids(values: Vec<String>) -> ApiResult<Vec<String>> {
@@ -702,7 +833,66 @@ pub(crate) fn parse_api68_latest_issue(response_body: &str) -> ApiResult<ApiDraw
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    Ok(ApiDrawSourceLatestIssue { issue, draw_time })
+    Ok(ApiDrawSourceLatestIssue {
+        issue,
+        draw_time,
+        next_issue: None,
+        next_draw_time: None,
+    })
+}
+
+pub(crate) fn parse_kj_draw_number(response_body: &str, expected_issue: &str) -> ApiResult<String> {
+    let expected_issue = expected_issue.trim();
+    if expected_issue.is_empty() {
+        return Err(ApiError::BadRequest("issue is required".to_string()));
+    }
+
+    let data = parse_kj_data(response_body)?;
+    let Some(issue) = api68_issue_value(&data.pre_draw_issue) else {
+        return Err(ApiError::Internal(
+            "kj api latest issue is missing".to_string(),
+        ));
+    };
+    if issue != expected_issue {
+        return Err(ApiError::NotFound(format!(
+            "api draw number for issue `{expected_issue}` not found"
+        )));
+    }
+
+    let draw_code = data.pre_draw_code.trim();
+    if draw_code.is_empty() {
+        return Err(ApiError::Internal(
+            "api draw source draw number is empty".to_string(),
+        ));
+    }
+
+    Ok(draw_code.to_string())
+}
+
+pub(crate) fn parse_kj_latest_issue(response_body: &str) -> ApiResult<ApiDrawSourceLatestIssue> {
+    let data = parse_kj_data(response_body)?;
+    let issue = api68_issue_value(&data.pre_draw_issue)
+        .ok_or_else(|| ApiError::Internal("kj api latest issue is missing".to_string()))?;
+    let draw_time = data
+        .pre_draw_time
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let next_issue = data
+        .draw_issue
+        .as_ref()
+        .and_then(api68_issue_value)
+        .filter(|value| !value.trim().is_empty());
+    let next_draw_time = data
+        .draw_time
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    Ok(ApiDrawSourceLatestIssue {
+        issue,
+        draw_time,
+        next_issue,
+        next_draw_time,
+    })
 }
 
 fn parse_api68_result(response_body: &str) -> ApiResult<Api68Result> {
@@ -728,6 +918,23 @@ fn parse_api68_result(response_body: &str) -> ApiResult<Api68Result> {
     }
 
     Ok(result)
+}
+
+fn parse_kj_data(response_body: &str) -> ApiResult<KjData> {
+    let envelope = serde_json::from_str::<KjEnvelope>(response_body)
+        .map_err(|_| ApiError::Internal("api draw source response cannot be parsed".to_string()))?;
+
+    if envelope.error_code != 0 {
+        return Err(ApiError::Internal(format!(
+            "api draw source returned error code {}",
+            envelope.error_code
+        )));
+    }
+
+    envelope
+        .result
+        .and_then(|result| result.data)
+        .ok_or_else(|| ApiError::Internal("kj api result data is missing".to_string()))
 }
 
 fn api68_issue_value(value: &Value) -> Option<String> {
@@ -763,11 +970,40 @@ struct Api68Draw {
     pre_draw_time: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KjEnvelope {
+    error_code: i64,
+    #[serde(default)]
+    result: Option<KjResult>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KjResult {
+    #[serde(default)]
+    data: Option<KjData>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KjData {
+    pre_draw_issue: Value,
+    pre_draw_code: String,
+    #[serde(default)]
+    pre_draw_time: Option<String>,
+    #[serde(default)]
+    draw_issue: Option<Value>,
+    #[serde(default)]
+    draw_time: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_api68_draw_number, parse_api68_latest_issue, ApiDrawSourceRepository,
-        API68_AU5_SOURCE_ID, API68_FC3D_SOURCE_ID,
+        parse_api68_draw_number, parse_api68_latest_issue, parse_kj_draw_number,
+        parse_kj_latest_issue, ApiDrawSourceRepository, API68_AU5_SOURCE_ID, API68_FC3D_SOURCE_ID,
+        KJ_TXFFC_SOURCE_ID,
     };
     use crate::{
         domain::lottery::{DrawSourceProvider, SaveDrawSourceRequest},
@@ -784,6 +1020,23 @@ mod tests {
                 { "preDrawIssue": 2026143, "preDrawCode": "3,7,6", "preDrawTime": "2026-06-02 21:15:00" },
                 { "preDrawIssue": "2026142", "preDrawCode": "8,9,4", "preDrawTime": "2026-06-01 21:15:00" }
             ]
+        }
+    }"#;
+    const KJ_SAMPLE: &str = r#"{
+        "errorCode": 0,
+        "message": "",
+        "result": {
+            "businessCode": "202606031178",
+            "message": "",
+            "data": {
+                "lotKey": "txffc",
+                "lotName": "腾讯分分彩",
+                "preDrawIssue": "202606031178",
+                "preDrawCode": "9,9,8,7,2",
+                "preDrawTime": "2026-06-03 19:38:01",
+                "drawIssue": 202606031179,
+                "drawTime": "2026-06-03 19:39:00"
+            }
         }
     }"#;
 
@@ -828,6 +1081,27 @@ mod tests {
 
         assert_eq!(latest.issue, "2026143");
         assert_eq!(latest.draw_time.as_deref(), Some("2026-06-02 21:15:00"));
+    }
+
+    #[test]
+    fn parse_kj_draw_number_matches_current_issue() {
+        let draw_number =
+            parse_kj_draw_number(KJ_SAMPLE, "202606031178").expect("draw number can be parsed");
+
+        assert_eq!(draw_number, "9,9,8,7,2");
+    }
+
+    #[test]
+    fn parse_kj_latest_issue_uses_current_and_next_issue() {
+        let latest = parse_kj_latest_issue(KJ_SAMPLE).expect("latest issue can be parsed");
+
+        assert_eq!(latest.issue, "202606031178");
+        assert_eq!(latest.draw_time.as_deref(), Some("2026-06-03 19:38:01"));
+        assert_eq!(latest.next_issue.as_deref(), Some("202606031179"));
+        assert_eq!(
+            latest.next_draw_time.as_deref(),
+            Some("2026-06-03 19:39:00")
+        );
     }
 
     #[tokio::test]
@@ -880,6 +1154,38 @@ mod tests {
             Some("https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do")
         );
         assert_eq!(source.reusable_for_lottery_ids, vec!["au5".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn seeded_sources_include_txffc_kjapi_source() {
+        let repository = ApiDrawSourceRepository::api68_seeded();
+        let sources = repository.list().await.expect("sources can be listed");
+        let source = sources
+            .iter()
+            .find(|source| source.id == KJ_TXFFC_SOURCE_ID)
+            .expect("txffc seeded source exists");
+
+        assert_eq!(source.provider, Some(DrawSourceProvider::KjApi));
+        assert_eq!(source.lot_code.as_deref(), Some("txffc"));
+        assert_eq!(
+            source.endpoint.as_deref(),
+            Some("https://kjapi.net/hall/hallajax/getLotteryInfo")
+        );
+        assert_eq!(source.reusable_for_lottery_ids, vec!["txffc".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn seeded_kj_source_returns_latest_issue_for_txffc() {
+        let repository = ApiDrawSourceRepository::kj_seeded_with_static_response(KJ_SAMPLE);
+
+        let latest = repository
+            .latest_issue_for_lottery("txffc")
+            .await
+            .expect("latest issue can be fetched")
+            .expect("txffc has source");
+
+        assert_eq!(latest.issue, "202606031178");
+        assert_eq!(latest.next_issue.as_deref(), Some("202606031179"));
     }
 
     #[tokio::test]

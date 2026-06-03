@@ -1,5 +1,13 @@
 # TODO
 
+## 2026-06-03 19:49 HKT 腾讯分分彩 KJAPI 彩种接入
+
+- 完成任务：新增 `txffc` 腾讯分分彩彩种，接入 KJAPI 开奖接口 `https://kjapi.net/hall/hallajax/getLotteryInfo?lotKey=txffc`，并在后台开奖源配置中支持 `kjApi` 供应商和腾讯分分彩采集预设。
+- 解决问题：系统此前只支持 API68 格式来源，无法解析 KJAPI 的 `result.data` 对象结构，也无法保存 `txffc` 这种字符串 `lotKey`；现在后端可读取 `preDrawIssue/preDrawCode/preDrawTime/drawIssue/drawTime`，并按供应商返回的下一期开奖时间生成期号。
+- 技术说明：API 期号序列升级为 64 位整数，支持 `202606031179` 这类 12 位期号；PostgreSQL 启动时会补齐缺失的默认彩种和开奖源，不覆盖已有同 ID 配置。
+- 验证记录：已新增 KJAPI 解析、腾讯分分彩期号生成、已封盘候选期跳过和种子彩种/来源测试；后续继续运行完整后端与前端构建验证。
+- 后续动作：补开奖源“测试连接”入口，展示供应商当前期号、下一期期号、服务器时间和解析后的本地开奖计划。
+
 ## 2026-06-03 19:28 HKT API68 周期彩种期号时间对齐修正
 
 - 完成任务：修复 API68 周期彩种生成下一期时的开奖时间对齐逻辑，澳洲 5 分彩现在会使用 API68 返回的 `preDrawTime` 作为节奏锚点，并按 `intervalSeconds` 推导后续期号时间。
