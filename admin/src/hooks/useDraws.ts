@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   cancelDrawIssue,
+  createDrawSource,
   closeDrawIssue,
   createDrawIssue,
+  deleteDrawSource,
   drawIssueResult,
   fetchDrawIssues,
   fetchDrawSources,
@@ -10,8 +12,9 @@ import {
   generateNextDrawIssue,
   previewDrawIssueGeneration,
   runDrawAutomation,
+  updateDrawSource,
 } from '../api/client';
-import type { DrawSource } from '../types/dashboard';
+import type { DrawSource, SaveDrawSourceRequest } from '../types/dashboard';
 import type {
   CreateDrawIssueRequest,
   DrawAutomationRunRequest,
@@ -71,6 +74,56 @@ export function useDraws() {
       const created = await createDrawIssue(payload);
       setIssues((current) => [created, ...current]);
       return created;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const createSource = useCallback(async (payload: SaveDrawSourceRequest) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await createDrawSource(payload);
+      setDrawSources((current) => [created, ...current]);
+      return created;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const updateSource = useCallback(
+    async (id: string, payload: SaveDrawSourceRequest) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const updated = await updateDrawSource(id, payload);
+        setDrawSources((current) =>
+          current.map((source) => (source.id === id ? updated : source)),
+        );
+        return updated;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [],
+  );
+
+  const deleteSource = useCallback(async (id: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const deleted = await deleteDrawSource(id);
+      setDrawSources((current) => current.filter((source) => source.id !== id));
+      return deleted;
     } catch (requestError) {
       setError(errorMessage(requestError));
       throw requestError;
@@ -196,6 +249,8 @@ export function useDraws() {
     cancel,
     close,
     create,
+    createSource,
+    deleteSource,
     draw,
     drawSources,
     error,
@@ -207,6 +262,7 @@ export function useDraws() {
     refresh,
     runAutomation,
     saving,
+    updateSource,
   };
 }
 

@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/api-contracts.md","reason":"本任务新增开奖源配置 CRUD 和复用契约，需要保持后端接口一致。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"保存配置和外部源失败必须返回统一 API 错误信封。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"开奖源复用不能导致开奖结果静默兜底或来源歧义。"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"外部开奖 API 失败和配置异常需要结构化日志。"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"前端新增配置保存能力，需要通过 hook 管理 loading/error/saving/refresh。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"DrawSource 字段扩展必须与后端 camelCase 契约一致。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"开奖源配置 UI 需要可见 loading/error 状态并通过构建检查。"}

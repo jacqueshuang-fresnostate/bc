@@ -32,6 +32,7 @@ export interface ModuleGroup {
 
 export type LotteryNumberType = 'threeDigit' | 'fiveDigit';
 export type DrawMode = 'platform' | 'api' | 'manual';
+export type DrawSourceProvider = 'api68';
 
 export type DrawSchedule =
   | { periodic: { intervalSeconds: number } }
@@ -71,9 +72,22 @@ export interface LotteryKind {
 }
 
 export interface DrawSource {
+  editable: boolean;
+  endpoint: string | null;
   id: string;
+  lotCode: string | null;
   name: string;
   mode: DrawMode;
+  provider: DrawSourceProvider | null;
+  reusableForLotteryIds: string[];
+}
+
+export interface SaveDrawSourceRequest {
+  endpoint?: string | null;
+  id: string;
+  lotCode: string;
+  name: string;
+  provider: DrawSourceProvider;
   reusableForLotteryIds: string[];
 }
 

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/api-contracts.md","reason":"验收时确认开奖源配置 CRUD、多彩种复用和错误矩阵已同步契约。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"验收时确认没有重复绑定导致来源歧义，也没有对已配置 API 源静默兜底。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"验收时确认前端 DrawSource 与请求类型没有 any 和字段漂移。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"验收时确认配置页面有可见错误状态并通过 npm run build。"}

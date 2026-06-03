@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::domain::{
     finance::{FinanceOverview, FinancialAccountSummary},
     group_buy::GroupBuyPlanSummary,
-    lottery::{DrawMode, DrawSource, LotteryKind},
+    lottery::{DrawSource, LotteryKind},
     order::OrderSummary,
     permission::{AdminRole, PermissionScope, SystemSetting},
     rebate::{InvitePolicySummary, RebateMode},
@@ -11,7 +11,7 @@ use crate::domain::{
     user::{AdminSummary, RegistrationConfig, UserSummary},
 };
 
-use super::{access::AccessSnapshot, draw_api::api_draw_source_summaries};
+use super::access::AccessSnapshot;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +68,7 @@ pub enum ModuleStatus {
 
 pub fn dashboard_summary_with_orders(
     lotteries: Vec<LotteryKind>,
+    draw_sources: Vec<DrawSource>,
     recent_orders: Vec<OrderSummary>,
     group_buy_plans: Vec<GroupBuyPlanSummary>,
     finance: FinanceOverview,
@@ -100,7 +101,7 @@ pub fn dashboard_summary_with_orders(
         ],
         module_groups: module_groups(),
         lotteries,
-        draw_sources: draw_sources(),
+        draw_sources,
         recent_orders,
         group_buy_plans,
         finance,
@@ -419,17 +420,6 @@ fn module(
     }
 }
 
-pub fn draw_sources() -> Vec<DrawSource> {
-    let mut sources = api_draw_source_summaries();
-    sources.push(DrawSource {
-        id: "platform-random-5d".to_string(),
-        name: "平台 5 位随机生成器".to_string(),
-        mode: DrawMode::Platform,
-        reusable_for_lottery_ids: vec!["ssc60".to_string()],
-    });
-    sources
-}
-
 #[cfg(test)]
 mod tests {
     use super::{dashboard_summary_for_scopes, dashboard_summary_with_orders, DashboardSummary};
@@ -572,6 +562,7 @@ mod tests {
     fn sample_summary(access: AccessSnapshot) -> DashboardSummary {
         dashboard_summary_with_orders(
             seed_lotteries(),
+            Vec::new(),
             Vec::new(),
             vec![GroupBuyPlanSummary {
                 id: "G202606020001".to_string(),

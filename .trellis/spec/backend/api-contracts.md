@@ -631,6 +631,9 @@ await createOrder({
 ### 2. 签名
 
 - `GET /api/admin/draw-sources`
+- `POST /api/admin/draw-sources`
+- `PUT /api/admin/draw-sources/{id}`
+- `DELETE /api/admin/draw-sources/{id}`
 - `GET /api/admin/draw-issues`
 - `GET /api/admin/draw-issues/{id}`
 - `POST /api/admin/draw-issues`
@@ -665,9 +668,39 @@ await createOrder({
 
 当前已接入的外部开奖源：
 
-- `api68-fc3d`：`fc3d` 福彩 3D 使用 API68 全国彩接口，`lotCode=10041`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为开奖号码。
+- `api68-fc3d`：`fc3d` 福彩 3D 和 `pl3` 排列 3 默认复用 API68 全国彩接口，`lotCode=10041`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为开奖号码。
 - `preDrawCode` 必须继续经过后端开奖号码校验，保存和返回仍统一为英文逗号分隔格式。
 - 暂未配置外部源的 API 彩种仍保留本地生成器占位能力，仅用于当前内存演示阶段；生产接入时需要显式配置来源。
+
+开奖源响应：
+
+```json
+{
+  "id": "api68-fc3d",
+  "name": "API68 福彩 3D/排列 3",
+  "mode": "api",
+  "provider": "api68",
+  "lotCode": "10041",
+  "endpoint": "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do",
+  "editable": true,
+  "reusableForLotteryIds": ["fc3d", "pl3"]
+}
+```
+
+保存开奖源请求：
+
+```json
+{
+  "id": "api68-fc3d",
+  "name": "API68 福彩 3D/排列 3",
+  "provider": "api68",
+  "lotCode": "10041",
+  "endpoint": "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do",
+  "reusableForLotteryIds": ["fc3d", "pl3"]
+}
+```
+
+`endpoint` 可为空；为空时后端使用默认 API68 全国彩 endpoint 或 `API68_QUANGUOCAI_ENDPOINT` 环境变量。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
 
 开奖期号响应：
 
@@ -706,6 +739,13 @@ await createOrder({
 | 开奖时间为空 | HTTP 400，返回 `scheduled time is required` |
 | 封盘时间为空 | HTTP 400，返回 `sale close time is required` |
 | 同一彩种重复创建同一期号 | HTTP 409，返回期号重复 |
+| 开奖源 ID 为空或包含非法字符 | HTTP 400，返回开奖源 ID 错误 |
+| 开奖源名称为空 | HTTP 400，返回开奖源名称必填 |
+| `lotCode` 为空或包含非数字字符 | HTTP 400，返回 `lot code` 错误 |
+| 复用彩种为空 | HTTP 400，返回复用彩种必填 |
+| 复用彩种不存在 | HTTP 404，返回彩种不存在 |
+| 复用彩种不是 `api` 开奖模式 | HTTP 400，返回彩种不是 API 开奖模式 |
+| 同一 API 彩种已绑定其他开奖源 | HTTP 409，返回彩种已绑定其他来源 |
 | 关闭非 `open` 期号 | HTTP 400，返回 `only open draw issues can be closed` |
 | 手动开奖缺少号码 | HTTP 400，返回 `manual draw requires draw number` |
 | 3 位彩种号码不是 3 位数字 | HTTP 400，返回号码长度或数字错误 |
@@ -720,19 +760,22 @@ await createOrder({
 ### 5. Good / Base / Bad Cases
 
 - Good：`fc3d` 创建期号 `2026143` 后调用 `PATCH /draw` 传 `{}`，后端从 API68 匹配 `preDrawIssue=2026143`，保存 `preDrawCode`，并返回 `status="drawn"`。
+- Good：`pl3` 创建同一期号 `2026143` 后调用 `PATCH /draw` 传 `{}`，后端复用同一个 `api68-fc3d` 来源并保存同一条 `preDrawCode`。
+- Good：管理员把 `api68-fc3d` 的 `reusableForLotteryIds` 保存为 `["fc3d"]` 后，`pl3` 不再命中该外部源。
 - Good：`manual-test` 创建期号后传 `{"drawNumber":"7,8,9,4,2"}`，后端按 `fiveDigit` 校验并保存逗号分隔开奖结果。
 - Base：开奖期号仓储当前是内存模式，服务重启后期号清空；这适合当前后台流程验证。没有外部源配置的 API 彩种仍是占位生成，不代表生产能力。
 - Bad：前端为 `manual` 期号传空对象执行开奖；后端必须拒绝，不能静默生成号码。
+- Bad：两个 API 来源同时绑定 `pl3`；保存时必须拒绝，避免开奖来源歧义。
 - Bad：`fc3d` API68 没有当前期号时继续本地生成号码；已配置外部源的 API 彩种必须返回错误，避免伪造开奖结果。
 - Bad：开奖后直接改订单状态或资金余额；本阶段还没有计奖、派奖和资金流水，开奖只记录结果事实。
 
 ### 6. 必要测试
 
-- 后端需要覆盖期号创建、关闭销售、平台生成号码、API68 期号匹配、外部源失败、手动开奖号码必填、号码长度和数字校验。
+- 后端需要覆盖期号创建、关闭销售、平台生成号码、API68 期号匹配、多彩种复用、重复彩种绑定拒绝、外部源失败、手动开奖号码必填、号码长度和数字校验。
 - 后端需要覆盖已开奖期号不能重复开奖或取消。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`。
-- 跨层联调需要请求开奖源、创建期号、封盘、API 开奖、手动开奖，并在管理后台页面确认结果回显。
+- 跨层联调需要请求开奖源、保存复用彩种、创建 `fc3d/pl3` 期号、封盘、API 开奖、手动开奖，并在管理后台页面确认结果回显。
 
 ### 7. Wrong vs Correct
 

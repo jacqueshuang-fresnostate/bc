@@ -23,7 +23,7 @@ use crate::{
             GroupBuyPlanSummary, UpdateGroupBuyPlanRequest,
         },
         invite::{CreateInviteRecordRequest, InviteRecord, UpdateInviteRecordRequest},
-        lottery::{DrawSource, LotteryKind},
+        lottery::{DrawSource, LotteryKind, SaveDrawSourceRequest},
         order::{CreateOrderRequest, OrderDetail},
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
@@ -44,8 +44,7 @@ use crate::{
     services::{
         automation::run_draw_automation,
         dashboard::{
-            dashboard_summary_for_scopes, dashboard_summary_with_orders, draw_sources,
-            DashboardSummary,
+            dashboard_summary_for_scopes, dashboard_summary_with_orders, DashboardSummary,
         },
         draw_generation::{
             generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
@@ -123,7 +122,14 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(get_robot).put(update_robot).delete(delete_robot),
         )
         .route("/robots/{id}/status", patch(set_robot_status))
-        .route("/draw-sources", get(list_draw_sources))
+        .route(
+            "/draw-sources",
+            get(list_draw_sources).post(create_draw_source),
+        )
+        .route(
+            "/draw-sources/{id}",
+            put(update_draw_source).delete(delete_draw_source),
+        )
         .route(
             "/draw-issues",
             get(list_draw_issues).post(create_draw_issue),
@@ -310,8 +316,45 @@ async fn update_draw_scheduler_config(
     Ok(Json(ApiEnvelope::success(status)))
 }
 
-async fn list_draw_sources() -> ApiResult<Json<ApiEnvelope<Vec<DrawSource>>>> {
-    Ok(Json(ApiEnvelope::success(draw_sources())))
+async fn list_draw_sources(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<DrawSource>>>> {
+    let sources = state.draws.draw_sources().await?;
+
+    Ok(Json(ApiEnvelope::success(sources)))
+}
+
+async fn create_draw_source(
+    State(state): State<AppState>,
+    Json(payload): Json<SaveDrawSourceRequest>,
+) -> ApiResult<Json<ApiEnvelope<DrawSource>>> {
+    let lotteries = state.lotteries.list().await?;
+    let source = state.draws.create_draw_source(payload, &lotteries).await?;
+
+    Ok(Json(ApiEnvelope::success(source)))
+}
+
+async fn update_draw_source(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<SaveDrawSourceRequest>,
+) -> ApiResult<Json<ApiEnvelope<DrawSource>>> {
+    let lotteries = state.lotteries.list().await?;
+    let source = state
+        .draws
+        .update_draw_source(&id, payload, &lotteries)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(source)))
+}
+
+async fn delete_draw_source(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<DrawSource>>> {
+    let source = state.draws.delete_draw_source(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(source)))
 }
 
 async fn list_draw_issues(
@@ -449,9 +492,11 @@ async fn get_dashboard_summary(
     let invite_policy = state.rebates.get().await?;
     let robots = state.robots.list().await?;
     let group_buy_plans = state.group_buys.list().await?;
+    let draw_sources = state.draws.draw_sources().await?;
 
     let summary = dashboard_summary_with_orders(
         lotteries,
+        draw_sources,
         recent_orders,
         group_buy_plans,
         finance,

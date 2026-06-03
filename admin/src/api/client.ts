@@ -1,4 +1,9 @@
-import type { ApiEnvelope, DashboardSummary, LotteryKind } from '../types/dashboard';
+import type {
+  ApiEnvelope,
+  DashboardSummary,
+  LotteryKind,
+  SaveDrawSourceRequest,
+} from '../types/dashboard';
 import type { DrawSource } from '../types/dashboard';
 import type {
   AdminPasswordResetRequest,
@@ -455,6 +460,26 @@ export function setLotterySaleStatus(id: string, saleEnabled: boolean) {
 
 export function fetchDrawSources(signal?: AbortSignal) {
   return requestJson<DrawSource[]>('/api/admin/draw-sources', { signal });
+}
+
+export function createDrawSource(payload: SaveDrawSourceRequest) {
+  return requestJson<DrawSource>('/api/admin/draw-sources', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateDrawSource(id: string, payload: SaveDrawSourceRequest) {
+  return requestJson<DrawSource>(`/api/admin/draw-sources/${encodeURIComponent(id)}`, {
+    body: payload,
+    method: 'PUT',
+  });
+}
+
+export function deleteDrawSource(id: string) {
+  return requestJson<DrawSource>(`/api/admin/draw-sources/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 }
 
 export function fetchDrawIssues(signal?: AbortSignal) {

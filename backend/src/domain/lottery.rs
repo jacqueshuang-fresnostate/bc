@@ -58,6 +58,28 @@ pub struct DrawSource {
     pub id: String,
     pub name: String,
     pub mode: DrawMode,
+    pub provider: Option<DrawSourceProvider>,
+    pub lot_code: Option<String>,
+    pub endpoint: Option<String>,
+    pub editable: bool,
+    pub reusable_for_lottery_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DrawSourceProvider {
+    Api68,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveDrawSourceRequest {
+    pub id: String,
+    pub name: String,
+    pub provider: DrawSourceProvider,
+    pub lot_code: String,
+    #[serde(default)]
+    pub endpoint: Option<String>,
     pub reusable_for_lottery_ids: Vec<String>,
 }
 

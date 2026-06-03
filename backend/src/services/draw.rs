@@ -7,7 +7,7 @@ use std::{
 use crate::{
     domain::{
         draw::{CreateDrawIssueRequest, DrawIssue, DrawIssueResultRequest, DrawIssueStatus},
-        lottery::{DrawMode, LotteryKind, LotteryNumberType},
+        lottery::{DrawMode, DrawSource, LotteryKind, LotteryNumberType, SaveDrawSourceRequest},
     },
     error::{ApiError, ApiResult},
 };
@@ -90,6 +90,33 @@ impl DrawRepository {
             .write()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
             .cancel(id)
+    }
+
+    pub async fn draw_sources(&self) -> ApiResult<Vec<DrawSource>> {
+        let mut sources = self.api_sources.list().await?;
+        sources.extend(super::draw_api::platform_draw_source_summaries());
+        Ok(sources)
+    }
+
+    pub async fn create_draw_source(
+        &self,
+        payload: SaveDrawSourceRequest,
+        lotteries: &[LotteryKind],
+    ) -> ApiResult<DrawSource> {
+        self.api_sources.create(payload, lotteries).await
+    }
+
+    pub async fn update_draw_source(
+        &self,
+        id: &str,
+        payload: SaveDrawSourceRequest,
+        lotteries: &[LotteryKind],
+    ) -> ApiResult<DrawSource> {
+        self.api_sources.update(id, payload, lotteries).await
+    }
+
+    pub async fn delete_draw_source(&self, id: &str) -> ApiResult<DrawSource> {
+        self.api_sources.delete(id).await
     }
 
     async fn resolve_draw_payload(
@@ -511,6 +538,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn repository_reuses_api68_source_for_pl3_api_draw() {
+        let mut lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
+        lottery.id = "pl3".to_string();
+        lottery.name = "排列 3".to_string();
+        let repository = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let issue = repository
+            .create(&lottery, create_request_for("pl3", "2026143"))
+            .await
+            .expect("issue can be created");
+
+        let drawn = repository
+            .draw(&issue.id, DrawIssueResultRequest::default())
+            .await
+            .expect("pl3 can reuse api68 draw");
+
+        assert_eq!(drawn.status, DrawIssueStatus::Drawn);
+        assert_eq!(drawn.draw_number.as_deref(), Some("3,7,6"));
+    }
+
+    #[tokio::test]
     async fn repository_rejects_api_draw_when_source_misses_issue() {
         let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
         let repository = DrawRepository::memory_with_api_sources(
@@ -533,8 +582,12 @@ mod tests {
     }
 
     fn create_request(issue: &str) -> CreateDrawIssueRequest {
+        create_request_for("fc3d", issue)
+    }
+
+    fn create_request_for(lottery_id: &str, issue: &str) -> CreateDrawIssueRequest {
         CreateDrawIssueRequest {
-            lottery_id: "fc3d".to_string(),
+            lottery_id: lottery_id.to_string(),
             issue: issue.to_string(),
             scheduled_at: "2026-06-02 21:00:15".to_string(),
             sale_closed_at: "2026-06-02 20:59:45".to_string(),

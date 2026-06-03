@@ -3,6 +3,7 @@ import {
   Activity,
   CalendarPlus,
   Clock3,
+  Edit3,
   History,
   ListPlus,
   Lock,
@@ -11,6 +12,7 @@ import {
   RefreshCcw,
   Save,
   Search,
+  Trash2,
   XCircle,
 } from 'lucide-react';
 import {
@@ -24,7 +26,14 @@ import {
 import { useDrawScheduler } from '../hooks/useDrawScheduler';
 import { useDraws } from '../hooks/useDraws';
 import { useLotteries } from '../hooks/useLotteries';
-import type { DrawMode, LotteryKind, LotteryNumberType } from '../types/dashboard';
+import type {
+  DrawMode,
+  DrawSource,
+  DrawSourceProvider,
+  LotteryKind,
+  LotteryNumberType,
+  SaveDrawSourceRequest,
+} from '../types/dashboard';
 import type {
   CreateDrawIssueRequest,
   DrawAutomationRun,
@@ -51,6 +60,15 @@ interface DrawIssueFormState {
   scheduledAt: string;
 }
 
+interface DrawSourceFormState {
+  endpoint: string;
+  id: string;
+  lotCode: string;
+  name: string;
+  provider: DrawSourceProvider;
+  reusableForLotteryIds: string[];
+}
+
 interface SchedulerConfigFormState {
   enabled: boolean;
   futureIssueCount: string;
@@ -63,6 +81,8 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     cancel,
     close,
     create,
+    createSource,
+    deleteSource,
     draw,
     drawSources,
     error: drawError,
@@ -74,6 +94,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     refresh: refreshDraws,
     runAutomation,
     saving,
+    updateSource,
   } = useDraws();
   const {
     error: lotteryError,
@@ -98,6 +119,9 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     DrawIssueGenerationPreview[]
   >([]);
   const [form, setForm] = useState<DrawIssueFormState>(() => emptyForm());
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const [sourceForm, setSourceForm] =
+    useState<DrawSourceFormState>(() => emptySourceForm());
   const [schedulerConfigForm, setSchedulerConfigForm] =
     useState<SchedulerConfigFormState>(() => emptySchedulerConfigForm());
 
@@ -108,6 +132,13 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   const selectedIssue = useMemo(
     () => issues.find((issue) => issue.id === selectedIssueId) ?? issues[0] ?? null,
     [issues, selectedIssueId],
+  );
+  const selectedSource = useMemo(
+    () =>
+      selectedSourceId
+        ? drawSources.find((source) => source.id === selectedSourceId) ?? null
+        : null,
+    [drawSources, selectedSourceId],
   );
 
   useEffect(() => {
@@ -128,6 +159,17 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     }
   }, [schedulerStatus]);
 
+  useEffect(() => {
+    if (selectedSource?.editable) {
+      setSelectedSourceId(selectedSource.id);
+      setSourceForm(sourceFormFromSource(selectedSource));
+    } else if (selectedSource) {
+      setSourceForm(emptySourceForm());
+    } else if (!selectedSourceId) {
+      setSourceForm(emptySourceForm());
+    }
+  }, [selectedSource, selectedSourceId]);
+
   const refreshAll = () => {
     refreshDraws();
     refreshLotteries();
@@ -146,6 +188,33 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     };
     const created = await create(payload);
     setSelectedIssueId(created.id);
+    onDashboardRefresh();
+  };
+
+  const startCreateSource = () => {
+    setSelectedSourceId(null);
+    setSourceForm(emptySourceForm());
+  };
+
+  const saveDrawSourceConfig = async () => {
+    const payload = sourcePayload(sourceForm);
+    const saved =
+      selectedSource?.editable && selectedSource.id === payload.id
+        ? await updateSource(selectedSource.id, payload)
+        : await createSource(payload);
+    setSelectedSourceId(saved.id);
+    refreshDraws();
+    onDashboardRefresh();
+  };
+
+  const deleteDrawSourceConfig = async () => {
+    if (!selectedSource?.editable) {
+      return;
+    }
+    await deleteSource(selectedSource.id);
+    setSelectedSourceId(null);
+    setSourceForm(emptySourceForm());
+    refreshDraws();
     onDashboardRefresh();
   };
 
@@ -264,25 +333,189 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
 
       {error ? <Banner type="danger" title="开奖接口错误" description={error} /> : null}
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {drawSources.map((source) => (
-          <Card key={source.id} className="rounded-md border border-line">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="truncate text-base font-semibold text-ink">{source.name}</h2>
-                <div className="mt-1 text-xs text-slate-400">{source.id}</div>
+      <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
+        <div className="grid gap-3 md:grid-cols-2">
+          {drawSources.map((source) => (
+            <Card
+              key={source.id}
+              className={`rounded-md border ${
+                selectedSource?.id === source.id ? 'border-accent' : 'border-line'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <button
+                  className="min-w-0 text-left"
+                  type="button"
+                  onClick={() => {
+                    setSelectedSourceId(source.id);
+                    if (source.editable) {
+                      setSourceForm(sourceFormFromSource(source));
+                    }
+                  }}
+                >
+                  <h2 className="truncate text-base font-semibold text-ink">{source.name}</h2>
+                  <div className="mt-1 text-xs text-slate-400">{source.id}</div>
+                </button>
+                <Tag color={drawModeColor(source.mode)}>{drawModeText(source.mode)}</Tag>
               </div>
-              <Tag color={drawModeColor(source.mode)}>{drawModeText(source.mode)}</Tag>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {source.reusableForLotteryIds.map((lotteryId) => (
+                  <Tag key={lotteryId} color="grey">
+                    {lotteryName(lotteryId, lotteries)}
+                  </Tag>
+                ))}
+              </div>
+              {source.provider ? (
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500">
+                  <div>
+                    <span className="text-slate-400">供应商</span>
+                    <div className="mt-1 font-medium text-ink">
+                      {drawSourceProviderText(source.provider)}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">lotCode</span>
+                    <div className="mt-1 font-mono font-medium text-ink">
+                      {source.lotCode ?? '-'}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </Card>
+          ))}
+        </div>
+
+        <Card className="rounded-md border border-line">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-ink">开奖源配置</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                API 源可绑定多个 API 开奖彩种复用。
+              </p>
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {source.reusableForLotteryIds.map((lotteryId) => (
-                <Tag key={lotteryId} color="grey">
-                  {lotteryName(lotteryId, lotteries)}
-                </Tag>
-              ))}
+            <Button icon={<Plus size={15} />} size="small" onClick={startCreateSource}>
+              新建
+            </Button>
+          </div>
+
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+            }}
+          >
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              <Field label="来源 ID">
+                <input
+                  className="form-input font-mono"
+                  disabled={Boolean(selectedSource?.editable)}
+                  value={sourceForm.id}
+                  onChange={(event) =>
+                    setSourceFormValue(setSourceForm, 'id', event.target.value)
+                  }
+                />
+              </Field>
+              <Field label="来源名称">
+                <input
+                  className="form-input"
+                  value={sourceForm.name}
+                  onChange={(event) =>
+                    setSourceFormValue(setSourceForm, 'name', event.target.value)
+                  }
+                />
+              </Field>
             </div>
-          </Card>
-        ))}
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              <Field label="供应商">
+                <select
+                  className="form-input"
+                  value={sourceForm.provider}
+                  onChange={(event) =>
+                    setSourceFormValue(
+                      setSourceForm,
+                      'provider',
+                      event.target.value as DrawSourceProvider,
+                    )
+                  }
+                >
+                  <option value="api68">API68 全国彩</option>
+                </select>
+              </Field>
+              <Field label="lotCode">
+                <input
+                  className="form-input font-mono"
+                  value={sourceForm.lotCode}
+                  onChange={(event) =>
+                    setSourceFormValue(setSourceForm, 'lotCode', event.target.value)
+                  }
+                />
+              </Field>
+            </div>
+
+            <Field label="endpoint">
+              <input
+                className="form-input"
+                value={sourceForm.endpoint}
+                onChange={(event) =>
+                  setSourceFormValue(setSourceForm, 'endpoint', event.target.value)
+                }
+              />
+            </Field>
+
+            <Field label="复用彩种">
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                {lotteries
+                  .filter((lottery) => lottery.drawMode === 'api')
+                  .map((lottery) => (
+                    <label
+                      key={lottery.id}
+                      className="flex min-h-10 items-center gap-2 rounded border border-line px-3 py-2 text-sm text-slate-700"
+                    >
+                      <input
+                        checked={sourceForm.reusableForLotteryIds.includes(lottery.id)}
+                        className="h-4 w-4 rounded border-line text-teal-600"
+                        type="checkbox"
+                        onChange={() => toggleSourceLottery(setSourceForm, lottery.id)}
+                      />
+                      <span className="min-w-0 truncate">{lottery.name}</span>
+                      <span className="font-mono text-xs text-slate-400">{lottery.id}</span>
+                    </label>
+                  ))}
+              </div>
+            </Field>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={saving}
+                icon={<Save size={15} />}
+                loading={saving}
+                theme="solid"
+                onClick={() => void saveDrawSourceConfig()}
+              >
+                保存来源
+              </Button>
+              {selectedSource?.editable ? (
+                <>
+                  <Button
+                    disabled={saving}
+                    icon={<Edit3 size={15} />}
+                    onClick={() => setSourceForm(sourceFormFromSource(selectedSource))}
+                  >
+                    还原
+                  </Button>
+                  <Button
+                    disabled={saving}
+                    icon={<Trash2 size={15} />}
+                    onClick={() => void deleteDrawSourceConfig()}
+                  >
+                    删除
+                  </Button>
+                </>
+              ) : null}
+            </div>
+          </form>
+        </Card>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
@@ -618,7 +851,10 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
                   </Field>
                 ) : (
                   <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
-                    当前期号将使用{drawModeText(selectedIssue.drawMode)}生成开奖号码。
+                    当前期号将使用{drawModeText(selectedIssue.drawMode)}
+                    {selectedIssue.drawMode === 'api'
+                      ? '按开奖源配置拉取开奖号码。'
+                      : '生成开奖号码。'}
                   </div>
                 )}
 
@@ -997,6 +1233,39 @@ function emptyForm(): DrawIssueFormState {
   };
 }
 
+function emptySourceForm(): DrawSourceFormState {
+  return {
+    endpoint: 'https://api.api68.com/QuanGuoCai/getLotteryInfoList.do',
+    id: 'api68-custom',
+    lotCode: '10041',
+    name: 'API68 自定义来源',
+    provider: 'api68',
+    reusableForLotteryIds: [],
+  };
+}
+
+function sourceFormFromSource(source: DrawSource): DrawSourceFormState {
+  return {
+    endpoint: source.endpoint ?? '',
+    id: source.id,
+    lotCode: source.lotCode ?? '',
+    name: source.name,
+    provider: source.provider ?? 'api68',
+    reusableForLotteryIds: source.reusableForLotteryIds,
+  };
+}
+
+function sourcePayload(form: DrawSourceFormState): SaveDrawSourceRequest {
+  return {
+    endpoint: form.endpoint.trim() || null,
+    id: form.id.trim(),
+    lotCode: form.lotCode.trim(),
+    name: form.name.trim(),
+    provider: form.provider,
+    reusableForLotteryIds: form.reusableForLotteryIds,
+  };
+}
+
 function emptySchedulerConfigForm(): SchedulerConfigFormState {
   return {
     enabled: false,
@@ -1057,6 +1326,29 @@ function setFormValue<K extends keyof DrawIssueFormState>(
   setForm((current) => ({ ...current, [key]: value }));
 }
 
+function setSourceFormValue<K extends keyof DrawSourceFormState>(
+  setForm: Dispatch<SetStateAction<DrawSourceFormState>>,
+  key: K,
+  value: DrawSourceFormState[K],
+) {
+  setForm((current) => ({ ...current, [key]: value }));
+}
+
+function toggleSourceLottery(
+  setForm: Dispatch<SetStateAction<DrawSourceFormState>>,
+  lotteryId: string,
+) {
+  setForm((current) => {
+    const exists = current.reusableForLotteryIds.includes(lotteryId);
+    return {
+      ...current,
+      reusableForLotteryIds: exists
+        ? current.reusableForLotteryIds.filter((id) => id !== lotteryId)
+        : [...current.reusableForLotteryIds, lotteryId],
+    };
+  });
+}
+
 function setSchedulerConfigFormValue<K extends keyof SchedulerConfigFormState>(
   setForm: Dispatch<SetStateAction<SchedulerConfigFormState>>,
   key: K,
@@ -1086,6 +1378,13 @@ function drawModeColor(mode: DrawMode) {
     return 'orange';
   }
   return 'green';
+}
+
+function drawSourceProviderText(provider: DrawSourceProvider) {
+  const labels: Record<DrawSourceProvider, string> = {
+    api68: 'API68 全国彩',
+  };
+  return labels[provider];
 }
 
 function numberTypeText(numberType: LotteryNumberType) {

@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -6,14 +10,15 @@ use serde_json::Value;
 use crate::{
     domain::{
         draw::DrawIssue,
-        lottery::{DrawMode, DrawSource},
+        lottery::{DrawMode, DrawSource, DrawSourceProvider, LotteryKind, SaveDrawSourceRequest},
     },
     error::{ApiError, ApiResult},
 };
 
 pub const API68_FC3D_SOURCE_ID: &str = "api68-fc3d";
-pub const API68_FC3D_SOURCE_NAME: &str = "API68 福彩 3D";
+pub const API68_FC3D_SOURCE_NAME: &str = "API68 福彩 3D/排列 3";
 pub const API68_FC3D_LOTTERY_ID: &str = "fc3d";
+pub const API68_PL3_LOTTERY_ID: &str = "pl3";
 pub const API68_FC3D_LOT_CODE: &str = "10041";
 pub const API68_QUANGUOCAI_ENDPOINT_ENV: &str = "API68_QUANGUOCAI_ENDPOINT";
 const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
@@ -23,7 +28,7 @@ const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
 #[derive(Clone)]
 pub struct ApiDrawSourceRepository {
     client: reqwest::Client,
-    sources: Arc<BTreeMap<String, ApiDrawSourceConfig>>,
+    inner: Arc<RwLock<ApiDrawSourceStore>>,
     static_responses: Arc<BTreeMap<String, String>>,
 }
 
@@ -40,12 +45,7 @@ impl ApiDrawSourceRepository {
     fn new(sources: Vec<ApiDrawSourceConfig>) -> Self {
         Self {
             client: reqwest::Client::new(),
-            sources: Arc::new(
-                sources
-                    .into_iter()
-                    .map(|source| (source.lottery_id.clone(), source))
-                    .collect(),
-            ),
+            inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(sources))),
             static_responses: Arc::new(BTreeMap::new()),
         }
     }
@@ -57,12 +57,48 @@ impl ApiDrawSourceRepository {
 
         Self {
             client: reqwest::Client::new(),
-            sources: Arc::new(BTreeMap::from([(
-                API68_FC3D_LOTTERY_ID.to_string(),
+            inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(vec![
                 ApiDrawSourceConfig::api68_fc3d(),
-            )])),
+            ]))),
             static_responses: Arc::new(static_responses),
         }
+    }
+
+    pub async fn list(&self) -> ApiResult<Vec<DrawSource>> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))
+            .map(|store| store.list())
+    }
+
+    pub async fn create(
+        &self,
+        payload: SaveDrawSourceRequest,
+        lotteries: &[LotteryKind],
+    ) -> ApiResult<DrawSource> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?
+            .create(payload, lotteries)
+    }
+
+    pub async fn update(
+        &self,
+        id: &str,
+        payload: SaveDrawSourceRequest,
+        lotteries: &[LotteryKind],
+    ) -> ApiResult<DrawSource> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?
+            .update(id, payload, lotteries)
+    }
+
+    pub async fn delete(&self, id: &str) -> ApiResult<DrawSource> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?
+            .delete(id)
     }
 
     pub async fn draw_number_for(&self, issue: &DrawIssue) -> ApiResult<Option<String>> {
@@ -70,12 +106,19 @@ impl ApiDrawSourceRepository {
             return Ok(None);
         }
 
-        let Some(source) = self.sources.get(&issue.lottery_id) else {
+        let source = {
+            self.inner
+                .read()
+                .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?
+                .find_for_lottery(&issue.lottery_id)
+        };
+
+        let Some(source) = source else {
             return Ok(None);
         };
 
         let result = match source.provider {
-            ApiDrawProvider::Api68 => self.fetch_api68_draw_number(source, &issue.issue).await,
+            DrawSourceProvider::Api68 => self.fetch_api68_draw_number(&source, &issue.issue).await,
         };
 
         if let Err(error) = &result {
@@ -102,7 +145,7 @@ impl ApiDrawSourceRepository {
 
         let response = self
             .client
-            .get(&source.url)
+            .get(source.url())
             .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
             .send()
             .await
@@ -124,13 +167,171 @@ impl ApiDrawSourceRepository {
     }
 }
 
+#[derive(Debug, Default)]
+struct ApiDrawSourceStore {
+    sources: BTreeMap<String, ApiDrawSourceConfig>,
+}
+
+impl ApiDrawSourceStore {
+    fn new(sources: Vec<ApiDrawSourceConfig>) -> Self {
+        Self {
+            sources: sources
+                .into_iter()
+                .map(|source| (source.id.clone(), source))
+                .collect(),
+        }
+    }
+
+    fn list(&self) -> Vec<DrawSource> {
+        self.sources
+            .values()
+            .map(ApiDrawSourceConfig::summary)
+            .collect()
+    }
+
+    fn find_for_lottery(&self, lottery_id: &str) -> Option<ApiDrawSourceConfig> {
+        self.sources
+            .values()
+            .find(|source| {
+                source
+                    .reusable_for_lottery_ids
+                    .iter()
+                    .any(|id| id == lottery_id)
+            })
+            .cloned()
+    }
+
+    fn create(
+        &mut self,
+        payload: SaveDrawSourceRequest,
+        lotteries: &[LotteryKind],
+    ) -> ApiResult<DrawSource> {
+        let source = self.source_from_request(payload, lotteries, None)?;
+        if self.sources.contains_key(&source.id) {
+            return Err(ApiError::Conflict(format!(
+                "draw source `{}` already exists",
+                source.id
+            )));
+        }
+
+        self.validate_lottery_bindings(&source, None)?;
+        self.sources.insert(source.id.clone(), source.clone());
+        Ok(source.summary())
+    }
+
+    fn update(
+        &mut self,
+        id: &str,
+        payload: SaveDrawSourceRequest,
+        lotteries: &[LotteryKind],
+    ) -> ApiResult<DrawSource> {
+        if !self.sources.contains_key(id) {
+            return Err(ApiError::NotFound(format!("draw source `{id}` not found")));
+        }
+
+        let source = self.source_from_request(payload, lotteries, Some(id))?;
+        self.validate_lottery_bindings(&source, Some(id))?;
+        self.sources.insert(id.to_string(), source.clone());
+        Ok(source.summary())
+    }
+
+    fn delete(&mut self, id: &str) -> ApiResult<DrawSource> {
+        self.sources
+            .remove(id)
+            .map(|source| source.summary())
+            .ok_or_else(|| ApiError::NotFound(format!("draw source `{id}` not found")))
+    }
+
+    fn source_from_request(
+        &self,
+        payload: SaveDrawSourceRequest,
+        lotteries: &[LotteryKind],
+        expected_id: Option<&str>,
+    ) -> ApiResult<ApiDrawSourceConfig> {
+        let id = payload.id.trim().to_string();
+        if id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "draw source id is required".to_string(),
+            ));
+        }
+        if !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err(ApiError::BadRequest(
+                "draw source id can only contain letters, numbers, hyphen and underscore"
+                    .to_string(),
+            ));
+        }
+        if let Some(expected_id) = expected_id {
+            if id != expected_id {
+                return Err(ApiError::BadRequest(
+                    "draw source id cannot be changed".to_string(),
+                ));
+            }
+        }
+
+        let name = payload.name.trim().to_string();
+        if name.is_empty() {
+            return Err(ApiError::BadRequest(
+                "draw source name is required".to_string(),
+            ));
+        }
+
+        let lot_code = payload.lot_code.trim().to_string();
+        if lot_code.is_empty() {
+            return Err(ApiError::BadRequest("lot code is required".to_string()));
+        }
+        if !lot_code.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(ApiError::BadRequest(
+                "lot code can only contain digits".to_string(),
+            ));
+        }
+
+        let reusable_for_lottery_ids = reusable_lottery_ids(payload.reusable_for_lottery_ids)?;
+        validate_reusable_lotteries(&reusable_for_lottery_ids, lotteries)?;
+
+        Ok(ApiDrawSourceConfig {
+            endpoint: normalized_endpoint(payload.endpoint.as_deref()),
+            id,
+            lot_code,
+            name,
+            provider: payload.provider,
+            reusable_for_lottery_ids,
+        })
+    }
+
+    fn validate_lottery_bindings(
+        &self,
+        source: &ApiDrawSourceConfig,
+        current_id: Option<&str>,
+    ) -> ApiResult<()> {
+        for lottery_id in &source.reusable_for_lottery_ids {
+            if let Some(existing) = self.sources.values().find(|existing| {
+                Some(existing.id.as_str()) != current_id
+                    && existing
+                        .reusable_for_lottery_ids
+                        .iter()
+                        .any(|id| id == lottery_id)
+            }) {
+                return Err(ApiError::Conflict(format!(
+                    "lottery `{lottery_id}` is already bound to draw source `{}`",
+                    existing.id
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ApiDrawSourceConfig {
     id: String,
     name: String,
-    lottery_id: String,
-    url: String,
-    provider: ApiDrawProvider,
+    provider: DrawSourceProvider,
+    lot_code: String,
+    endpoint: String,
+    reusable_for_lottery_ids: Vec<String>,
 }
 
 impl ApiDrawSourceConfig {
@@ -138,35 +339,100 @@ impl ApiDrawSourceConfig {
         Self {
             id: API68_FC3D_SOURCE_ID.to_string(),
             name: API68_FC3D_SOURCE_NAME.to_string(),
-            lottery_id: API68_FC3D_LOTTERY_ID.to_string(),
-            url: api68_url(API68_FC3D_LOT_CODE),
-            provider: ApiDrawProvider::Api68,
+            provider: DrawSourceProvider::Api68,
+            lot_code: API68_FC3D_LOT_CODE.to_string(),
+            endpoint: default_api68_endpoint(),
+            reusable_for_lottery_ids: vec![
+                API68_FC3D_LOTTERY_ID.to_string(),
+                API68_PL3_LOTTERY_ID.to_string(),
+            ],
         }
+    }
+
+    fn url(&self) -> String {
+        api68_url(&self.endpoint, &self.lot_code)
     }
 
     fn summary(&self) -> DrawSource {
         DrawSource {
+            editable: true,
+            endpoint: Some(self.endpoint.clone()),
             id: self.id.clone(),
+            lot_code: Some(self.lot_code.clone()),
             name: self.name.clone(),
             mode: DrawMode::Api,
-            reusable_for_lottery_ids: vec![self.lottery_id.clone()],
+            provider: Some(self.provider.clone()),
+            reusable_for_lottery_ids: self.reusable_for_lottery_ids.clone(),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ApiDrawProvider {
-    Api68,
+pub fn platform_draw_source_summaries() -> Vec<DrawSource> {
+    vec![DrawSource {
+        editable: false,
+        endpoint: None,
+        id: "platform-random-5d".to_string(),
+        lot_code: None,
+        name: "平台 5 位随机生成器".to_string(),
+        mode: DrawMode::Platform,
+        provider: None,
+        reusable_for_lottery_ids: vec!["ssc60".to_string()],
+    }]
 }
 
-pub fn api_draw_source_summaries() -> Vec<DrawSource> {
-    vec![ApiDrawSourceConfig::api68_fc3d().summary()]
+fn default_api68_endpoint() -> String {
+    std::env::var(API68_QUANGUOCAI_ENDPOINT_ENV)
+        .unwrap_or_else(|_| DEFAULT_API68_QUANGUOCAI_ENDPOINT.to_string())
 }
 
-fn api68_url(lot_code: &str) -> String {
-    let endpoint = std::env::var(API68_QUANGUOCAI_ENDPOINT_ENV)
-        .unwrap_or_else(|_| DEFAULT_API68_QUANGUOCAI_ENDPOINT.to_string());
+fn normalized_endpoint(endpoint: Option<&str>) -> String {
+    endpoint
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(default_api68_endpoint)
+}
+
+fn api68_url(endpoint: &str, lot_code: &str) -> String {
     format!("{endpoint}?lotCode={lot_code}")
+}
+
+fn reusable_lottery_ids(values: Vec<String>) -> ApiResult<Vec<String>> {
+    let mut unique = BTreeSet::new();
+    let ids = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .filter(|value| unique.insert(value.clone()))
+        .collect::<Vec<_>>();
+
+    if ids.is_empty() {
+        return Err(ApiError::BadRequest(
+            "reusable lottery ids are required".to_string(),
+        ));
+    }
+
+    Ok(ids)
+}
+
+fn validate_reusable_lotteries(
+    reusable_for_lottery_ids: &[String],
+    lotteries: &[LotteryKind],
+) -> ApiResult<()> {
+    for lottery_id in reusable_for_lottery_ids {
+        let lottery = lotteries
+            .iter()
+            .find(|lottery| lottery.id == *lottery_id)
+            .ok_or_else(|| ApiError::NotFound(format!("lottery `{lottery_id}` not found")))?;
+
+        if lottery.draw_mode != DrawMode::Api {
+            return Err(ApiError::BadRequest(format!(
+                "lottery `{lottery_id}` is not api draw mode"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) fn parse_api68_draw_number(
@@ -252,7 +518,11 @@ struct Api68Draw {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_api68_draw_number;
+    use super::{parse_api68_draw_number, ApiDrawSourceRepository, API68_FC3D_SOURCE_ID};
+    use crate::{
+        domain::lottery::{DrawSourceProvider, SaveDrawSourceRequest},
+        services::lottery::seed_lotteries,
+    };
 
     const API68_SAMPLE: &str = r#"{
         "errorCode": 0,
@@ -300,5 +570,84 @@ mod tests {
         .expect_err("business failure is rejected");
 
         assert!(error.to_string().contains("business code 1"));
+    }
+
+    #[tokio::test]
+    async fn seeded_api68_source_reuses_fc3d_and_pl3() {
+        let repository = ApiDrawSourceRepository::api68_seeded();
+        let sources = repository.list().await.expect("sources can be listed");
+        let source = sources
+            .iter()
+            .find(|source| source.id == API68_FC3D_SOURCE_ID)
+            .expect("seeded source exists");
+
+        assert_eq!(source.lot_code.as_deref(), Some("10041"));
+        assert!(source
+            .reusable_for_lottery_ids
+            .contains(&"fc3d".to_string()));
+        assert!(source.reusable_for_lottery_ids.contains(&"pl3".to_string()));
+    }
+
+    #[tokio::test]
+    async fn source_create_rejects_duplicate_lottery_binding() {
+        let repository = ApiDrawSourceRepository::api68_seeded();
+        let lotteries = seed_lotteries();
+
+        let error = repository
+            .create(draw_source_payload("api68-copy", &["pl3"]), &lotteries)
+            .await
+            .expect_err("duplicate lottery binding is rejected");
+
+        assert!(error.to_string().contains("already bound"));
+    }
+
+    #[tokio::test]
+    async fn source_update_can_split_reusable_lottery_binding() {
+        let repository = ApiDrawSourceRepository::api68_seeded();
+        let lotteries = seed_lotteries();
+
+        let updated = repository
+            .update(
+                API68_FC3D_SOURCE_ID,
+                draw_source_payload(API68_FC3D_SOURCE_ID, &["fc3d"]),
+                &lotteries,
+            )
+            .await
+            .expect("source can be updated");
+        let created = repository
+            .create(draw_source_payload("api68-pl3", &["pl3"]), &lotteries)
+            .await
+            .expect("pl3 source can be created after split");
+
+        assert_eq!(updated.reusable_for_lottery_ids, vec!["fc3d".to_string()]);
+        assert_eq!(created.reusable_for_lottery_ids, vec!["pl3".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn source_save_rejects_non_api_lottery() {
+        let repository = ApiDrawSourceRepository::api68_seeded();
+        let lotteries = seed_lotteries();
+
+        let error = repository
+            .update(
+                API68_FC3D_SOURCE_ID,
+                draw_source_payload(API68_FC3D_SOURCE_ID, &["ssc60"]),
+                &lotteries,
+            )
+            .await
+            .expect_err("platform lottery cannot bind api source");
+
+        assert!(error.to_string().contains("not api draw mode"));
+    }
+
+    fn draw_source_payload(id: &str, lottery_ids: &[&str]) -> SaveDrawSourceRequest {
+        SaveDrawSourceRequest {
+            endpoint: None,
+            id: id.to_string(),
+            lot_code: "10041".to_string(),
+            name: format!("测试来源 {id}"),
+            provider: DrawSourceProvider::Api68,
+            reusable_for_lottery_ids: lottery_ids.iter().map(|id| id.to_string()).collect(),
+        }
     }
 }

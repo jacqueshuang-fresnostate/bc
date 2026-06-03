@@ -246,3 +246,10 @@
 - 解决问题：此前 `api` 开奖模式仍使用本地生成器，无法按真实第三方 API 拉取开奖结果，也可能在外部结果缺失时生成假号码；本次让 `fc3d` 按 `preDrawIssue` 匹配 API68 响应中的期号，使用 `preDrawCode` 作为开奖号码，并继续统一保存英文逗号分隔格式。API68 未命中期号或请求失败时不回退生成器，手动开奖返回统一错误，自动任务把期号写入 `skippedIssues` 后继续处理其他期号。用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 101 个，覆盖 API68 响应解析、数字/字符串期号匹配、业务失败、开奖仓储使用 API68、外部源未命中保持期号未开奖、自动任务跳过 API 失败期号。API 冒烟使用 `PORT=18100` 登录后确认 `GET /api/admin/draw-sources` 返回 `api68-fc3d`，创建 `fc3d/2026143` 后触发开奖回填 `3,7,6`，创建 `fc3d/2099999` 后触发开奖返回 404 且期号仍无开奖号码，自动任务对该期写入 `skippedIssues`，同时平台 `ssc60` 期号正常开奖和结算。
 - 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议推进开奖源配置 CRUD、API68 原始响应留痕、失败重试队列、人工复核、排列 3 复用福彩 3D 结果映射和开奖期号持久化。
+
+## 2026-06-03 09:41:11 HKT
+
+- 完成任务：实现 `06-03-draw-source-reuse-config` 开奖源配置与多彩种复用阶段，新增 API 开奖源配置的列表、创建、更新、删除接口，并把默认 API68 来源升级为 `fc3d` 和 `pl3` 共同复用的配置。
+- 解决问题：此前 API68 来源仍是硬编码单彩种绑定，后台只能查看不能配置，也无法让排列 3 复用福彩 3D 的 API 结果；本次把 API 来源改为内存配置仓储，按 `reusableForLotteryIds` 绑定多个 API 开奖彩种，保存时校验彩种存在、必须为 API 开奖模式，并禁止同一彩种绑定多个来源以避免开奖歧义。管理后台“开奖期号与开奖源”页面新增“开奖源配置”面板，可维护名称、provider、lotCode、endpoint 和复用彩种；平台生成器仍只读展示。用户已有的 `admin/vite.config.ts`、`backend/src/main.rs` 端口改动和 `.idea/` 继续保留，不纳入本阶段提交。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；后端测试增加到 106 个，覆盖默认 API68 同时绑定 `fc3d/pl3`、重复彩种绑定拒绝、拆分复用彩种配置、非 API 彩种拒绝绑定、`pl3/2026143` 复用 API68 返回 `3,7,6`。API 冒烟使用 `PORT=18101` 登录后确认 `GET /api/admin/draw-sources` 返回 `api68-fc3d` 且复用彩种为 `fc3d/pl3`，重复绑定 `fc3d` 的新来源返回 409，创建 `pl3/2026143` 并开奖回填 `3,7,6`，保存来源为仅 `fc3d` 后再改回 `fc3d/pl3` 均成功。前端浏览器自动化因项目未安装 Playwright 且本轮无可用 browser 工具未执行，已用 `npm run build` 完成类型与生产构建验证。
+- 后续动作：提交本阶段代码，归档 Trellis 任务并记录开发日志；下一阶段建议推进开奖源配置 PostgreSQL 持久化、API68 原始响应留痕、失败重试队列、不同彩种期号映射和更多 provider 接入。
