@@ -1191,3 +1191,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 35: 全员邀请码中文日志与澳洲5分彩接入
+
+**Date**: 2026-06-03
+**Task**: 全员邀请码中文日志与澳洲5分彩接入
+**Branch**: `main`
+
+### Summary
+
+用户摘要改为单个 inviteCode，普通用户码创建邀请关系返回无效；后端日志 message 中文化；新增 au5 澳洲 5 分彩和 API68 10010 来源。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a4c987c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
