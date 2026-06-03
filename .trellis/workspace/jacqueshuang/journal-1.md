@@ -1042,3 +1042,42 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: 福彩3D真实期号生成修复
+
+**Date**: 2026-06-03
+**Task**: 福彩3D真实期号生成修复
+**Branch**: `main`
+
+### Summary
+
+修复福彩 3D 自动生成时间戳期号的问题，改为基于 API68 最新 preDrawIssue 生成真实 7 位期号，并让排列 3 复用同一规则。
+
+### Main Changes
+
+- 新增 API68 最新 `preDrawIssue` 解析能力，开奖匹配和期号生成共用同一响应校验入口。
+- 福彩 3D、排列 3 绑定 `api68-fc3d` 来源时，预览、单期生成、批量生成和调度补期都会按外部最新 7 位期号递增。
+- 当 API68 当前最新为 `2026143` 时，福彩 3D 下一期生成 `2026144`；本地已有 `2026144` 后继续生成 `2026145`。
+- 常驻调度遇到 API 最新期号缺失时跳过对应彩种并记录原因，平台彩种继续补期。
+- 已更新 `架构设计.md`、`TODO.md` 与 `.trellis/spec/backend/api-contracts.md`。
+- 验证：`cargo fmt --check`、`cargo check`、`cargo test` 通过，后端测试 112 个；API 冒烟使用 `PORT=18102` 验证真实 API68 生成 `2026144/2026145`，`pl3` 预览生成 `2026144`。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fce7c21` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
