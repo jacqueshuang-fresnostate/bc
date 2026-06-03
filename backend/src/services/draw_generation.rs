@@ -296,7 +296,7 @@ impl IssueLabeler {
         let latest_external_issue =
             parse_api_sequence_issue(&latest_api_issue.issue).ok_or_else(|| {
                 ApiError::Internal(format!(
-                    "api draw source latest issue `{}` is not a 7-digit numeric issue",
+                    "api draw source latest issue `{}` is not a numeric issue",
                     latest_api_issue.issue
                 ))
             })?;
@@ -331,7 +331,7 @@ impl IssueLabeler {
 
 fn parse_api_sequence_issue(value: &str) -> Option<u32> {
     let value = value.trim();
-    if value.len() != 7 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
 
@@ -366,6 +366,17 @@ mod tests {
             "data": [
                 { "preDrawIssue": 2026143, "preDrawCode": "3,7,6", "preDrawTime": "2026-06-02 21:15:00" },
                 { "preDrawIssue": "2026142", "preDrawCode": "8,9,4", "preDrawTime": "2026-06-01 21:15:00" }
+            ]
+        }
+    }"#;
+    const API68_AU5_SAMPLE: &str = r#"{
+        "errorCode": 0,
+        "message": "操作成功",
+        "result": {
+            "businessCode": 0,
+            "message": "操作成功",
+            "data": [
+                { "preDrawIssue": 51320849, "preDrawCode": "4,5,4,3,0", "preDrawTime": "2026-06-03 11:18:40" }
             ]
         }
     }"#;
@@ -492,6 +503,26 @@ mod tests {
                 .expect("issue can be generated");
 
         assert_eq!(issue.issue, "2026144");
+    }
+
+    #[tokio::test]
+    async fn api68_au5_source_generates_eight_digit_issue() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_AU5_SAMPLE),
+        );
+        let mut lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 300,
+        });
+        lottery.id = "au5".to_string();
+        lottery.name = "澳洲 5 分彩".to_string();
+        lottery.number_type = LotteryNumberType::FiveDigit;
+
+        let issue =
+            generate_next_draw_issue(&draws, &lottery, request_for("au5", "2026-06-03 11:20:00"))
+                .await
+                .expect("issue can be generated");
+
+        assert_eq!(issue.issue, "51320850");
     }
 
     #[tokio::test]

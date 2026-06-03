@@ -338,7 +338,7 @@ pub fn spawn_draw_scheduler(
     scheduler: DrawSchedulerRepository,
 ) -> Option<JoinHandle<()>> {
     if !config.enabled {
-        tracing::info!("draw scheduler disabled");
+        tracing::info!("开奖调度器已禁用");
         return None;
     }
 
@@ -346,7 +346,7 @@ pub fn spawn_draw_scheduler(
         interval_seconds = config.interval_seconds,
         future_issue_count = config.future_issue_count,
         sale_close_lead_seconds = config.sale_close_lead_seconds,
-        "draw scheduler enabled"
+        "开奖调度器已启用"
     );
 
     Some(tokio::spawn(async move {
@@ -361,12 +361,12 @@ pub fn spawn_draw_scheduler(
             let current_config = match scheduler.config() {
                 Ok(current_config) => current_config,
                 Err(error) => {
-                    tracing::error!(%error, "draw scheduler config read failed");
+                    tracing::error!(%error, "开奖调度器配置读取失败");
                     config.clone()
                 }
             };
             if !current_config.enabled {
-                tracing::debug!("draw scheduler skipped because config is disabled");
+                tracing::debug!("开奖调度器因配置禁用跳过本轮执行");
                 continue;
             }
             if current_config.interval_seconds != active_interval_seconds {
@@ -375,7 +375,7 @@ pub fn spawn_draw_scheduler(
                 interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
                 tracing::info!(
                     interval_seconds = active_interval_seconds,
-                    "draw scheduler interval updated"
+                    "开奖调度器执行周期已更新"
                 );
             }
             match run_draw_scheduler_once(
@@ -396,7 +396,7 @@ pub fn spawn_draw_scheduler(
                         finished_at,
                         &run,
                     ) {
-                        tracing::error!(%error, "draw scheduler history record failed");
+                        tracing::error!(%error, "开奖调度器历史记录写入失败");
                     }
                     tracing::info!(
                         now = %run.now,
@@ -407,7 +407,7 @@ pub fn spawn_draw_scheduler(
                         generated_issues = run.generated_issues.len(),
                         skipped_lotteries = run.skipped_lotteries.len(),
                         skipped_issues = run.automation_run.skipped_issues.len(),
-                        "draw scheduler cycle completed"
+                        "开奖调度器本轮执行完成"
                     );
                 }
                 Err(error) => {
@@ -419,9 +419,9 @@ pub fn spawn_draw_scheduler(
                         now.clone(),
                         error.to_string(),
                     ) {
-                        tracing::error!(%record_error, "draw scheduler history record failed");
+                        tracing::error!(%record_error, "开奖调度器历史记录写入失败");
                     }
-                    tracing::error!(%now, %error, "draw scheduler cycle failed");
+                    tracing::error!(%now, %error, "开奖调度器本轮执行失败");
                 }
             }
         }
@@ -505,7 +505,7 @@ async fn ensure_future_draw_issues(
                 tracing::warn!(
                     lottery_id = %lottery.id,
                     error = %error,
-                    "draw scheduler skipped lottery after issue generation failure"
+                    "开奖调度器因期号生成失败跳过彩种"
                 );
                 skipped_lotteries.push(DrawSchedulerSkippedLottery {
                     lottery_id: lottery.id,

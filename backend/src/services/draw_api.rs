@@ -20,9 +20,16 @@ pub const API68_FC3D_SOURCE_NAME: &str = "API68 福彩 3D/排列 3";
 pub const API68_FC3D_LOTTERY_ID: &str = "fc3d";
 pub const API68_PL3_LOTTERY_ID: &str = "pl3";
 pub const API68_FC3D_LOT_CODE: &str = "10041";
+pub const API68_AU5_SOURCE_ID: &str = "api68-au5";
+pub const API68_AU5_SOURCE_NAME: &str = "API68 澳洲 5 分彩";
+pub const API68_AU5_LOTTERY_ID: &str = "au5";
+pub const API68_AU5_LOT_CODE: &str = "10010";
 pub const API68_QUANGUOCAI_ENDPOINT_ENV: &str = "API68_QUANGUOCAI_ENDPOINT";
+pub const API68_CQSHICAI_ENDPOINT_ENV: &str = "API68_CQSHICAI_ENDPOINT";
 const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
     "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do";
+const DEFAULT_API68_CQSHICAI_ENDPOINT: &str =
+    "https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do";
 const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +51,10 @@ impl ApiDrawSourceRepository {
     }
 
     pub fn api68_seeded() -> Self {
-        Self::new(vec![ApiDrawSourceConfig::api68_fc3d()])
+        Self::new(vec![
+            ApiDrawSourceConfig::api68_fc3d(),
+            ApiDrawSourceConfig::api68_au5(),
+        ])
     }
 
     fn new(sources: Vec<ApiDrawSourceConfig>) -> Self {
@@ -58,12 +68,15 @@ impl ApiDrawSourceRepository {
     #[cfg(test)]
     pub fn api68_seeded_with_static_response(response_body: impl Into<String>) -> Self {
         let mut static_responses = BTreeMap::new();
-        static_responses.insert(API68_FC3D_SOURCE_ID.to_string(), response_body.into());
+        let response_body = response_body.into();
+        static_responses.insert(API68_FC3D_SOURCE_ID.to_string(), response_body.clone());
+        static_responses.insert(API68_AU5_SOURCE_ID.to_string(), response_body);
 
         Self {
             client: reqwest::Client::new(),
             inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(vec![
                 ApiDrawSourceConfig::api68_fc3d(),
+                ApiDrawSourceConfig::api68_au5(),
             ]))),
             static_responses: Arc::new(static_responses),
         }
@@ -132,7 +145,7 @@ impl ApiDrawSourceRepository {
                 lottery_id = %issue.lottery_id,
                 issue = %issue.issue,
                 error = %error,
-                "api draw source failed"
+                "API 开奖源获取开奖号码失败"
             );
         }
 
@@ -163,7 +176,7 @@ impl ApiDrawSourceRepository {
                 source_id = %source.id,
                 lottery_id = %lottery_id,
                 error = %error,
-                "api draw source latest issue failed"
+                "API 开奖源获取最新期号失败"
             );
         }
 
@@ -408,11 +421,22 @@ impl ApiDrawSourceConfig {
             name: API68_FC3D_SOURCE_NAME.to_string(),
             provider: DrawSourceProvider::Api68,
             lot_code: API68_FC3D_LOT_CODE.to_string(),
-            endpoint: default_api68_endpoint(),
+            endpoint: default_api68_quanguocai_endpoint(),
             reusable_for_lottery_ids: vec![
                 API68_FC3D_LOTTERY_ID.to_string(),
                 API68_PL3_LOTTERY_ID.to_string(),
             ],
+        }
+    }
+
+    fn api68_au5() -> Self {
+        Self {
+            id: API68_AU5_SOURCE_ID.to_string(),
+            name: API68_AU5_SOURCE_NAME.to_string(),
+            provider: DrawSourceProvider::Api68,
+            lot_code: API68_AU5_LOT_CODE.to_string(),
+            endpoint: default_api68_cqshicai_endpoint(),
+            reusable_for_lottery_ids: vec![API68_AU5_LOTTERY_ID.to_string()],
         }
     }
 
@@ -447,9 +471,14 @@ pub fn platform_draw_source_summaries() -> Vec<DrawSource> {
     }]
 }
 
-fn default_api68_endpoint() -> String {
+fn default_api68_quanguocai_endpoint() -> String {
     std::env::var(API68_QUANGUOCAI_ENDPOINT_ENV)
         .unwrap_or_else(|_| DEFAULT_API68_QUANGUOCAI_ENDPOINT.to_string())
+}
+
+fn default_api68_cqshicai_endpoint() -> String {
+    std::env::var(API68_CQSHICAI_ENDPOINT_ENV)
+        .unwrap_or_else(|_| DEFAULT_API68_CQSHICAI_ENDPOINT.to_string())
 }
 
 fn normalized_endpoint(endpoint: Option<&str>) -> String {
@@ -457,7 +486,7 @@ fn normalized_endpoint(endpoint: Option<&str>) -> String {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(default_api68_endpoint)
+        .unwrap_or_else(default_api68_quanguocai_endpoint)
 }
 
 fn api68_url(endpoint: &str, lot_code: &str) -> String {
@@ -609,7 +638,7 @@ struct Api68Draw {
 mod tests {
     use super::{
         parse_api68_draw_number, parse_api68_latest_issue, ApiDrawSourceRepository,
-        API68_FC3D_SOURCE_ID,
+        API68_AU5_SOURCE_ID, API68_FC3D_SOURCE_ID,
     };
     use crate::{
         domain::lottery::{DrawSourceProvider, SaveDrawSourceRequest},
@@ -704,6 +733,23 @@ mod tests {
             .reusable_for_lottery_ids
             .contains(&"fc3d".to_string()));
         assert!(source.reusable_for_lottery_ids.contains(&"pl3".to_string()));
+    }
+
+    #[tokio::test]
+    async fn seeded_api68_source_includes_au5() {
+        let repository = ApiDrawSourceRepository::api68_seeded();
+        let sources = repository.list().await.expect("sources can be listed");
+        let source = sources
+            .iter()
+            .find(|source| source.id == API68_AU5_SOURCE_ID)
+            .expect("au5 seeded source exists");
+
+        assert_eq!(source.lot_code.as_deref(), Some("10010"));
+        assert_eq!(
+            source.endpoint.as_deref(),
+            Some("https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do")
+        );
+        assert_eq!(source.reusable_for_lottery_ids, vec!["au5".to_string()]);
     }
 
     #[tokio::test]

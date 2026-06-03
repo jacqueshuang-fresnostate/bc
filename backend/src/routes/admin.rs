@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use axum::{
     extract::{Path, Request, State},
     http::header::AUTHORIZATION,
@@ -660,9 +658,7 @@ async fn reply_support_conversation(
 async fn list_users(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<UserSummary>>>> {
-    let mut users = state.access.users().await?;
-    let invite_codes_by_inviter = state.invites.invite_codes_by_inviter().await?;
-    attach_invite_codes_to_users(&mut users, &invite_codes_by_inviter);
+    let users = state.access.users().await?;
 
     Ok(Json(ApiEnvelope::success(users)))
 }
@@ -671,9 +667,7 @@ async fn get_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
-    let mut user = state.access.get_user(&id).await?;
-    let invite_codes_by_inviter = state.invites.invite_codes_by_inviter().await?;
-    attach_invite_codes_to_user(&mut user, &invite_codes_by_inviter);
+    let user = state.access.get_user(&id).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -682,9 +676,7 @@ async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<UserSummary>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
-    let mut user = state.access.create_user(payload).await?;
-    let invite_codes_by_inviter = state.invites.invite_codes_by_inviter().await?;
-    attach_invite_codes_to_user(&mut user, &invite_codes_by_inviter);
+    let user = state.access.create_user(payload).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -694,9 +686,7 @@ async fn update_user(
     Path(id): Path<String>,
     Json(payload): Json<UserSummary>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
-    let mut user = state.access.update_user(&id, payload).await?;
-    let invite_codes_by_inviter = state.invites.invite_codes_by_inviter().await?;
-    attach_invite_codes_to_user(&mut user, &invite_codes_by_inviter);
+    let user = state.access.update_user(&id, payload).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -706,30 +696,9 @@ async fn set_user_status(
     Path(id): Path<String>,
     Json(payload): Json<UserStatusRequest>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
-    let mut user = state.access.set_user_status(&id, payload.status).await?;
-    let invite_codes_by_inviter = state.invites.invite_codes_by_inviter().await?;
-    attach_invite_codes_to_user(&mut user, &invite_codes_by_inviter);
+    let user = state.access.set_user_status(&id, payload.status).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
-}
-
-fn attach_invite_codes_to_users(
-    users: &mut [UserSummary],
-    invite_codes_by_inviter: &BTreeMap<String, Vec<String>>,
-) {
-    for user in users {
-        attach_invite_codes_to_user(user, invite_codes_by_inviter);
-    }
-}
-
-fn attach_invite_codes_to_user(
-    user: &mut UserSummary,
-    invite_codes_by_inviter: &BTreeMap<String, Vec<String>>,
-) {
-    user.invite_codes = invite_codes_by_inviter
-        .get(&user.id)
-        .cloned()
-        .unwrap_or_default();
 }
 
 async fn list_admins(
@@ -1003,7 +972,7 @@ async fn create_order(
             tracing::error!(
                 order_id = %order.id,
                 error = %rollback_error,
-                "failed to remove unfunded order after debit failure"
+                "扣款失败后移除未入账订单失败"
             );
         }
         return Err(error);

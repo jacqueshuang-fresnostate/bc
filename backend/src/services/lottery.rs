@@ -443,6 +443,40 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             ),
         },
         LotteryKind {
+            id: "au5".to_string(),
+            name: "澳洲 5 分彩".to_string(),
+            number_type: LotteryNumberType::FiveDigit,
+            draw_mode: DrawMode::Api,
+            schedule: DrawSchedule::Periodic {
+                interval_seconds: 300,
+            },
+            sale_enabled: true,
+            group_buy: group_buy_config(),
+            play_categories: vec![
+                PlayCategory::Direct,
+                PlayCategory::DirectCombination,
+                PlayCategory::GroupThree,
+                PlayCategory::GroupSix,
+                PlayCategory::BigSmallOddEven,
+            ],
+            play_configs: play_configs_with_overrides(
+                LotteryNumberType::FiveDigit,
+                &[
+                    PlayCategory::Direct,
+                    PlayCategory::DirectCombination,
+                    PlayCategory::GroupThree,
+                    PlayCategory::GroupSix,
+                    PlayCategory::BigSmallOddEven,
+                ],
+                &[
+                    (PlayRuleCode::FiveFrontDirect, 95_000),
+                    (PlayRuleCode::FiveMiddleDirect, 96_000),
+                    (PlayRuleCode::FiveBackDirect, 97_000),
+                    (PlayRuleCode::FiveBigSmallOddEven, 19_000),
+                ],
+            ),
+        },
+        LotteryKind {
             id: "ssc60".to_string(),
             name: "60 秒时时彩".to_string(),
             number_type: LotteryNumberType::FiveDigit,
@@ -712,14 +746,14 @@ fn enum_value<T: Serialize>(value: &T) -> ApiResult<String> {
     let value = serde_json::to_value(value).map_err(serde_error)?;
 
     value.as_str().map(ToString::to_string).ok_or_else(|| {
-        tracing::error!("lottery enum did not serialize to string");
+        tracing::error!("彩种枚举没有序列化为字符串");
         ApiError::Internal("lottery enum serialization failed".to_string())
     })
 }
 
 fn enum_from_string<T: DeserializeOwned>(value: String) -> ApiResult<T> {
     serde_json::from_value(Value::String(value)).map_err(|error| {
-        tracing::error!(%error, "invalid lottery enum in database");
+        tracing::error!(%error, "数据库中的彩种枚举无效");
         ApiError::Internal("invalid lottery data in database".to_string())
     })
 }
@@ -730,18 +764,18 @@ fn json_value<T: Serialize>(value: &T) -> ApiResult<Value> {
 
 fn json_from_value<T: DeserializeOwned>(value: Value) -> ApiResult<T> {
     serde_json::from_value(value).map_err(|error| {
-        tracing::error!(%error, "invalid lottery json in database");
+        tracing::error!(%error, "数据库中的彩种 JSON 无效");
         ApiError::Internal("invalid lottery data in database".to_string())
     })
 }
 
 fn serde_error(error: serde_json::Error) -> ApiError {
-    tracing::error!(%error, "lottery json serialization failed");
+    tracing::error!(%error, "彩种 JSON 序列化失败");
     ApiError::Internal("lottery data serialization failed".to_string())
 }
 
 fn database_error(error: sqlx::Error) -> ApiError {
-    tracing::error!(%error, "lottery database operation failed");
+    tracing::error!(%error, "彩种数据库操作失败");
     ApiError::Internal("lottery database operation failed".to_string())
 }
 
@@ -751,7 +785,7 @@ mod tests {
         enum_from_string, enum_value, json_from_value, json_value, seed_lotteries,
         LotteryRepository, LotteryStore,
     };
-    use crate::domain::lottery::{DrawMode, DrawSchedule, LotteryKind};
+    use crate::domain::lottery::{DrawMode, DrawSchedule, LotteryKind, LotteryNumberType};
 
     #[test]
     fn store_creates_and_lists_lottery() {
@@ -766,6 +800,24 @@ mod tests {
         store.create(lottery).expect("lottery can be created");
 
         assert!(store.list().iter().any(|item| item.id == "new3d"));
+    }
+
+    #[test]
+    fn seeded_lotteries_include_au5_api_lottery() {
+        let lottery = seed_lotteries()
+            .into_iter()
+            .find(|item| item.id == "au5")
+            .expect("au5 seed lottery exists");
+
+        assert_eq!(lottery.name, "澳洲 5 分彩");
+        assert_eq!(lottery.number_type, LotteryNumberType::FiveDigit);
+        assert_eq!(lottery.draw_mode, DrawMode::Api);
+        assert_eq!(
+            lottery.schedule,
+            DrawSchedule::Periodic {
+                interval_seconds: 300
+            }
+        );
     }
 
     #[test]
@@ -846,7 +898,7 @@ mod tests {
 
         let lotteries = repository.list().await.expect("lotteries can be listed");
 
-        assert_eq!(lotteries.len(), 4);
+        assert_eq!(lotteries.len(), 5);
     }
 
     #[tokio::test]

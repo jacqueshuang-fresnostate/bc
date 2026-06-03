@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let address = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&address).await?;
 
-    tracing::info!(address = %address, "backend api listening");
+    tracing::info!(address = %address, "后台接口服务已开始监听");
     axum::serve(listener, app::router_from_env().await?).await?;
 
     Ok(())

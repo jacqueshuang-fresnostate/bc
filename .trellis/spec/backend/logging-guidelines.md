@@ -8,6 +8,8 @@
 
 后端使用 `tracing` 和 `tracing-subscriber`。日志需要帮助排查用户、财务、彩票、开奖、返利和机器人行为，同时不能暴露敏感数据。
 
+所有后台运行日志的 message 必须使用中文。结构化字段名可以保留英文 snake_case，以便后续日志系统检索；但 `tracing::info!`、`tracing::warn!`、`tracing::error!`、`panic!` 等实际打印文本不能使用英文描述。
+
 ---
 
 ## 日志级别

@@ -1170,7 +1170,7 @@ function DrawSourceSideSheet({
                 )
               }
             >
-              <option value="api68">API68 全国彩</option>
+              <option value="api68">API68</option>
             </select>
           </Field>
           <Field label="lotCode">
@@ -1782,7 +1782,7 @@ function drawModeColor(mode: DrawMode) {
 
 function drawSourceProviderText(provider: DrawSourceProvider) {
   const labels: Record<DrawSourceProvider, string> = {
-    api68: 'API68 全国彩',
+    api68: 'API68',
   };
   return labels[provider];
 }

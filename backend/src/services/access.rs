@@ -297,6 +297,7 @@ impl AccessStore {
 
     fn create_user(&mut self, user: UserSummary) -> ApiResult<UserSummary> {
         let user = normalize_user(user)?;
+        self.ensure_unique_invite_code(&user.id, &user.invite_code)?;
         if self.users.contains_key(&user.id) {
             return Err(ApiError::Conflict(format!(
                 "user `{}` already exists",
@@ -318,6 +319,7 @@ impl AccessStore {
         if !self.users.contains_key(id) {
             return Err(ApiError::NotFound(format!("user `{id}` not found")));
         }
+        self.ensure_unique_invite_code(id, &user.invite_code)?;
 
         self.users.insert(id.to_string(), user.clone());
         Ok(user)
@@ -330,6 +332,21 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))?;
         user.status = status;
         Ok(user.clone())
+    }
+
+    fn ensure_unique_invite_code(&self, user_id: &str, invite_code: &str) -> ApiResult<()> {
+        if let Some(existing) = self
+            .users
+            .values()
+            .find(|user| user.id != user_id && user.invite_code == invite_code)
+        {
+            return Err(ApiError::Conflict(format!(
+                "invite code `{invite_code}` is already assigned to user `{}`",
+                existing.id
+            )));
+        }
+
+        Ok(())
     }
 
     fn admins(&self) -> Vec<AdminSummary> {
@@ -598,7 +615,10 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
         .agent_id
         .map(|agent_id| agent_id.trim().to_string())
         .filter(|agent_id| !agent_id.is_empty());
-    user.invite_codes.clear();
+    user.invite_code = user.invite_code.trim().to_string();
+    if user.invite_code.is_empty() {
+        user.invite_code = invite_code_for_user(&user.id);
+    }
 
     if user.balance_minor < 0 {
         return Err(ApiError::BadRequest(
@@ -607,6 +627,15 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
     }
 
     Ok(user)
+}
+
+fn invite_code_for_user(user_id: &str) -> String {
+    let code = user_id
+        .bytes()
+        .filter(|byte| byte.is_ascii_alphanumeric())
+        .map(|byte| (byte as char).to_ascii_uppercase())
+        .collect::<String>();
+    format!("INV{code}")
 }
 
 fn normalize_admin(
@@ -684,7 +713,7 @@ fn seed_users() -> Vec<UserSummary> {
             status: UserStatus::Active,
             balance_minor: 12_000,
             agent_id: Some("U90001".to_string()),
-            invite_codes: Vec::new(),
+            invite_code: "USER10001".to_string(),
         },
         UserSummary {
             id: "U90001".to_string(),
@@ -694,7 +723,7 @@ fn seed_users() -> Vec<UserSummary> {
             status: UserStatus::Active,
             balance_minor: 520_000,
             agent_id: None,
-            invite_codes: Vec::new(),
+            invite_code: "AGENT10001".to_string(),
         },
         UserSummary {
             id: "U10004".to_string(),
@@ -704,7 +733,7 @@ fn seed_users() -> Vec<UserSummary> {
             status: UserStatus::Suspended,
             balance_minor: 0,
             agent_id: Some("U90001".to_string()),
-            invite_codes: Vec::new(),
+            invite_code: "USER10004".to_string(),
         },
     ]
 }
@@ -733,7 +762,7 @@ fn seed_admin_password_hashes(admins: &BTreeMap<String, AdminSummary>) -> BTreeM
         .keys()
         .map(|admin_id| {
             let hash = hash_admin_password(DEFAULT_SEED_ADMIN_PASSWORD)
-                .unwrap_or_else(|_| panic!("failed to hash seed admin password"));
+                .unwrap_or_else(|_| panic!("种子管理员密码哈希失败"));
             (admin_id.clone(), hash)
         })
         .collect()
@@ -801,18 +830,39 @@ mod tests {
                 status: UserStatus::Active,
                 balance_minor: 1000,
                 agent_id: None,
-                invite_codes: Vec::new(),
+                invite_code: String::new(),
             })
             .await
             .expect("user can be created");
 
         assert_eq!(created.id, "U20001");
+        assert_eq!(created.invite_code, "INVU20001");
 
         let updated = access
             .set_user_status("U20001", UserStatus::Locked)
             .await
             .expect("status can be updated");
         assert_eq!(updated.status, UserStatus::Locked);
+    }
+
+    #[tokio::test]
+    async fn access_repository_rejects_duplicate_invite_code() {
+        let access = AccessRepository::memory_seeded();
+        let error = access
+            .create_user(UserSummary {
+                id: "U20002".to_string(),
+                username: "duplicate_invite_code".to_string(),
+                email: None,
+                kind: UserKind::Regular,
+                status: UserStatus::Active,
+                balance_minor: 0,
+                agent_id: None,
+                invite_code: "AGENT10001".to_string(),
+            })
+            .await
+            .expect_err("duplicate invite code must be rejected");
+
+        assert!(matches!(error, ApiError::Conflict(_)));
     }
 
     #[tokio::test]

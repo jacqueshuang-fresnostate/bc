@@ -669,6 +669,7 @@ await createOrder({
 当前已接入的外部开奖源：
 
 - `api68-fc3d`：`fc3d` 福彩 3D 和 `pl3` 排列 3 默认复用 API68 全国彩接口，`lotCode=10041`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为开奖号码。
+- `api68-au5`：`au5` 澳洲 5 分彩默认使用 API68 CQShiCai 接口，`lotCode=10010`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为英文逗号分隔开奖号码。
 - `preDrawCode` 必须继续经过后端开奖号码校验，保存和返回仍统一为英文逗号分隔格式。
 - 暂未配置外部源的 API 彩种仍保留本地生成器占位能力，仅用于当前内存演示阶段；生产接入时需要显式配置来源。
 
@@ -700,7 +701,7 @@ await createOrder({
 }
 ```
 
-`endpoint` 可为空；为空时后端使用默认 API68 全国彩 endpoint 或 `API68_QUANGUOCAI_ENDPOINT` 环境变量。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
+`endpoint` 可为空；为空时后端使用默认 API68 全国彩 endpoint 或 `API68_QUANGUOCAI_ENDPOINT` 环境变量。澳洲 5 分彩默认来源使用 `https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do`，可通过 `API68_CQSHICAI_ENDPOINT` 覆盖。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
 
 开奖期号响应：
 
@@ -1567,7 +1568,7 @@ await fetchDrawSchedulerStatus();
   "status": "active",
   "balanceMinor": 12000,
   "agentId": "U90001",
-  "inviteCodes": []
+  "inviteCode": "USER10001"
 }
 ```
 
@@ -1619,7 +1620,7 @@ await fetchDrawSchedulerStatus();
 2. 管理员保存时前端提交 `roleId`；后端根据 `roleId` 查找角色并回填 `roleName`，前端不能靠中文角色名反查。
 3. 角色权限范围使用后端枚举的 `camelCase` 值：`users`、`orders`、`finance`、`customerService`、`admins`、`roles`、`systemSettings`、`lotteries`、`robots`、`rebates`。
 4. 用户余额字段仍是 `balanceMinor` 最小货币单位。本阶段用户摘要余额不强制和财务账户仓储同步。
-5. 用户摘要中的 `inviteCodes` 是只读派生字段，由邀请关系按 `inviterUserId` 聚合得出；用户创建或更新请求中的该字段不参与保存。
+5. 每个用户摘要都有单个 `inviteCode`。代理用户的邀请码可用于创建邀请关系，普通用户的邀请码只展示，使用时返回“邀请码无效”。
 6. 用户管理接口只需要 `users` 权限，不允许让用户管理页额外依赖需要 `rebates` 权限的邀请管理接口。
 7. 本阶段不保存管理员密码，不提供真实登录、JWT、菜单拦截或权限鉴权。
 
@@ -2153,10 +2154,11 @@ await createSupportConversation({
 
 1. `status` 只允许 `pending`、`active`、`disabled`。
 2. 创建邀请关系时后端必须读取 `InvitePolicySummary` 判断邀请人是否有邀请权限。
-3. 默认策略下只有 `agent` 用户可以作为邀请人；如果 `regularUsersCanInvite=true`，普通用户也可作为邀请人。
+3. 邀请码所有人必须是 `agent` 用户；普通用户自己的邀请码会返回“邀请码无效”。
 4. `inviterUsername` 和 `inviteeUsername` 由后端根据用户仓储回填，前端不能提交或覆盖。
 5. `rebateEnabled` 只表示该邀请关系有返利资格，不代表已经发放返利。
-6. 本阶段只做邀请关系配置，不执行真实充值返利发放，不写返利流水或财务入账。
+6. 同一个代理邀请码可以创建多条不同被邀请人的邀请关系；重复关系仍按邀请人和被邀请人组合拒绝。
+7. 本阶段只做邀请关系配置，不执行真实充值返利发放，不写返利流水或财务入账。
 
 ### 4. 校验与错误矩阵
 
@@ -2169,11 +2171,11 @@ await createSupportConversation({
 | 邀请人不存在 | HTTP 404，返回邀请人用户不存在 |
 | 被邀请人不存在 | HTTP 404，返回被邀请人用户不存在 |
 | 邀请人和被邀请人相同 | HTTP 400，返回 `inviter and invitee must be different users` |
-| 普通用户邀请但策略未开启 | HTTP 403，返回 `regular user invite entry is disabled` |
+| 普通用户邀请码被使用 | HTTP 400，返回 `邀请码无效` |
 | 代理邀请但策略未开启 | HTTP 403，返回 `agent invite entry is disabled` |
 | 同一邀请人和被邀请人关系重复 | HTTP 409，返回重复邀请关系错误 |
 | 邀请码为空 | HTTP 400，返回 `invite code is required` |
-| 邀请码重复 | HTTP 409，返回重复邀请码错误 |
+| 邀请码与邀请人不匹配 | HTTP 400，返回 `邀请码与邀请人不匹配` |
 | 查询或更新不存在邀请关系 | HTTP 404，返回邀请关系不存在 |
 
 ### 5. Good / Base / Bad Cases
@@ -2182,14 +2184,14 @@ await createSupportConversation({
 - Good：把邀请关系状态改为 `disabled` 并关闭 `rebateEnabled`，后续真实返利发放应跳过该关系。
 - Base：无数据库环境下使用内存邀请仓储，服务重启后恢复种子邀请关系。
 - Bad：前端提交 `inviterUsername` 或 `inviteeUsername` 并让后端信任，会导致用户改名或伪造请求时数据漂移。
-- Bad：邀请管理页面不读取返利配置，允许普通用户在默认策略下创建邀请关系，会违反业务入口策略。
+- Bad：邀请管理页面允许普通用户邀请码创建邀请关系，会违反“普通用户码仅展示、不可邀请”的业务规则。
 
 ### 6. 必要测试
 
 - 后端需要覆盖代理创建邀请关系和更新状态。
-- 后端需要覆盖默认策略下普通用户邀请被拒绝。
+- 后端需要覆盖普通用户邀请码返回“邀请码无效”。
 - 后端需要覆盖被邀请人不存在拒绝。
-- 后端需要覆盖重复邀请码拒绝。
+- 后端需要覆盖同一个代理邀请码可用于多个不同被邀请人。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`，确认邀请状态、请求字段和 API client 类型一致。
 - API 冒烟需要创建用户后创建邀请关系、更新状态、验证普通用户邀请被拒绝，并确认 dashboard 中 `invite` 为 `scaffolded`。

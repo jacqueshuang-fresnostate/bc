@@ -449,13 +449,14 @@ function UserSection({
                     {user.agentId ?? '无'}
                   </td>
                   <td className="py-3 pr-4">
-                    {user.inviteCodes.length > 0 ? (
+                    {user.inviteCode ? (
                       <div className="flex max-w-[240px] flex-wrap gap-1">
-                        {user.inviteCodes.map((code) => (
-                          <Tag key={code} color="teal">
-                            {code}
-                          </Tag>
-                        ))}
+                        <Tag color={user.kind === 'agent' ? 'teal' : 'grey'}>
+                          {user.inviteCode}
+                        </Tag>
+                        <Tag color={user.kind === 'agent' ? 'green' : 'orange'}>
+                          {user.kind === 'agent' ? '可邀请' : '无邀请功能'}
+                        </Tag>
                       </div>
                     ) : (
                       <span className="text-slate-400">未配置</span>
@@ -1143,7 +1144,7 @@ function userPayload(form: UserFormState): UserSummary {
     balanceMinor: numberField(form.balanceMinor),
     email: optionalText(form.email),
     id: form.id.trim(),
-    inviteCodes: [],
+    inviteCode: '',
     kind: form.kind,
     status: form.status,
     username: form.username.trim(),

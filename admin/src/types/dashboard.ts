@@ -136,7 +136,7 @@ export interface UserSummary {
   status: UserStatus;
   balanceMinor: number;
   agentId: string | null;
-  inviteCodes: string[];
+  inviteCode: string;
 }
 
 export type UserStatus = 'active' | 'suspended' | 'locked';

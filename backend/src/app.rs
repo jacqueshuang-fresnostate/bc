@@ -57,13 +57,13 @@ impl AppState {
         scheduler: DrawSchedulerRepository,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let Ok(database_url) = std::env::var("DATABASE_URL") else {
-            tracing::info!("DATABASE_URL not configured; using in-memory lottery repository");
+            tracing::info!("未配置 DATABASE_URL，使用内存彩种仓储");
             return Ok(Self::new_with_scheduler(scheduler));
         };
 
         let lotteries = LotteryRepository::postgres(&database_url).await?;
 
-        tracing::info!("DATABASE_URL configured; using PostgreSQL lottery repository");
+        tracing::info!("已配置 DATABASE_URL，使用 PostgreSQL 彩种仓储");
         Ok(Self {
             access: AccessRepository::memory_seeded(),
             draws: default_draw_repository(),

@@ -41,7 +41,7 @@ impl IntoResponse for ApiError {
         let message = self.to_string();
 
         if status.is_server_error() {
-            tracing::error!(%message, "api error");
+            tracing::error!(%message, "接口错误");
         }
 
         (status, Json(ApiEnvelope::error(message))).into_response()

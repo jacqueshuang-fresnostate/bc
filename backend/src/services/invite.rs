@@ -35,13 +35,6 @@ impl InviteRepository {
             .map(|store| store.list())
     }
 
-    pub async fn invite_codes_by_inviter(&self) -> ApiResult<BTreeMap<String, Vec<String>>> {
-        self.inner
-            .read()
-            .map_err(|_| ApiError::Internal("invite store lock poisoned".to_string()))
-            .map(|store| store.invite_codes_by_inviter())
-    }
-
     pub async fn get(&self, id: &str) -> ApiResult<InviteRecord> {
         self.inner
             .read()
@@ -92,18 +85,6 @@ impl InviteStore {
         self.records.values().cloned().collect()
     }
 
-    fn invite_codes_by_inviter(&self) -> BTreeMap<String, Vec<String>> {
-        let mut codes_by_inviter: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for record in self.records.values() {
-            codes_by_inviter
-                .entry(record.inviter_user_id.clone())
-                .or_default()
-                .push(record.invite_code.clone());
-        }
-
-        codes_by_inviter
-    }
-
     fn get(&self, id: &str) -> ApiResult<InviteRecord> {
         self.records
             .get(id)
@@ -140,6 +121,8 @@ impl InviteStore {
             .iter()
             .find(|user| user.id == invitee_user_id)
             .ok_or_else(|| ApiError::NotFound(format!("user `{invitee_user_id}` not found")))?;
+        let invite_code = required_trimmed(request.invite_code, "invite code")?;
+        validate_invite_code(&invite_code, &inviter_user_id, users)?;
         validate_inviter(inviter, policy)?;
 
         if self.records.values().any(|record| {
@@ -147,17 +130,6 @@ impl InviteStore {
         }) {
             return Err(ApiError::Conflict(format!(
                 "invite relation `{inviter_user_id}` -> `{invitee_user_id}` already exists"
-            )));
-        }
-
-        let invite_code = required_trimmed(request.invite_code, "invite code")?;
-        if self
-            .records
-            .values()
-            .any(|record| record.invite_code == invite_code)
-        {
-            return Err(ApiError::Conflict(format!(
-                "invite code `{invite_code}` already exists"
             )));
         }
 
@@ -192,6 +164,25 @@ impl InviteStore {
 
         Ok(record.clone())
     }
+}
+
+fn validate_invite_code<'a>(
+    invite_code: &str,
+    inviter_user_id: &str,
+    users: &'a [UserSummary],
+) -> ApiResult<&'a UserSummary> {
+    let Some(owner) = users.iter().find(|user| user.invite_code == invite_code) else {
+        return Err(ApiError::BadRequest("邀请码无效".to_string()));
+    };
+
+    if owner.kind != UserKind::Agent {
+        return Err(ApiError::BadRequest("邀请码无效".to_string()));
+    }
+    if owner.id != inviter_user_id {
+        return Err(ApiError::BadRequest("邀请码与邀请人不匹配".to_string()));
+    }
+
+    Ok(owner)
 }
 
 fn validate_inviter(inviter: &UserSummary, policy: &InvitePolicySummary) -> ApiResult<()> {
@@ -240,7 +231,7 @@ fn seed_invites() -> Vec<InviteRecord> {
             inviter_username: "agent_alpha".to_string(),
             invitee_user_id: "U10004".to_string(),
             invitee_username: "risk_watch".to_string(),
-            invite_code: "AGENT10002".to_string(),
+            invite_code: "AGENT10001".to_string(),
             status: InviteStatus::Pending,
             rebate_enabled: false,
             note: "风险观察用户暂不返利".to_string(),
@@ -272,7 +263,7 @@ mod tests {
                 status: UserStatus::Active,
                 balance_minor: 0,
                 agent_id: None,
-                invite_codes: Vec::new(),
+                invite_code: String::new(),
             })
             .await
             .expect("test invitee can be created");
@@ -288,7 +279,7 @@ mod tests {
                     id: " INV-NEW ".to_string(),
                     inviter_user_id: "U90001".to_string(),
                     invitee_user_id: "U20001".to_string(),
-                    invite_code: " AGENT-NEW ".to_string(),
+                    invite_code: " AGENT10001 ".to_string(),
                     rebate_enabled: true,
                     note: " 新邀请 ".to_string(),
                 },
@@ -301,7 +292,7 @@ mod tests {
         assert_eq!(created.id, "INV-NEW");
         assert_eq!(created.inviter_username, "agent_alpha");
         assert_eq!(created.invitee_username, "fresh_invitee");
-        assert_eq!(created.invite_code, "AGENT-NEW");
+        assert_eq!(created.invite_code, "AGENT10001");
         assert_eq!(created.note, "新邀请");
 
         let updated = invites
@@ -320,28 +311,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invite_repository_groups_codes_by_inviter() {
+    async fn invite_repository_rejects_regular_user_invite_code() {
         let invites = InviteRepository::memory_seeded();
-        let codes_by_inviter = invites
-            .invite_codes_by_inviter()
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
             .await
-            .expect("invite code map can load");
+            .expect("access snapshot can load");
+        let policy = RebateRepository::memory_seeded()
+            .get()
+            .await
+            .expect("policy can load");
 
-        assert_eq!(
-            codes_by_inviter.get("U90001"),
-            Some(&vec!["AGENT10001".to_string(), "AGENT10002".to_string()])
-        );
+        let error = invites
+            .create(
+                CreateInviteRecordRequest {
+                    id: "INV-REGULAR".to_string(),
+                    inviter_user_id: "U10001".to_string(),
+                    invitee_user_id: "U10004".to_string(),
+                    invite_code: "USER10001".to_string(),
+                    rebate_enabled: true,
+                    note: String::new(),
+                },
+                &access.users,
+                &policy,
+            )
+            .await
+            .expect_err("regular invite code must be rejected");
+
+        assert!(matches!(error, ApiError::BadRequest(message) if message == "邀请码无效"));
     }
 
     #[tokio::test]
-    async fn invite_repository_rejects_regular_inviter_when_policy_disabled() {
+    async fn invite_repository_rejects_agent_inviter_when_policy_disabled() {
         let invites = InviteRepository::memory_seeded();
         let access = AccessRepository::memory_seeded()
             .snapshot()
             .await
             .expect("access snapshot can load");
         let policy = InvitePolicySummary {
-            agents_can_invite: true,
+            agents_can_invite: false,
             regular_users_can_invite: false,
             rebate_mode: RebateMode::Immediate,
             supported_rebate_modes: vec![RebateMode::Immediate, RebateMode::RechargeTiered],
@@ -351,10 +359,10 @@ mod tests {
         let error = invites
             .create(
                 CreateInviteRecordRequest {
-                    id: "INV-REGULAR".to_string(),
-                    inviter_user_id: "U10001".to_string(),
+                    id: "INV-AGENT-DISABLED".to_string(),
+                    inviter_user_id: "U90001".to_string(),
                     invitee_user_id: "U10004".to_string(),
-                    invite_code: "REGULAR10001".to_string(),
+                    invite_code: "AGENT10001".to_string(),
                     rebate_enabled: true,
                     note: String::new(),
                 },
@@ -362,7 +370,7 @@ mod tests {
                 &policy,
             )
             .await
-            .expect_err("regular inviter must be rejected");
+            .expect_err("disabled agent invite entry must be rejected");
 
         assert!(matches!(error, ApiError::Forbidden(_)));
     }
@@ -399,19 +407,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invite_repository_rejects_duplicate_invite_code() {
+    async fn invite_repository_allows_agent_code_reuse_for_different_invitees() {
         let invites = InviteRepository::memory_seeded();
         let access = AccessRepository::memory_seeded();
         access
             .create_user(UserSummary {
                 id: "U20002".to_string(),
-                username: "duplicate_code_invitee".to_string(),
+                username: "agent_code_reuse_invitee".to_string(),
                 email: None,
                 kind: UserKind::Regular,
                 status: UserStatus::Active,
                 balance_minor: 0,
                 agent_id: None,
-                invite_codes: Vec::new(),
+                invite_code: String::new(),
             })
             .await
             .expect("test invitee can be created");
@@ -421,10 +429,10 @@ mod tests {
             .await
             .expect("policy can load");
 
-        let error = invites
+        let created = invites
             .create(
                 CreateInviteRecordRequest {
-                    id: "INV-DUP-CODE".to_string(),
+                    id: "INV-REUSE-CODE".to_string(),
                     inviter_user_id: "U90001".to_string(),
                     invitee_user_id: "U20002".to_string(),
                     invite_code: "AGENT10001".to_string(),
@@ -435,8 +443,8 @@ mod tests {
                 &policy,
             )
             .await
-            .expect_err("duplicate invite code must be rejected");
+            .expect("agent code can be reused for another invitee");
 
-        assert!(matches!(error, ApiError::Conflict(_)));
+        assert_eq!(created.invite_code, "AGENT10001");
     }
 }

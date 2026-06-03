@@ -391,7 +391,7 @@ mod tests {
                     status: UserStatus::Active,
                     balance_minor: 0,
                     agent_id: None,
-                    invite_codes: Vec::new(),
+                    invite_code: "USER1".to_string(),
                 }],
             )
             .await
