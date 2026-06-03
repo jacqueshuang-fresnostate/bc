@@ -1,7 +1,5 @@
 use std::{
     collections::VecDeque,
-    error::Error,
-    io::{Error as IoError, ErrorKind},
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -531,43 +529,6 @@ impl DrawSchedulerStore {
 }
 
 impl DrawSchedulerConfig {
-    pub fn from_env() -> Result<Self, Box<dyn Error + Send + Sync>> {
-        Self::from_getter(|key| std::env::var(key).ok())
-    }
-
-    fn from_getter(
-        mut get: impl FnMut(&str) -> Option<String>,
-    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let defaults = Self::default();
-        let config = Self {
-            enabled: parse_bool(
-                "DRAW_SCHEDULER_ENABLED",
-                get("DRAW_SCHEDULER_ENABLED"),
-                defaults.enabled,
-            )?,
-            interval_seconds: parse_u64(
-                "DRAW_SCHEDULER_INTERVAL_SECONDS",
-                get("DRAW_SCHEDULER_INTERVAL_SECONDS"),
-                defaults.interval_seconds,
-            )?,
-            future_issue_count: parse_u32(
-                "DRAW_SCHEDULER_FUTURE_ISSUE_COUNT",
-                get("DRAW_SCHEDULER_FUTURE_ISSUE_COUNT"),
-                defaults.future_issue_count,
-            )?,
-            sale_close_lead_seconds: parse_u32(
-                "DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS",
-                get("DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS"),
-                defaults.sale_close_lead_seconds,
-            )?,
-        };
-
-        config
-            .validate()
-            .map_err(|error| config_error(error.to_string()))?;
-        Ok(config)
-    }
-
     fn validate(&self) -> ApiResult<()> {
         if self.interval_seconds == 0 {
             return Err(ApiError::BadRequest(
@@ -796,61 +757,9 @@ fn current_scheduler_timestamp() -> String {
         .to_string()
 }
 
-fn parse_bool(
-    key: &str,
-    value: Option<String>,
-    default: bool,
-) -> Result<bool, Box<dyn Error + Send + Sync>> {
-    let Some(value) = value else {
-        return Ok(default);
-    };
-
-    match value.trim() {
-        "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON" => Ok(true),
-        "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF" => Ok(false),
-        _ => Err(config_error(format!(
-            "{key} must be true/false, 1/0, yes/no, or on/off"
-        ))),
-    }
-}
-
-fn parse_u64(
-    key: &str,
-    value: Option<String>,
-    default: u64,
-) -> Result<u64, Box<dyn Error + Send + Sync>> {
-    value
-        .map(|value| {
-            value
-                .trim()
-                .parse::<u64>()
-                .map_err(|_| config_error(format!("{key} must be a positive integer")))
-        })
-        .unwrap_or(Ok(default))
-}
-
-fn parse_u32(
-    key: &str,
-    value: Option<String>,
-    default: u32,
-) -> Result<u32, Box<dyn Error + Send + Sync>> {
-    value
-        .map(|value| {
-            value
-                .trim()
-                .parse::<u32>()
-                .map_err(|_| config_error(format!("{key} must be a positive integer")))
-        })
-        .unwrap_or(Ok(default))
-}
-
-fn config_error(message: impl Into<String>) -> Box<dyn Error + Send + Sync> {
-    Box::new(IoError::new(ErrorKind::InvalidInput, message.into()))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, time::Duration};
+    use std::time::Duration;
 
     use crate::{
         domain::{
@@ -1234,36 +1143,27 @@ mod tests {
     }
 
     #[test]
-    fn scheduler_config_reads_environment_contract() {
-        let values = HashMap::from([
-            ("DRAW_SCHEDULER_ENABLED", "true"),
-            ("DRAW_SCHEDULER_INTERVAL_SECONDS", "5"),
-            ("DRAW_SCHEDULER_FUTURE_ISSUE_COUNT", "3"),
-            ("DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS", "45"),
-        ]);
-        let config = DrawSchedulerConfig::from_getter(|key| {
-            values.get(key).map(|value| (*value).to_string())
-        })
-        .expect("config can be parsed");
+    fn scheduler_config_uses_database_seed_defaults() {
+        let config = DrawSchedulerConfig::default();
 
-        assert!(config.enabled);
-        assert_eq!(config.interval_seconds, 5);
-        assert_eq!(config.future_issue_count, 3);
-        assert_eq!(config.sale_close_lead_seconds, 45);
+        assert!(!config.enabled);
+        assert_eq!(config.interval_seconds, 60);
+        assert_eq!(config.future_issue_count, 1);
+        assert_eq!(
+            config.sale_close_lead_seconds,
+            DEFAULT_SALE_CLOSE_LEAD_SECONDS
+        );
     }
 
     #[test]
     fn scheduler_config_rejects_invalid_values() {
-        let values = HashMap::from([
-            ("DRAW_SCHEDULER_ENABLED", "maybe"),
-            ("DRAW_SCHEDULER_INTERVAL_SECONDS", "0"),
-        ]);
-        let error = DrawSchedulerConfig::from_getter(|key| {
-            values.get(key).map(|value| (*value).to_string())
-        })
-        .expect_err("invalid bool is rejected");
+        let mut config = DrawSchedulerConfig::default();
+        config.interval_seconds = 0;
+        let error = config.validate().expect_err("invalid config is rejected");
 
-        assert!(error.to_string().contains("DRAW_SCHEDULER_ENABLED"));
+        assert!(error
+            .to_string()
+            .contains("interval seconds must be greater than zero"));
     }
 
     fn enabled_config(future_issue_count: u32) -> DrawSchedulerConfig {

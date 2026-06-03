@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-03 19:09 HKT 开奖调度配置数据库修正
+
+- 完成任务：移除 `DRAW_SCHEDULER_ENABLED`、`DRAW_SCHEDULER_INTERVAL_SECONDS`、`DRAW_SCHEDULER_FUTURE_ISSUE_COUNT` 和 `DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS` 本地 env 配置入口。
+- 解决问题：开奖调度启用状态、执行周期、未来期号数量和封盘提前秒数属于后台业务配置，不应该通过环境变量覆盖；现在配置以 `draw_scheduler_config` 数据库表为准，由后台“自动任务与调度”页面保存。
+- 技术说明：服务启动时使用 `DrawSchedulerConfig::default()` 作为空库或内存模式种子；配置 PostgreSQL 时会读取 `draw_scheduler_config`，表为空才写入默认配置，已有数据不会被 env 覆盖。
+- 后续动作：继续补调度配置变更审计、版本号、审批回滚和多实例分布式锁。
+
 ## 2026-06-03 19:02 HKT API68 endpoint 数据库配置修正
 
 - 完成任务：将 API68 全国彩和重庆时时彩 endpoint 从本地 env 配置中移除，并修正后端逻辑为只使用开奖源配置中的 endpoint。

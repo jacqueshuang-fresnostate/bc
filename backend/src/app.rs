@@ -96,8 +96,7 @@ fn default_draw_repository() -> DrawRepository {
 }
 
 pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
-    let scheduler_config = DrawSchedulerConfig::from_env()?;
-    let scheduler = DrawSchedulerRepository::new(scheduler_config);
+    let scheduler = DrawSchedulerRepository::new(DrawSchedulerConfig::default());
     let state = AppState::from_env_with_scheduler(scheduler).await?;
     let scheduler_config = state.scheduler.config()?;
     spawn_draw_scheduler(

@@ -1353,16 +1353,11 @@ await previewDrawIssueGeneration({
 ### 1. 范围 / 触发条件
 
 - 触发条件：新增或修改服务启动后的常驻调度、自动补齐未来期号、自动封盘开奖结算循环、调度状态接口或管理后台调度可视化。
-- 范围：后端运行环境变量、`app::router_from_env` 启动流程、调度服务、自动任务服务、期号生成服务、调度运行历史仓储、管理后台状态接口和结构化日志。
+- 范围：`app::router_from_env` 启动流程、调度服务、自动任务服务、期号生成服务、调度配置/运行历史数据库仓储、管理后台状态接口和结构化日志。
 
 ### 2. 签名
 
-调度后台任务随服务启动自动创建；环境变量只提供初始配置默认值，不能决定后台任务是否存在：
-
-- `DRAW_SCHEDULER_ENABLED`
-- `DRAW_SCHEDULER_INTERVAL_SECONDS`
-- `DRAW_SCHEDULER_FUTURE_ISSUE_COUNT`
-- `DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS`
+调度后台任务随服务启动自动创建；调度配置保存在数据库 `draw_scheduler_config` 表中，空库或内存模式使用后端默认值初始化。
 
 管理后台状态接口：
 
@@ -1370,9 +1365,9 @@ await previewDrawIssueGeneration({
 
 后端内部入口：
 
-- `DrawSchedulerConfig::from_env()`
 - `DrawSchedulerRepository::new(config)`
 - `DrawSchedulerRepository::status()`
+- `DrawSchedulerRepository::update_config(config)`
 - `DrawSchedulerRepository::record_success(trigger, started_at, finished_at, run)`
 - `DrawSchedulerRepository::record_failure(trigger, started_at, finished_at, now, error)`
 - `spawn_draw_scheduler(draws, lotteries, orders, finance, config, scheduler)`
@@ -1380,13 +1375,15 @@ await previewDrawIssueGeneration({
 
 ### 3. 契约
 
-默认配置：
+空库默认配置：
 
-```text
-DRAW_SCHEDULER_ENABLED=false
-DRAW_SCHEDULER_INTERVAL_SECONDS=60
-DRAW_SCHEDULER_FUTURE_ISSUE_COUNT=1
-DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
+```json
+{
+  "enabled": false,
+  "intervalSeconds": 60,
+  "futureIssueCount": 1,
+  "saleCloseLeadSeconds": 30
+}
 ```
 
 `GET /api/admin/draw-scheduler/status` 继续返回统一 API 信封，`data` 字段形状如下：
@@ -1433,12 +1430,12 @@ DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 
 行为契约：
 
-1. 服务启动后必须创建 Tokio 后台任务，即使 `DRAW_SCHEDULER_ENABLED` 未设置或为 `false`。
-2. 未设置 `DRAW_SCHEDULER_ENABLED` 时，调度配置默认关闭；后台任务常驻但不改写期号、订单或资金数据。
+1. 服务启动后必须创建 Tokio 后台任务，即使数据库调度配置为 `enabled=false`。
+2. `DATABASE_URL` 已配置时，调度配置必须从 `draw_scheduler_config` 恢复；该表为空时才写入空库默认配置。
 3. 后台保存 `enabled=true` 后，已启动的后台任务必须在不重启服务的情况下读取新配置并开始执行。
 4. 每轮调度使用服务器当前本地时间，格式为 `YYYY-MM-DD HH:mm:ss`。
 5. 每轮先调用既有 `run_draw_automation`，处理到期封盘、开奖、结算和派奖入账。
-6. 自动任务执行后，再扫描 `saleEnabled=true` 的彩种，确保每个彩种至少有 `DRAW_SCHEDULER_FUTURE_ISSUE_COUNT` 个未来可投注 `open` 期号。
+6. 自动任务执行后，再扫描 `saleEnabled=true` 的彩种，确保每个彩种至少有 `config.futureIssueCount` 个未来可投注 `open` 期号。
 7. 未来期号判断只统计同彩种、状态为 `open`，并且 `scheduledAt > now` 的期号；`closed` 期号已经封盘，不能当作下一期缓冲，否则封盘后不会立即开盘下一期。
 8. 补期继续调用 `generate_draw_issue_batch`，不在调度服务里重新实现开奖计划算法。
 9. `saleEnabled=false` 彩种不会自动补期，会记录为跳过彩种。
@@ -1449,13 +1446,12 @@ DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 
 | 条件 | 预期行为 |
 |------|----------|
-| `DRAW_SCHEDULER_ENABLED` 未设置 | 使用默认 `false` 配置，但仍创建后台任务等待后台启用 |
-| `DRAW_SCHEDULER_ENABLED=true/1/yes/on` | 初始配置为启用，后台任务启动后立即按配置执行 |
-| `DRAW_SCHEDULER_ENABLED=false/0/no/off` | 初始配置为禁用，后台任务启动但跳过执行 |
-| `DRAW_SCHEDULER_ENABLED` 为其他值 | 启动失败，返回清晰配置错误 |
-| `DRAW_SCHEDULER_INTERVAL_SECONDS=0` | 启动失败，返回 `draw scheduler interval seconds must be greater than zero` |
-| `DRAW_SCHEDULER_FUTURE_ISSUE_COUNT` 小于 1 或大于 50 | 启动失败，返回未来期号数量范围错误 |
-| `DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=0` | 启动失败，返回封盘提前秒数错误 |
+| `draw_scheduler_config` 为空 | 写入空库默认配置，后台任务常驻等待后台启用 |
+| `draw_scheduler_config.enabled=true` | 后台任务启动后按数据库配置执行 |
+| `draw_scheduler_config.enabled=false` | 后台任务启动但跳过执行，等待后台启用 |
+| `draw_scheduler_config.interval_seconds=0` | 启动时配置校验失败，返回执行周期错误 |
+| `draw_scheduler_config.future_issue_count` 小于 1 或大于 50 | 启动时配置校验失败，返回未来期号数量范围错误 |
+| `draw_scheduler_config.sale_close_lead_seconds=0` | 启动时配置校验失败，返回封盘提前秒数错误 |
 | 单轮调度 `now` 为空 | 返回 `draw scheduler time is required` |
 | 自动开奖或补期过程中发生业务错误 | 当前轮记录错误日志，后台任务继续下一轮 |
 | 调度未启用时查询状态 | HTTP 200，`enabled=false`，历史为空 |
@@ -1465,7 +1461,7 @@ DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 ### 5. Good / Base / Bad Cases
 
 - Good：服务启动后即使初始配置禁用，管理后台保存 `enabled=true` 后也会在不重启服务的情况下开始自动调度。
-- Good：设置 `DRAW_SCHEDULER_ENABLED=true` 和 `DRAW_SCHEDULER_INTERVAL_SECONDS=1` 后，本地启动服务会自动为销售开启彩种补齐未来期号。
+- Good：后台保存 `enabled=true` 和 `intervalSeconds=1` 后，本地启动服务会从数据库恢复配置，并自动为销售开启彩种补齐未来期号。
 - Good：调度跑过一轮后，`GET /api/admin/draw-scheduler/status` 返回最新 `SCH...` 记录，管理后台“常驻调度”显示成功状态和运行摘要。
 - Good：已有到期开奖期号时，单轮调度先执行封盘/开奖/结算，再补齐下一期期号。
 - Good：已有期号刚到封盘时间但未到开奖时间时，单轮调度先把当前期转为 `closed`，再生成下一期 `open`，保证销售链路继续有可投注期号。
@@ -1478,7 +1474,7 @@ DRAW_SCHEDULER_SALE_CLOSE_LEAD_SECONDS=30
 
 - 后端需要覆盖调度默认关闭时仍创建后台任务，但不执行开奖调度。
 - 后端需要覆盖后台保存 `enabled=true` 后，已启动后台任务无需重启即可执行。
-- 后端需要覆盖环境变量解析和无效值拒绝。
+- 后端需要覆盖默认配置写入数据库、数据库配置恢复和无效配置拒绝。
 - 后端需要覆盖销售开启彩种自动补齐未来期号，销售关闭彩种跳过。
 - 后端需要覆盖未来期号缓冲已满足时不重复生成。
 - 后端需要覆盖到期期号先自动开奖，再补齐未来期号。
@@ -2452,7 +2448,7 @@ await addGroupBuyParticipant(id, {
 
 - 触发条件：新增调度配置更新 API、前端 API client、`useDrawScheduler` 保存能力和“常驻调度”配置表单。
 - 范围：调度配置查看、更新、状态回显，以及服务启动时创建的后台循环每轮读取最新配置。
-- 调度配置已经接入业务表持久化；环境变量只作为空库或无持久化模式下的初始默认值，不负责动态启动后台任务。
+- 调度配置已经接入业务表持久化；后端默认值只作为空库或无持久化模式下的种子配置，不再通过环境变量配置调度参数。
 
 ### 2. 签名
 
@@ -2514,7 +2510,7 @@ await addGroupBuyParticipant(id, {
 - Good：后台保存 `enabled=true, intervalSeconds=5, futureIssueCount=3, saleCloseLeadSeconds=20`，状态接口立即回显新配置。
 - Good：服务启动时配置为禁用，后台保存 `enabled=true` 后无需重启即可开始自动补期。
 - Good：已启动调度循环每轮读取 `DrawSchedulerRepository::config()`，所以 `futureIssueCount` 和 `saleCloseLeadSeconds` 不需要重启进程即可生效。
-- Base：数据库中没有调度配置时，服务使用环境变量或默认值初始化配置。
+- Base：数据库中没有调度配置时，服务写入后端默认配置并等待后台启用。
 - Bad：前端只改本地表单状态，不调用 `PUT /draw-scheduler/config`，刷新后状态丢失且后端不生效。
 - Bad：后台循环继续使用启动时捕获的 `DrawSchedulerConfig`，配置页面虽然保存成功，但自动补期仍按旧配置运行。
 
@@ -2523,7 +2519,7 @@ await addGroupBuyParticipant(id, {
 - 后端需要覆盖有效配置更新成功并回显。
 - 后端需要覆盖服务启动时禁用、后台保存启用后常驻循环无需重启即可执行。
 - 后端需要覆盖无效 `intervalSeconds` 被拒绝。
-- 后端需要覆盖环境变量解析旧测试不回退。
+- 后端需要覆盖数据库配置恢复和空库默认配置写入。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`，确认配置字段和 API client 类型一致。
 - API 冒烟需要保存有效配置、查询状态回显，并验证无效配置返回业务错误。
