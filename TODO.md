@@ -332,3 +332,9 @@
 - 解决问题：此前 GitHub 仓库没有自动化流水线；本次 workflow 在 `push`、`pull_request` 和手动触发时运行前后端质量检查，并构建 Docker 单镜像。`main` 分支 push 时使用 `GITHUB_TOKEN` 登录 GHCR，推送 `ghcr.io/sydneypoole/bc:latest` 和 `sha-<提交短哈希>` 标签；PR 只构建不推送，避免未合并代码覆盖发布镜像。
 - 验证结果：workflow YAML 解析通过；`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；`docker build -t bc-platform:latest .` 通过并命中缓存。前端构建仍保留既有 chunk size warning。
 - 后续动作：提交并推送本阶段 workflow；推送后在 GitHub Actions 页面确认 `CI` 工作流通过，并在 GHCR 包页面确认镜像标签生成。
+
+## 2026-06-03 12:24:57 HKT
+
+- 完成任务：优化 GitHub Actions action 版本，按 GitHub API 查询结果升级到 `actions/checkout@v6`、`actions/setup-node@v6`、`actions/cache@v5`、`docker/setup-buildx-action@v4`、`docker/login-action@v4`、`docker/metadata-action@v6`、`docker/build-push-action@v7`，并显式启用 Node.js 24 action runtime。
+- 解决问题：第一次云端 CI 已通过并成功发布 GHCR 镜像，但 GitHub 提示旧版 action 运行在 Node.js 20，2026-06-16 后会强制切到 Node.js 24；本次提前升级，降低后续 workflow 警告和运行时兼容风险。
+- 后续动作：提交并推送 action 版本升级，重新观察 GitHub Actions 运行状态。
