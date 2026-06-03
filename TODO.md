@@ -1,5 +1,41 @@
 # TODO
 
+## 2026-06-03 22:12 HKT 期号按玩法筛选与停售不调度
+
+- 完成任务：在“开奖期号与开奖源”期号列表页新增玩法筛选入口（按彩种），可按单一玩法或全部玩法查看期号；筛选项默认显示“全部玩法”。
+- 完成任务：补齐接口与调度链路，`GET /api/admin/draw-issues` 支持 `lotteryId` 查询参数；自动化调度与补期任务在遇到停售彩种时会跳过处理。
+- 解决问题：此前“期号列表”无法按玩法快速定位，停售彩种仍会参与自动封盘/开奖流程，导致后台运维排障困难和调度行为不可控。
+- 技术说明：
+  - 后端：`backend/src/routes/admin.rs` 的 `list_draw_issues` 新增查询参数提取，支持 `lotteryId`；`backend/src/services/draw.rs` 增加按 `lottery_id` 过滤仓储查询；`automation.rs` 已有停售彩种跳过逻辑；`scheduler.rs` 已在补期期号阶段跳过停售彩种。
+  - 前端：`admin/src/types/draws.ts` 新增 `DrawIssueQuery`；`admin/src/api/client.ts` 的 `fetchDrawIssues` 支持可选查询参数；`admin/src/hooks/useDraws.ts` 增加 `refreshWithFilter` 入口；`admin/src/pages/DrawManagementPage.tsx` 的期号管理区增加下拉筛选并联动刷新。
+- 验证记录：待执行 `cargo test`、`cargo check`、`npm run build`；重点验证 `GET /api/admin/draw-issues?lotteryId=fc3d` 正常返回、停售彩种在 `POST /api/admin/draw-automation/run` 与常驻调度循环中记录“彩种已停售，跳过自动任务”。
+- 后续动作：补充前端筛选状态持久化（URL query 保留筛选值）和后续 UI 增加“号码类型/3位/5位”快捷筛选。
+
+## 2026-06-03 21:02 HKT 开奖源配置改为数据库优先
+
+- 完成任务：修改开奖源加载策略，使 `draw_sources` 在数据库已有数据时不再注入硬编码默认彩种源配置；仅在数据库表为空时执行默认种子回填。
+- 解决问题：当前系统在有数据库配置的情况下仍可能被代码内置默认值混入/覆盖判断，影响“数据库配置即权威源”约定；现在数据库优先，避免重复或不一致来源。
+- 技术说明：`backend/src/services/draw_api.rs` 的 `load_draw_source_store` 改为仅在存储为空时回填默认源；新增迁移 `backend/migrations/20260603192000_seed_draw_sources.sql` 在空库初始化时写入默认 `draw_sources`（使用 `ON CONFLICT DO NOTHING` 保证已有行不受影响）。
+- 影响范围：数据库初始化、开奖源 CRUD 与重启恢复流程。
+- 后续动作：清理 `api68_seeded` 场景对生产链路的依赖，统一所有环境都从数据库读取源定义；补充一次迁移回放验证文档。
+
+## 2026-06-03 21:18 HKT 后台代码中文注释补齐
+
+- 完成任务：为后端全部 Rust 文件补充中文注释，明确每个文件/模块职责，提升可读性。
+- 解决问题：项目需求为“后台每个地方具体干什么都要中文说明”，当前代码在多人接手时可读性不足，尤其是服务与领域模型入口边界。
+- 技术说明：在 `backend/src` 的所有 `.rs` 文件顶部新增 `//!` 中文模块说明，覆盖 `app/main/routes/domain/services` 与其子模块；并针对 `routes/mod.rs`、`services/mod.rs`、`domain/mod.rs` 修正为准确模块聚合职责。
+- 影响范围：后端代码可读性、交接和后续维护。
+- 后续动作：继续补充函数级中文注释（如关键公共方法、复杂条件分支），按页面对接状态逐步补齐到“每个逻辑点都可直接读懂”。
+
+## 2026-06-03 20:12 HKT 开奖等待原因可视化与控制台当前期修正
+
+- 完成任务：排查彩种控制台“到达开奖时间一直等待开奖”的原因，并新增调度跳过明细持久化、后台展示和控制台状态提示。
+- 解决问题：本地复现发现 `txffc` 旧期 `202606031202` 已到期开奖，但 KJAPI 当前返回期号已跳到后续期号，最新接口无法补取旧期开奖号码；此前调度历史只展示跳过数量，控制台又优先显示最早 `closed` 期号，导致旧待补期一直压住新的 open 期，看起来像系统不再开盘。
+- 技术说明：`draw_scheduler_runs` 新增 `skipped_issues`、`skipped_lotteries` 两个 `jsonb` 字段；`DrawSchedulerRunRecord` 返回跳过期号和彩种原因；自动开奖跳过原因改为中文业务前缀，并在 API 未找到期号时带上当前外部返回期号。
+- 管理后台：常驻调度卡片展示最近一轮跳过明细；彩种控制台展示调度启停状态和执行周期，到点后区分“等待开奖源”“等待调度”“调度已关闭”；当前期选择优先展示 open 期号，旧 closed 漏开奖以“待补开奖 N”标签提示。
+- 验证记录：`cargo fmt --check`、`git diff --check`、`cargo check`、`cargo test` 137 个测试、`npm run build` 均通过；本地 `18121` 后端连接外部 PostgreSQL 验证调度状态接口返回 `txffc` 跳过原因“当前返回期号 `202606031211`”。
+- 后续动作：补开奖源测试连接、原始响应留痕和旧期异常复核入口，允许管理员对外部源已越过的期号进行手动开奖、取消或标记异常。
+
 ## 2026-06-03 19:49 HKT 腾讯分分彩 KJAPI 彩种接入
 
 - 完成任务：新增 `txffc` 腾讯分分彩彩种，接入 KJAPI 开奖接口 `https://kjapi.net/hall/hallajax/getLotteryInfo?lotKey=txffc`，并在后台开奖源配置中支持 `kjApi` 供应商和腾讯分分彩采集预设。

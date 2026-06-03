@@ -131,6 +131,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     loading: drawsLoading,
     previewGeneration,
     refresh: refreshDraws,
+    refreshWithFilter,
     runAutomation,
     saving,
     updateSource,
@@ -168,6 +169,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   const [drawIssueSheetVisible, setDrawIssueSheetVisible] = useState(false);
   const [sourceSheetVisible, setSourceSheetVisible] = useState(false);
   const [schedulerSheetVisible, setSchedulerSheetVisible] = useState(false);
+  const [issueLotteryFilter, setIssueLotteryFilter] = useState('');
 
   const selectedLottery = useMemo(
     () => lotteries.find((lottery) => lottery.id === form.lotteryId) ?? lotteries[0] ?? null,
@@ -198,6 +200,12 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   }, [issues, selectedIssueId]);
 
   useEffect(() => {
+    if (issueLotteryFilter && !lotteries.some((lottery) => lottery.id === issueLotteryFilter)) {
+      handleIssueLotteryFilterChange('');
+    }
+  }, [issueLotteryFilter, lotteries]);
+
+  useEffect(() => {
     if (schedulerStatus) {
       setSchedulerConfigForm(configFormFromStatus(schedulerStatus));
     }
@@ -225,6 +233,23 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     () => drawOverview(issues, drawSources, schedulerStatus),
     [drawSources, issues, schedulerStatus],
   );
+
+  const issueFilterOptions = useMemo(
+    () =>
+      lotteries
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+        .map((lottery) => ({
+          value: lottery.id,
+          label: `${lottery.name}（${numberTypeText(lottery.numberType)}）`,
+        })),
+    [lotteries],
+  );
+
+  const handleIssueLotteryFilterChange = (lotteryId: string) => {
+    setIssueLotteryFilter(lotteryId);
+    refreshWithFilter(lotteryId ? { lotteryId } : undefined);
+  };
 
   const refreshAll = () => {
     refreshDraws();
@@ -452,10 +477,13 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
 
       {section === 'issues' ? (
         <IssueManagementSection
+          lotteryFilter={issueLotteryFilter}
+          lotteryFilterOptions={issueFilterOptions}
           issues={issues}
           loading={loading}
           saving={saving}
           selectedIssue={selectedIssue}
+          onIssueLotteryFilterChange={handleIssueLotteryFilterChange}
           onCancelIssue={(issue) => void cancelIssue(issue)}
           onCloseIssue={(issue) => void closeIssue(issue)}
           onCreateIssue={() => setCreateIssueSheetVisible(true)}
@@ -591,20 +619,26 @@ function SectionTabs({
 function IssueManagementSection({
   issues,
   loading,
+  lotteryFilter,
+  lotteryFilterOptions,
   onCancelIssue,
   onCloseIssue,
   onCreateIssue,
   onOpenDraw,
+  onIssueLotteryFilterChange,
   onSelectIssue,
   saving,
   selectedIssue,
 }: {
   issues: DrawIssue[];
   loading: boolean;
+  lotteryFilter: string;
+  lotteryFilterOptions: Array<{ value: string; label: string }>;
   onCancelIssue: (issue: DrawIssue) => void;
   onCloseIssue: (issue: DrawIssue) => void;
   onCreateIssue: () => void;
   onOpenDraw: (issue: DrawIssue) => void;
+  onIssueLotteryFilterChange: (lotteryId: string) => void;
   onSelectIssue: (id: string) => void;
   saving: boolean;
   selectedIssue: DrawIssue | null;
@@ -620,6 +654,18 @@ function IssueManagementSection({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Tag color="cyan">{issues.length} 个期号</Tag>
+          <select
+            className="form-input min-w-[220px]"
+            value={lotteryFilter}
+            onChange={(event) => onIssueLotteryFilterChange(event.target.value)}
+          >
+            <option value="">全部玩法</option>
+            {lotteryFilterOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
           <Button icon={<Plus size={16} />} theme="solid" onClick={onCreateIssue}>
             创建期号
           </Button>
@@ -1576,6 +1622,9 @@ function SchedulerConfigForm({
 }
 
 function SchedulerLastRunSummary({ run }: { run: DrawSchedulerRunRecord }) {
+  const skippedIssues = run.skippedIssues ?? [];
+  const skippedLotteries = run.skippedLotteries ?? [];
+
   return (
     <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
       <div className="flex items-start justify-between gap-3">
@@ -1605,6 +1654,27 @@ function SchedulerLastRunSummary({ run }: { run: DrawSchedulerRunRecord }) {
       {run.error ? (
         <div className="mt-3 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600">
           {run.error}
+        </div>
+      ) : null}
+
+      {skippedIssues.length > 0 || skippedLotteries.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          {skippedIssues.map((issue) => (
+            <div
+              key={`${issue.drawIssueId}-${issue.reason}`}
+              className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700"
+            >
+              期号 {issue.issue}（{issue.lotteryId}）：{issue.reason}
+            </div>
+          ))}
+          {skippedLotteries.map((lottery) => (
+            <div
+              key={`${lottery.lotteryId}-${lottery.reason}`}
+              className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700"
+            >
+              彩种 {lottery.lotteryId}：{lottery.reason}
+            </div>
+          ))}
         </div>
       ) : null}
     </div>
@@ -1641,7 +1711,8 @@ function SchedulerRunHistory({ runs }: { runs: DrawSchedulerRunRecord[] }) {
                 </td>
                 <td className="py-2 align-top text-slate-500">
                   补期 {run.generatedIssueCount}，开奖 {run.drawnIssueCount}，入账{' '}
-                  {run.ledgerEntryCount}
+                  {run.ledgerEntryCount}，跳过{' '}
+                  {run.skippedIssueCount + run.skippedLotteryCount}
                 </td>
               </tr>
             ))}

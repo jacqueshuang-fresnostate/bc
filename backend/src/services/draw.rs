@@ -1,3 +1,5 @@
+//! 开奖期号与开奖控制领域模型，定义状态与开奖请求参数
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, RwLock},
@@ -64,6 +66,14 @@ impl DrawRepository {
             .read()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
             .map(|store| store.list())
+    }
+
+    pub async fn list_by_lottery_id(&self, lottery_id: &str) -> ApiResult<Vec<DrawIssue>> {
+        let lottery_id = lottery_id.trim();
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|store| store.list_by_lottery_id(lottery_id))
     }
 
     pub async fn get(&self, id: &str) -> ApiResult<DrawIssue> {
@@ -468,6 +478,15 @@ fn max_sequence<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u64 
 impl DrawStore {
     fn list(&self) -> Vec<DrawIssue> {
         self.issues.values().rev().cloned().collect()
+    }
+
+    fn list_by_lottery_id(&self, lottery_id: &str) -> Vec<DrawIssue> {
+        self.issues
+            .values()
+            .rev()
+            .filter(|issue| issue.lottery_id == lottery_id)
+            .cloned()
+            .collect()
     }
 
     fn get(&self, id: &str) -> ApiResult<DrawIssue> {

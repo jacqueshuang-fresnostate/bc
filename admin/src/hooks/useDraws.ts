@@ -19,6 +19,7 @@ import type {
   CreateDrawIssueRequest,
   DrawAutomationRunRequest,
   DrawIssue,
+  DrawIssueQuery,
   DrawIssueGenerationPreview,
   DrawIssueResultRequest,
   GenerateDrawIssueRequest,
@@ -28,12 +29,18 @@ import type {
 export function useDraws() {
   const [drawSources, setDrawSources] = useState<DrawSource[]>([]);
   const [issues, setIssues] = useState<DrawIssue[]>([]);
+  const [query, setQuery] = useState<DrawIssueQuery>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
 
   const refresh = useCallback(() => {
+    setRefreshToken((current) => current + 1);
+  }, []);
+
+  const refreshWithFilter = useCallback((nextQuery?: DrawIssueQuery) => {
+    setQuery(nextQuery ?? {});
     setRefreshToken((current) => current + 1);
   }, []);
 
@@ -45,7 +52,7 @@ export function useDraws() {
 
     Promise.all([
       fetchDrawSources(controller.signal),
-      fetchDrawIssues(controller.signal),
+      fetchDrawIssues(controller.signal, query),
     ])
       .then(([sources, drawIssues]) => {
         setDrawSources(sources);
@@ -65,7 +72,7 @@ export function useDraws() {
     return () => {
       controller.abort();
     };
-  }, [refreshToken]);
+  }, [query, refreshToken]);
 
   const create = useCallback(async (payload: CreateDrawIssueRequest) => {
     setSaving(true);
@@ -229,21 +236,24 @@ export function useDraws() {
     }
   }, []);
 
-  const runAutomation = useCallback(async (payload: DrawAutomationRunRequest) => {
-    setSaving(true);
-    setError(null);
-    try {
-      const run = await runDrawAutomation(payload);
-      const latestIssues = await fetchDrawIssues();
-      setIssues(latestIssues);
-      return run;
-    } catch (requestError) {
-      setError(errorMessage(requestError));
-      throw requestError;
-    } finally {
-      setSaving(false);
-    }
-  }, []);
+  const runAutomation = useCallback(
+    async (payload: DrawAutomationRunRequest, issueQuery?: DrawIssueQuery) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const run = await runDrawAutomation(payload);
+        const latestIssues = await fetchDrawIssues(undefined, issueQuery ?? query);
+        setIssues(latestIssues);
+        return run;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [query],
+  );
 
   return {
     cancel,
@@ -260,6 +270,7 @@ export function useDraws() {
     loading,
     previewGeneration,
     refresh,
+    refreshWithFilter,
     runAutomation,
     saving,
     updateSource,

@@ -1,5 +1,7 @@
+//! 管理后台 API 路由总控，汇总和注册所有后台接口
+
 use axum::{
-    extract::{Path, Request, State},
+    extract::{Path, Query, Request, State},
     http::header::AUTHORIZATION,
     middleware::{self, Next},
     response::Response,
@@ -299,7 +301,14 @@ async fn run_draw_automation_request(
     State(state): State<AppState>,
     Json(payload): Json<DrawAutomationRunRequest>,
 ) -> ApiResult<Json<ApiEnvelope<DrawAutomationRun>>> {
-    let run = run_draw_automation(&state.draws, &state.orders, &state.finance, payload).await?;
+    let run = run_draw_automation(
+        &state.draws,
+        &state.lotteries,
+        &state.orders,
+        &state.finance,
+        payload,
+    )
+    .await?;
 
     Ok(Json(ApiEnvelope::success(run)))
 }
@@ -394,10 +403,26 @@ async fn save_lottery_draw_control(
 
 async fn list_draw_issues(
     State(state): State<AppState>,
+    Query(query): Query<DrawIssueListQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<DrawIssue>>>> {
-    let issues = state.draws.list().await?;
+    let issues = if let Some(lottery_id) = query.lottery_id {
+        let lottery_id = lottery_id.trim().to_string();
+        if lottery_id.is_empty() {
+            state.draws.list().await?
+        } else {
+            state.draws.list_by_lottery_id(&lottery_id).await?
+        }
+    } else {
+        state.draws.list().await?
+    };
 
     Ok(Json(ApiEnvelope::success(issues)))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DrawIssueListQuery {
+    lottery_id: Option<String>,
 }
 
 async fn get_draw_issue(

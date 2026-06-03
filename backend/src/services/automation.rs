@@ -1,3 +1,7 @@
+//! 开奖自动化服务，统一编排手动/自动开奖执行链路
+
+use std::collections::HashMap;
+
 use crate::{
     domain::{
         draw::{
@@ -12,6 +16,7 @@ use crate::{
 
 pub async fn run_draw_automation(
     draws: &DrawRepository,
+    lotteries: &crate::services::lottery::LotteryRepository,
     orders: &OrderRepository,
     finance: &FinanceRepository,
     payload: DrawAutomationRunRequest,
@@ -32,7 +37,14 @@ pub async fn run_draw_automation(
         skipped_issues: Vec::new(),
     };
 
+    let lottery_sale_status = lottery_sale_status(lotteries).await?;
+
     for issue in draws.list().await? {
+        if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_sale_status) {
+            run.skipped_issues.push(skipped_issue(&issue, &reason));
+            continue;
+        }
+
         if should_close(&issue, &now) {
             let closed = draws.close(&issue.id).await?;
             run.closed_issues.push(closed);
@@ -40,16 +52,25 @@ pub async fn run_draw_automation(
     }
 
     for issue in draws.list().await? {
+        if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_sale_status) {
+            if !run
+                .skipped_issues
+                .iter()
+                .any(|skipped| skipped.draw_issue_id == issue.id)
+            {
+                run.skipped_issues.push(skipped_issue(&issue, &reason));
+            }
+            continue;
+        }
+
         if !should_draw(&issue, &now) {
             continue;
         }
         if issue.draw_mode == DrawMode::Manual
             && !draws.has_active_draw_control(&issue.lottery_id).await?
         {
-            run.skipped_issues.push(skipped_issue(
-                &issue,
-                "manual draw requires administrator draw number",
-            ));
+            run.skipped_issues
+                .push(skipped_issue(&issue, "手动开奖需要管理员录入开奖号码"));
             continue;
         }
 
@@ -59,6 +80,7 @@ pub async fn run_draw_automation(
         {
             Ok(drawn) => drawn,
             Err(error) => {
+                let reason = automation_error_reason(&error);
                 tracing::warn!(
                     draw_issue_id = %issue.id,
                     lottery_id = %issue.lottery_id,
@@ -66,8 +88,7 @@ pub async fn run_draw_automation(
                     error = %error.log_message(),
                     "自动开奖因开奖失败跳过期号"
                 );
-                run.skipped_issues
-                    .push(skipped_issue(&issue, &error.to_string()));
+                run.skipped_issues.push(skipped_issue(&issue, &reason));
                 continue;
             }
         };
@@ -107,6 +128,47 @@ fn skipped_issue(issue: &DrawIssue, reason: &str) -> DrawAutomationSkippedIssue 
     }
 }
 
+async fn lottery_sale_status(
+    lotteries: &crate::services::lottery::LotteryRepository,
+) -> ApiResult<HashMap<String, bool>> {
+    let mut sale_status = HashMap::new();
+
+    for lottery in lotteries.list().await? {
+        sale_status.insert(lottery.id, lottery.sale_enabled);
+    }
+
+    Ok(sale_status)
+}
+
+fn skip_issue_if_lottery_disabled(
+    issue: &DrawIssue,
+    lottery_sale_status: &HashMap<String, bool>,
+) -> Option<&'static str> {
+    let sale_enabled = match lottery_sale_status.get(&issue.lottery_id) {
+        Some(enabled) => *enabled,
+        None => {
+            return Some("未找到彩种配置，跳过自动任务");
+        }
+    };
+
+    if sale_enabled {
+        None
+    } else {
+        Some("彩种已停售，跳过自动任务")
+    }
+}
+
+fn automation_error_reason(error: &ApiError) -> String {
+    match error {
+        ApiError::BadRequest(message) => format!("请求错误：{message}"),
+        ApiError::Unauthorized(message) => format!("未授权：{message}"),
+        ApiError::Forbidden(message) => format!("权限不足：{message}"),
+        ApiError::NotFound(message) => format!("资源不存在：{message}"),
+        ApiError::Conflict(message) => format!("资源冲突：{message}"),
+        ApiError::Internal(message) => format!("内部错误：{message}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -124,7 +186,8 @@ mod tests {
         },
         services::{
             automation::run_draw_automation, draw::DrawRepository,
-            draw_api::ApiDrawSourceRepository, finance::FinanceRepository, order::OrderRepository,
+            draw_api::ApiDrawSourceRepository, finance::FinanceRepository,
+            lottery::LotteryRepository, order::OrderRepository,
         },
     };
 
@@ -143,6 +206,7 @@ mod tests {
     #[tokio::test]
     async fn automation_closes_draws_settles_and_credits_due_issue() {
         let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let lottery = lottery(DrawMode::Api);
@@ -167,6 +231,7 @@ mod tests {
 
         let run = run_draw_automation(
             &draws,
+            &lotteries,
             &orders,
             &finance,
             DrawAutomationRunRequest {
@@ -195,8 +260,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn automation_skips_all_steps_when_lottery_stopped() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        lotteries
+            .set_sale_enabled("fc3d", false)
+            .await
+            .expect("lottery sale can be disabled");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let lottery = lottery(DrawMode::Api);
+        let issue = draws
+            .create(&lottery, create_request("AUTO_STOPPED"))
+            .await
+            .expect("issue can be created");
+
+        let run = run_draw_automation(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            DrawAutomationRunRequest {
+                now: "2026-06-02 22:00:00".to_string(),
+            },
+        )
+        .await
+        .expect("automation can run when lottery stopped");
+        let stored = draws.get(&issue.id).await.expect("issue still exists");
+
+        assert_eq!(run.closed_issues.len(), 0);
+        assert!(run.drawn_issues.is_empty());
+        assert_eq!(run.skipped_issues.len(), 1);
+        assert_eq!(run.skipped_issues[0].lottery_id, "fc3d");
+        assert!(run.skipped_issues[0].reason.contains("已停售"));
+        assert_eq!(stored.status, DrawIssueStatus::Open);
+    }
+
+    #[tokio::test]
     async fn automation_skips_due_manual_issue_without_draw_number() {
         let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let lottery = lottery(DrawMode::Manual);
@@ -207,6 +310,7 @@ mod tests {
 
         let run = run_draw_automation(
             &draws,
+            &lotteries,
             &orders,
             &finance,
             DrawAutomationRunRequest {
@@ -221,14 +325,13 @@ mod tests {
         assert!(run.drawn_issues.is_empty());
         assert_eq!(run.skipped_issues.len(), 1);
         assert_eq!(stored.status, DrawIssueStatus::Closed);
-        assert!(run.skipped_issues[0]
-            .reason
-            .contains("administrator draw number"));
+        assert!(run.skipped_issues[0].reason.contains("管理员录入开奖号码"));
     }
 
     #[tokio::test]
     async fn automation_draws_due_manual_issue_with_control_number() {
         let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let lottery = lottery(DrawMode::Manual);
@@ -249,6 +352,7 @@ mod tests {
 
         let run = run_draw_automation(
             &draws,
+            &lotteries,
             &orders,
             &finance,
             DrawAutomationRunRequest {
@@ -271,6 +375,7 @@ mod tests {
         let draws = DrawRepository::memory_with_api_sources(
             ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
         );
+        let lotteries = LotteryRepository::memory_seeded();
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let lottery = lottery(DrawMode::Api);
@@ -281,6 +386,7 @@ mod tests {
 
         let run = run_draw_automation(
             &draws,
+            &lotteries,
             &orders,
             &finance,
             DrawAutomationRunRequest {
@@ -296,7 +402,7 @@ mod tests {
         assert_eq!(run.skipped_issues.len(), 1);
         assert_eq!(stored.status, DrawIssueStatus::Closed);
         assert!(stored.draw_number.is_none());
-        assert!(run.skipped_issues[0].reason.contains("not found"));
+        assert!(run.skipped_issues[0].reason.contains("未找到"));
     }
 
     fn create_request(issue: &str) -> CreateDrawIssueRequest {

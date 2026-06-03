@@ -1,3 +1,5 @@
+//! 开奖调度服务，处理常驻调度配置、启动/关闭和历史记录
+
 use std::{
     collections::VecDeque,
     sync::{Arc, RwLock},
@@ -12,15 +14,17 @@ use tokio::task::JoinHandle;
 use crate::{
     domain::{
         draw::{
-            DrawAutomationRun, DrawAutomationRunRequest, DrawIssue, DrawIssueStatus,
-            GenerateDrawIssuesRequest,
+            DrawAutomationRun, DrawAutomationRunRequest, DrawAutomationSkippedIssue, DrawIssue,
+            DrawIssueStatus, GenerateDrawIssuesRequest,
         },
         lottery::LotteryKind,
     },
     error::{ApiError, ApiResult},
     services::{
         automation::run_draw_automation,
-        business_database::{enum_from_string, enum_to_string, BusinessDatabase},
+        business_database::{
+            enum_from_string, enum_to_string, from_json, to_json, BusinessDatabase,
+        },
         draw::DrawRepository,
         draw_generation::{generate_draw_issue_batch, DEFAULT_SALE_CLOSE_LEAD_SECONDS},
         finance::FinanceRepository,
@@ -90,6 +94,8 @@ pub struct DrawSchedulerRunRecord {
     pub generated_issue_count: usize,
     pub skipped_issue_count: usize,
     pub skipped_lottery_count: usize,
+    pub skipped_issues: Vec<DrawAutomationSkippedIssue>,
+    pub skipped_lotteries: Vec<DrawSchedulerSkippedLottery>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -269,7 +275,8 @@ async fn load_scheduler_store(
     for row in sqlx::query(
         "SELECT id, trigger, status, started_at, finished_at, now, error, closed_issue_count,
                 drawn_issue_count, settlement_run_count, ledger_entry_count,
-                generated_issue_count, skipped_issue_count, skipped_lottery_count
+                generated_issue_count, skipped_issue_count, skipped_lottery_count,
+                skipped_issues, skipped_lotteries
          FROM draw_scheduler_runs
          ORDER BY id DESC
          LIMIT 20",
@@ -311,6 +318,14 @@ async fn load_scheduler_store(
             generated_issue_count: read_usize_count(&row, "generated_issue_count")?,
             skipped_issue_count: read_usize_count(&row, "skipped_issue_count")?,
             skipped_lottery_count: read_usize_count(&row, "skipped_lottery_count")?,
+            skipped_issues: from_json(
+                row.try_get("skipped_issues")
+                    .map_err(|_| ApiError::Internal("开奖调度跳过期号明细读取失败".to_string()))?,
+            )?,
+            skipped_lotteries: from_json(
+                row.try_get("skipped_lotteries")
+                    .map_err(|_| ApiError::Internal("开奖调度跳过彩种明细读取失败".to_string()))?,
+            )?,
         });
     }
 
@@ -379,8 +394,8 @@ async fn save_scheduler_store(
             "INSERT INTO draw_scheduler_runs
              (id, trigger, status, started_at, finished_at, now, error, closed_issue_count,
               drawn_issue_count, settlement_run_count, ledger_entry_count, generated_issue_count,
-              skipped_issue_count, skipped_lottery_count)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+              skipped_issue_count, skipped_lottery_count, skipped_issues, skipped_lotteries)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
         )
         .bind(&run.id)
         .bind(enum_to_string(&run.trigger)?)
@@ -396,6 +411,8 @@ async fn save_scheduler_store(
         .bind(to_i32_count(run.generated_issue_count, "生成期号数量")?)
         .bind(to_i32_count(run.skipped_issue_count, "跳过期号数量")?)
         .bind(to_i32_count(run.skipped_lottery_count, "跳过彩种数量")?)
+        .bind(to_json(&run.skipped_issues)?)
+        .bind(to_json(&run.skipped_lotteries)?)
         .execute(&mut *tx)
         .await
         .map_err(|_| ApiError::Internal("开奖调度历史数据保存失败".to_string()))?;
@@ -482,6 +499,8 @@ impl DrawSchedulerStore {
             generated_issue_count: run.generated_issues.len(),
             skipped_issue_count: run.automation_run.skipped_issues.len(),
             skipped_lottery_count: run.skipped_lotteries.len(),
+            skipped_issues: run.automation_run.skipped_issues.clone(),
+            skipped_lotteries: run.skipped_lotteries.clone(),
         });
         self.push_record(record)
     }
@@ -509,6 +528,8 @@ impl DrawSchedulerStore {
             generated_issue_count: 0,
             skipped_issue_count: 0,
             skipped_lottery_count: 0,
+            skipped_issues: Vec::new(),
+            skipped_lotteries: Vec::new(),
         });
         self.push_record(record)
     }
@@ -667,6 +688,7 @@ pub async fn run_draw_scheduler_once(
 
     let automation_run = run_draw_automation(
         draws,
+        lotteries,
         orders,
         finance,
         DrawAutomationRunRequest { now: now.clone() },
@@ -697,7 +719,7 @@ async fn ensure_future_draw_issues(
         if !lottery.sale_enabled {
             skipped_lotteries.push(DrawSchedulerSkippedLottery {
                 lottery_id: lottery.id,
-                reason: "lottery sale is disabled".to_string(),
+                reason: "彩种销售已关闭".to_string(),
             });
             continue;
         }
@@ -835,11 +857,12 @@ mod tests {
         .await
         .expect("scheduler can skip failed api generation");
 
-        assert!(run
-            .skipped_lotteries
-            .iter()
-            .any(|lottery| lottery.lottery_id == "fc3d"
-                && lottery.reason.contains("latest issue is missing")));
+        assert!(
+            run.skipped_lotteries
+                .iter()
+                .any(|lottery| lottery.lottery_id == "fc3d"
+                    && lottery.reason.contains("最新期号为空"))
+        );
         assert!(run
             .generated_issues
             .iter()
@@ -1062,6 +1085,11 @@ mod tests {
                 .map(|run| run.generated_issue_count),
             Some(run.generated_issues.len())
         );
+        assert_eq!(record.skipped_lotteries.len(), run.skipped_lotteries.len());
+        assert!(record
+            .skipped_lotteries
+            .iter()
+            .any(|lottery| lottery.lottery_id == "manual-test"));
     }
 
     #[tokio::test]
@@ -1083,6 +1111,8 @@ mod tests {
 
         assert_eq!(record.status, DrawSchedulerRunStatus::Failed);
         assert_eq!(record.error.as_deref(), Some("boom"));
+        assert!(record.skipped_issues.is_empty());
+        assert!(record.skipped_lotteries.is_empty());
         assert_eq!(status.run_count, 1);
         assert_eq!(status.recent_runs[0].status, DrawSchedulerRunStatus::Failed);
     }
