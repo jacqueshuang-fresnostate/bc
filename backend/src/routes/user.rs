@@ -11,7 +11,7 @@ use axum::{
 
 use crate::{
     app::AppState,
-    domain::finance::FinancialAccountSummary,
+    domain::finance::{FinancialAccountSummary, LedgerEntry},
     domain::user::WithdrawalMethod,
     domain::user::{
         UserAuthSession, UserBalanceResponse, UserBindEmailRequest, UserChangePasswordRequest,
@@ -31,6 +31,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/bind-email", post(bind_email))
         .route("/password/change", post(change_password))
         .route("/balance", get(get_balance))
+        .route("/ledger-entries", get(list_ledger_entries))
         .route(
             "/withdrawal-methods",
             get(list_withdrawal_methods).post(create_withdrawal_method),
@@ -176,6 +177,15 @@ async fn get_balance(
         user: session.user,
         account,
     })))
+}
+
+async fn list_ledger_entries(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<Vec<LedgerEntry>>>> {
+    let entries = state.finance.user_ledger_entries(&session.user.id).await?;
+
+    Ok(Json(ApiEnvelope::success(entries)))
 }
 
 async fn list_withdrawal_methods(

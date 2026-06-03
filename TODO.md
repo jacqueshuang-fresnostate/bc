@@ -1,5 +1,16 @@
 # TODO
 
+## 2026-06-04 11:20 HKT 用户资金流水接口补齐
+
+- 完成任务：补齐用户端“资金流水列表”接口，新增 `GET /api/user/ledger-entries`，用于查询当前登录用户的资金流水。
+- 解决问题：当前已有账户余额、提现方式等接口，但缺少用户可见的流水查询能力，前端/移动端无法拉取个人账变明细，难以展示充值、投注扣款、派奖入账等完整账单闭环。
+- 技术实现：
+  - 在 `backend/src/routes/user.rs` 增加受保护路由 `/ledger-entries`，挂载到登录态鉴权后链路。
+  - 新增 handler `list_ledger_entries`，从会话读取 `user.id` 并调用 `state.finance.user_ledger_entries(&session.user.id)`。
+  - 在 `backend/src/services/finance.rs` 新增仓储能力 `user_ledger_entries`，并补充 `ledger_entries_for_user` 的内存过滤实现（按当前实现约定倒序返回）。
+  - 新增 `FinanceRepository::user_ledger_entries` 的单元测试，覆盖“只返回指定用户流水、过滤其它用户记录”场景。
+- 验证记录：本地运行 `cd backend && cargo test` 全量通过。
+
 ## 2026-06-04 10:30 HKT 彩种分类编辑能力
 
 - 完成任务：增加“彩种分类（地方/海外/福利/其他）”字段，支持后台彩种管理页直接维护彩种分类。

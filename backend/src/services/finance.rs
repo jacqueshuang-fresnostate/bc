@@ -71,6 +71,20 @@ impl FinanceRepository {
             .map(|store| store.ledger_entries())
     }
 
+    /// 返回指定用户的财务流水列表。
+    pub async fn user_ledger_entries(&self, user_id: &str) -> ApiResult<Vec<LedgerEntry>> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
+
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .ledger_entries_for_user(user_id))
+    }
+
     /// 校验用户余额是否可支付指定金额。
     pub async fn ensure_available(&self, user_id: &str, amount_minor: i64) -> ApiResult<()> {
         self.inner
@@ -393,6 +407,16 @@ impl FinanceStore {
     /// 处理 ledger_entries 的具体内部流程。
     fn ledger_entries(&self) -> Vec<LedgerEntry> {
         self.ledger_entries.iter().rev().cloned().collect()
+    }
+
+    /// 处理 ledger_entries_for_user 的具体内部流程。
+    fn ledger_entries_for_user(&self, user_id: &str) -> Vec<LedgerEntry> {
+        self.ledger_entries
+            .iter()
+            .filter(|entry| entry.user_id == user_id)
+            .cloned()
+            .rev()
+            .collect()
     }
 
     /// 处理 ensure_available 的具体内部流程。
@@ -719,6 +743,28 @@ mod tests {
         assert_eq!(entry.kind, LedgerEntryKind::ManualAdjustment);
         assert_eq!(entry.amount_minor, 1_000);
         assert_eq!(account.available_balance_minor, 13_000);
+    }
+
+    #[test]
+    /// 处理 store_filters_ledger_entries_by_user 的具体内部流程。
+    fn store_filters_ledger_entries_by_user() {
+        let mut store = FinanceStore::seeded();
+        let order = order_detail("O000000000001", "U10001", 200, 0);
+        let _ = store.debit_order(&order).expect("debit for user 1");
+
+        let _ = store
+            .manual_adjust(ManualBalanceAdjustmentRequest {
+                user_id: "U10002".to_string(),
+                amount_minor: 500,
+                description: "other user adjustment".to_string(),
+            })
+            .expect("adjustment for user 2");
+
+        let entries = store.ledger_entries_for_user("U10001");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].user_id, "U10001");
+        assert_eq!(entries[0].kind, LedgerEntryKind::OrderDebit);
     }
 
     /// 处理 order_detail 的具体内部流程。
