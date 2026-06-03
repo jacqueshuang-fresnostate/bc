@@ -1081,3 +1081,42 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 32: 开奖期号与开奖源页面优化
+
+**Date**: 2026-06-03
+**Task**: 开奖期号与开奖源页面优化
+**Branch**: `main`
+
+### Summary
+
+把开奖期号与开奖源页面重排为概览指标、分段工作区和 SideSheet 维护表单，减少长页面拥挤并提升运营扫描效率。
+
+### Main Changes
+
+- 页面新增期号总数、待开奖、已开奖、开奖源/调度状态 4 个概览指标。
+- 主工作区拆分为“期号管理”“开奖源配置”“自动任务与调度”三个分段入口。
+- 创建期号、执行开奖、开奖源维护和调度配置都改用 Semi UI SideSheet 打开，主页面只保留列表、卡片摘要、状态和操作入口。
+- 创建期号表单默认期号改为空，不再展示旧的 `20260602001`；默认时间改为当前时间后一小时，封盘时间为开奖前 30 秒。
+- 已更新 `架构设计.md` 和 `TODO.md`。
+- 验证：`npm run build` 通过，仅保留既有 chunk size warning；Vite dev server `http://127.0.0.1:5196/` 返回 HTTP 200。当前环境无可用浏览器检查工具，未执行截图级视觉验证。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e16ffe8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
