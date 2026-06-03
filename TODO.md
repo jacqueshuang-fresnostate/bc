@@ -391,3 +391,11 @@
 - 技术说明：未来缓冲现在只统计同彩种、状态为 `open` 且 `scheduledAt > now` 的期号；`closed` 期号已不可投注，不再占用开盘缓冲。新增测试覆盖当前期封盘后会自动生成下一期 `open` 期号。
 - 验证结果：`cargo test scheduler_ -- --nocapture` 已通过，12 个调度测试全部成功；`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过，后端 125 个测试全部成功。前端构建仍只有既有 chunk size warning。
 - 后续动作：提交本阶段修复改动；后续可继续补调度运行页面中“当前封盘后已开新期”的视觉提示和调度失败告警。
+
+## 2026-06-03 16:02 HKT 后台动态启用开奖调度器
+
+- 完成任务：启动 `06-03-scheduler-backend-dynamic-enable` 并把开奖调度器改为服务启动时由后端常驻启动，后台配置只控制是否执行。
+- 解决问题：此前 `spawn_draw_scheduler` 在 `enabled=false` 时直接不创建后台循环，导致管理后台保存“启用”只更新配置，实际没有调度任务在运行，必须依赖环境变量并重启服务才生效。
+- 技术说明：`spawn_draw_scheduler` 现在始终创建后台任务；`enabled=false` 时任务每 1 秒读取配置并跳过执行，后台保存 `enabled=true` 后无需重启即可进入自动封盘、开奖、结算和补期流程。
+- 验证结果：`cargo test scheduler_ -- --nocapture` 已通过，13 个调度测试全部成功；`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过，后端 126 个测试全部成功。前端构建仍只有既有 chunk size warning。
+- 后续动作：提交并推送本阶段改动；后续可继续补前端提示文案，明确“保存启用后后台任务会自动生效”。

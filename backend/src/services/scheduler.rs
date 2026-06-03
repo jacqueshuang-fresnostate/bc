@@ -9,7 +9,7 @@ use std::{
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tokio::{task::JoinHandle, time::MissedTickBehavior};
+use tokio::task::JoinHandle;
 
 use crate::{
     domain::{
@@ -33,6 +33,7 @@ use crate::{
 
 const DEFAULT_SCHEDULER_INTERVAL_SECONDS: u64 = 60;
 const DEFAULT_FUTURE_ISSUE_COUNT: u32 = 1;
+const DISABLED_SCHEDULER_POLL_SECONDS: u64 = 1;
 const MAX_SCHEDULER_HISTORY: usize = 20;
 const MAX_FUTURE_ISSUE_COUNT: u32 = 50;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -595,26 +596,17 @@ pub fn spawn_draw_scheduler(
     finance: FinanceRepository,
     config: DrawSchedulerConfig,
     scheduler: DrawSchedulerRepository,
-) -> Option<JoinHandle<()>> {
-    if !config.enabled {
-        tracing::info!("开奖调度器已禁用");
-        return None;
-    }
-
+) -> JoinHandle<()> {
     tracing::info!(
+        enabled = config.enabled,
         interval_seconds = config.interval_seconds,
         future_issue_count = config.future_issue_count,
         sale_close_lead_seconds = config.sale_close_lead_seconds,
-        "开奖调度器已启用"
+        "开奖调度器后台任务已启动"
     );
 
-    Some(tokio::spawn(async move {
-        let mut active_interval_seconds = config.interval_seconds;
-        let mut interval = tokio::time::interval(Duration::from_secs(active_interval_seconds));
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
+    tokio::spawn(async move {
         loop {
-            interval.tick().await;
             let started_at = current_scheduler_timestamp();
             let now = started_at.clone();
             let current_config = match scheduler.config() {
@@ -624,19 +616,13 @@ pub fn spawn_draw_scheduler(
                     config.clone()
                 }
             };
+
             if !current_config.enabled {
                 tracing::debug!("开奖调度器因配置禁用跳过本轮执行");
+                tokio::time::sleep(Duration::from_secs(DISABLED_SCHEDULER_POLL_SECONDS)).await;
                 continue;
             }
-            if current_config.interval_seconds != active_interval_seconds {
-                active_interval_seconds = current_config.interval_seconds;
-                interval = tokio::time::interval(Duration::from_secs(active_interval_seconds));
-                interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-                tracing::info!(
-                    interval_seconds = active_interval_seconds,
-                    "开奖调度器执行周期已更新"
-                );
-            }
+
             match run_draw_scheduler_once(
                 &draws,
                 &lotteries,
@@ -696,8 +682,10 @@ pub fn spawn_draw_scheduler(
                     );
                 }
             }
+
+            tokio::time::sleep(Duration::from_secs(current_config.interval_seconds)).await;
         }
-    }))
+    })
 }
 
 pub async fn run_draw_scheduler_once(
@@ -862,7 +850,7 @@ fn config_error(message: impl Into<String>) -> Box<dyn Error + Send + Sync> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, time::Duration};
 
     use crate::{
         domain::{
@@ -1066,8 +1054,8 @@ mod tests {
                 && issue.status == DrawIssueStatus::Open));
     }
 
-    #[test]
-    fn scheduler_spawn_returns_none_when_disabled() {
+    #[tokio::test]
+    async fn scheduler_spawn_starts_worker_even_when_disabled() {
         let handle = spawn_draw_scheduler(
             DrawRepository::memory(),
             LotteryRepository::memory_seeded(),
@@ -1077,7 +1065,48 @@ mod tests {
             DrawSchedulerRepository::new(DrawSchedulerConfig::default()),
         );
 
-        assert!(handle.is_none());
+        assert!(!handle.is_finished());
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn scheduler_worker_runs_after_backend_config_enables_it() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let scheduler = DrawSchedulerRepository::new(DrawSchedulerConfig::default());
+        let handle = spawn_draw_scheduler(
+            draws,
+            lotteries,
+            orders,
+            finance,
+            DrawSchedulerConfig::default(),
+            scheduler.clone(),
+        );
+
+        scheduler
+            .update_config(DrawSchedulerConfig {
+                enabled: true,
+                interval_seconds: 1,
+                future_issue_count: 1,
+                sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
+            })
+            .await
+            .expect("scheduler can be enabled from backend config");
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if scheduler.status().expect("status can load").run_count > 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("scheduler should run after backend config enables it");
+
+        handle.abort();
     }
 
     #[tokio::test]
