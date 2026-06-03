@@ -1,20 +1,38 @@
 use std::sync::{Arc, RwLock};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     domain::rebate::{InvitePolicySummary, InvitePolicyUpdateRequest, RebateMode},
     error::{ApiError, ApiResult},
 };
 
+use super::state_document::StateDocumentRepository;
+
+const REBATE_STATE_NAMESPACE: &str = "rebates";
+
 #[derive(Clone)]
 pub struct RebateRepository {
     inner: Arc<RwLock<RebateStore>>,
+    persistence: Option<StateDocumentRepository>,
 }
 
 impl RebateRepository {
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(RebateStore::seeded())),
+            persistence: None,
         }
+    }
+
+    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
+        let store = persistence
+            .load_or_seed(REBATE_STATE_NAMESPACE, RebateStore::seeded())
+            .await?;
+        Ok(Self {
+            inner: Arc::new(RwLock::new(store)),
+            persistence: Some(persistence),
+        })
     }
 
     pub async fn get(&self) -> ApiResult<InvitePolicySummary> {
@@ -28,14 +46,28 @@ impl RebateRepository {
         &self,
         request: InvitePolicyUpdateRequest,
     ) -> ApiResult<InvitePolicySummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("rebate store lock poisoned".to_string()))?
-            .update(request)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("rebate store lock poisoned".to_string()))?;
+            let result = store.update(request)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    async fn persist(&self, store: &RebateStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence.save(REBATE_STATE_NAMESPACE, store).await?;
+        }
+
+        Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct RebateStore {
     agents_can_invite: bool,
     regular_users_can_invite: bool,

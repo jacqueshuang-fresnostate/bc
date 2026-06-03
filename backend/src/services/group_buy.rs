@@ -4,6 +4,7 @@ use std::{
 };
 
 use chrono::Local;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     domain::{
@@ -17,16 +18,32 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
+use super::state_document::StateDocumentRepository;
+
+const GROUP_BUY_STATE_NAMESPACE: &str = "group_buys";
+
 #[derive(Clone)]
 pub struct GroupBuyRepository {
     inner: Arc<RwLock<GroupBuyStore>>,
+    persistence: Option<StateDocumentRepository>,
 }
 
 impl GroupBuyRepository {
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(GroupBuyStore::seeded())),
+            persistence: None,
         }
+    }
+
+    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
+        let store = persistence
+            .load_or_seed(GROUP_BUY_STATE_NAMESPACE, GroupBuyStore::seeded())
+            .await?;
+        Ok(Self {
+            inner: Arc::new(RwLock::new(store)),
+            persistence: Some(persistence),
+        })
     }
 
     pub async fn list(&self) -> ApiResult<Vec<GroupBuyPlanSummary>> {
@@ -49,10 +66,16 @@ impl GroupBuyRepository {
         lotteries: &[LotteryKind],
         users: &[UserSummary],
     ) -> ApiResult<GroupBuyPlan> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
-            .create(request, lotteries, users)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
+            let result = store.create(request, lotteries, users)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn update(
@@ -60,10 +83,16 @@ impl GroupBuyRepository {
         id: &str,
         request: UpdateGroupBuyPlanRequest,
     ) -> ApiResult<GroupBuyPlan> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
-            .update(id, request)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
+            let result = store.update(id, request)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn add_participant(
@@ -72,14 +101,28 @@ impl GroupBuyRepository {
         request: AddGroupBuyParticipantRequest,
         users: &[UserSummary],
     ) -> ApiResult<GroupBuyPlan> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
-            .add_participant(id, request, users)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
+            let result = store.add_participant(id, request, users)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    async fn persist(&self, store: &GroupBuyStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence.save(GROUP_BUY_STATE_NAMESPACE, store).await?;
+        }
+
+        Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct GroupBuyStore {
     plans: BTreeMap<String, GroupBuyPlan>,
 }

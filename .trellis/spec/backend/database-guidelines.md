@@ -6,7 +6,7 @@
 
 ## 概览
 
-首个后端里程碑只使用内存演示数据。后续接入持久化时，优先选择 PostgreSQL + SQLx migrations，让 Rust 类型和 SQL 都保持显式。
+后端支持两种运行模式：未配置 `DATABASE_URL` 时使用内存演示数据；配置 `DATABASE_URL` 时使用 PostgreSQL + SQLx migrations。彩种和玩法赔率使用关系表，其它已落地后台模块当前使用 JSONB 状态文档作为第一阶段持久化方案。
 
 不要把数据库访问直接写进 HTTP 处理函数。路由处理函数调用服务，服务再调用仓储或查询模块。
 
@@ -88,7 +88,7 @@ YYYYMMDDHHMMSS_describe_change.sql
 - 如果 `lotteries` 表为空，写入种子彩种。
 - 如果 `lotteries` 表已有数据，不覆盖已有彩种。
 
-Docker Compose 本地部署必须提供 PostgreSQL 服务和持久化 volume，并把应用 `DATABASE_URL` 指向 Compose 网络内的数据库。当前只有彩种管理和玩法赔率配置使用 PostgreSQL；其它模块仍是内存仓储时，运行日志和文档必须明确说明，不能误导为全系统持久化。
+Docker Compose 本地部署必须提供 PostgreSQL 服务和持久化 volume，并把应用 `DATABASE_URL` 指向 Compose 网络内的数据库。彩种管理和玩法赔率配置使用 PostgreSQL `lotteries` 关系表；其它当前已落地业务模块使用 `state_documents` 状态文档表。运行日志和文档必须明确当前哪些模块是关系表、哪些模块是状态文档，不能把状态文档误写成已完成范式化业务表。
 
 `lotteries` 表字段：
 
@@ -152,3 +152,105 @@ let lotteries = LotteryRepository::postgres(&database_url).await?;
 ```
 
 只有未配置数据库时才使用内存模式；配置后连接失败必须让启动失败。
+
+---
+
+## 场景：全后台状态文档持久化
+
+### 1. 范围 / 触发条件
+
+- 触发条件：当前已落地的后台模块需要在配置 `DATABASE_URL` 后跨服务重启恢复数据。
+- 范围：`state_documents` 表、`StateDocumentRepository`、所有非彩种关系表的业务仓储。
+
+### 2. 签名
+
+- 迁移文件：`backend/migrations/20260603143000_create_state_documents.sql`
+- 表名：`state_documents`
+- 仓储：`backend/src/services/state_document.rs`
+- 测试数据库环境变量：`BC_TEST_DATABASE_URL`
+
+### 3. 契约
+
+`DATABASE_URL` 未配置时，后端必须继续使用内存业务仓储。
+
+`DATABASE_URL` 已配置时，后端必须：
+
+- 运行 SQLx migrations。
+- 使用 `state_documents` 保存当前非彩种关系表模块状态。
+- 数据库没有对应 `namespace` 时写入该模块原有种子状态。
+- 数据库已有对应 `namespace` 时恢复数据库状态，不覆盖为种子数据。
+- 写操作成功后保存对应模块快照。
+- 启动连接或迁移失败时直接启动失败，不静默降级。
+
+`state_documents` 表字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `namespace` | `text primary key` | 业务状态命名空间 |
+| `payload` | `jsonb not null` | 模块状态快照 |
+| `created_at` | `timestamptz not null default now()` | 创建时间 |
+| `updated_at` | `timestamptz not null default now()` | 更新时间 |
+
+当前命名空间：
+
+| 命名空间 | 内容 |
+|------|------|
+| `access` | 用户、管理员、管理员密码哈希、角色、系统设置、注册配置和管理员会话 |
+| `orders` | 订单、结算批次和编号序列 |
+| `draw_issues` | 开奖期号、状态、开奖号码和编号序列 |
+| `draw_controls` | 彩种控制台控制开奖号码配置 |
+| `draw_sources` | API 开奖源配置 |
+| `finance` | 资金账户、资金流水和流水编号序列 |
+| `group_buys` | 合买计划和参与记录 |
+| `invites` | 邀请关系、邀请码、返利资格和状态 |
+| `rebates` | 邀请返利策略 |
+| `robots` | 机器人配置 |
+| `support` | 客服会话、消息、分配状态和未读数 |
+| `draw_scheduler` | 调度配置、运行序号和最近运行历史 |
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `namespace` 为空 | 返回 `BadRequest` |
+| JSON 序列化失败 | 返回内部错误，不暴露结构细节 |
+| JSON 反序列化失败 | 返回内部错误，不继续用种子覆盖 |
+| 状态保存失败 | 当前接口返回内部错误 |
+| 未配置 `DATABASE_URL` | 所有业务仓储继续内存模式 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：后台新增订单、调整资金、保存开奖控制号码后重启服务，配置 `DATABASE_URL` 时数据仍可恢复。
+- Base：本地未配置数据库时，全部页面仍可使用种子内存数据。
+- Bad：数据库已有状态时重新写入种子，导致用户、订单、资金或控制号码被覆盖。
+
+### 6. 必要测试
+
+- 无数据库模式必须继续通过 `cargo test`。
+- 状态文档仓储需要测试空状态种子写入、保存和重新加载恢复。
+- 数据库集成测试只能在显式配置 `BC_TEST_DATABASE_URL` 时运行，避免误写生产数据库。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+let store = AccessStore::seeded();
+persistence.save("access", &store).await?;
+```
+
+服务每次启动都直接保存种子状态，会覆盖数据库中已经存在的真实用户、管理员密码哈希、会话和权限配置。
+
+#### 正确
+
+```rust
+let store = persistence
+    .load_or_seed("access", AccessStore::seeded())
+    .await?;
+```
+
+先尝试读取已有状态；只有状态不存在时才写入种子，避免重启覆盖真实业务数据。
+
+### 8. 后续拆表要求
+
+状态文档是第一阶段“全模块可持久化”的过渡方案。订单、资金流水、开奖期号、结算批次、管理员权限和高风险开奖控制后续拆成关系表时，必须同步补事务、索引、审计字段、分页查询和迁移说明。

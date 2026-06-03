@@ -3,6 +3,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     domain::{
         lottery::LotteryKind,
@@ -11,16 +13,32 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
+use super::state_document::StateDocumentRepository;
+
+const ROBOT_STATE_NAMESPACE: &str = "robots";
+
 #[derive(Clone)]
 pub struct RobotRepository {
     inner: Arc<RwLock<RobotStore>>,
+    persistence: Option<StateDocumentRepository>,
 }
 
 impl RobotRepository {
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(RobotStore::seeded())),
+            persistence: None,
         }
+    }
+
+    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
+        let store = persistence
+            .load_or_seed(ROBOT_STATE_NAMESPACE, RobotStore::seeded())
+            .await?;
+        Ok(Self {
+            inner: Arc::new(RwLock::new(store)),
+            persistence: Some(persistence),
+        })
     }
 
     pub async fn list(&self) -> ApiResult<Vec<RobotConfigSummary>> {
@@ -42,10 +60,16 @@ impl RobotRepository {
         robot: RobotConfigSummary,
         lotteries: &[LotteryKind],
     ) -> ApiResult<RobotConfigSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("robot store lock poisoned".to_string()))?
-            .create(robot, lotteries)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("robot store lock poisoned".to_string()))?;
+            let result = store.create(robot, lotteries)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn update(
@@ -54,28 +78,54 @@ impl RobotRepository {
         robot: RobotConfigSummary,
         lotteries: &[LotteryKind],
     ) -> ApiResult<RobotConfigSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("robot store lock poisoned".to_string()))?
-            .update(id, robot, lotteries)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("robot store lock poisoned".to_string()))?;
+            let result = store.update(id, robot, lotteries)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn delete(&self, id: &str) -> ApiResult<RobotConfigSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("robot store lock poisoned".to_string()))?
-            .delete(id)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("robot store lock poisoned".to_string()))?;
+            let result = store.delete(id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn set_status(&self, id: &str, status: RobotStatus) -> ApiResult<RobotConfigSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("robot store lock poisoned".to_string()))?
-            .set_status(id, status)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("robot store lock poisoned".to_string()))?;
+            let result = store.set_status(id, status)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    async fn persist(&self, store: &RobotStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence.save(ROBOT_STATE_NAMESPACE, store).await?;
+        }
+
+        Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct RobotStore {
     robots: BTreeMap<String, RobotConfigSummary>,
 }

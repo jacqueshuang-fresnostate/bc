@@ -17,6 +17,7 @@ use crate::{
         rebate::RebateRepository,
         robot::RobotRepository,
         scheduler::{spawn_draw_scheduler, DrawSchedulerConfig, DrawSchedulerRepository},
+        state_document::StateDocumentRepository,
         support::SupportRepository,
     },
 };
@@ -57,25 +58,35 @@ impl AppState {
         scheduler: DrawSchedulerRepository,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let Ok(database_url) = std::env::var("DATABASE_URL") else {
-            tracing::info!("未配置 DATABASE_URL，使用内存彩种仓储");
+            tracing::info!("未配置 DATABASE_URL，使用内存业务仓储");
             return Ok(Self::new_with_scheduler(scheduler));
         };
 
         let lotteries = LotteryRepository::postgres(&database_url).await?;
+        let state_documents = StateDocumentRepository::postgres(&database_url).await?;
+        let api_sources =
+            ApiDrawSourceRepository::persistent_api68_seeded(state_documents.clone()).await?;
+        let scheduler =
+            DrawSchedulerRepository::persistent(scheduler.config()?, state_documents.clone())
+                .await?;
 
-        tracing::info!("已配置 DATABASE_URL，使用 PostgreSQL 彩种仓储，其它业务模块仍使用内存仓储");
+        tracing::info!("已配置 DATABASE_URL，使用 PostgreSQL 持久化所有后台业务仓储");
         Ok(Self {
-            access: AccessRepository::memory_seeded(),
-            draws: default_draw_repository(),
-            finance: FinanceRepository::memory_seeded(),
-            group_buys: GroupBuyRepository::memory_seeded(),
-            invites: InviteRepository::memory_seeded(),
+            access: AccessRepository::persistent(state_documents.clone()).await?,
+            draws: DrawRepository::persistent_with_api_sources(
+                api_sources,
+                state_documents.clone(),
+            )
+            .await?,
+            finance: FinanceRepository::persistent(state_documents.clone()).await?,
+            group_buys: GroupBuyRepository::persistent(state_documents.clone()).await?,
+            invites: InviteRepository::persistent(state_documents.clone()).await?,
             lotteries,
-            orders: OrderRepository::memory(),
-            rebates: RebateRepository::memory_seeded(),
-            robots: RobotRepository::memory_seeded(),
+            orders: OrderRepository::persistent(state_documents.clone()).await?,
+            rebates: RebateRepository::persistent(state_documents.clone()).await?,
+            robots: RobotRepository::persistent(state_documents.clone()).await?,
             scheduler,
-            support: SupportRepository::memory_seeded(),
+            support: SupportRepository::persistent(state_documents).await?,
         })
     }
 }
@@ -86,15 +97,16 @@ fn default_draw_repository() -> DrawRepository {
 
 pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
     let scheduler_config = DrawSchedulerConfig::from_env()?;
-    let scheduler = DrawSchedulerRepository::new(scheduler_config.clone());
-    let state = AppState::from_env_with_scheduler(scheduler.clone()).await?;
+    let scheduler = DrawSchedulerRepository::new(scheduler_config);
+    let state = AppState::from_env_with_scheduler(scheduler).await?;
+    let scheduler_config = state.scheduler.config()?;
     spawn_draw_scheduler(
         state.draws.clone(),
         state.lotteries.clone(),
         state.orders.clone(),
         state.finance.clone(),
         scheduler_config,
-        scheduler,
+        state.scheduler.clone(),
     );
 
     Ok(router_with_state(state))

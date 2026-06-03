@@ -4,6 +4,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     domain::{
         draw::{
@@ -15,13 +17,20 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::draw_api::{ApiDrawSourceLatestIssue, ApiDrawSourceRepository};
+use super::{
+    draw_api::{ApiDrawSourceLatestIssue, ApiDrawSourceRepository},
+    state_document::StateDocumentRepository,
+};
+
+const DRAW_STATE_NAMESPACE: &str = "draw_issues";
+const DRAW_CONTROL_STATE_NAMESPACE: &str = "draw_controls";
 
 #[derive(Clone)]
 pub struct DrawRepository {
     inner: Arc<RwLock<DrawStore>>,
     api_sources: ApiDrawSourceRepository,
     controls: Arc<RwLock<DrawControlStore>>,
+    persistence: Option<StateDocumentRepository>,
 }
 
 impl DrawRepository {
@@ -35,7 +44,26 @@ impl DrawRepository {
             inner: Arc::new(RwLock::new(DrawStore::default())),
             api_sources,
             controls: Arc::new(RwLock::new(DrawControlStore::default())),
+            persistence: None,
         }
+    }
+
+    pub async fn persistent_with_api_sources(
+        api_sources: ApiDrawSourceRepository,
+        persistence: StateDocumentRepository,
+    ) -> ApiResult<Self> {
+        let store = persistence
+            .load_or_seed(DRAW_STATE_NAMESPACE, DrawStore::default())
+            .await?;
+        let controls = persistence
+            .load_or_seed(DRAW_CONTROL_STATE_NAMESPACE, DrawControlStore::default())
+            .await?;
+        Ok(Self {
+            inner: Arc::new(RwLock::new(store)),
+            api_sources,
+            controls: Arc::new(RwLock::new(controls)),
+            persistence: Some(persistence),
+        })
     }
 
     pub async fn list(&self) -> ApiResult<Vec<DrawIssue>> {
@@ -68,33 +96,57 @@ impl DrawRepository {
         lottery: &LotteryKind,
         payload: CreateDrawIssueRequest,
     ) -> ApiResult<DrawIssue> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
-            .create(lottery, payload)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
+            let result = store.create(lottery, payload)?;
+            (result, store.clone())
+        };
+        self.persist_draws(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn close(&self, id: &str) -> ApiResult<DrawIssue> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
-            .close(id)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
+            let result = store.close(id)?;
+            (result, store.clone())
+        };
+        self.persist_draws(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn draw(&self, id: &str, payload: DrawIssueResultRequest) -> ApiResult<DrawIssue> {
         let (payload, uses_control_number) = self.resolve_draw_payload(id, payload).await?;
 
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
-            .draw(id, payload, uses_control_number)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
+            let result = store.draw(id, payload, uses_control_number)?;
+            (result, store.clone())
+        };
+        self.persist_draws(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn cancel(&self, id: &str) -> ApiResult<DrawIssue> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
-            .cancel(id)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
+            let result = store.cancel(id)?;
+            (result, store.clone())
+        };
+        self.persist_draws(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn draw_sources(&self) -> ApiResult<Vec<DrawSource>> {
@@ -131,18 +183,22 @@ impl DrawRepository {
         payload: SaveLotteryDrawControlRequest,
     ) -> ApiResult<LotteryDrawControl> {
         let draw_number = normalize_control_draw_number(lottery, &payload)?;
-        let mut store = self
-            .controls
-            .write()
-            .map_err(|_| ApiError::Internal("draw control store lock poisoned".to_string()))?;
+        let (result, snapshot) = {
+            let mut store = self
+                .controls
+                .write()
+                .map_err(|_| ApiError::Internal("draw control store lock poisoned".to_string()))?;
 
-        store.save(DrawControlConfig {
-            lottery_id: lottery.id.clone(),
-            enabled: payload.enabled,
-            draw_number,
-            updated_at: current_timestamp_label(),
-        });
-        store.get(lottery)
+            store.save(DrawControlConfig {
+                lottery_id: lottery.id.clone(),
+                enabled: payload.enabled,
+                draw_number,
+                updated_at: current_timestamp_label(),
+            });
+            (store.get(lottery)?, store.clone())
+        };
+        self.persist_controls(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn create_draw_source(
@@ -218,9 +274,27 @@ impl DrawRepository {
             .map_err(|_| ApiError::Internal("draw control store lock poisoned".to_string()))
             .map(|store| store.active_draw_number(lottery_id))
     }
+
+    async fn persist_draws(&self, store: &DrawStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence.save(DRAW_STATE_NAMESPACE, store).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn persist_controls(&self, store: &DrawControlStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence
+                .save(DRAW_CONTROL_STATE_NAMESPACE, store)
+                .await?;
+        }
+
+        Ok(())
+    }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct DrawStore {
     next_sequence: u64,
     issues: BTreeMap<String, DrawIssue>,
@@ -386,7 +460,7 @@ impl DrawStore {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct DrawControlConfig {
     lottery_id: String,
     enabled: bool,
@@ -394,7 +468,7 @@ struct DrawControlConfig {
     updated_at: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct DrawControlStore {
     controls: BTreeMap<String, DrawControlConfig>,
 }

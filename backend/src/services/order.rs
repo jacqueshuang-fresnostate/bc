@@ -4,6 +4,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     domain::{
         draw::{DrawIssue, DrawIssueStatus},
@@ -16,7 +18,10 @@ use crate::{
     services::play_rules::{evaluate_play_rule, expanded_bets_for_rule, number_type_for_rule},
 };
 
+use super::state_document::StateDocumentRepository;
+
 const ODDS_SCALE_BASIS_POINTS: i64 = 10_000;
+const ORDER_STATE_NAMESPACE: &str = "orders";
 
 pub fn validate_draw_issue_accepts_order(
     draw_issue: &DrawIssue,
@@ -50,13 +55,25 @@ pub fn validate_draw_issue_accepts_order(
 #[derive(Clone)]
 pub struct OrderRepository {
     inner: Arc<RwLock<OrderStore>>,
+    persistence: Option<StateDocumentRepository>,
 }
 
 impl OrderRepository {
     pub fn memory() -> Self {
         Self {
             inner: Arc::new(RwLock::new(OrderStore::default())),
+            persistence: None,
         }
+    }
+
+    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
+        let store = persistence
+            .load_or_seed(ORDER_STATE_NAMESPACE, OrderStore::default())
+            .await?;
+        Ok(Self {
+            inner: Arc::new(RwLock::new(store)),
+            persistence: Some(persistence),
+        })
     }
 
     pub async fn list(&self) -> ApiResult<Vec<OrderDetail>> {
@@ -78,10 +95,16 @@ impl OrderRepository {
         lottery: &LotteryKind,
         payload: CreateOrderRequest,
     ) -> ApiResult<OrderDetail> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
-            .create(lottery, payload)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?;
+            let result = store.create(lottery, payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn quote(
@@ -97,17 +120,29 @@ impl OrderRepository {
     }
 
     pub async fn cancel(&self, id: &str) -> ApiResult<OrderDetail> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
-            .cancel(id)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?;
+            let result = store.cancel(id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn remove_unfunded(&self, id: &str) -> ApiResult<OrderDetail> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
-            .remove_unfunded(id)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?;
+            let result = store.remove_unfunded(id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn recent_summaries(&self, limit: usize) -> ApiResult<Vec<OrderSummary>> {
@@ -132,14 +167,28 @@ impl OrderRepository {
     }
 
     pub async fn settle_draw_issue(&self, draw_issue: &DrawIssue) -> ApiResult<SettlementRun> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
-            .settle_draw_issue(draw_issue)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?;
+            let result = store.settle_draw_issue(draw_issue)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    async fn persist(&self, store: &OrderStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence.save(ORDER_STATE_NAMESPACE, store).await?;
+        }
+
+        Ok(())
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct OrderStore {
     next_sequence: u64,
     next_settlement_sequence: u64,

@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
@@ -14,6 +14,8 @@ use crate::{
     },
     error::{ApiError, ApiResult},
 };
+
+use super::state_document::StateDocumentRepository;
 
 pub const API68_FC3D_SOURCE_ID: &str = "api68-fc3d";
 pub const API68_FC3D_SOURCE_NAME: &str = "API68 福彩 3D/排列 3";
@@ -31,6 +33,7 @@ const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
 const DEFAULT_API68_CQSHICAI_ENDPOINT: &str =
     "https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do";
 const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
+const DRAW_SOURCE_STATE_NAMESPACE: &str = "draw_sources";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiDrawSourceLatestIssue {
@@ -42,6 +45,7 @@ pub struct ApiDrawSourceRepository {
     client: reqwest::Client,
     inner: Arc<RwLock<ApiDrawSourceStore>>,
     static_responses: Arc<BTreeMap<String, String>>,
+    persistence: Option<StateDocumentRepository>,
 }
 
 impl ApiDrawSourceRepository {
@@ -62,7 +66,26 @@ impl ApiDrawSourceRepository {
             client: reqwest::Client::new(),
             inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(sources))),
             static_responses: Arc::new(BTreeMap::new()),
+            persistence: None,
         }
+    }
+
+    pub async fn persistent_api68_seeded(persistence: StateDocumentRepository) -> ApiResult<Self> {
+        let store = persistence
+            .load_or_seed(
+                DRAW_SOURCE_STATE_NAMESPACE,
+                ApiDrawSourceStore::new(vec![
+                    ApiDrawSourceConfig::api68_fc3d(),
+                    ApiDrawSourceConfig::api68_au5(),
+                ]),
+            )
+            .await?;
+        Ok(Self {
+            client: reqwest::Client::new(),
+            inner: Arc::new(RwLock::new(store)),
+            static_responses: Arc::new(BTreeMap::new()),
+            persistence: Some(persistence),
+        })
     }
 
     #[cfg(test)]
@@ -79,6 +102,7 @@ impl ApiDrawSourceRepository {
                 ApiDrawSourceConfig::api68_au5(),
             ]))),
             static_responses: Arc::new(static_responses),
+            persistence: None,
         }
     }
 
@@ -94,10 +118,16 @@ impl ApiDrawSourceRepository {
         payload: SaveDrawSourceRequest,
         lotteries: &[LotteryKind],
     ) -> ApiResult<DrawSource> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?
-            .create(payload, lotteries)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?;
+            let result = store.create(payload, lotteries)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn update(
@@ -106,17 +136,29 @@ impl ApiDrawSourceRepository {
         payload: SaveDrawSourceRequest,
         lotteries: &[LotteryKind],
     ) -> ApiResult<DrawSource> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?
-            .update(id, payload, lotteries)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?;
+            let result = store.update(id, payload, lotteries)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn delete(&self, id: &str) -> ApiResult<DrawSource> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?
-            .delete(id)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("draw source store lock poisoned".to_string()))?;
+            let result = store.delete(id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn draw_number_for(&self, issue: &DrawIssue) -> ApiResult<Option<String>> {
@@ -245,9 +287,17 @@ impl ApiDrawSourceRepository {
 
         parse_api68_latest_issue(&response_body)
     }
+
+    async fn persist(&self, store: &ApiDrawSourceStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence.save(DRAW_SOURCE_STATE_NAMESPACE, store).await?;
+        }
+
+        Ok(())
+    }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct ApiDrawSourceStore {
     sources: BTreeMap<String, ApiDrawSourceConfig>,
 }
@@ -404,7 +454,7 @@ impl ApiDrawSourceStore {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct ApiDrawSourceConfig {
     id: String,
     name: String,

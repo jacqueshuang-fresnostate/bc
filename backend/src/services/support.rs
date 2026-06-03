@@ -4,6 +4,7 @@ use std::{
 };
 
 use chrono::Local;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     domain::{
@@ -17,16 +18,32 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
+use super::state_document::StateDocumentRepository;
+
+const SUPPORT_STATE_NAMESPACE: &str = "support";
+
 #[derive(Clone)]
 pub struct SupportRepository {
     inner: Arc<RwLock<SupportStore>>,
+    persistence: Option<StateDocumentRepository>,
 }
 
 impl SupportRepository {
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(SupportStore::seeded())),
+            persistence: None,
         }
+    }
+
+    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
+        let store = persistence
+            .load_or_seed(SUPPORT_STATE_NAMESPACE, SupportStore::seeded())
+            .await?;
+        Ok(Self {
+            inner: Arc::new(RwLock::new(store)),
+            persistence: Some(persistence),
+        })
     }
 
     pub async fn list(&self) -> ApiResult<Vec<SupportConversation>> {
@@ -48,10 +65,16 @@ impl SupportRepository {
         request: CreateSupportConversationRequest,
         users: &[UserSummary],
     ) -> ApiResult<SupportConversation> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?
-            .create(request, users)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?;
+            let result = store.create(request, users)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn update(
@@ -60,10 +83,16 @@ impl SupportRepository {
         request: UpdateSupportConversationRequest,
         admins: &[AdminSummary],
     ) -> ApiResult<SupportConversation> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?
-            .update(id, request, admins)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?;
+            let result = store.update(id, request, admins)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn reply(
@@ -72,14 +101,28 @@ impl SupportRepository {
         request: SupportReplyRequest,
         admins: &[AdminSummary],
     ) -> ApiResult<SupportConversation> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?
-            .reply(id, request, admins)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?;
+            let result = store.reply(id, request, admins)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    async fn persist(&self, store: &SupportStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence.save(SUPPORT_STATE_NAMESPACE, store).await?;
+        }
+
+        Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct SupportStore {
     conversations: BTreeMap<String, SupportConversation>,
 }

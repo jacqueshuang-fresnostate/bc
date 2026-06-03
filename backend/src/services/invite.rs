@@ -4,6 +4,7 @@ use std::{
 };
 
 use chrono::Local;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     domain::{
@@ -16,16 +17,32 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
+use super::state_document::StateDocumentRepository;
+
+const INVITE_STATE_NAMESPACE: &str = "invites";
+
 #[derive(Clone)]
 pub struct InviteRepository {
     inner: Arc<RwLock<InviteStore>>,
+    persistence: Option<StateDocumentRepository>,
 }
 
 impl InviteRepository {
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(InviteStore::seeded())),
+            persistence: None,
         }
+    }
+
+    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
+        let store = persistence
+            .load_or_seed(INVITE_STATE_NAMESPACE, InviteStore::seeded())
+            .await?;
+        Ok(Self {
+            inner: Arc::new(RwLock::new(store)),
+            persistence: Some(persistence),
+        })
     }
 
     pub async fn list(&self) -> ApiResult<Vec<InviteRecord>> {
@@ -48,10 +65,16 @@ impl InviteRepository {
         users: &[UserSummary],
         policy: &InvitePolicySummary,
     ) -> ApiResult<InviteRecord> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("invite store lock poisoned".to_string()))?
-            .create(request, users, policy)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("invite store lock poisoned".to_string()))?;
+            let result = store.create(request, users, policy)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn update(
@@ -59,14 +82,28 @@ impl InviteRepository {
         id: &str,
         request: UpdateInviteRecordRequest,
     ) -> ApiResult<InviteRecord> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("invite store lock poisoned".to_string()))?
-            .update(id, request)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("invite store lock poisoned".to_string()))?;
+            let result = store.update(id, request)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    async fn persist(&self, store: &InviteStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence.save(INVITE_STATE_NAMESPACE, store).await?;
+        }
+
+        Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct InviteStore {
     records: BTreeMap<String, InviteRecord>,
 }

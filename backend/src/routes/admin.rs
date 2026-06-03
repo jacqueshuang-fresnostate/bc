@@ -316,7 +316,7 @@ async fn update_draw_scheduler_config(
     State(state): State<AppState>,
     Json(payload): Json<DrawSchedulerConfig>,
 ) -> ApiResult<Json<ApiEnvelope<DrawSchedulerStatus>>> {
-    let status = state.scheduler.update_config(payload)?;
+    let status = state.scheduler.update_config(payload).await?;
 
     Ok(Json(ApiEnvelope::success(status)))
 }

@@ -4,6 +4,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     domain::{
         finance::{
@@ -16,16 +18,32 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
+use super::state_document::StateDocumentRepository;
+
+const FINANCE_STATE_NAMESPACE: &str = "finance";
+
 #[derive(Clone)]
 pub struct FinanceRepository {
     inner: Arc<RwLock<FinanceStore>>,
+    persistence: Option<StateDocumentRepository>,
 }
 
 impl FinanceRepository {
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(FinanceStore::seeded())),
+            persistence: None,
         }
+    }
+
+    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
+        let store = persistence
+            .load_or_seed(FINANCE_STATE_NAMESPACE, FinanceStore::seeded())
+            .await?;
+        Ok(Self {
+            inner: Arc::new(RwLock::new(store)),
+            persistence: Some(persistence),
+        })
     }
 
     pub async fn overview(&self) -> ApiResult<FinanceOverview> {
@@ -67,38 +85,70 @@ impl FinanceRepository {
         &self,
         payload: ManualBalanceAdjustmentRequest,
     ) -> ApiResult<LedgerEntry> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
-            .manual_adjust(payload)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.manual_adjust(payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn debit_order(&self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
-            .debit_order(order)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.debit_order(order)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn refund_order(&self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
-            .refund_order(order)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.refund_order(order)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn credit_settlement(
         &self,
         settlement: &SettlementRun,
     ) -> ApiResult<Vec<LedgerEntry>> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
-            .credit_settlement(settlement)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.credit_settlement(settlement)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    async fn persist(&self, store: &FinanceStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence.save(FINANCE_STATE_NAMESPACE, store).await?;
+        }
+
+        Ok(())
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct FinanceStore {
     accounts: BTreeMap<String, FinancialAccountSummary>,
     ledger_entries: Vec<LedgerEntry>,

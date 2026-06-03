@@ -9,6 +9,7 @@ use argon2::{
     Argon2,
 };
 use rand_core::OsRng;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     domain::{
@@ -22,8 +23,11 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
+use super::state_document::StateDocumentRepository;
+
 const DEFAULT_SEED_ADMIN_PASSWORD: &str = "admin123";
 const MIN_ADMIN_PASSWORD_LEN: usize = 8;
+const ACCESS_STATE_NAMESPACE: &str = "access";
 
 #[derive(Debug, Clone)]
 pub struct AccessSnapshot {
@@ -37,13 +41,25 @@ pub struct AccessSnapshot {
 #[derive(Clone)]
 pub struct AccessRepository {
     inner: Arc<RwLock<AccessStore>>,
+    persistence: Option<StateDocumentRepository>,
 }
 
 impl AccessRepository {
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(AccessStore::seeded())),
+            persistence: None,
         }
+    }
+
+    pub async fn persistent(persistence: StateDocumentRepository) -> ApiResult<Self> {
+        let store = persistence
+            .load_or_seed(ACCESS_STATE_NAMESPACE, AccessStore::seeded())
+            .await?;
+        Ok(Self {
+            inner: Arc::new(RwLock::new(store)),
+            persistence: Some(persistence),
+        })
     }
 
     pub async fn snapshot(&self) -> ApiResult<AccessSnapshot> {
@@ -68,24 +84,42 @@ impl AccessRepository {
     }
 
     pub async fn create_user(&self, user: UserSummary) -> ApiResult<UserSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .create_user(user)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.create_user(user)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn update_user(&self, id: &str, user: UserSummary) -> ApiResult<UserSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .update_user(id, user)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.update_user(id, user)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn set_user_status(&self, id: &str, status: UserStatus) -> ApiResult<UserSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .set_user_status(id, status)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.set_user_status(id, status)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn admins(&self) -> ApiResult<Vec<AdminSummary>> {
@@ -103,24 +137,42 @@ impl AccessRepository {
     }
 
     pub async fn create_admin(&self, admin: AdminSaveRequest) -> ApiResult<AdminSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .create_admin(admin)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.create_admin(admin)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn update_admin(&self, id: &str, admin: AdminSaveRequest) -> ApiResult<AdminSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .update_admin(id, admin)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.update_admin(id, admin)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn set_admin_status(&self, id: &str, status: UserStatus) -> ApiResult<AdminSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .set_admin_status(id, status)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.set_admin_status(id, status)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn reset_admin_password(
@@ -128,10 +180,16 @@ impl AccessRepository {
         id: &str,
         payload: AdminPasswordResetRequest,
     ) -> ApiResult<AdminSummary> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .reset_admin_password(id, payload)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.reset_admin_password(id, payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn roles(&self) -> ApiResult<Vec<AdminRole>> {
@@ -149,24 +207,42 @@ impl AccessRepository {
     }
 
     pub async fn create_role(&self, role: AdminRole) -> ApiResult<AdminRole> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .create_role(role)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.create_role(role)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn update_role(&self, id: &str, role: AdminRole) -> ApiResult<AdminRole> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .update_role(id, role)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.update_role(id, role)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn delete_role(&self, id: &str) -> ApiResult<AdminRole> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .delete_role(id)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.delete_role(id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn settings(&self) -> ApiResult<Vec<SystemSetting>> {
@@ -181,10 +257,16 @@ impl AccessRepository {
         key: &str,
         payload: UpdateSystemSettingRequest,
     ) -> ApiResult<SystemSetting> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .update_setting(key, payload)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.update_setting(key, payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn registration(&self) -> ApiResult<RegistrationConfig> {
@@ -198,17 +280,29 @@ impl AccessRepository {
         &self,
         registration: RegistrationConfig,
     ) -> ApiResult<RegistrationConfig> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .update_registration(registration)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.update_registration(registration)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn login(&self, payload: AdminLoginRequest) -> ApiResult<AdminAuthSession> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .login(payload)
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.login(payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
     }
 
     pub async fn session_from_token(&self, token: &str) -> ApiResult<AdminAuthSession> {
@@ -219,14 +313,27 @@ impl AccessRepository {
     }
 
     pub async fn logout(&self, token: &str) -> ApiResult<()> {
-        self.inner
-            .write()
-            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
-            .logout(token)
+        let snapshot = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            store.logout(token)?;
+            store.clone()
+        };
+        self.persist(&snapshot).await
+    }
+
+    async fn persist(&self, store: &AccessStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            persistence.save(ACCESS_STATE_NAMESPACE, store).await?;
+        }
+
+        Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct AccessStore {
     users: BTreeMap<String, UserSummary>,
     admins: BTreeMap<String, AdminSummary>,
