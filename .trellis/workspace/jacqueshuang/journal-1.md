@@ -1290,3 +1290,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 38: 数据库持久化接入
+
+**Date**: 2026-06-03
+**Task**: 数据库持久化接入
+**Branch**: `main`
+
+### Summary
+
+让 Docker Compose 同时启动 PostgreSQL 与前后端单镜像应用，注入 DATABASE_URL，保留 docker run 外部数据库模式；补充中文部署说明、架构设计、TODO 和后端数据库/部署规范；验证 cargo fmt/check/test、npm run build、Compose healthcheck、/api/health 与 lotteries 表迁移。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `05f7a94` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
