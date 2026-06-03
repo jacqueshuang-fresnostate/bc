@@ -1356,3 +1356,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 40: 彩种控制台控制开奖号码
+
+**Date**: 2026-06-03
+**Task**: 彩种控制台控制开奖号码
+**Branch**: `main`
+
+### Summary
+
+新增彩种控制台开奖号码控制接口和 SideSheet 维护入口，控制号码优先覆盖平台/API 开奖并支持手动彩种自动开奖。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1c8472d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
