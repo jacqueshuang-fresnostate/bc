@@ -5,6 +5,7 @@ import { useLotteries } from '../hooks/useLotteries';
 import type {
   DrawMode,
   DrawSchedule,
+  LotteryCategory,
   LotteryKind,
   LotteryNumberType,
   LotteryPlayConfig,
@@ -20,6 +21,7 @@ interface LotteryManagementPageProps {
 type ScheduleKind = 'periodic' | 'daily' | 'weekly';
 
 interface LotteryFormState {
+  category: LotteryCategory;
   drawMode: DrawMode;
   groupBuyEnabled: boolean;
   id: string;
@@ -43,6 +45,13 @@ const playCategoryOptions: Array<{ label: string; value: PlayCategory }> = [
   { label: '组三', value: 'groupThree' },
   { label: '组六', value: 'groupSix' },
   { label: '大小单双', value: 'bigSmallOddEven' },
+];
+
+const lotteryCategoryOptions: Array<{ label: string; value: LotteryCategory }> = [
+  { label: '地方彩种', value: 'regional' },
+  { label: '海外彩种', value: 'overseas' },
+  { label: '福利彩种', value: 'welfare' },
+  { label: '其他', value: 'other' },
 ];
 
 export function LotteryManagementPage({
@@ -148,6 +157,7 @@ export function LotteryManagementPage({
                 <thead className="border-b border-line text-xs text-slate-500">
                   <tr>
                     <th className="py-2 pr-4 font-medium">彩种</th>
+                    <th className="py-2 pr-4 font-medium">分类</th>
                     <th className="py-2 pr-4 font-medium">类型</th>
                     <th className="py-2 pr-4 font-medium">开奖</th>
                     <th className="py-2 pr-4 font-medium">时间</th>
@@ -173,6 +183,7 @@ export function LotteryManagementPage({
                         </button>
                         <div className="mt-1 text-xs text-slate-400">{lottery.id}</div>
                       </td>
+                      <td className="py-3 pr-4 text-slate-600">{lotteryCategoryText(lottery.category)}</td>
                       <td className="py-3 pr-4 text-slate-600">
                         {lottery.numberType === 'threeDigit' ? '3 位号码' : '5 位号码'}
                       </td>
@@ -271,6 +282,25 @@ export function LotteryManagementPage({
                   <option value="platform">平台开奖</option>
                   <option value="api">API 接口</option>
                   <option value="manual">指定号码</option>
+                </select>
+              </Field>
+              <Field label="彩种分类">
+                <select
+                  className="form-input"
+                  value={form.category}
+                  onChange={(event) =>
+                    setFormValue(
+                      setForm,
+                      'category',
+                      event.target.value as LotteryCategory,
+                    )
+                  }
+                >
+                  {lotteryCategoryOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </Field>
             </div>
@@ -445,6 +475,7 @@ function Field({ children, label }: FieldProps) {
 
 function emptyForm(): LotteryFormState {
   return {
+    category: 'regional',
     drawMode: 'platform',
     groupBuyEnabled: true,
     id: '',
@@ -467,6 +498,7 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
   const schedule = scheduleFormFields(lottery.schedule);
 
   return {
+    category: lottery.category,
     drawMode: lottery.drawMode,
     groupBuyEnabled: lottery.groupBuy.enabled,
     id: lottery.id,
@@ -487,6 +519,7 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
 
 function lotteryFromForm(form: LotteryFormState): LotteryKind {
   return {
+    category: form.category,
     drawMode: form.drawMode,
     groupBuy: {
       enabled: form.groupBuyEnabled,
@@ -599,6 +632,17 @@ function drawModeText(mode: string) {
     platform: '平台开奖',
   };
   return labels[mode] ?? mode;
+}
+
+function lotteryCategoryText(category: LotteryCategory) {
+  const names: Record<LotteryCategory, string> = {
+    regional: '地方彩种',
+    overseas: '海外彩种',
+    welfare: '福利彩种',
+    other: '其他',
+  };
+
+  return names[category];
 }
 
 function drawModeColor(mode: string) {

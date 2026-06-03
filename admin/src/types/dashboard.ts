@@ -33,6 +33,7 @@ export interface ModuleGroup {
 export type LotteryNumberType = 'threeDigit' | 'fiveDigit';
 export type DrawMode = 'platform' | 'api' | 'manual';
 export type DrawSourceProvider = 'api68' | 'kjApi';
+export type LotteryCategory = 'regional' | 'overseas' | 'welfare' | 'other';
 
 export type DrawSchedule =
   | { periodic: { intervalSeconds: number } }
@@ -62,6 +63,7 @@ export interface LotteryPlayConfig {
 export interface LotteryKind {
   id: string;
   name: string;
+  category: LotteryCategory;
   numberType: LotteryNumberType;
   drawMode: DrawMode;
   schedule: DrawSchedule;

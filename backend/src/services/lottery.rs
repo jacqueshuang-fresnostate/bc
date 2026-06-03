@@ -9,8 +9,8 @@ use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use crate::{
     domain::{
         lottery::{
-            DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
-            LotteryPlayConfig, PlayCategory,
+            DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategory, LotteryKind,
+            LotteryNumberType, LotteryPlayConfig, PlayCategory,
         },
         play::PlayRuleCode,
     },
@@ -225,7 +225,7 @@ impl PostgresLotteryStore {
 
     async fn list(&self) -> ApiResult<Vec<LotteryKind>> {
         let rows = sqlx::query(
-            "SELECT id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
+            "SELECT id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              FROM lotteries
              ORDER BY id ASC",
         )
@@ -238,7 +238,7 @@ impl PostgresLotteryStore {
 
     async fn get(&self, id: &str) -> ApiResult<LotteryKind> {
         let row = sqlx::query(
-            "SELECT id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
+            "SELECT id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              FROM lotteries
              WHERE id = $1",
         )
@@ -257,14 +257,15 @@ impl PostgresLotteryStore {
 
         let created = sqlx::query(
             "INSERT INTO lotteries (
-                id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
+                id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT (id) DO NOTHING
-             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(&lottery.id)
         .bind(&lottery.name)
+        .bind(enum_value(&lottery.category)?)
         .bind(enum_value(&lottery.number_type)?)
         .bind(enum_value(&lottery.draw_mode)?)
         .bind(json_value(&lottery.schedule)?)
@@ -287,13 +288,14 @@ impl PostgresLotteryStore {
 
         sqlx::query(
             "INSERT INTO lotteries (
-                id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
+                id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT (id) DO NOTHING",
         )
         .bind(&lottery.id)
         .bind(&lottery.name)
+        .bind(enum_value(&lottery.category)?)
         .bind(enum_value(&lottery.number_type)?)
         .bind(enum_value(&lottery.draw_mode)?)
         .bind(json_value(&lottery.schedule)?)
@@ -320,19 +322,21 @@ impl PostgresLotteryStore {
         let updated = sqlx::query(
             "UPDATE lotteries
              SET name = $2,
-                 number_type = $3,
-                 draw_mode = $4,
-                 schedule = $5,
-                 sale_enabled = $6,
-                 group_buy = $7,
-                 play_categories = $8,
-                 play_configs = $9,
+                 category = $3,
+                 number_type = $4,
+                 draw_mode = $5,
+                 schedule = $6,
+                 sale_enabled = $7,
+                 group_buy = $8,
+                 play_categories = $9,
+                 play_configs = $10,
                  updated_at = now()
              WHERE id = $1
-             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .bind(&lottery.name)
+        .bind(enum_value(&lottery.category)?)
         .bind(enum_value(&lottery.number_type)?)
         .bind(enum_value(&lottery.draw_mode)?)
         .bind(json_value(&lottery.schedule)?)
@@ -354,7 +358,7 @@ impl PostgresLotteryStore {
         let deleted = sqlx::query(
             "DELETE FROM lotteries
              WHERE id = $1
-             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -373,7 +377,7 @@ impl PostgresLotteryStore {
              SET sale_enabled = $2,
                  updated_at = now()
              WHERE id = $1
-             RETURNING id, name, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .bind(sale_enabled)
@@ -394,6 +398,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         LotteryKind {
             id: "fc3d".to_string(),
             name: "福彩 3D".to_string(),
+            category: LotteryCategory::Regional,
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode: DrawMode::Api,
             schedule: DrawSchedule::Daily {
@@ -425,6 +430,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         LotteryKind {
             id: "pl3".to_string(),
             name: "排列 3".to_string(),
+            category: LotteryCategory::Regional,
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode: DrawMode::Api,
             schedule: DrawSchedule::Daily {
@@ -456,6 +462,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         LotteryKind {
             id: "au5".to_string(),
             name: "澳洲 5 分彩".to_string(),
+            category: LotteryCategory::Overseas,
             number_type: LotteryNumberType::FiveDigit,
             draw_mode: DrawMode::Api,
             schedule: DrawSchedule::Periodic {
@@ -490,6 +497,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         LotteryKind {
             id: "txffc".to_string(),
             name: "腾讯分分彩".to_string(),
+            category: LotteryCategory::Overseas,
             number_type: LotteryNumberType::FiveDigit,
             draw_mode: DrawMode::Api,
             schedule: DrawSchedule::Periodic {
@@ -524,6 +532,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         LotteryKind {
             id: "ssc60".to_string(),
             name: "60 秒时时彩".to_string(),
+            category: LotteryCategory::Overseas,
             number_type: LotteryNumberType::FiveDigit,
             draw_mode: DrawMode::Platform,
             schedule: DrawSchedule::Periodic {
@@ -558,6 +567,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         LotteryKind {
             id: "manual-test".to_string(),
             name: "指定号码测试彩".to_string(),
+            category: LotteryCategory::Other,
             number_type: LotteryNumberType::FiveDigit,
             draw_mode: DrawMode::Manual,
             schedule: DrawSchedule::Weekly {
@@ -777,6 +787,7 @@ fn group_buy_config() -> GroupBuyConfig {
 fn lottery_from_row(row: sqlx::postgres::PgRow) -> ApiResult<LotteryKind> {
     let number_type = enum_from_string(row.try_get("number_type").map_err(database_error)?)?;
     let draw_mode = enum_from_string(row.try_get("draw_mode").map_err(database_error)?)?;
+    let category = enum_from_string(row.try_get("category").map_err(database_error)?)?;
     let schedule = json_from_value(row.try_get("schedule").map_err(database_error)?)?;
     let group_buy = json_from_value(row.try_get("group_buy").map_err(database_error)?)?;
     let play_categories = json_from_value(row.try_get("play_categories").map_err(database_error)?)?;
@@ -785,6 +796,7 @@ fn lottery_from_row(row: sqlx::postgres::PgRow) -> ApiResult<LotteryKind> {
     normalize_lottery(LotteryKind {
         id: row.try_get("id").map_err(database_error)?,
         name: row.try_get("name").map_err(database_error)?,
+        category,
         number_type,
         draw_mode,
         schedule,

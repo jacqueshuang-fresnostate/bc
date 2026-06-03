@@ -1,5 +1,18 @@
 # TODO
 
+## 2026-06-04 10:30 HKT 彩种分类编辑能力
+
+- 完成任务：增加“彩种分类（地方/海外/福利/其他）”字段，支持后台彩种管理页直接维护彩种分类。
+- 解决问题：之前彩种只有玩法/开奖参数，无法按运营归类或在列表中快速识别同类彩种，造成后台配置与实际分类口径不一致。
+- 技术实现：
+  - 后端 `LotteryKind` 增加 `category` 枚举字段，数据库 `lotteries` 新增 `category` 列，并新增 `lotteries_category_check` 校验约束。
+  - 彩种持久化 SQL（`list/get/create/update/seed`）同步读写 `category` 字段，含迁移与注释。
+  - 期号种子和测试级临时构造彩种补齐分类默认值。
+  - 管理后台 `LotteryKind` 类型增加 `category`，彩种管理页新增分类下拉（地方/海外/福利/其他），列表增加分类展示。
+  - 首次新增和默认表单新增分类默认值为“地方彩种”。
+- 验证记录：对 `backend/src/domain/lottery.rs`、`backend/src/services/lottery.rs`、`admin/src/pages/LotteryManagementPage.tsx`、`admin/src/types/dashboard.ts` 做静态编译检查；后续补充数据库迁移与端到端验证。
+- 后续动作：如需按分类在“开奖控制台/期号列表”添加筛选条件，可复用 `category` 字段继续扩展。
+
 ## 2026-06-03 23:58 HKT 用户接口补齐
 
 - 完成任务：补齐用户相关后端接口链路，支持“用户注册（用户名/邮箱）”“登录（用户名/邮箱）”“绑定邮箱”“修改密码”“忘记密码重置”“查询用户余额”“提现方式（支付宝、微信、银行卡）”完整流程。

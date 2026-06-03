@@ -185,8 +185,8 @@ mod tests {
                 SaveLotteryDrawControlRequest,
             },
             lottery::{
-                DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
-                LotteryPlayConfig, PlayCategory,
+                DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategory, LotteryKind,
+                LotteryNumberType, LotteryPlayConfig, PlayCategory,
             },
             order::CreateOrderRequest,
             play::{PlayRuleCode, PlaySelection},
@@ -427,6 +427,7 @@ mod tests {
         LotteryKind {
             id: "fc3d".to_string(),
             name: "福彩 3D".to_string(),
+            category: LotteryCategory::Regional,
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode,
             schedule: DrawSchedule::Daily {

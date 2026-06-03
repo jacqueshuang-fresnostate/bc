@@ -6,6 +6,15 @@ use crate::domain::play::PlayRuleCode;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum LotteryCategory {
+    Regional,
+    Overseas,
+    Welfare,
+    Other,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum LotteryNumberType {
     ThreeDigit,
     FiveDigit,
@@ -91,6 +100,7 @@ pub struct SaveDrawSourceRequest {
 pub struct LotteryKind {
     pub id: String,
     pub name: String,
+    pub category: LotteryCategory,
     pub number_type: LotteryNumberType,
     pub draw_mode: DrawMode,
     pub schedule: DrawSchedule,

@@ -869,7 +869,10 @@ mod tests {
                 CreateDrawIssueRequest, DrawIssueResultRequest, DrawIssueStatus,
                 SaveLotteryDrawControlRequest,
             },
-            lottery::{DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType},
+            lottery::{
+                DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategory, LotteryKind,
+                LotteryNumberType,
+            },
         },
         services::{
             draw::{DrawRepository, DrawStore},
@@ -1142,6 +1145,7 @@ mod tests {
         LotteryKind {
             id: "fc3d".to_string(),
             name: "福彩 3D".to_string(),
+            category: LotteryCategory::Regional,
             number_type,
             draw_mode,
             schedule: DrawSchedule::Daily {
