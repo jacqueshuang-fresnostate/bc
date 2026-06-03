@@ -38,6 +38,7 @@ const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiDrawSourceLatestIssue {
     pub issue: String,
+    pub draw_time: Option<String>,
 }
 
 #[derive(Clone)]
@@ -687,18 +688,21 @@ pub(crate) fn parse_api68_draw_number(
 
 pub(crate) fn parse_api68_latest_issue(response_body: &str) -> ApiResult<ApiDrawSourceLatestIssue> {
     let result = parse_api68_result(response_body)?;
-    let Some(issue) = result
-        .data
-        .into_iter()
-        .find_map(|draw| api68_issue_value(&draw.pre_draw_issue))
-        .filter(|issue| !issue.trim().is_empty())
-    else {
+    let Some(draw) = result.data.into_iter().find(|draw| {
+        api68_issue_value(&draw.pre_draw_issue).is_some_and(|issue| !issue.trim().is_empty())
+    }) else {
         return Err(ApiError::Internal(
             "api draw source latest issue is missing".to_string(),
         ));
     };
+    let issue = api68_issue_value(&draw.pre_draw_issue)
+        .ok_or_else(|| ApiError::Internal("api draw source latest issue is missing".to_string()))?;
+    let draw_time = draw
+        .pre_draw_time
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
-    Ok(ApiDrawSourceLatestIssue { issue })
+    Ok(ApiDrawSourceLatestIssue { issue, draw_time })
 }
 
 fn parse_api68_result(response_body: &str) -> ApiResult<Api68Result> {
@@ -755,6 +759,8 @@ struct Api68Result {
 struct Api68Draw {
     pre_draw_issue: Value,
     pre_draw_code: String,
+    #[serde(default)]
+    pre_draw_time: Option<String>,
 }
 
 #[cfg(test)]
@@ -821,6 +827,7 @@ mod tests {
         let latest = parse_api68_latest_issue(API68_SAMPLE).expect("latest issue can be parsed");
 
         assert_eq!(latest.issue, "2026143");
+        assert_eq!(latest.draw_time.as_deref(), Some("2026-06-02 21:15:00"));
     }
 
     #[tokio::test]
