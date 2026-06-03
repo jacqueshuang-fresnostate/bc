@@ -29,8 +29,6 @@ pub const API68_AU5_SOURCE_ID: &str = "api68-au5";
 pub const API68_AU5_SOURCE_NAME: &str = "API68 澳洲 5 分彩";
 pub const API68_AU5_LOTTERY_ID: &str = "au5";
 pub const API68_AU5_LOT_CODE: &str = "10010";
-pub const API68_QUANGUOCAI_ENDPOINT_ENV: &str = "API68_QUANGUOCAI_ENDPOINT";
-pub const API68_CQSHICAI_ENDPOINT_ENV: &str = "API68_CQSHICAI_ENDPOINT";
 const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
     "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do";
 const DEFAULT_API68_CQSHICAI_ENDPOINT: &str =
@@ -599,13 +597,11 @@ pub fn platform_draw_source_summaries() -> Vec<DrawSource> {
 }
 
 fn default_api68_quanguocai_endpoint() -> String {
-    std::env::var(API68_QUANGUOCAI_ENDPOINT_ENV)
-        .unwrap_or_else(|_| DEFAULT_API68_QUANGUOCAI_ENDPOINT.to_string())
+    DEFAULT_API68_QUANGUOCAI_ENDPOINT.to_string()
 }
 
 fn default_api68_cqshicai_endpoint() -> String {
-    std::env::var(API68_CQSHICAI_ENDPOINT_ENV)
-        .unwrap_or_else(|_| DEFAULT_API68_CQSHICAI_ENDPOINT.to_string())
+    DEFAULT_API68_CQSHICAI_ENDPOINT.to_string()
 }
 
 fn normalized_endpoint(endpoint: Option<&str>) -> String {

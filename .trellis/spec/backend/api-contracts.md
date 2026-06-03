@@ -701,7 +701,7 @@ await createOrder({
 }
 ```
 
-`endpoint` 可为空；为空时后端使用默认 API68 全国彩 endpoint 或 `API68_QUANGUOCAI_ENDPOINT` 环境变量。澳洲 5 分彩默认来源使用 `https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do`，可通过 `API68_CQSHICAI_ENDPOINT` 覆盖。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
+`endpoint` 可为空；为空时后端写入默认 API68 全国彩 endpoint。福彩 3D/排列 3 默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfoList.do`；澳洲 5 分彩默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do`。后续修改 endpoint 必须通过后台“开奖源配置”或开奖源 API 写入数据库，不通过环境变量覆盖。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
 
 开奖期号响应：
 

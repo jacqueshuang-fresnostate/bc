@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-03 19:02 HKT API68 endpoint 数据库配置修正
+
+- 完成任务：将 API68 全国彩和重庆时时彩 endpoint 从本地 env 配置中移除，并修正后端逻辑为只使用开奖源配置中的 endpoint。
+- 解决问题：`API68_QUANGUOCAI_ENDPOINT` 和 `API68_CQSHICAI_ENDPOINT` 属于开奖源业务配置，不应该通过环境变量覆盖；现在默认 endpoint 写入 `draw_sources`，后续修改需要通过后台“开奖源配置”保存到数据库。
+- 技术说明：保留 API68 默认 seed 值用于空库初始化，数据库已有开奖源时读取数据库中的 `endpoint`；`.env.example` 和本机 `.env.local` 不再包含 API68 endpoint。
+- 后续动作：继续完善开奖源连通性测试、原始响应留痕、endpoint 变更审计和二次确认。
+
 ## 2026-06-03 18:59 HKT Git 提交中文规则
 
 - 完成任务：在 `AGENTS.md` 中新增 Git 提交信息使用中文的项目规则。
