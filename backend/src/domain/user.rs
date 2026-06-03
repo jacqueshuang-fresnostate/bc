@@ -25,6 +25,8 @@ pub struct UserSummary {
     pub status: UserStatus,
     pub balance_minor: i64,
     pub agent_id: Option<String>,
+    #[serde(default)]
+    pub invite_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

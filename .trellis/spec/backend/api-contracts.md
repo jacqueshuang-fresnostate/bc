@@ -1566,7 +1566,8 @@ await fetchDrawSchedulerStatus();
   "kind": "regular",
   "status": "active",
   "balanceMinor": 12000,
-  "agentId": "U90001"
+  "agentId": "U90001",
+  "inviteCodes": []
 }
 ```
 
@@ -1618,7 +1619,9 @@ await fetchDrawSchedulerStatus();
 2. 管理员保存时前端提交 `roleId`；后端根据 `roleId` 查找角色并回填 `roleName`，前端不能靠中文角色名反查。
 3. 角色权限范围使用后端枚举的 `camelCase` 值：`users`、`orders`、`finance`、`customerService`、`admins`、`roles`、`systemSettings`、`lotteries`、`robots`、`rebates`。
 4. 用户余额字段仍是 `balanceMinor` 最小货币单位。本阶段用户摘要余额不强制和财务账户仓储同步。
-5. 本阶段不保存管理员密码，不提供真实登录、JWT、菜单拦截或权限鉴权。
+5. 用户摘要中的 `inviteCodes` 是只读派生字段，由邀请关系按 `inviterUserId` 聚合得出；用户创建或更新请求中的该字段不参与保存。
+6. 用户管理接口只需要 `users` 权限，不允许让用户管理页额外依赖需要 `rebates` 权限的邀请管理接口。
+7. 本阶段不保存管理员密码，不提供真实登录、JWT、菜单拦截或权限鉴权。
 
 ### 4. 校验与错误矩阵
 
@@ -1650,6 +1653,7 @@ await fetchDrawSchedulerStatus();
 ### 6. 必要测试
 
 - 后端需要覆盖创建/更新用户和用户状态变更。
+- 后端需要覆盖邀请码按邀请人聚合，并随用户管理接口返回。
 - 后端需要覆盖角色权限范围为空拒绝保存。
 - 后端需要覆盖已分配角色拒绝删除。
 - 后端需要覆盖角色改名后管理员 `roleName` 同步。

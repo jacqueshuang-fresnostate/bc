@@ -404,13 +404,14 @@ function UserSection({
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] text-left text-sm">
+          <table className="w-full min-w-[960px] text-left text-sm">
             <thead className="border-b border-line text-xs text-slate-500">
               <tr>
                 <th className="py-2 pr-4 font-medium">用户</th>
                 <th className="py-2 pr-4 font-medium">类型</th>
                 <th className="py-2 pr-4 font-medium">余额</th>
                 <th className="py-2 pr-4 font-medium">上级代理</th>
+                <th className="py-2 pr-4 font-medium">邀请码</th>
                 <th className="py-2 pr-4 font-medium">状态</th>
                 <th className="py-2 pr-4 font-medium">操作</th>
               </tr>
@@ -446,6 +447,19 @@ function UserSection({
                   </td>
                   <td className="py-3 pr-4 text-slate-600">
                     {user.agentId ?? '无'}
+                  </td>
+                  <td className="py-3 pr-4">
+                    {user.inviteCodes.length > 0 ? (
+                      <div className="flex max-w-[240px] flex-wrap gap-1">
+                        {user.inviteCodes.map((code) => (
+                          <Tag key={code} color="teal">
+                            {code}
+                          </Tag>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-slate-400">未配置</span>
+                    )}
                   </td>
                   <td className="py-3 pr-4">
                     <Tag color={userStatusColor(user.status)}>
@@ -1129,6 +1143,7 @@ function userPayload(form: UserFormState): UserSummary {
     balanceMinor: numberField(form.balanceMinor),
     email: optionalText(form.email),
     id: form.id.trim(),
+    inviteCodes: [],
     kind: form.kind,
     status: form.status,
     username: form.username.trim(),

@@ -35,6 +35,13 @@ impl InviteRepository {
             .map(|store| store.list())
     }
 
+    pub async fn invite_codes_by_inviter(&self) -> ApiResult<BTreeMap<String, Vec<String>>> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("invite store lock poisoned".to_string()))
+            .map(|store| store.invite_codes_by_inviter())
+    }
+
     pub async fn get(&self, id: &str) -> ApiResult<InviteRecord> {
         self.inner
             .read()
@@ -83,6 +90,18 @@ impl InviteStore {
 
     fn list(&self) -> Vec<InviteRecord> {
         self.records.values().cloned().collect()
+    }
+
+    fn invite_codes_by_inviter(&self) -> BTreeMap<String, Vec<String>> {
+        let mut codes_by_inviter: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for record in self.records.values() {
+            codes_by_inviter
+                .entry(record.inviter_user_id.clone())
+                .or_default()
+                .push(record.invite_code.clone());
+        }
+
+        codes_by_inviter
     }
 
     fn get(&self, id: &str) -> ApiResult<InviteRecord> {
@@ -253,6 +272,7 @@ mod tests {
                 status: UserStatus::Active,
                 balance_minor: 0,
                 agent_id: None,
+                invite_codes: Vec::new(),
             })
             .await
             .expect("test invitee can be created");
@@ -297,6 +317,20 @@ mod tests {
             .expect("invite can be updated");
         assert_eq!(updated.status, InviteStatus::Disabled);
         assert!(!updated.rebate_enabled);
+    }
+
+    #[tokio::test]
+    async fn invite_repository_groups_codes_by_inviter() {
+        let invites = InviteRepository::memory_seeded();
+        let codes_by_inviter = invites
+            .invite_codes_by_inviter()
+            .await
+            .expect("invite code map can load");
+
+        assert_eq!(
+            codes_by_inviter.get("U90001"),
+            Some(&vec!["AGENT10001".to_string(), "AGENT10002".to_string()])
+        );
     }
 
     #[tokio::test]
@@ -377,6 +411,7 @@ mod tests {
                 status: UserStatus::Active,
                 balance_minor: 0,
                 agent_id: None,
+                invite_codes: Vec::new(),
             })
             .await
             .expect("test invitee can be created");

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/api-contracts.md", "reason": "用户管理接口新增 inviteCodes 字段，需要遵守统一 API 信封、camelCase 字段和跨层契约。"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "用户管理表格属于后台列表页，需要保持紧凑可扫描，并沿用 Semi UI 展示状态与标签。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 UserSummary 类型必须与后端响应字段完全一致。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "需求跨越邀请数据、用户 API、前端类型和页面展示，需要明确字段来源与边界。"}

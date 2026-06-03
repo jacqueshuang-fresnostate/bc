@@ -598,6 +598,7 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
         .agent_id
         .map(|agent_id| agent_id.trim().to_string())
         .filter(|agent_id| !agent_id.is_empty());
+    user.invite_codes.clear();
 
     if user.balance_minor < 0 {
         return Err(ApiError::BadRequest(
@@ -683,6 +684,7 @@ fn seed_users() -> Vec<UserSummary> {
             status: UserStatus::Active,
             balance_minor: 12_000,
             agent_id: Some("U90001".to_string()),
+            invite_codes: Vec::new(),
         },
         UserSummary {
             id: "U90001".to_string(),
@@ -692,6 +694,7 @@ fn seed_users() -> Vec<UserSummary> {
             status: UserStatus::Active,
             balance_minor: 520_000,
             agent_id: None,
+            invite_codes: Vec::new(),
         },
         UserSummary {
             id: "U10004".to_string(),
@@ -701,6 +704,7 @@ fn seed_users() -> Vec<UserSummary> {
             status: UserStatus::Suspended,
             balance_minor: 0,
             agent_id: Some("U90001".to_string()),
+            invite_codes: Vec::new(),
         },
     ]
 }
@@ -797,6 +801,7 @@ mod tests {
                 status: UserStatus::Active,
                 balance_minor: 1000,
                 agent_id: None,
+                invite_codes: Vec::new(),
             })
             .await
             .expect("user can be created");
