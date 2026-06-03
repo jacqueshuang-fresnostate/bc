@@ -24,11 +24,28 @@ interface LotteryConsoleItem {
   issueCount: number;
 }
 
+type LotteryConsoleStatusFilter =
+  | 'all'
+  | 'closed'
+  | 'drawn'
+  | 'noCurrent'
+  | 'open'
+  | 'saleDisabled'
+  | 'saleEnabled';
+
+interface LotteryConsoleStatusFilterOption {
+  count: number;
+  key: LotteryConsoleStatusFilter;
+  label: string;
+}
+
 export function LotteryConsolePage({
   onDashboardRefresh,
 }: LotteryConsolePageProps) {
   const { error, issues, loading, lotteries, refresh } = useLotteryConsole();
   const [now, setNow] = useState(() => new Date());
+  const [statusFilter, setStatusFilter] =
+    useState<LotteryConsoleStatusFilter>('all');
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -43,6 +60,14 @@ export function LotteryConsolePage({
   const items = useMemo(
     () => lotteries.map((lottery) => lotteryConsoleItem(lottery, issues)),
     [issues, lotteries],
+  );
+  const statusFilterOptions = useMemo(
+    () => lotteryConsoleStatusFilterOptions(items),
+    [items],
+  );
+  const filteredItems = useMemo(
+    () => items.filter((item) => lotteryConsoleItemMatchesFilter(item, statusFilter)),
+    [items, statusFilter],
   );
 
   const metrics = useMemo(() => {
@@ -132,20 +157,68 @@ export function LotteryConsolePage({
         ))}
       </section>
 
-      {items.length > 0 ? (
+      <LotteryConsoleStatusFilterBar
+        active={statusFilter}
+        filteredCount={filteredItems.length}
+        options={statusFilterOptions}
+        totalCount={items.length}
+        onChange={setStatusFilter}
+      />
+
+      {filteredItems.length > 0 ? (
         <section className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
-          {items.map((item) => (
+          {filteredItems.map((item) => (
             <LotteryConsoleCard key={item.lottery.id} item={item} now={now} />
           ))}
         </section>
       ) : (
         <Card className="rounded-md border border-line">
           <div className="py-8 text-center text-sm text-slate-500">
-            暂无彩种配置。
+            {items.length > 0 ? '当前筛选下暂无彩种。' : '暂无彩种配置。'}
           </div>
         </Card>
       )}
     </div>
+  );
+}
+
+function LotteryConsoleStatusFilterBar({
+  active,
+  filteredCount,
+  onChange,
+  options,
+  totalCount,
+}: {
+  active: LotteryConsoleStatusFilter;
+  filteredCount: number;
+  onChange: (filter: LotteryConsoleStatusFilter) => void;
+  options: LotteryConsoleStatusFilterOption[];
+  totalCount: number;
+}) {
+  return (
+    <Card className="rounded-md border border-line">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-ink">状态筛选</div>
+          <div className="mt-1 text-xs text-slate-500">
+            当前显示 {filteredCount} / {totalCount} 个彩种
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {options.map((option) => (
+            <Button
+              key={option.key}
+              size="small"
+              theme={active === option.key ? 'solid' : 'light'}
+              onClick={() => onChange(option.key)}
+            >
+              {option.label}
+              <span className="ml-1 font-mono text-xs opacity-75">{option.count}</span>
+            </Button>
+          ))}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -273,6 +346,66 @@ function CountdownBlock({
       <div className="mt-2 font-mono text-xl font-semibold text-ink">{value}</div>
     </div>
   );
+}
+
+function lotteryConsoleStatusFilterOptions(
+  items: LotteryConsoleItem[],
+): LotteryConsoleStatusFilterOption[] {
+  return [
+    { count: items.length, key: 'all', label: '全部' },
+    {
+      count: items.filter((item) => item.lottery.saleEnabled).length,
+      key: 'saleEnabled',
+      label: '销售开启',
+    },
+    {
+      count: items.filter((item) => !item.lottery.saleEnabled).length,
+      key: 'saleDisabled',
+      label: '已停售',
+    },
+    {
+      count: items.filter((item) => item.currentIssue?.status === 'open').length,
+      key: 'open',
+      label: '开盘中',
+    },
+    {
+      count: items.filter((item) => item.currentIssue?.status === 'closed').length,
+      key: 'closed',
+      label: '待开奖',
+    },
+    {
+      count: items.filter((item) => item.recentDrawnIssue !== null).length,
+      key: 'drawn',
+      label: '已开奖',
+    },
+    {
+      count: items.filter((item) => item.currentIssue === null).length,
+      key: 'noCurrent',
+      label: '无当前期',
+    },
+  ];
+}
+
+function lotteryConsoleItemMatchesFilter(
+  item: LotteryConsoleItem,
+  filter: LotteryConsoleStatusFilter,
+) {
+  switch (filter) {
+    case 'all':
+      return true;
+    case 'closed':
+      return item.currentIssue?.status === 'closed';
+    case 'drawn':
+      return item.recentDrawnIssue !== null;
+    case 'noCurrent':
+      return item.currentIssue === null;
+    case 'open':
+      return item.currentIssue?.status === 'open';
+    case 'saleDisabled':
+      return !item.lottery.saleEnabled;
+    case 'saleEnabled':
+      return item.lottery.saleEnabled;
+  }
 }
 
 function lotteryConsoleItem(
