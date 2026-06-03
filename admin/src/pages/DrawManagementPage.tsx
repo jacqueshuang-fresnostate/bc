@@ -1,4 +1,4 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Banner, Button, Card, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
 import {
   Activity,
   CalendarPlus,
@@ -23,6 +23,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import { MetricCard } from '../components/MetricCard';
 import { useDrawScheduler } from '../hooks/useDrawScheduler';
 import { useDraws } from '../hooks/useDraws';
 import { useLotteries } from '../hooks/useLotteries';
@@ -51,6 +52,8 @@ import type {
 interface DrawManagementPageProps {
   onDashboardRefresh: () => void;
 }
+
+type DrawManagementSection = 'automation' | 'issues' | 'sources';
 
 interface DrawIssueFormState {
   drawNumber: string;
@@ -110,6 +113,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     saving: schedulerSaving,
     status: schedulerStatus,
   } = useDrawScheduler();
+  const [section, setSection] = useState<DrawManagementSection>('issues');
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [automationNow, setAutomationNow] = useState(() => currentDateTimeLabel());
   const [automationResult, setAutomationResult] =
@@ -124,6 +128,10 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     useState<DrawSourceFormState>(() => emptySourceForm());
   const [schedulerConfigForm, setSchedulerConfigForm] =
     useState<SchedulerConfigFormState>(() => emptySchedulerConfigForm());
+  const [createIssueSheetVisible, setCreateIssueSheetVisible] = useState(false);
+  const [drawIssueSheetVisible, setDrawIssueSheetVisible] = useState(false);
+  const [sourceSheetVisible, setSourceSheetVisible] = useState(false);
+  const [schedulerSheetVisible, setSchedulerSheetVisible] = useState(false);
 
   const selectedLottery = useMemo(
     () => lotteries.find((lottery) => lottery.id === form.lotteryId) ?? lotteries[0] ?? null,
@@ -170,6 +178,18 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     }
   }, [selectedSource, selectedSourceId]);
 
+  useEffect(() => {
+    setCreateIssueSheetVisible(false);
+    setDrawIssueSheetVisible(false);
+    setSourceSheetVisible(false);
+    setSchedulerSheetVisible(false);
+  }, [section]);
+
+  const overview = useMemo(
+    () => drawOverview(issues, drawSources, schedulerStatus),
+    [drawSources, issues, schedulerStatus],
+  );
+
   const refreshAll = () => {
     refreshDraws();
     refreshLotteries();
@@ -188,12 +208,25 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     };
     const created = await create(payload);
     setSelectedIssueId(created.id);
+    setCreateIssueSheetVisible(false);
     onDashboardRefresh();
   };
 
   const startCreateSource = () => {
     setSelectedSourceId(null);
     setSourceForm(emptySourceForm());
+    setSourceSheetVisible(true);
+  };
+
+  const editDrawSourceConfig = (source: DrawSource) => {
+    setSelectedSourceId(source.id);
+    setSourceForm(sourceFormFromSource(source));
+    setSourceSheetVisible(true);
+  };
+
+  const openDrawIssueSheet = (issue: DrawIssue) => {
+    setSelectedIssueId(issue.id);
+    setDrawIssueSheetVisible(true);
   };
 
   const saveDrawSourceConfig = async () => {
@@ -203,6 +236,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
         ? await updateSource(selectedSource.id, payload)
         : await createSource(payload);
     setSelectedSourceId(saved.id);
+    setSourceSheetVisible(false);
     refreshDraws();
     onDashboardRefresh();
   };
@@ -214,6 +248,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     await deleteSource(selectedSource.id);
     setSelectedSourceId(null);
     setSourceForm(emptySourceForm());
+    setSourceSheetVisible(false);
     refreshDraws();
     onDashboardRefresh();
   };
@@ -228,6 +263,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     });
     setGenerationPreview([]);
     setSelectedIssueId(created.id);
+    setCreateIssueSheetVisible(false);
     refreshScheduler();
     onDashboardRefresh();
   };
@@ -267,6 +303,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     if (created[0]) {
       setSelectedIssueId(created[0].id);
     }
+    setCreateIssueSheetVisible(false);
     refreshScheduler();
     onDashboardRefresh();
   };
@@ -285,12 +322,14 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     const drawn = await draw(issue.id, payload);
     setSelectedIssueId(drawn.id);
     setForm((current) => ({ ...current, drawNumber: '' }));
+    setDrawIssueSheetVisible(false);
     onDashboardRefresh();
   };
 
   const cancelIssue = async (issue: DrawIssue) => {
     const cancelled = await cancel(issue.id);
     setSelectedIssueId(cancelled.id);
+    setDrawIssueSheetVisible(false);
     onDashboardRefresh();
   };
 
@@ -307,6 +346,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
 
   const saveSchedulerConfig = async () => {
     await saveSchedulerConfigRequest(schedulerConfigPayload(schedulerConfigForm));
+    setSchedulerSheetVisible(false);
     refreshScheduler();
     onDashboardRefresh();
   };
@@ -333,569 +373,905 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
 
       {error ? <Banner type="danger" title="开奖接口错误" description={error} /> : null}
 
-      <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
-        <div className="grid gap-3 md:grid-cols-2">
-          {drawSources.map((source) => (
-            <Card
-              key={source.id}
-              className={`rounded-md border ${
-                selectedSource?.id === source.id ? 'border-accent' : 'border-line'
-              }`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <button
-                  className="min-w-0 text-left"
-                  type="button"
-                  onClick={() => {
-                    setSelectedSourceId(source.id);
-                    if (source.editable) {
-                      setSourceForm(sourceFormFromSource(source));
-                    }
-                  }}
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          label="期号总数"
+          trend={`${overview.openCount} 个销售中，${overview.closedCount} 个已封盘`}
+          value={`${issues.length}`}
+        />
+        <MetricCard
+          label="待开奖"
+          trend="销售中或已封盘"
+          value={`${overview.pendingCount}`}
+        />
+        <MetricCard
+          label="已开奖"
+          trend={`取消 ${overview.cancelledCount} 期`}
+          value={`${overview.drawnCount}`}
+        />
+        <MetricCard
+          label="开奖源"
+          trend={`${overview.apiSourceCount} 个 API，调度${
+            overview.schedulerEnabled ? '已启用' : '未启用'
+          }`}
+          value={`${drawSources.length}`}
+        />
+      </section>
+
+      <SectionTabs active={section} onChange={setSection} />
+
+      {section === 'issues' ? (
+        <IssueManagementSection
+          issues={issues}
+          loading={loading}
+          saving={saving}
+          selectedIssue={selectedIssue}
+          onCancelIssue={(issue) => void cancelIssue(issue)}
+          onCloseIssue={(issue) => void closeIssue(issue)}
+          onCreateIssue={() => setCreateIssueSheetVisible(true)}
+          onOpenDraw={openDrawIssueSheet}
+          onSelectIssue={setSelectedIssueId}
+        />
+      ) : null}
+
+      {section === 'sources' ? (
+        <SourceManagementSection
+          drawSources={drawSources}
+          lotteries={lotteries}
+          selectedSource={selectedSource}
+          onCreate={startCreateSource}
+          onEdit={editDrawSourceConfig}
+          onSelect={setSelectedSourceId}
+        />
+      ) : null}
+
+      {section === 'automation' ? (
+        <AutomationManagementSection
+          automationNow={automationNow}
+          automationResult={automationResult}
+          saving={saving}
+          schedulerLoading={schedulerLoading}
+          schedulerStatus={schedulerStatus}
+          onAutomationNowChange={setAutomationNow}
+          onConfigureScheduler={() => setSchedulerSheetVisible(true)}
+          onRunAutomation={() => void runDueAutomation()}
+        />
+      ) : null}
+
+      <CreateIssueSideSheet
+        automationNow={automationNow}
+        form={form}
+        generationActionDisabled={generationActionDisabled}
+        generationCount={generationCount}
+        generationCountValue={generationCountValue}
+        generationPreview={generationPreview}
+        lotteries={lotteries}
+        saving={saving}
+        selectedLottery={selectedLottery}
+        visible={createIssueSheetVisible}
+        onAutomationNowChange={setAutomationNow}
+        onClose={() => setCreateIssueSheetVisible(false)}
+        onCreateIssue={() => void createIssue()}
+        onFormChange={setForm}
+        onGenerateBatch={() => void generateIssueBatch()}
+        onGenerateNext={() => void generateNextIssue()}
+        onGenerationCountChange={setGenerationCount}
+        onPreview={() => void previewIssueGeneration()}
+      />
+
+      <DrawIssueSideSheet
+        form={form}
+        issue={selectedIssue}
+        saving={saving}
+        visible={drawIssueSheetVisible}
+        onCancelIssue={(issue) => void cancelIssue(issue)}
+        onClose={() => setDrawIssueSheetVisible(false)}
+        onCloseIssue={(issue) => void closeIssue(issue)}
+        onDrawIssue={(issue) => void drawIssue(issue)}
+        onFormChange={setForm}
+      />
+
+      <DrawSourceSideSheet
+        form={sourceForm}
+        lotteries={lotteries}
+        saving={saving}
+        selectedSource={selectedSource}
+        visible={sourceSheetVisible}
+        onClose={() => setSourceSheetVisible(false)}
+        onDelete={() => void deleteDrawSourceConfig()}
+        onFormChange={setSourceForm}
+        onReset={() => {
+          if (selectedSource?.editable) {
+            setSourceForm(sourceFormFromSource(selectedSource));
+          }
+        }}
+        onSave={() => void saveDrawSourceConfig()}
+      />
+
+      <SchedulerConfigSideSheet
+        form={schedulerConfigForm}
+        saving={schedulerSaving}
+        visible={schedulerSheetVisible}
+        onChange={setSchedulerConfigForm}
+        onClose={() => setSchedulerSheetVisible(false)}
+        onSubmit={() => void saveSchedulerConfig()}
+      />
+    </div>
+  );
+}
+
+const DRAW_MANAGEMENT_SECTIONS: Array<{
+  key: DrawManagementSection;
+  label: string;
+  summary: string;
+}> = [
+  { key: 'issues', label: '期号管理', summary: '创建、封盘、开奖和取消' },
+  { key: 'sources', label: '开奖源配置', summary: 'API 来源和彩种复用' },
+  { key: 'automation', label: '自动任务与调度', summary: '补期、开奖、结算和历史' },
+];
+
+function SectionTabs({
+  active,
+  onChange,
+}: {
+  active: DrawManagementSection;
+  onChange: (section: DrawManagementSection) => void;
+}) {
+  return (
+    <section className="flex flex-wrap gap-2">
+      {DRAW_MANAGEMENT_SECTIONS.map((item) => (
+        <Button
+          key={item.key}
+          theme={active === item.key ? 'solid' : 'light'}
+          onClick={() => onChange(item.key)}
+        >
+          <span className="inline-flex flex-col items-start leading-tight">
+            <span>{item.label}</span>
+            <span className="text-xs opacity-70">{item.summary}</span>
+          </span>
+        </Button>
+      ))}
+    </section>
+  );
+}
+
+function IssueManagementSection({
+  issues,
+  loading,
+  onCancelIssue,
+  onCloseIssue,
+  onCreateIssue,
+  onOpenDraw,
+  onSelectIssue,
+  saving,
+  selectedIssue,
+}: {
+  issues: DrawIssue[];
+  loading: boolean;
+  onCancelIssue: (issue: DrawIssue) => void;
+  onCloseIssue: (issue: DrawIssue) => void;
+  onCreateIssue: () => void;
+  onOpenDraw: (issue: DrawIssue) => void;
+  onSelectIssue: (id: string) => void;
+  saving: boolean;
+  selectedIssue: DrawIssue | null;
+}) {
+  return (
+    <Card className="rounded-md border border-line">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-semibold text-ink">期号列表</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            按期号查看封盘、开奖和取消状态。
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Tag color="cyan">{issues.length} 个期号</Tag>
+          <Button icon={<Plus size={16} />} theme="solid" onClick={onCreateIssue}>
+            创建期号
+          </Button>
+        </div>
+      </div>
+      {loading ? (
+        <div className="grid min-h-[300px] place-items-center">
+          <Spin tip="正在加载期开奖数据" />
+        </div>
+      ) : issues.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] text-left text-sm">
+            <thead className="border-b border-line text-xs text-slate-500">
+              <tr>
+                <th className="py-2 pr-4 font-medium">期号</th>
+                <th className="py-2 pr-4 font-medium">彩种</th>
+                <th className="py-2 pr-4 font-medium">号码类型</th>
+                <th className="py-2 pr-4 font-medium">开奖模式</th>
+                <th className="py-2 pr-4 font-medium">封盘/开奖</th>
+                <th className="py-2 pr-4 font-medium">结果</th>
+                <th className="py-2 pr-4 font-medium">状态</th>
+                <th className="py-2 pr-4 font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {issues.map((issue) => (
+                <tr
+                  key={issue.id}
+                  className={`border-b border-slate-100 ${
+                    selectedIssue?.id === issue.id ? 'bg-teal-50/60' : ''
+                  }`}
                 >
-                  <h2 className="truncate text-base font-semibold text-ink">{source.name}</h2>
-                  <div className="mt-1 text-xs text-slate-400">{source.id}</div>
-                </button>
-                <Tag color={drawModeColor(source.mode)}>{drawModeText(source.mode)}</Tag>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {source.reusableForLotteryIds.map((lotteryId) => (
-                  <Tag key={lotteryId} color="grey">
-                    {lotteryName(lotteryId, lotteries)}
-                  </Tag>
-                ))}
-              </div>
-              {source.provider ? (
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500">
-                  <div>
-                    <span className="text-slate-400">供应商</span>
-                    <div className="mt-1 font-medium text-ink">
-                      {drawSourceProviderText(source.provider)}
+                  <td className="py-3 pr-4">
+                    <button
+                      className="text-left font-semibold text-accent"
+                      type="button"
+                      onClick={() => onSelectIssue(issue.id)}
+                    >
+                      {issue.issue}
+                    </button>
+                    <div className="mt-1 text-xs text-slate-400">{issue.id}</div>
+                  </td>
+                  <td className="py-3 pr-4">
+                    <div className="font-medium text-ink">{issue.lotteryName}</div>
+                    <div className="mt-1 text-xs text-slate-400">{issue.lotteryId}</div>
+                  </td>
+                  <td className="py-3 pr-4 text-slate-600">
+                    {numberTypeText(issue.numberType)}
+                  </td>
+                  <td className="py-3 pr-4">
+                    <Tag color={drawModeColor(issue.drawMode)}>
+                      {drawModeText(issue.drawMode)}
+                    </Tag>
+                  </td>
+                  <td className="py-3 pr-4 text-slate-600">
+                    <div>{issue.saleClosedAt}</div>
+                    <div className="mt-1 text-xs text-slate-400">{issue.scheduledAt}</div>
+                  </td>
+                  <td className="py-3 pr-4">
+                    {issue.drawNumber ? (
+                      <span className="font-mono text-base font-semibold text-ink">
+                        {issue.drawNumber}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">未开奖</span>
+                    )}
+                  </td>
+                  <td className="py-3 pr-4">
+                    <Tag color={statusColor(issue.status)}>{statusText(issue.status)}</Tag>
+                  </td>
+                  <td className="py-3 pr-4">
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        disabled={saving || issue.status !== 'open'}
+                        icon={<Lock size={14} />}
+                        size="small"
+                        onClick={() => onCloseIssue(issue)}
+                      >
+                        封盘
+                      </Button>
+                      <Button
+                        disabled={
+                          saving ||
+                          issue.status === 'drawn' ||
+                          issue.status === 'cancelled'
+                        }
+                        icon={<Play size={14} />}
+                        size="small"
+                        theme={selectedIssue?.id === issue.id ? 'solid' : 'light'}
+                        onClick={() => onOpenDraw(issue)}
+                      >
+                        开奖
+                      </Button>
+                      <Button
+                        disabled={saving || !canCancel(issue.status)}
+                        icon={<XCircle size={14} />}
+                        size="small"
+                        onClick={() => onCancelIssue(issue)}
+                      >
+                        取消
+                      </Button>
                     </div>
-                  </div>
-                  <div>
-                    <span className="text-slate-400">lotCode</span>
-                    <div className="mt-1 font-mono font-medium text-ink">
-                      {source.lotCode ?? '-'}
-                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+          暂无期号，点击“创建期号”新增一期开奖结果期号。
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function SourceManagementSection({
+  drawSources,
+  lotteries,
+  onCreate,
+  onEdit,
+  onSelect,
+  selectedSource,
+}: {
+  drawSources: DrawSource[];
+  lotteries: LotteryKind[];
+  onCreate: () => void;
+  onEdit: (source: DrawSource) => void;
+  onSelect: (id: string) => void;
+  selectedSource: DrawSource | null;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-semibold text-ink">开奖源配置</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            API 源可绑定多个 API 开奖彩种复用。
+          </p>
+        </div>
+        <Button icon={<Plus size={16} />} theme="solid" onClick={onCreate}>
+          新建来源
+        </Button>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+        {drawSources.map((source) => (
+          <Card
+            key={source.id}
+            className={`rounded-md border ${
+              selectedSource?.id === source.id ? 'border-accent' : 'border-line'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <button
+                className="min-w-0 text-left"
+                type="button"
+                onClick={() => onSelect(source.id)}
+              >
+                <h3 className="truncate text-base font-semibold text-ink">{source.name}</h3>
+                <div className="mt-1 text-xs text-slate-400">{source.id}</div>
+              </button>
+              <Tag color={drawModeColor(source.mode)}>{drawModeText(source.mode)}</Tag>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {source.reusableForLotteryIds.map((lotteryId) => (
+                <Tag key={lotteryId} color="grey">
+                  {lotteryName(lotteryId, lotteries)}
+                </Tag>
+              ))}
+            </div>
+            {source.provider ? (
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500">
+                <div>
+                  <span className="text-slate-400">供应商</span>
+                  <div className="mt-1 font-medium text-ink">
+                    {drawSourceProviderText(source.provider)}
                   </div>
                 </div>
-              ) : null}
-            </Card>
-          ))}
-        </div>
-
-        <Card className="rounded-md border border-line">
-          <div className="mb-4 flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-ink">开奖源配置</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                API 源可绑定多个 API 开奖彩种复用。
-              </p>
+                <div>
+                  <span className="text-slate-400">lotCode</span>
+                  <div className="mt-1 font-mono font-medium text-ink">
+                    {source.lotCode ?? '-'}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            <div className="mt-4 flex justify-end">
+              <Button
+                disabled={!source.editable}
+                icon={<Edit3 size={15} />}
+                size="small"
+                onClick={() => onEdit(source)}
+              >
+                {source.editable ? '编辑' : '只读'}
+              </Button>
             </div>
-            <Button icon={<Plus size={15} />} size="small" onClick={startCreateSource}>
-              新建
+          </Card>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AutomationManagementSection({
+  automationNow,
+  automationResult,
+  onAutomationNowChange,
+  onConfigureScheduler,
+  onRunAutomation,
+  saving,
+  schedulerLoading,
+  schedulerStatus,
+}: {
+  automationNow: string;
+  automationResult: DrawAutomationRun | null;
+  onAutomationNowChange: (value: string) => void;
+  onConfigureScheduler: () => void;
+  onRunAutomation: () => void;
+  saving: boolean;
+  schedulerLoading: boolean;
+  schedulerStatus: DrawSchedulerStatus | null;
+}) {
+  return (
+    <section className="grid gap-4 xl:grid-cols-[420px_1fr]">
+      <Card className="rounded-md border border-line">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-ink">自动任务</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              按时间执行封盘、开奖、结算和派奖入账。
+            </p>
+          </div>
+          <Tag color="blue">执行器</Tag>
+        </div>
+        <div className="space-y-4">
+          <Field label="执行时间">
+            <input
+              className="form-input"
+              value={automationNow}
+              onChange={(event) => onAutomationNowChange(event.target.value)}
+            />
+          </Field>
+          <Button
+            disabled={saving || !automationNow.trim()}
+            icon={<Clock3 size={16} />}
+            theme="solid"
+            onClick={onRunAutomation}
+          >
+            {saving ? '处理中' : '运行自动任务'}
+          </Button>
+          {automationResult ? <AutomationResultSummary run={automationResult} /> : null}
+        </div>
+      </Card>
+
+      <Card className="rounded-md border border-line">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Activity size={17} className="text-accent" />
+              <h2 className="text-base font-semibold text-ink">常驻调度</h2>
+            </div>
+            <p className="mt-1 text-sm text-slate-500">
+              服务启动后按配置自动补期并执行到期任务。
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            {schedulerStatus ? (
+              <Tag color={schedulerStatus.enabled ? 'green' : 'grey'}>
+                {schedulerStatus.enabled ? '已启用' : '未启用'}
+              </Tag>
+            ) : null}
+            <Button
+              icon={<Save size={15} />}
+              size="small"
+              onClick={onConfigureScheduler}
+            >
+              配置
             </Button>
           </div>
+        </div>
+        <SchedulerStatusSummary loading={schedulerLoading} status={schedulerStatus} />
+      </Card>
+    </section>
+  );
+}
 
-          <form
-            className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-            }}
+function CreateIssueSideSheet({
+  automationNow,
+  form,
+  generationActionDisabled,
+  generationCount,
+  generationCountValue,
+  generationPreview,
+  lotteries,
+  onAutomationNowChange,
+  onClose,
+  onCreateIssue,
+  onFormChange,
+  onGenerateBatch,
+  onGenerateNext,
+  onGenerationCountChange,
+  onPreview,
+  saving,
+  selectedLottery,
+  visible,
+}: {
+  automationNow: string;
+  form: DrawIssueFormState;
+  generationActionDisabled: boolean;
+  generationCount: string;
+  generationCountValue: number | null;
+  generationPreview: DrawIssueGenerationPreview[];
+  lotteries: LotteryKind[];
+  onAutomationNowChange: (value: string) => void;
+  onClose: () => void;
+  onCreateIssue: () => void;
+  onFormChange: Dispatch<SetStateAction<DrawIssueFormState>>;
+  onGenerateBatch: () => void;
+  onGenerateNext: () => void;
+  onGenerationCountChange: (value: string) => void;
+  onPreview: () => void;
+  saving: boolean;
+  selectedLottery: LotteryKind | null;
+  visible: boolean;
+}) {
+  return (
+    <SideSheet
+      aria-label="创建期号"
+      title="创建期号"
+      visible={visible}
+      width={560}
+      onCancel={onClose}
+    >
+      <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
+        <Field label="彩种">
+          <select
+            className="form-input"
+            value={selectedLottery?.id ?? ''}
+            onChange={(event) =>
+              onFormChange((current) => ({
+                ...current,
+                lotteryId: event.target.value,
+              }))
+            }
           >
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-              <Field label="来源 ID">
-                <input
-                  className="form-input font-mono"
-                  disabled={Boolean(selectedSource?.editable)}
-                  value={sourceForm.id}
-                  onChange={(event) =>
-                    setSourceFormValue(setSourceForm, 'id', event.target.value)
-                  }
-                />
-              </Field>
-              <Field label="来源名称">
-                <input
-                  className="form-input"
-                  value={sourceForm.name}
-                  onChange={(event) =>
-                    setSourceFormValue(setSourceForm, 'name', event.target.value)
-                  }
-                />
-              </Field>
-            </div>
+            {lotteries.map((lottery) => (
+              <option key={lottery.id} value={lottery.id}>
+                {lottery.name}（{drawModeText(lottery.drawMode)}）
+              </option>
+            ))}
+          </select>
+        </Field>
 
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-              <Field label="供应商">
-                <select
-                  className="form-input"
-                  value={sourceForm.provider}
-                  onChange={(event) =>
-                    setSourceFormValue(
-                      setSourceForm,
-                      'provider',
-                      event.target.value as DrawSourceProvider,
-                    )
-                  }
-                >
-                  <option value="api68">API68 全国彩</option>
-                </select>
-              </Field>
-              <Field label="lotCode">
-                <input
-                  className="form-input font-mono"
-                  value={sourceForm.lotCode}
-                  onChange={(event) =>
-                    setSourceFormValue(setSourceForm, 'lotCode', event.target.value)
-                  }
-                />
-              </Field>
-            </div>
+        <Field label="期号">
+          <input
+            className="form-input"
+            value={form.issue}
+            onChange={(event) => setFormValue(onFormChange, 'issue', event.target.value)}
+          />
+        </Field>
 
-            <Field label="endpoint">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="封盘时间">
+            <input
+              className="form-input"
+              value={form.saleClosedAt}
+              onChange={(event) =>
+                setFormValue(onFormChange, 'saleClosedAt', event.target.value)
+              }
+            />
+          </Field>
+          <Field label="开奖时间">
+            <input
+              className="form-input"
+              value={form.scheduledAt}
+              onChange={(event) =>
+                setFormValue(onFormChange, 'scheduledAt', event.target.value)
+              }
+            />
+          </Field>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="计划基准时间">
+            <input
+              className="form-input"
+              value={automationNow}
+              onChange={(event) => onAutomationNowChange(event.target.value)}
+            />
+          </Field>
+          <Field label="预生成数量">
+            <input
+              className="form-input"
+              max={50}
+              min={1}
+              type="number"
+              value={generationCount}
+              onChange={(event) => onGenerationCountChange(event.target.value)}
+            />
+            {!generationCountValue ? (
+              <span className="mt-1 block text-xs text-amber-600">
+                数量需要在 1 到 50 之间。
+              </span>
+            ) : null}
+          </Field>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            disabled={!selectedLottery || saving}
+            icon={<Plus size={16} />}
+            theme="solid"
+            onClick={onCreateIssue}
+          >
+            {saving ? '处理中' : '创建期号'}
+          </Button>
+          <Button
+            disabled={!selectedLottery || saving || !automationNow.trim()}
+            icon={<CalendarPlus size={16} />}
+            onClick={onGenerateNext}
+          >
+            按计划生成下一期
+          </Button>
+          <Button
+            disabled={generationActionDisabled}
+            icon={<Search size={16} />}
+            onClick={onPreview}
+          >
+            预览计划
+          </Button>
+          <Button
+            disabled={generationActionDisabled}
+            icon={<ListPlus size={16} />}
+            onClick={onGenerateBatch}
+          >
+            批量生成
+          </Button>
+        </div>
+
+        {generationPreview.length > 0 ? (
+          <GenerationPreviewList plans={generationPreview} />
+        ) : null}
+      </form>
+    </SideSheet>
+  );
+}
+
+function DrawIssueSideSheet({
+  form,
+  issue,
+  onCancelIssue,
+  onClose,
+  onCloseIssue,
+  onDrawIssue,
+  onFormChange,
+  saving,
+  visible,
+}: {
+  form: DrawIssueFormState;
+  issue: DrawIssue | null;
+  onCancelIssue: (issue: DrawIssue) => void;
+  onClose: () => void;
+  onCloseIssue: (issue: DrawIssue) => void;
+  onDrawIssue: (issue: DrawIssue) => void;
+  onFormChange: Dispatch<SetStateAction<DrawIssueFormState>>;
+  saving: boolean;
+  visible: boolean;
+}) {
+  return (
+    <SideSheet
+      aria-label="执行开奖"
+      title="执行开奖"
+      visible={visible}
+      width={520}
+      onCancel={onClose}
+    >
+      {issue ? (
+        <div className="space-y-4">
+          <IssueSummary issue={issue} />
+
+          {issue.drawMode === 'manual' ? (
+            <Field label={`开奖号码（${numberTypeText(issue.numberType)}）`}>
               <input
-                className="form-input"
-                value={sourceForm.endpoint}
+                className="form-input font-mono"
+                maxLength={issue.numberType === 'threeDigit' ? 5 : 9}
+                placeholder={issue.numberType === 'threeDigit' ? '2,4,7' : '7,8,9,4,2'}
+                value={form.drawNumber}
                 onChange={(event) =>
-                  setSourceFormValue(setSourceForm, 'endpoint', event.target.value)
+                  setFormValue(onFormChange, 'drawNumber', event.target.value)
                 }
               />
             </Field>
-
-            <Field label="复用彩种">
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-                {lotteries
-                  .filter((lottery) => lottery.drawMode === 'api')
-                  .map((lottery) => (
-                    <label
-                      key={lottery.id}
-                      className="flex min-h-10 items-center gap-2 rounded border border-line px-3 py-2 text-sm text-slate-700"
-                    >
-                      <input
-                        checked={sourceForm.reusableForLotteryIds.includes(lottery.id)}
-                        className="h-4 w-4 rounded border-line text-teal-600"
-                        type="checkbox"
-                        onChange={() => toggleSourceLottery(setSourceForm, lottery.id)}
-                      />
-                      <span className="min-w-0 truncate">{lottery.name}</span>
-                      <span className="font-mono text-xs text-slate-400">{lottery.id}</span>
-                    </label>
-                  ))}
-              </div>
-            </Field>
-
-            <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={saving}
-                icon={<Save size={15} />}
-                loading={saving}
-                theme="solid"
-                onClick={() => void saveDrawSourceConfig()}
-              >
-                保存来源
-              </Button>
-              {selectedSource?.editable ? (
-                <>
-                  <Button
-                    disabled={saving}
-                    icon={<Edit3 size={15} />}
-                    onClick={() => setSourceForm(sourceFormFromSource(selectedSource))}
-                  >
-                    还原
-                  </Button>
-                  <Button
-                    disabled={saving}
-                    icon={<Trash2 size={15} />}
-                    onClick={() => void deleteDrawSourceConfig()}
-                  >
-                    删除
-                  </Button>
-                </>
-              ) : null}
-            </div>
-          </form>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
-        <Card className="rounded-md border border-line">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">期号列表</h2>
-            <Tag color="cyan">{issues.length} 个期号</Tag>
-          </div>
-          {loading ? (
-            <div className="grid min-h-[300px] place-items-center">
-              <Spin tip="正在加载期开奖数据" />
-            </div>
-          ) : issues.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[980px] text-left text-sm">
-                <thead className="border-b border-line text-xs text-slate-500">
-                  <tr>
-                    <th className="py-2 pr-4 font-medium">期号</th>
-                    <th className="py-2 pr-4 font-medium">彩种</th>
-                    <th className="py-2 pr-4 font-medium">号码类型</th>
-                    <th className="py-2 pr-4 font-medium">开奖模式</th>
-                    <th className="py-2 pr-4 font-medium">封盘/开奖</th>
-                    <th className="py-2 pr-4 font-medium">结果</th>
-                    <th className="py-2 pr-4 font-medium">状态</th>
-                    <th className="py-2 pr-4 font-medium">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {issues.map((issue) => (
-                    <tr
-                      key={issue.id}
-                      className={`border-b border-slate-100 ${
-                        selectedIssue?.id === issue.id ? 'bg-teal-50/60' : ''
-                      }`}
-                    >
-                      <td className="py-3 pr-4">
-                        <button
-                          className="text-left font-semibold text-accent"
-                          type="button"
-                          onClick={() => setSelectedIssueId(issue.id)}
-                        >
-                          {issue.issue}
-                        </button>
-                        <div className="mt-1 text-xs text-slate-400">{issue.id}</div>
-                      </td>
-                      <td className="py-3 pr-4">
-                        <div className="font-medium text-ink">{issue.lotteryName}</div>
-                        <div className="mt-1 text-xs text-slate-400">{issue.lotteryId}</div>
-                      </td>
-                      <td className="py-3 pr-4 text-slate-600">
-                        {numberTypeText(issue.numberType)}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <Tag color={drawModeColor(issue.drawMode)}>
-                          {drawModeText(issue.drawMode)}
-                        </Tag>
-                      </td>
-                      <td className="py-3 pr-4 text-slate-600">
-                        <div>{issue.saleClosedAt}</div>
-                        <div className="mt-1 text-xs text-slate-400">{issue.scheduledAt}</div>
-                      </td>
-                      <td className="py-3 pr-4">
-                        {issue.drawNumber ? (
-                          <span className="font-mono text-base font-semibold text-ink">
-                            {issue.drawNumber}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">未开奖</span>
-                        )}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <Tag color={statusColor(issue.status)}>
-                          {statusText(issue.status)}
-                        </Tag>
-                      </td>
-                      <td className="py-3 pr-4">
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            disabled={saving || issue.status !== 'open'}
-                            icon={<Lock size={14} />}
-                            size="small"
-                            onClick={() => void closeIssue(issue)}
-                          >
-                            封盘
-                          </Button>
-                          <Button
-                            disabled={
-                              saving ||
-                              issue.status === 'drawn' ||
-                              issue.status === 'cancelled'
-                            }
-                            icon={<Play size={14} />}
-                            size="small"
-                            theme={selectedIssue?.id === issue.id ? 'solid' : 'light'}
-                            onClick={() => setSelectedIssueId(issue.id)}
-                          >
-                            开奖
-                          </Button>
-                          <Button
-                            disabled={saving || !canCancel(issue.status)}
-                            icon={<XCircle size={14} />}
-                            size="small"
-                            onClick={() => void cancelIssue(issue)}
-                          >
-                            取消
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           ) : (
-            <div className="rounded-md border border-line p-4 text-sm text-slate-500">
-              暂无期号，先在右侧创建一期开奖结果期号。
+            <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
+              当前期号将使用{drawModeText(issue.drawMode)}
+              {issue.drawMode === 'api'
+                ? '按开奖源配置拉取开奖号码。'
+                : '生成开奖号码。'}
             </div>
           )}
-        </Card>
 
-        <div className="space-y-4">
-          <Card className="rounded-md border border-line">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Activity size={17} className="text-accent" />
-                  <h2 className="text-base font-semibold text-ink">常驻调度</h2>
-                </div>
-                <p className="mt-1 text-sm text-slate-500">
-                  服务启动后按配置自动补期并执行到期任务。
-                </p>
-              </div>
-              {schedulerStatus ? (
-                <Tag color={schedulerStatus.enabled ? 'green' : 'grey'}>
-                  {schedulerStatus.enabled ? '已启用' : '未启用'}
-                </Tag>
-              ) : null}
-            </div>
-
-            <SchedulerStatusSummary loading={schedulerLoading} status={schedulerStatus} />
-
-            <SchedulerConfigForm
-              form={schedulerConfigForm}
-              saving={schedulerSaving}
-              onChange={setSchedulerConfigForm}
-              onSubmit={() => void saveSchedulerConfig()}
-            />
-          </Card>
-
-          <Card className="rounded-md border border-line">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-ink">自动任务</h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  按时间执行封盘、开奖、结算和派奖入账。
-                </p>
-              </div>
-              <Tag color="blue">执行器</Tag>
-            </div>
-
-            <div className="space-y-4">
-              <Field label="执行时间">
-                <input
-                  className="form-input"
-                  value={automationNow}
-                  onChange={(event) => setAutomationNow(event.target.value)}
-                />
-              </Field>
-
-              <Button
-                disabled={saving || !automationNow.trim()}
-                icon={<Clock3 size={16} />}
-                theme="solid"
-                onClick={() => void runDueAutomation()}
-              >
-                {saving ? '处理中' : '运行自动任务'}
-              </Button>
-
-              {automationResult ? (
-                <AutomationResultSummary run={automationResult} />
-              ) : null}
-            </div>
-          </Card>
-
-          <Card className="rounded-md border border-line">
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-ink">创建期号</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                创建后可在列表中封盘、开奖或取消。
-              </p>
-            </div>
-
-            <form
-              className="space-y-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-              }}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={saving || issue.status !== 'open'}
+              icon={<Lock size={14} />}
+              onClick={() => onCloseIssue(issue)}
             >
-              <Field label="彩种">
-                <select
-                  className="form-input"
-                  value={selectedLottery?.id ?? ''}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      lotteryId: event.target.value,
-                    }))
-                  }
-                >
-                  {lotteries.map((lottery) => (
-                    <option key={lottery.id} value={lottery.id}>
-                      {lottery.name}（{drawModeText(lottery.drawMode)}）
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="期号">
-                <input
-                  className="form-input"
-                  value={form.issue}
-                  onChange={(event) => setFormValue(setForm, 'issue', event.target.value)}
-                />
-              </Field>
-
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                <Field label="封盘时间">
-                  <input
-                    className="form-input"
-                    value={form.saleClosedAt}
-                    onChange={(event) =>
-                      setFormValue(setForm, 'saleClosedAt', event.target.value)
-                    }
-                  />
-                </Field>
-                <Field label="开奖时间">
-                  <input
-                    className="form-input"
-                    value={form.scheduledAt}
-                    onChange={(event) =>
-                      setFormValue(setForm, 'scheduledAt', event.target.value)
-                    }
-                  />
-                </Field>
-              </div>
-
-              <Field label="预生成数量">
-                <input
-                  className="form-input"
-                  max={50}
-                  min={1}
-                  type="number"
-                  value={generationCount}
-                  onChange={(event) => setGenerationCount(event.target.value)}
-                />
-                {!generationCountValue ? (
-                  <span className="mt-1 block text-xs text-amber-600">
-                    数量需要在 1 到 50 之间。
-                  </span>
-                ) : null}
-              </Field>
-
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  disabled={!selectedLottery || saving}
-                  icon={<Plus size={16} />}
-                  theme="solid"
-                  onClick={() => void createIssue()}
-                >
-                  {saving ? '处理中' : '创建期号'}
-                </Button>
-                <Button
-                  disabled={!selectedLottery || saving || !automationNow.trim()}
-                  icon={<CalendarPlus size={16} />}
-                  onClick={() => void generateNextIssue()}
-                >
-                  按计划生成下一期
-                </Button>
-                <Button
-                  disabled={generationActionDisabled}
-                  icon={<Search size={16} />}
-                  onClick={() => void previewIssueGeneration()}
-                >
-                  预览计划
-                </Button>
-                <Button
-                  disabled={generationActionDisabled}
-                  icon={<ListPlus size={16} />}
-                  onClick={() => void generateIssueBatch()}
-                >
-                  批量生成
-                </Button>
-              </div>
-
-              {generationPreview.length > 0 ? (
-                <GenerationPreviewList plans={generationPreview} />
-              ) : null}
-            </form>
-          </Card>
-
-          <Card className="rounded-md border border-line">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-ink">执行开奖</h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  手动开奖需要录入号码，平台/API 开奖由后端生成。
-                </p>
-              </div>
-              {selectedIssue ? (
-                <Tag color={statusColor(selectedIssue.status)}>
-                  {statusText(selectedIssue.status)}
-                </Tag>
-              ) : null}
-            </div>
-
-            {selectedIssue ? (
-              <div className="space-y-4">
-                <IssueSummary issue={selectedIssue} />
-
-                {selectedIssue.drawMode === 'manual' ? (
-                  <Field label={`开奖号码（${numberTypeText(selectedIssue.numberType)}）`}>
-                    <input
-                      className="form-input font-mono"
-                      maxLength={selectedIssue.numberType === 'threeDigit' ? 5 : 9}
-                      placeholder={
-                        selectedIssue.numberType === 'threeDigit' ? '2,4,7' : '7,8,9,4,2'
-                      }
-                      value={form.drawNumber}
-                      onChange={(event) =>
-                        setFormValue(setForm, 'drawNumber', event.target.value)
-                      }
-                    />
-                  </Field>
-                ) : (
-                  <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
-                    当前期号将使用{drawModeText(selectedIssue.drawMode)}
-                    {selectedIssue.drawMode === 'api'
-                      ? '按开奖源配置拉取开奖号码。'
-                      : '生成开奖号码。'}
-                  </div>
-                )}
-
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    disabled={saving || selectedIssue.status !== 'open'}
-                    icon={<Lock size={14} />}
-                    onClick={() => void closeIssue(selectedIssue)}
-                  >
-                    封盘
-                  </Button>
-                  <Button
-                    disabled={
-                      saving ||
-                      selectedIssue.status === 'drawn' ||
-                      selectedIssue.status === 'cancelled'
-                    }
-                    icon={<Play size={14} />}
-                    theme="solid"
-                    onClick={() => void drawIssue(selectedIssue)}
-                  >
-                    开奖
-                  </Button>
-                  <Button
-                    disabled={saving || !canCancel(selectedIssue.status)}
-                    icon={<XCircle size={14} />}
-                    onClick={() => void cancelIssue(selectedIssue)}
-                  >
-                    取消
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-md border border-line p-4 text-sm text-slate-500">
-                暂无可操作期号。
-              </div>
-            )}
-          </Card>
+              封盘
+            </Button>
+            <Button
+              disabled={saving || issue.status === 'drawn' || issue.status === 'cancelled'}
+              icon={<Play size={14} />}
+              theme="solid"
+              onClick={() => onDrawIssue(issue)}
+            >
+              开奖
+            </Button>
+            <Button
+              disabled={saving || !canCancel(issue.status)}
+              icon={<XCircle size={14} />}
+              onClick={() => onCancelIssue(issue)}
+            >
+              取消
+            </Button>
+          </div>
         </div>
-      </section>
-    </div>
+      ) : (
+        <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+          暂无可操作期号。
+        </div>
+      )}
+    </SideSheet>
+  );
+}
+
+function DrawSourceSideSheet({
+  form,
+  lotteries,
+  onClose,
+  onDelete,
+  onFormChange,
+  onReset,
+  onSave,
+  saving,
+  selectedSource,
+  visible,
+}: {
+  form: DrawSourceFormState;
+  lotteries: LotteryKind[];
+  onClose: () => void;
+  onDelete: () => void;
+  onFormChange: Dispatch<SetStateAction<DrawSourceFormState>>;
+  onReset: () => void;
+  onSave: () => void;
+  saving: boolean;
+  selectedSource: DrawSource | null;
+  visible: boolean;
+}) {
+  return (
+    <SideSheet
+      aria-label="开奖源维护"
+      title={selectedSource?.editable ? '编辑开奖源' : '新建开奖源'}
+      visible={visible}
+      width={560}
+      onCancel={onClose}
+    >
+      <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="来源 ID">
+            <input
+              className="form-input font-mono"
+              disabled={Boolean(selectedSource?.editable)}
+              value={form.id}
+              onChange={(event) =>
+                setSourceFormValue(onFormChange, 'id', event.target.value)
+              }
+            />
+          </Field>
+          <Field label="来源名称">
+            <input
+              className="form-input"
+              value={form.name}
+              onChange={(event) =>
+                setSourceFormValue(onFormChange, 'name', event.target.value)
+              }
+            />
+          </Field>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="供应商">
+            <select
+              className="form-input"
+              value={form.provider}
+              onChange={(event) =>
+                setSourceFormValue(
+                  onFormChange,
+                  'provider',
+                  event.target.value as DrawSourceProvider,
+                )
+              }
+            >
+              <option value="api68">API68 全国彩</option>
+            </select>
+          </Field>
+          <Field label="lotCode">
+            <input
+              className="form-input font-mono"
+              value={form.lotCode}
+              onChange={(event) =>
+                setSourceFormValue(onFormChange, 'lotCode', event.target.value)
+              }
+            />
+          </Field>
+        </div>
+
+        <Field label="endpoint">
+          <input
+            className="form-input"
+            value={form.endpoint}
+            onChange={(event) =>
+              setSourceFormValue(onFormChange, 'endpoint', event.target.value)
+            }
+          />
+        </Field>
+
+        <Field label="复用彩种">
+          <div className="grid gap-2 sm:grid-cols-2">
+            {lotteries
+              .filter((lottery) => lottery.drawMode === 'api')
+              .map((lottery) => (
+                <label
+                  key={lottery.id}
+                  className="flex min-h-10 items-center gap-2 rounded border border-line px-3 py-2 text-sm text-slate-700"
+                >
+                  <input
+                    checked={form.reusableForLotteryIds.includes(lottery.id)}
+                    className="h-4 w-4 rounded border-line text-teal-600"
+                    type="checkbox"
+                    onChange={() => toggleSourceLottery(onFormChange, lottery.id)}
+                  />
+                  <span className="min-w-0 truncate">{lottery.name}</span>
+                  <span className="font-mono text-xs text-slate-400">{lottery.id}</span>
+                </label>
+              ))}
+          </div>
+        </Field>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            disabled={saving}
+            icon={<Save size={15} />}
+            loading={saving}
+            theme="solid"
+            onClick={onSave}
+          >
+            保存来源
+          </Button>
+          {selectedSource?.editable ? (
+            <>
+              <Button disabled={saving} icon={<Edit3 size={15} />} onClick={onReset}>
+                还原
+              </Button>
+              <Button disabled={saving} icon={<Trash2 size={15} />} onClick={onDelete}>
+                删除
+              </Button>
+            </>
+          ) : null}
+        </div>
+      </form>
+    </SideSheet>
+  );
+}
+
+function SchedulerConfigSideSheet({
+  form,
+  onChange,
+  onClose,
+  onSubmit,
+  saving,
+  visible,
+}: {
+  form: SchedulerConfigFormState;
+  onChange: Dispatch<SetStateAction<SchedulerConfigFormState>>;
+  onClose: () => void;
+  onSubmit: () => void;
+  saving: boolean;
+  visible: boolean;
+}) {
+  return (
+    <SideSheet
+      aria-label="调度配置"
+      title="调度配置"
+      visible={visible}
+      width={520}
+      onCancel={onClose}
+    >
+      <SchedulerConfigForm
+        form={form}
+        saving={saving}
+        onChange={onChange}
+        onSubmit={onSubmit}
+      />
+    </SideSheet>
   );
 }
 
@@ -1223,13 +1599,38 @@ function ResultMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function drawOverview(
+  issues: DrawIssue[],
+  drawSources: DrawSource[],
+  schedulerStatus: DrawSchedulerStatus | null,
+) {
+  const openCount = issues.filter((issue) => issue.status === 'open').length;
+  const closedCount = issues.filter((issue) => issue.status === 'closed').length;
+  const drawnCount = issues.filter((issue) => issue.status === 'drawn').length;
+  const cancelledCount = issues.filter((issue) => issue.status === 'cancelled').length;
+  const apiSourceCount = drawSources.filter((source) => source.mode === 'api').length;
+
+  return {
+    apiSourceCount,
+    cancelledCount,
+    closedCount,
+    drawnCount,
+    openCount,
+    pendingCount: openCount + closedCount,
+    schedulerEnabled: schedulerStatus?.enabled ?? false,
+  };
+}
+
 function emptyForm(): DrawIssueFormState {
+  const scheduledAt = new Date(Date.now() + 60 * 60 * 1000);
+  const saleClosedAt = new Date(scheduledAt.getTime() - 30 * 1000);
+
   return {
     drawNumber: '',
-    issue: '20260602001',
+    issue: '',
     lotteryId: '',
-    saleClosedAt: '2026-06-02 20:59:45',
-    scheduledAt: '2026-06-02 21:00:15',
+    saleClosedAt: currentDateTimeLabel(saleClosedAt),
+    scheduledAt: currentDateTimeLabel(scheduledAt),
   };
 }
 
@@ -1295,13 +1696,12 @@ function schedulerConfigPayload(
   };
 }
 
-function currentDateTimeLabel() {
-  const now = new Date();
+function currentDateTimeLabel(value = new Date()) {
   const pad = (value: number) => value.toString().padStart(2, '0');
 
   return [
-    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
-    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`,
+    `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`,
+    `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`,
   ].join(' ');
 }
 
