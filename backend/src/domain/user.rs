@@ -1,3 +1,5 @@
+//! 用户与管理员领域模型，定义状态、查询和编辑参数
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -52,6 +54,7 @@ pub struct AdminSaveRequest {
 }
 
 impl AdminSaveRequest {
+    /// 生成当前实体对象的汇总信息。
     pub fn summary(&self) -> AdminSummary {
         AdminSummary {
             id: self.id.clone(),

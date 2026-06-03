@@ -1,8 +1,11 @@
+//! 提供服务健康检查路由，供运维与联调探测服务状态
+
 use axum::{routing::get, Json, Router};
 use serde::Serialize;
 
 use crate::{app::AppState, error::ApiResult, response::ApiEnvelope};
 
+/// 组装并返回当前模块对应的路由树。
 pub fn router() -> Router<AppState> {
     Router::new().route("/health", get(health))
 }

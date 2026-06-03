@@ -1,3 +1,5 @@
+//! HTTP 服务主入口，加载环境变量并启动 Axum 应用
+
 mod app;
 mod domain;
 mod error;
@@ -36,6 +38,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
+/// 处理 load_local_env_files 的具体内部流程。
 fn load_local_env_files() -> Result<Vec<PathBuf>, Box<dyn Error + Send + Sync>> {
     let current_dir = std::env::current_dir()?;
     let original_env_keys = std::env::vars()
@@ -61,6 +64,7 @@ fn load_local_env_files() -> Result<Vec<PathBuf>, Box<dyn Error + Send + Sync>> 
     Ok(loaded_files)
 }
 
+/// 处理 local_env_file_candidates 的具体内部流程。
 fn local_env_file_candidates(current_dir: &Path) -> Vec<PathBuf> {
     let project_root = if current_dir
         .file_name()
@@ -90,6 +94,7 @@ mod tests {
     use super::local_env_file_candidates;
 
     #[test]
+    /// 处理 env_file_candidates_include_project_and_backend_files 的具体内部流程。
     fn env_file_candidates_include_project_and_backend_files() {
         let candidates = local_env_file_candidates(Path::new("/workspace/bc"));
 
@@ -105,6 +110,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 env_file_candidates_work_when_started_from_backend_directory 的具体内部流程。
     fn env_file_candidates_work_when_started_from_backend_directory() {
         let candidates = local_env_file_candidates(Path::new("/workspace/bc/backend"));
 

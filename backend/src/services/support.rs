@@ -1,3 +1,5 @@
+//! 在线客服领域模型，定义会话、消息、优先级与状态
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, RwLock},
@@ -28,6 +30,7 @@ pub struct SupportRepository {
 }
 
 impl SupportRepository {
+    /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(SupportStore::seeded())),
@@ -35,6 +38,7 @@ impl SupportRepository {
         }
     }
 
+    /// 从数据库加载历史数据并初始化持久化仓储。
     pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
         let store = load_support_store(&persistence).await?;
         Ok(Self {
@@ -43,6 +47,7 @@ impl SupportRepository {
         })
     }
 
+    /// 返回完整列表。
     pub async fn list(&self) -> ApiResult<Vec<SupportConversation>> {
         self.inner
             .read()
@@ -50,6 +55,7 @@ impl SupportRepository {
             .map(|store| store.list())
     }
 
+    /// 按 ID 查询单条记录。
     pub async fn get(&self, id: &str) -> ApiResult<SupportConversation> {
         self.inner
             .read()
@@ -57,6 +63,7 @@ impl SupportRepository {
             .get(id)
     }
 
+    /// 校验入参并创建一条新记录。
     pub async fn create(
         &self,
         request: CreateSupportConversationRequest,
@@ -74,6 +81,7 @@ impl SupportRepository {
         Ok(result)
     }
 
+    /// 更新现有记录并持久化变更。
     pub async fn update(
         &self,
         id: &str,
@@ -92,6 +100,7 @@ impl SupportRepository {
         Ok(result)
     }
 
+    /// 追加客服回复并更新会话。
     pub async fn reply(
         &self,
         id: &str,
@@ -291,6 +300,7 @@ async fn save_support_store(database: &BusinessDatabase, store: &SupportStore) -
 }
 
 impl SupportStore {
+    /// 构建并返回种子数据。
     fn seeded() -> Self {
         let conversations = seed_conversations()
             .into_iter()
@@ -300,10 +310,12 @@ impl SupportStore {
         Self { conversations }
     }
 
+    /// 返回完整数据列表。
     fn list(&self) -> Vec<SupportConversation> {
         self.conversations.values().cloned().collect()
     }
 
+    /// 按标识查询并返回单条记录。
     fn get(&self, id: &str) -> ApiResult<SupportConversation> {
         self.conversations
             .get(id)
@@ -311,6 +323,7 @@ impl SupportStore {
             .ok_or_else(|| ApiError::NotFound(format!("support conversation `{id}` not found")))
     }
 
+    /// 校验入参并创建新记录。
     fn create(
         &mut self,
         request: CreateSupportConversationRequest,
@@ -358,6 +371,7 @@ impl SupportStore {
         Ok(conversation)
     }
 
+    /// 校验入参并更新指定记录。
     fn update(
         &mut self,
         id: &str,
@@ -385,6 +399,7 @@ impl SupportStore {
         Ok(conversation.clone())
     }
 
+    /// 记录回复并持久化会话更新。
     fn reply(
         &mut self,
         id: &str,
@@ -423,6 +438,7 @@ impl SupportStore {
     }
 }
 
+/// 标准化输入并返回规范值。
 fn normalize_assigned_admin(
     admin_id: Option<String>,
     admins: &[AdminSummary],
@@ -442,6 +458,7 @@ fn normalize_assigned_admin(
         .ok_or_else(|| ApiError::NotFound(format!("admin `{admin_id}` not found")))
 }
 
+/// 去除空白并校验必填字段。
 fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     let value = value.trim().to_string();
     if value.is_empty() {
@@ -450,14 +467,17 @@ fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     Ok(value)
 }
 
+/// 返回当前时间的展示文本。
 fn current_time_label() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
+/// 处理 message_id 的具体内部流程。
 fn message_id(conversation_id: &str, index: usize) -> String {
     format!("{conversation_id}-M{index:03}")
 }
 
+/// 返回内置种子或测试数据。
 fn seed_conversations() -> Vec<SupportConversation> {
     vec![
         SupportConversation {

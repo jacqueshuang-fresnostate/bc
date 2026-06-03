@@ -1,3 +1,5 @@
+//! 计奖派奖领域模型，定义结算批次与订单结算明细
+
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{order::OrderStatus, play::PlayRuleCode};

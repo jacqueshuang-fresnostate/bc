@@ -1,3 +1,5 @@
+//! 统一 API 错误类型与响应码映射，提供中文错误文案
+
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use thiserror::Error;
 
@@ -23,6 +25,7 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    /// 处理 status_code 的具体内部流程。
     fn status_code(&self) -> StatusCode {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
@@ -34,6 +37,7 @@ impl ApiError {
         }
     }
 
+    /// 返回当前错误对象的中文日志消息文本，用于日志展示和错误提示。
     pub fn log_message(&self) -> String {
         match self {
             Self::BadRequest(message) => format!("请求错误：{}", log_detail(message)),
@@ -47,6 +51,7 @@ impl ApiError {
 }
 
 impl IntoResponse for ApiError {
+    /// 处理 into_response 的具体内部流程。
     fn into_response(self) -> axum::response::Response {
         let status = self.status_code();
         let log_message = self.log_message();
@@ -60,6 +65,7 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// 处理 log_detail 的具体内部流程。
 fn log_detail(message: &str) -> &str {
     if message
         .chars()
@@ -76,6 +82,7 @@ mod tests {
     use super::ApiError;
 
     #[test]
+    /// 处理 api_error_log_message_uses_chinese_prefixes 的具体内部流程。
     fn api_error_log_message_uses_chinese_prefixes() {
         let message = ApiError::BadRequest("邀请码无效".to_string()).log_message();
 
@@ -83,6 +90,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 api_error_log_message_hides_english_internal_details 的具体内部流程。
     fn api_error_log_message_hides_english_internal_details() {
         let message =
             ApiError::Internal("api draw source request failed".to_string()).log_message();

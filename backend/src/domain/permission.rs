@@ -1,3 +1,5 @@
+//! 权限与角色领域模型，承载系统设置与角色范围定义
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]

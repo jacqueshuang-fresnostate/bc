@@ -1,3 +1,5 @@
+//! 机器人领域模型，定义机器人类型、状态与配置项
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

@@ -1,3 +1,5 @@
+//! 合买领域模型，定义合买计划、参与人和份额约束
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -43,6 +45,7 @@ pub struct GroupBuyPlan {
 }
 
 impl GroupBuyPlan {
+    /// 生成当前实体对象的汇总信息。
     pub fn summary(&self) -> GroupBuyPlanSummary {
         GroupBuyPlanSummary {
             id: self.id.clone(),

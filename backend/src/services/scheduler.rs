@@ -122,6 +122,7 @@ struct DrawSchedulerStore {
 }
 
 impl Default for DrawSchedulerConfig {
+    /// 返回默认配置。
     fn default() -> Self {
         Self {
             enabled: false,
@@ -133,6 +134,7 @@ impl Default for DrawSchedulerConfig {
 }
 
 impl DrawSchedulerRepository {
+    /// 初始化调度器状态。
     pub fn new(config: DrawSchedulerConfig) -> Self {
         Self {
             inner: Arc::new(RwLock::new(DrawSchedulerStore::new(config))),
@@ -140,6 +142,7 @@ impl DrawSchedulerRepository {
         }
     }
 
+    /// 从数据库加载历史数据并初始化持久化仓储。
     pub async fn persistent(
         config: DrawSchedulerConfig,
         persistence: BusinessDatabase,
@@ -151,6 +154,7 @@ impl DrawSchedulerRepository {
         })
     }
 
+    /// 读取当前调度器运行状态。
     pub fn status(&self) -> ApiResult<DrawSchedulerStatus> {
         self.inner
             .read()
@@ -158,6 +162,7 @@ impl DrawSchedulerRepository {
             .map(|store| store.status())
     }
 
+    /// 读取调度器当前配置。
     pub fn config(&self) -> ApiResult<DrawSchedulerConfig> {
         self.inner
             .read()
@@ -165,6 +170,7 @@ impl DrawSchedulerRepository {
             .map(|store| store.config.clone())
     }
 
+    /// 更新并持久化调度器配置。
     pub async fn update_config(
         &self,
         config: DrawSchedulerConfig,
@@ -180,6 +186,7 @@ impl DrawSchedulerRepository {
         Ok(result)
     }
 
+    /// 记录一次调度成功执行并更新统计。
     pub async fn record_success(
         &self,
         trigger: DrawSchedulerRunTrigger,
@@ -198,6 +205,7 @@ impl DrawSchedulerRepository {
         Ok(result)
     }
 
+    /// 记录一次调度失败并更新统计信息。
     pub async fn record_failure(
         &self,
         trigger: DrawSchedulerRunTrigger,
@@ -432,6 +440,7 @@ async fn save_scheduler_store(
         .map_err(|_| ApiError::Internal("开奖调度事务提交失败".to_string()))
 }
 
+/// 读取并转换数据库中计数值。
 fn read_usize_count(row: &sqlx::postgres::PgRow, column: &str) -> ApiResult<usize> {
     let value: i32 = row
         .try_get(column)
@@ -439,10 +448,12 @@ fn read_usize_count(row: &sqlx::postgres::PgRow, column: &str) -> ApiResult<usiz
     usize::try_from(value).map_err(|_| ApiError::Internal("开奖调度数量数据无效".to_string()))
 }
 
+/// 将 usize 转为 i32 并校验范围。
 fn to_i32_count(value: usize, label: &str) -> ApiResult<i32> {
     i32::try_from(value).map_err(|_| ApiError::Internal(format!("{label}过大")))
 }
 
+/// 计算并返回序列号最大值。
 fn max_sequence(ids: &[String]) -> u64 {
     ids.iter()
         .filter_map(|id| id.strip_prefix("SCH"))
@@ -452,6 +463,7 @@ fn max_sequence(ids: &[String]) -> u64 {
 }
 
 impl DrawSchedulerStore {
+    /// 创建并初始化新实例。
     fn new(config: DrawSchedulerConfig) -> Self {
         Self {
             config,
@@ -460,6 +472,7 @@ impl DrawSchedulerStore {
         }
     }
 
+    /// 返回当前状态信息。
     fn status(&self) -> DrawSchedulerStatus {
         let recent_runs = self.runs.iter().cloned().collect::<Vec<_>>();
         DrawSchedulerStatus {
@@ -471,12 +484,14 @@ impl DrawSchedulerStore {
         }
     }
 
+    /// 处理 update_config 的具体内部流程。
     fn update_config(&mut self, config: DrawSchedulerConfig) -> ApiResult<DrawSchedulerStatus> {
         config.validate()?;
         self.config = config;
         Ok(self.status())
     }
 
+    /// 处理 record_success 的具体内部流程。
     fn record_success(
         &mut self,
         trigger: DrawSchedulerRunTrigger,
@@ -505,6 +520,7 @@ impl DrawSchedulerStore {
         self.push_record(record)
     }
 
+    /// 处理 record_failure 的具体内部流程。
     fn record_failure(
         &mut self,
         trigger: DrawSchedulerRunTrigger,
@@ -534,12 +550,14 @@ impl DrawSchedulerStore {
         self.push_record(record)
     }
 
+    /// 处理 next_record 的具体内部流程。
     fn next_record(&mut self, mut record: DrawSchedulerRunRecord) -> DrawSchedulerRunRecord {
         self.next_sequence += 1;
         record.id = format!("SCH{:012}", self.next_sequence);
         record
     }
 
+    /// 处理 push_record 的具体内部流程。
     fn push_record(&mut self, record: DrawSchedulerRunRecord) -> ApiResult<DrawSchedulerRunRecord> {
         self.runs.push_front(record.clone());
         while self.runs.len() > MAX_SCHEDULER_HISTORY {
@@ -550,6 +568,7 @@ impl DrawSchedulerStore {
 }
 
 impl DrawSchedulerConfig {
+    /// 校验参数并返回校验结果。
     fn validate(&self) -> ApiResult<()> {
         if self.interval_seconds == 0 {
             return Err(ApiError::BadRequest(
@@ -571,6 +590,7 @@ impl DrawSchedulerConfig {
     }
 }
 
+/// 创建并启动异步开奖调度任务。
 pub fn spawn_draw_scheduler(
     draws: DrawRepository,
     lotteries: LotteryRepository,
@@ -629,14 +649,14 @@ pub fn spawn_draw_scheduler(
                         tracing::error!(error = %error.log_message(), "开奖调度器历史记录写入失败");
                     }
                     tracing::info!(
-                        now = %run.now,
-                        closed_issues = run.automation_run.closed_issues.len(),
-                        drawn_issues = run.automation_run.drawn_issues.len(),
-                        settlement_runs = run.automation_run.settlement_runs.len(),
-                        ledger_entries = run.automation_run.ledger_entries.len(),
-                        generated_issues = run.generated_issues.len(),
-                        skipped_lotteries = run.skipped_lotteries.len(),
-                        skipped_issues = run.automation_run.skipped_issues.len(),
+                        "当前时间" = %run.now,
+                        "封盘期数" = run.automation_run.closed_issues.len(),
+                        "开奖期数" = run.automation_run.drawn_issues.len(),
+                        "结算批次" = run.automation_run.settlement_runs.len(),
+                        "入账笔数" = run.automation_run.ledger_entries.len(),
+                        "新增期号" = run.generated_issues.len(),
+                        "跳过彩种" = run.skipped_lotteries.len(),
+                        "跳过期号" = run.automation_run.skipped_issues.len(),
                         "开奖调度器本轮执行完成"
                     );
                 }
@@ -670,6 +690,7 @@ pub fn spawn_draw_scheduler(
     })
 }
 
+/// 执行一次完整开奖调度流程。
 pub async fn run_draw_scheduler_once(
     draws: &DrawRepository,
     lotteries: &LotteryRepository,
@@ -761,6 +782,7 @@ async fn ensure_future_draw_issues(
     Ok((generated_issues, skipped_lotteries))
 }
 
+/// 统计未来待处理期号数量。
 fn future_issue_count(issues: &[DrawIssue], lottery: &LotteryKind, now: &str) -> u32 {
     issues
         .iter()
@@ -772,6 +794,7 @@ fn future_issue_count(issues: &[DrawIssue], lottery: &LotteryKind, now: &str) ->
         .count() as u32
 }
 
+/// 返回调度器当前时间戳字符串。
 fn current_scheduler_timestamp() -> String {
     Local::now()
         .naive_local()
@@ -1173,6 +1196,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 scheduler_config_uses_database_seed_defaults 的具体内部流程。
     fn scheduler_config_uses_database_seed_defaults() {
         let config = DrawSchedulerConfig::default();
 
@@ -1186,6 +1210,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 scheduler_config_rejects_invalid_values 的具体内部流程。
     fn scheduler_config_rejects_invalid_values() {
         let mut config = DrawSchedulerConfig::default();
         config.interval_seconds = 0;
@@ -1196,6 +1221,7 @@ mod tests {
             .contains("interval seconds must be greater than zero"));
     }
 
+    /// 处理 enabled_config 的具体内部流程。
     fn enabled_config(future_issue_count: u32) -> DrawSchedulerConfig {
         DrawSchedulerConfig {
             enabled: true,

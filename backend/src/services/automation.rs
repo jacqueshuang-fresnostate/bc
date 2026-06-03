@@ -14,6 +14,7 @@ use crate::{
     services::{draw::DrawRepository, finance::FinanceRepository, order::OrderRepository},
 };
 
+/// 触发自动化开奖一轮任务并返回执行结果。
 pub async fn run_draw_automation(
     draws: &DrawRepository,
     lotteries: &crate::services::lottery::LotteryRepository,
@@ -103,10 +104,12 @@ pub async fn run_draw_automation(
     Ok(run)
 }
 
+/// 处理 should_close 的具体内部流程。
 fn should_close(issue: &DrawIssue, now: &str) -> bool {
     issue.status == DrawIssueStatus::Open && is_due_at(&issue.sale_closed_at, now)
 }
 
+/// 处理 should_draw 的具体内部流程。
 fn should_draw(issue: &DrawIssue, now: &str) -> bool {
     matches!(
         issue.status,
@@ -114,11 +117,13 @@ fn should_draw(issue: &DrawIssue, now: &str) -> bool {
     ) && is_due_at(&issue.scheduled_at, now)
 }
 
+/// 判断并返回布尔结果。
 fn is_due_at(value: &str, now: &str) -> bool {
     let value = value.trim();
     !value.is_empty() && value <= now
 }
 
+/// 处理 skipped_issue 的具体内部流程。
 fn skipped_issue(issue: &DrawIssue, reason: &str) -> DrawAutomationSkippedIssue {
     DrawAutomationSkippedIssue {
         draw_issue_id: issue.id.clone(),
@@ -140,6 +145,7 @@ async fn lottery_sale_status(
     Ok(sale_status)
 }
 
+/// 处理 skip_issue_if_lottery_disabled 的具体内部流程。
 fn skip_issue_if_lottery_disabled(
     issue: &DrawIssue,
     lottery_sale_status: &HashMap<String, bool>,
@@ -158,6 +164,7 @@ fn skip_issue_if_lottery_disabled(
     }
 }
 
+/// 处理 automation_error_reason 的具体内部流程。
 fn automation_error_reason(error: &ApiError) -> String {
     match error {
         ApiError::BadRequest(message) => format!("请求错误：{message}"),
@@ -405,6 +412,7 @@ mod tests {
         assert!(run.skipped_issues[0].reason.contains("未找到"));
     }
 
+    /// 处理 create_request 的具体内部流程。
     fn create_request(issue: &str) -> CreateDrawIssueRequest {
         CreateDrawIssueRequest {
             lottery_id: "fc3d".to_string(),
@@ -414,6 +422,7 @@ mod tests {
         }
     }
 
+    /// 处理 lottery 的具体内部流程。
     fn lottery(draw_mode: DrawMode) -> LotteryKind {
         LotteryKind {
             id: "fc3d".to_string(),
@@ -439,6 +448,7 @@ mod tests {
         }
     }
 
+    /// 处理 full_direct_selection 的具体内部流程。
     fn full_direct_selection() -> PlaySelection {
         let all_digits = (0..=9).collect::<Vec<_>>();
         PlaySelection {

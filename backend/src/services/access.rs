@@ -1,3 +1,5 @@
+//! 权限与账号服务，提供用户、管理员、角色和系统设置的状态管理
+
 use std::{
     collections::{BTreeMap, HashSet},
     sync::{Arc, RwLock},
@@ -8,7 +10,7 @@ use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use rand_core::OsRng;
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -28,6 +30,11 @@ use super::business_database::{enum_from_string, enum_to_string, to_json, Busine
 
 const DEFAULT_SEED_ADMIN_PASSWORD: &str = "admin123";
 const MIN_ADMIN_PASSWORD_LEN: usize = 8;
+const INVITE_CODE_LENGTH: usize = 8;
+const INVITE_CODE_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const DEMO_USER_INVITE_CODE: &str = "QWERTYPA";
+const DEMO_AGENT_INVITE_CODE: &str = "KJHGFDSA";
+const RISK_USER_INVITE_CODE: &str = "ZXCVBNML";
 
 #[derive(Debug, Clone)]
 pub struct AccessSnapshot {
@@ -45,6 +52,7 @@ pub struct AccessRepository {
 }
 
 impl AccessRepository {
+    /// 创建一个只依赖种子数据的内存访问仓储，适配测试和本地开发场景。
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(AccessStore::seeded())),
@@ -52,6 +60,7 @@ impl AccessRepository {
         }
     }
 
+    /// 用数据库持久化初始化仓储，启动时会从 business database 回放所有用户与权限状态。
     pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
         let store = load_access_store(&persistence).await?;
         Ok(Self {
@@ -60,6 +69,7 @@ impl AccessRepository {
         })
     }
 
+    /// 返回访问控制模块的聚合快照。
     pub async fn snapshot(&self) -> ApiResult<AccessSnapshot> {
         self.inner
             .read()
@@ -67,6 +77,7 @@ impl AccessRepository {
             .map(|store| store.snapshot())
     }
 
+    /// 返回完整用户列表，供后台用户管理页和导出需求复用。
     pub async fn users(&self) -> ApiResult<Vec<UserSummary>> {
         self.inner
             .read()
@@ -74,6 +85,7 @@ impl AccessRepository {
             .map(|store| store.users())
     }
 
+    /// 获取单个用户详情，找不到用户返回 NotFound。
     pub async fn get_user(&self, id: &str) -> ApiResult<UserSummary> {
         self.inner
             .read()
@@ -81,6 +93,7 @@ impl AccessRepository {
             .get_user(id)
     }
 
+    /// 新增用户：先在内存层校验并补全邀请码（空则自动生成），再落库并同步持久化。
     pub async fn create_user(&self, user: UserSummary) -> ApiResult<UserSummary> {
         let (result, snapshot) = {
             let mut store = self
@@ -94,6 +107,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 更新用户：检查路径 ID 与载荷 ID 一致、保留原邀请码，完成唯一性与持久化更新。
     pub async fn update_user(&self, id: &str, user: UserSummary) -> ApiResult<UserSummary> {
         let (result, snapshot) = {
             let mut store = self
@@ -107,6 +121,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 修改用户状态（启用/锁定/禁用），用于快速停用异常账户。
     pub async fn set_user_status(&self, id: &str, status: UserStatus) -> ApiResult<UserSummary> {
         let (result, snapshot) = {
             let mut store = self
@@ -120,6 +135,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 返回全部管理员列表。
     pub async fn admins(&self) -> ApiResult<Vec<AdminSummary>> {
         self.inner
             .read()
@@ -127,6 +143,7 @@ impl AccessRepository {
             .map(|store| store.admins())
     }
 
+    /// 按 ID 查询管理员详情。
     pub async fn get_admin(&self, id: &str) -> ApiResult<AdminSummary> {
         self.inner
             .read()
@@ -134,6 +151,7 @@ impl AccessRepository {
             .get_admin(id)
     }
 
+    /// 创建管理员并返回新记录。
     pub async fn create_admin(&self, admin: AdminSaveRequest) -> ApiResult<AdminSummary> {
         let (result, snapshot) = {
             let mut store = self
@@ -147,6 +165,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 更新管理员信息。
     pub async fn update_admin(&self, id: &str, admin: AdminSaveRequest) -> ApiResult<AdminSummary> {
         let (result, snapshot) = {
             let mut store = self
@@ -160,6 +179,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 变更管理员状态。
     pub async fn set_admin_status(&self, id: &str, status: UserStatus) -> ApiResult<AdminSummary> {
         let (result, snapshot) = {
             let mut store = self
@@ -173,6 +193,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 重置管理员密码。
     pub async fn reset_admin_password(
         &self,
         id: &str,
@@ -190,6 +211,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 返回全部角色列表。
     pub async fn roles(&self) -> ApiResult<Vec<AdminRole>> {
         self.inner
             .read()
@@ -197,6 +219,7 @@ impl AccessRepository {
             .map(|store| store.roles())
     }
 
+    /// 按 ID 查询角色。
     pub async fn get_role(&self, id: &str) -> ApiResult<AdminRole> {
         self.inner
             .read()
@@ -204,6 +227,7 @@ impl AccessRepository {
             .get_role(id)
     }
 
+    /// 新增角色。
     pub async fn create_role(&self, role: AdminRole) -> ApiResult<AdminRole> {
         let (result, snapshot) = {
             let mut store = self
@@ -217,6 +241,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 更新角色信息。
     pub async fn update_role(&self, id: &str, role: AdminRole) -> ApiResult<AdminRole> {
         let (result, snapshot) = {
             let mut store = self
@@ -230,6 +255,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 删除角色记录。
     pub async fn delete_role(&self, id: &str) -> ApiResult<AdminRole> {
         let (result, snapshot) = {
             let mut store = self
@@ -243,6 +269,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 返回系统全部设置。
     pub async fn settings(&self) -> ApiResult<Vec<SystemSetting>> {
         self.inner
             .read()
@@ -250,6 +277,7 @@ impl AccessRepository {
             .map(|store| store.settings())
     }
 
+    /// 更新系统设置项。
     pub async fn update_setting(
         &self,
         key: &str,
@@ -267,6 +295,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 返回注册策略。
     pub async fn registration(&self) -> ApiResult<RegistrationConfig> {
         self.inner
             .read()
@@ -274,6 +303,7 @@ impl AccessRepository {
             .map(|store| store.registration.clone())
     }
 
+    /// 更新注册策略。
     pub async fn update_registration(
         &self,
         registration: RegistrationConfig,
@@ -290,6 +320,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 执行管理员登录并返回会话。
     pub async fn login(&self, payload: AdminLoginRequest) -> ApiResult<AdminAuthSession> {
         let (result, snapshot) = {
             let mut store = self
@@ -303,6 +334,7 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 根据 Token 还原管理员会话。
     pub async fn session_from_token(&self, token: &str) -> ApiResult<AdminAuthSession> {
         self.inner
             .read()
@@ -310,6 +342,7 @@ impl AccessRepository {
             .session_from_token(token)
     }
 
+    /// 退出登录并清理 Token。
     pub async fn logout(&self, token: &str) -> ApiResult<()> {
         let snapshot = {
             let mut store = self
@@ -675,6 +708,7 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
 }
 
 impl AccessStore {
+    /// 生成初始内存状态：管理员、角色、设置和用户均使用固定种子值，服务可直接启动。
     fn seeded() -> Self {
         let roles = seed_roles()
             .into_iter()
@@ -710,6 +744,7 @@ impl AccessStore {
         }
     }
 
+    /// 处理 snapshot 的具体内部流程。
     fn snapshot(&self) -> AccessSnapshot {
         AccessSnapshot {
             users: self.users(),
@@ -720,10 +755,12 @@ impl AccessStore {
         }
     }
 
+    /// 查询所有用户，返回可序列化的向量副本给上层接口。
     fn users(&self) -> Vec<UserSummary> {
         self.users.values().cloned().collect()
     }
 
+    /// 按 ID 查询用户，若不存在给出明确 404 错误。
     fn get_user(&self, id: &str) -> ApiResult<UserSummary> {
         self.users
             .get(id)
@@ -731,8 +768,12 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))
     }
 
+    /// 创建用户并落入内存集合，空邀请码时自动生成随机字母码。
     fn create_user(&mut self, user: UserSummary) -> ApiResult<UserSummary> {
-        let user = normalize_user(user)?;
+        let mut user = normalize_user(user)?;
+        if user.invite_code.is_empty() {
+            user.invite_code = random_invite_code(&self.users)?;
+        }
         self.ensure_unique_invite_code(&user.id, &user.invite_code)?;
         if self.users.contains_key(&user.id) {
             return Err(ApiError::Conflict(format!(
@@ -745,8 +786,9 @@ impl AccessStore {
         Ok(user)
     }
 
+    /// 更新内存用户：空邀请码会沿用数据库已有值，不会被改成空值。
     fn update_user(&mut self, id: &str, user: UserSummary) -> ApiResult<UserSummary> {
-        let user = normalize_user(user)?;
+        let mut user = normalize_user(user)?;
         if id != user.id {
             return Err(ApiError::BadRequest(
                 "path id must match user id".to_string(),
@@ -755,12 +797,20 @@ impl AccessStore {
         if !self.users.contains_key(id) {
             return Err(ApiError::NotFound(format!("user `{id}` not found")));
         }
+        if user.invite_code.is_empty() {
+            user.invite_code = self
+                .users
+                .get(id)
+                .map(|existing| existing.invite_code.clone())
+                .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))?;
+        }
         self.ensure_unique_invite_code(id, &user.invite_code)?;
 
         self.users.insert(id.to_string(), user.clone());
         Ok(user)
     }
 
+    /// 切换用户状态并返回最新用户快照。
     fn set_user_status(&mut self, id: &str, status: UserStatus) -> ApiResult<UserSummary> {
         let user = self
             .users
@@ -770,6 +820,7 @@ impl AccessStore {
         Ok(user.clone())
     }
 
+    /// 校验邀请码未被其他用户占用，避免出现重复码导致推荐关系错误。
     fn ensure_unique_invite_code(&self, user_id: &str, invite_code: &str) -> ApiResult<()> {
         if let Some(existing) = self
             .users
@@ -785,10 +836,12 @@ impl AccessStore {
         Ok(())
     }
 
+    /// 处理 admins 的具体内部流程。
     fn admins(&self) -> Vec<AdminSummary> {
         self.admins.values().cloned().collect()
     }
 
+    /// 处理 get_admin 的具体内部流程。
     fn get_admin(&self, id: &str) -> ApiResult<AdminSummary> {
         self.admins
             .get(id)
@@ -796,6 +849,7 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("admin `{id}` not found")))
     }
 
+    /// 处理 create_admin 的具体内部流程。
     fn create_admin(&mut self, request: AdminSaveRequest) -> ApiResult<AdminSummary> {
         let password = request
             .password
@@ -817,6 +871,7 @@ impl AccessStore {
         Ok(admin)
     }
 
+    /// 处理 update_admin 的具体内部流程。
     fn update_admin(&mut self, id: &str, request: AdminSaveRequest) -> ApiResult<AdminSummary> {
         let password = match request.password.as_deref() {
             Some(password) => Some(validate_admin_password(password)?),
@@ -841,6 +896,7 @@ impl AccessStore {
         Ok(admin)
     }
 
+    /// 处理 set_admin_status 的具体内部流程。
     fn set_admin_status(&mut self, id: &str, status: UserStatus) -> ApiResult<AdminSummary> {
         let admin = self
             .admins
@@ -850,6 +906,7 @@ impl AccessStore {
         Ok(admin.clone())
     }
 
+    /// 处理 reset_admin_password 的具体内部流程。
     fn reset_admin_password(
         &mut self,
         id: &str,
@@ -863,10 +920,12 @@ impl AccessStore {
         Ok(admin)
     }
 
+    /// 处理 roles 的具体内部流程。
     fn roles(&self) -> Vec<AdminRole> {
         self.roles.values().cloned().collect()
     }
 
+    /// 处理 get_role 的具体内部流程。
     fn get_role(&self, id: &str) -> ApiResult<AdminRole> {
         self.roles
             .get(id)
@@ -874,6 +933,7 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("role `{id}` not found")))
     }
 
+    /// 处理 create_role 的具体内部流程。
     fn create_role(&mut self, role: AdminRole) -> ApiResult<AdminRole> {
         let role = normalize_role(role)?;
         if self.roles.contains_key(&role.id) {
@@ -887,6 +947,7 @@ impl AccessStore {
         Ok(role)
     }
 
+    /// 处理 update_role 的具体内部流程。
     fn update_role(&mut self, id: &str, role: AdminRole) -> ApiResult<AdminRole> {
         let role = normalize_role(role)?;
         if id != role.id {
@@ -903,6 +964,7 @@ impl AccessStore {
         Ok(role)
     }
 
+    /// 处理 delete_role 的具体内部流程。
     fn delete_role(&mut self, id: &str) -> ApiResult<AdminRole> {
         if self.admins.values().any(|admin| admin.role_id == id) {
             return Err(ApiError::Conflict(format!(
@@ -915,10 +977,12 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("role `{id}` not found")))
     }
 
+    /// 处理 settings 的具体内部流程。
     fn settings(&self) -> Vec<SystemSetting> {
         self.settings.values().cloned().collect()
     }
 
+    /// 处理 update_setting 的具体内部流程。
     fn update_setting(
         &mut self,
         key: &str,
@@ -939,6 +1003,7 @@ impl AccessStore {
         Ok(setting.clone())
     }
 
+    /// 处理 update_registration 的具体内部流程。
     fn update_registration(
         &mut self,
         registration: RegistrationConfig,
@@ -953,6 +1018,7 @@ impl AccessStore {
         Ok(self.registration.clone())
     }
 
+    /// 处理 login 的具体内部流程。
     fn login(&mut self, payload: AdminLoginRequest) -> ApiResult<AdminAuthSession> {
         let username = required_trimmed(payload.username, "admin username")?;
         let password = required_trimmed(payload.password, "admin password")?;
@@ -982,6 +1048,7 @@ impl AccessStore {
         self.session_from_token(&token)
     }
 
+    /// 处理 session_from_token 的具体内部流程。
     fn session_from_token(&self, token: &str) -> ApiResult<AdminAuthSession> {
         let token = token.trim();
         if token.is_empty() {
@@ -1010,11 +1077,13 @@ impl AccessStore {
         })
     }
 
+    /// 处理 logout 的具体内部流程。
     fn logout(&mut self, token: &str) -> ApiResult<()> {
         self.sessions.remove(token.trim());
         Ok(())
     }
 
+    /// 处理 sync_admin_role_names 的具体内部流程。
     fn sync_admin_role_names(&mut self, role_id: &str) {
         let Some(role) = self.roles.get(role_id) else {
             return;
@@ -1026,6 +1095,7 @@ impl AccessStore {
         }
     }
 
+    /// 处理 next_session_token 的具体内部流程。
     fn next_session_token(&mut self, admin_id: &str) -> ApiResult<String> {
         self.session_counter = self.session_counter.saturating_add(1);
         let unix_millis = SystemTime::now()
@@ -1040,6 +1110,7 @@ impl AccessStore {
     }
 }
 
+/// 统一归一化用户提交字段：去空格、检查必填项并校验余额非负数。
 fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
     user.id = required_trimmed(user.id, "user id")?;
     user.username = required_trimmed(user.username, "username")?;
@@ -1052,9 +1123,6 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
         .map(|agent_id| agent_id.trim().to_string())
         .filter(|agent_id| !agent_id.is_empty());
     user.invite_code = user.invite_code.trim().to_string();
-    if user.invite_code.is_empty() {
-        user.invite_code = invite_code_for_user(&user.id);
-    }
 
     if user.balance_minor < 0 {
         return Err(ApiError::BadRequest(
@@ -1065,15 +1133,28 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
     Ok(user)
 }
 
-fn invite_code_for_user(user_id: &str) -> String {
-    let code = user_id
-        .bytes()
-        .filter(|byte| byte.is_ascii_alphanumeric())
-        .map(|byte| (byte as char).to_ascii_uppercase())
-        .collect::<String>();
-    format!("INV{code}")
+/// 依据当前用户集合随机生成 8 位大写字母邀请码，最多尝试 128 次防止极端碰撞。
+fn random_invite_code(users: &BTreeMap<String, UserSummary>) -> ApiResult<String> {
+    for _ in 0..128 {
+        let mut bytes = [0u8; INVITE_CODE_LENGTH];
+        OsRng.fill_bytes(&mut bytes);
+        let code = bytes
+            .iter()
+            .map(|byte| {
+                let index = usize::from(*byte % INVITE_CODE_ALPHABET.len() as u8);
+                INVITE_CODE_ALPHABET[index] as char
+            })
+            .collect::<String>();
+
+        if !users.values().any(|user| user.invite_code == code) {
+            return Ok(code);
+        }
+    }
+
+    Err(ApiError::Internal("邀请码生成失败".to_string()))
 }
 
+/// 标准化输入并返回规范值。
 fn normalize_admin(
     mut admin: AdminSummary,
     roles: &BTreeMap<String, AdminRole>,
@@ -1089,6 +1170,7 @@ fn normalize_admin(
     Ok(admin)
 }
 
+/// 校验输入参数并返回校验结果。
 fn validate_admin_password(password: &str) -> ApiResult<String> {
     let password = required_trimmed(password.to_string(), "admin password")?;
     if password.chars().count() < MIN_ADMIN_PASSWORD_LEN {
@@ -1100,6 +1182,7 @@ fn validate_admin_password(password: &str) -> ApiResult<String> {
     Ok(password)
 }
 
+/// 处理 hash_admin_password 的具体内部流程。
 fn hash_admin_password(password: &str) -> ApiResult<String> {
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
@@ -1108,6 +1191,7 @@ fn hash_admin_password(password: &str) -> ApiResult<String> {
         .map_err(|_| ApiError::Internal("admin password hash failed".to_string()))
 }
 
+/// 处理 verify_admin_password 的具体内部流程。
 fn verify_admin_password(password: &str, password_hash: &str) -> ApiResult<bool> {
     let parsed_hash = PasswordHash::new(password_hash)
         .map_err(|_| ApiError::Internal("admin password hash is invalid".to_string()))?;
@@ -1117,6 +1201,7 @@ fn verify_admin_password(password: &str, password_hash: &str) -> ApiResult<bool>
         .is_ok())
 }
 
+/// 标准化输入并返回规范值。
 fn normalize_role(mut role: AdminRole) -> ApiResult<AdminRole> {
     role.id = required_trimmed(role.id, "role id")?;
     role.name = required_trimmed(role.name, "role name")?;
@@ -1131,6 +1216,7 @@ fn normalize_role(mut role: AdminRole) -> ApiResult<AdminRole> {
     Ok(role)
 }
 
+/// 去除空白并校验必填字段。
 fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     let value = value.trim().to_string();
     if value.is_empty() {
@@ -1139,6 +1225,7 @@ fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     Ok(value)
 }
 
+/// 加载系统内置用户种子，给每个演示用户分配固定的邀请码。
 fn seed_users() -> Vec<UserSummary> {
     vec![
         UserSummary {
@@ -1149,7 +1236,7 @@ fn seed_users() -> Vec<UserSummary> {
             status: UserStatus::Active,
             balance_minor: 12_000,
             agent_id: Some("U90001".to_string()),
-            invite_code: "USER10001".to_string(),
+            invite_code: DEMO_USER_INVITE_CODE.to_string(),
         },
         UserSummary {
             id: "U90001".to_string(),
@@ -1159,7 +1246,7 @@ fn seed_users() -> Vec<UserSummary> {
             status: UserStatus::Active,
             balance_minor: 520_000,
             agent_id: None,
-            invite_code: "AGENT10001".to_string(),
+            invite_code: DEMO_AGENT_INVITE_CODE.to_string(),
         },
         UserSummary {
             id: "U10004".to_string(),
@@ -1169,11 +1256,12 @@ fn seed_users() -> Vec<UserSummary> {
             status: UserStatus::Suspended,
             balance_minor: 0,
             agent_id: Some("U90001".to_string()),
-            invite_code: "USER10004".to_string(),
+            invite_code: RISK_USER_INVITE_CODE.to_string(),
         },
     ]
 }
 
+/// 返回内置种子或测试数据。
 fn seed_admins() -> Vec<AdminSummary> {
     vec![
         AdminSummary {
@@ -1193,6 +1281,7 @@ fn seed_admins() -> Vec<AdminSummary> {
     ]
 }
 
+/// 返回内置种子或测试数据。
 fn seed_admin_password_hashes(admins: &BTreeMap<String, AdminSummary>) -> BTreeMap<String, String> {
     admins
         .keys()
@@ -1204,6 +1293,7 @@ fn seed_admin_password_hashes(admins: &BTreeMap<String, AdminSummary>) -> BTreeM
         .collect()
 }
 
+/// 返回内置种子或测试数据。
 fn seed_roles() -> Vec<AdminRole> {
     vec![
         AdminRole {
@@ -1234,6 +1324,7 @@ fn seed_roles() -> Vec<AdminRole> {
     ]
 }
 
+/// 返回内置种子或测试数据。
 fn seed_settings() -> Vec<SystemSetting> {
     vec![
         SystemSetting {
@@ -1272,7 +1363,11 @@ mod tests {
             .expect("user can be created");
 
         assert_eq!(created.id, "U20001");
-        assert_eq!(created.invite_code, "INVU20001");
+        assert_eq!(created.invite_code.len(), INVITE_CODE_LENGTH);
+        assert!(created
+            .invite_code
+            .chars()
+            .all(|ch| ch.is_ascii_alphabetic() && ch.is_ascii_uppercase()));
 
         let updated = access
             .set_user_status("U20001", UserStatus::Locked)
@@ -1293,7 +1388,7 @@ mod tests {
                 status: UserStatus::Active,
                 balance_minor: 0,
                 agent_id: None,
-                invite_code: "AGENT10001".to_string(),
+                invite_code: DEMO_AGENT_INVITE_CODE.to_string(),
             })
             .await
             .expect_err("duplicate invite code must be rejected");

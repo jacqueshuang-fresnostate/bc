@@ -1,3 +1,5 @@
+//! 在线客服领域模型，定义会话、消息、优先级与状态
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

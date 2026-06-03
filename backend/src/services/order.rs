@@ -1,3 +1,5 @@
+//! 订单领域模型，定义订单生命周期、金额和结算相关结构
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, RwLock},
@@ -25,6 +27,7 @@ use super::business_database::{
 
 const ODDS_SCALE_BASIS_POINTS: i64 = 10_000;
 
+/// 校验期号与订单关联关系是否允许下单。
 pub fn validate_draw_issue_accepts_order(
     draw_issue: &DrawIssue,
     lottery: &LotteryKind,
@@ -61,6 +64,7 @@ pub struct OrderRepository {
 }
 
 impl OrderRepository {
+    /// 创建内存仓储实例。
     pub fn memory() -> Self {
         Self {
             inner: Arc::new(RwLock::new(OrderStore::default())),
@@ -68,6 +72,7 @@ impl OrderRepository {
         }
     }
 
+    /// 从数据库加载历史数据并初始化持久化仓储。
     pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
         let store = load_order_store(&persistence).await?;
         Ok(Self {
@@ -76,6 +81,7 @@ impl OrderRepository {
         })
     }
 
+    /// 返回完整列表。
     pub async fn list(&self) -> ApiResult<Vec<OrderDetail>> {
         self.inner
             .read()
@@ -83,6 +89,7 @@ impl OrderRepository {
             .map(|store| store.list())
     }
 
+    /// 按 ID 查询单条记录。
     pub async fn get(&self, id: &str) -> ApiResult<OrderDetail> {
         self.inner
             .read()
@@ -90,6 +97,7 @@ impl OrderRepository {
             .get(id)
     }
 
+    /// 校验入参并创建一条新记录。
     pub async fn create(
         &self,
         lottery: &LotteryKind,
@@ -107,6 +115,7 @@ impl OrderRepository {
         Ok(result)
     }
 
+    /// 按当前彩种规则计算订单注数和应付金额。
     pub async fn quote(
         &self,
         lottery: &LotteryKind,
@@ -119,6 +128,7 @@ impl OrderRepository {
         })
     }
 
+    /// 取消开奖期并回退相关状态。
     pub async fn cancel(&self, id: &str) -> ApiResult<OrderDetail> {
         let (result, snapshot) = {
             let mut store = self
@@ -132,6 +142,7 @@ impl OrderRepository {
         Ok(result)
     }
 
+    /// 清理未支付订单。
     pub async fn remove_unfunded(&self, id: &str) -> ApiResult<OrderDetail> {
         let (result, snapshot) = {
             let mut store = self
@@ -145,6 +156,7 @@ impl OrderRepository {
         Ok(result)
     }
 
+    /// 返回最近订单汇总列表。
     pub async fn recent_summaries(&self, limit: usize) -> ApiResult<Vec<OrderSummary>> {
         self.inner
             .read()
@@ -152,6 +164,7 @@ impl OrderRepository {
             .map(|store| store.recent_summaries(limit))
     }
 
+    /// 查询历史结算任务列表。
     pub async fn settlement_runs(&self) -> ApiResult<Vec<SettlementRun>> {
         self.inner
             .read()
@@ -159,6 +172,7 @@ impl OrderRepository {
             .map(|store| store.settlement_runs())
     }
 
+    /// 根据 ID 查询结算明细。
     pub async fn get_settlement(&self, id: &str) -> ApiResult<SettlementRun> {
         self.inner
             .read()
@@ -166,6 +180,7 @@ impl OrderRepository {
             .get_settlement(id)
     }
 
+    /// 对某期进行结算并返回执行结果。
     pub async fn settle_draw_issue(&self, draw_issue: &DrawIssue) -> ApiResult<SettlementRun> {
         let (result, snapshot) = {
             let mut store = self
@@ -551,6 +566,7 @@ async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> Ap
         .map_err(|_| ApiError::Internal("订单事务提交失败".to_string()))
 }
 
+/// 计算并返回序列号最大值。
 fn max_sequence<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u64 {
     ids.filter_map(|id| id.strip_prefix(prefix))
         .filter_map(|value| value.parse::<u64>().ok())
@@ -559,10 +575,12 @@ fn max_sequence<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u64 
 }
 
 impl OrderStore {
+    /// 返回完整数据列表。
     fn list(&self) -> Vec<OrderDetail> {
         self.orders.values().rev().cloned().collect()
     }
 
+    /// 按标识查询并返回单条记录。
     fn get(&self, id: &str) -> ApiResult<OrderDetail> {
         self.orders
             .get(id)
@@ -570,6 +588,7 @@ impl OrderStore {
             .ok_or_else(|| ApiError::NotFound(format!("order `{id}` not found")))
     }
 
+    /// 校验入参并创建新记录。
     fn create(
         &mut self,
         lottery: &LotteryKind,
@@ -604,6 +623,7 @@ impl OrderStore {
         Ok(order)
     }
 
+    /// 处理 cancel 的具体内部流程。
     fn cancel(&mut self, id: &str) -> ApiResult<OrderDetail> {
         let order = self
             .orders
@@ -620,6 +640,7 @@ impl OrderStore {
         Ok(order.clone())
     }
 
+    /// 处理 remove_unfunded 的具体内部流程。
     fn remove_unfunded(&mut self, id: &str) -> ApiResult<OrderDetail> {
         let order = self
             .orders
@@ -637,6 +658,7 @@ impl OrderStore {
             .ok_or_else(|| ApiError::NotFound(format!("order `{id}` not found")))
     }
 
+    /// 处理 recent_summaries 的具体内部流程。
     fn recent_summaries(&self, limit: usize) -> Vec<OrderSummary> {
         self.orders
             .values()
@@ -646,10 +668,12 @@ impl OrderStore {
             .collect()
     }
 
+    /// 处理 settlement_runs 的具体内部流程。
     fn settlement_runs(&self) -> Vec<SettlementRun> {
         self.settlement_runs.values().rev().cloned().collect()
     }
 
+    /// 处理 get_settlement 的具体内部流程。
     fn get_settlement(&self, id: &str) -> ApiResult<SettlementRun> {
         self.settlement_runs
             .get(id)
@@ -657,6 +681,7 @@ impl OrderStore {
             .ok_or_else(|| ApiError::NotFound(format!("settlement `{id}` not found")))
     }
 
+    /// 处理 settle_draw_issue 的具体内部流程。
     fn settle_draw_issue(&mut self, draw_issue: &DrawIssue) -> ApiResult<SettlementRun> {
         if draw_issue.status != DrawIssueStatus::Drawn {
             return Err(ApiError::BadRequest(
@@ -772,6 +797,7 @@ impl OrderStore {
     }
 }
 
+/// 校验输入参数并返回校验结果。
 fn validate_order_request(lottery: &LotteryKind, payload: &CreateOrderRequest) -> ApiResult<()> {
     if payload.user_id.trim().is_empty() {
         return Err(ApiError::BadRequest("user id is required".to_string()));
@@ -811,6 +837,7 @@ struct CalculatedOrder {
     expanded_bets: Vec<String>,
 }
 
+/// 处理 calculated_order 的具体内部流程。
 fn calculated_order(
     lottery: &LotteryKind,
     payload: &CreateOrderRequest,
@@ -854,6 +881,7 @@ fn calculated_order(
     })
 }
 
+/// 处理 payout_amount_minor 的具体内部流程。
 fn payout_amount_minor(
     matched_bet_count: usize,
     unit_amount_minor: i64,
@@ -868,6 +896,7 @@ fn payout_amount_minor(
         .ok_or_else(|| ApiError::BadRequest("payout amount is too large".to_string()))
 }
 
+/// 处理 current_timestamp_label 的具体内部流程。
 fn current_timestamp_label() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -892,6 +921,7 @@ mod tests {
     };
 
     #[test]
+    /// 处理 store_creates_order_from_play_rule_stakes 的具体内部流程。
     fn store_creates_order_from_play_rule_stakes() {
         let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
         let mut store = OrderStore::default();
@@ -925,6 +955,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_rejects_disabled_play_category 的具体内部流程。
     fn store_rejects_disabled_play_category() {
         let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
         let mut store = OrderStore::default();
@@ -952,6 +983,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_cancels_pending_order_once 的具体内部流程。
     fn store_cancels_pending_order_once() {
         let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
         let mut store = OrderStore::default();
@@ -984,6 +1016,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_settles_drawn_issue_and_updates_order_statuses 的具体内部流程。
     fn store_settles_drawn_issue_and_updates_order_statuses() {
         let lottery = lottery_with_categories(vec![
             crate::domain::lottery::PlayCategory::Direct,
@@ -1050,6 +1083,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_skips_cancelled_orders_when_settling 的具体内部流程。
     fn store_skips_cancelled_orders_when_settling() {
         let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
         let mut store = OrderStore::default();
@@ -1083,6 +1117,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_rejects_unfinished_or_duplicate_settlement 的具体内部流程。
     fn store_rejects_unfinished_or_duplicate_settlement() {
         let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
         let mut store = OrderStore::default();
@@ -1120,6 +1155,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 draw_issue_must_be_open_before_order_creation 的具体内部流程。
     fn draw_issue_must_be_open_before_order_creation() {
         let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
         let open_issue = draw_issue(DrawIssueStatus::Open, None);
@@ -1150,6 +1186,7 @@ mod tests {
             .contains("draw issue number does not match order issue"));
     }
 
+    /// 处理 lottery_with_categories 的具体内部流程。
     fn lottery_with_categories(play_categories: Vec<PlayCategory>) -> LotteryKind {
         let play_configs = vec![
             LotteryPlayConfig {
@@ -1199,6 +1236,7 @@ mod tests {
         }
     }
 
+    /// 处理 draw_issue 的具体内部流程。
     fn draw_issue(status: DrawIssueStatus, draw_number: Option<&str>) -> DrawIssue {
         DrawIssue {
             id: "D000000000001".to_string(),

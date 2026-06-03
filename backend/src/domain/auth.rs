@@ -1,3 +1,5 @@
+//! 管理员认证与会话领域模型，定义登录/登出/会话数据结构
+
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -36,6 +38,7 @@ pub struct AdminLogoutResponse {
 }
 
 impl AdminAuthSession {
+    /// 从管理员会话数据中提取可对外返回的 profile 信息。
     pub fn profile(&self) -> CurrentAdminProfile {
         CurrentAdminProfile {
             admin: self.admin.clone(),

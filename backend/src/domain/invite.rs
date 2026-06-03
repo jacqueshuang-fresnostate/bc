@@ -1,3 +1,5 @@
+//! 邀请领域模型，定义邀请码、邀请关系与状态变更参数
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

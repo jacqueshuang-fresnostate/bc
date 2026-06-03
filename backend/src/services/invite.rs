@@ -1,3 +1,5 @@
+//! 邀请领域模型，定义邀请码、邀请关系与状态变更参数
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, RwLock},
@@ -27,6 +29,7 @@ pub struct InviteRepository {
 }
 
 impl InviteRepository {
+    /// 创建一个仅内存的邀请仓储，适用于测试和未接入数据库的场景。
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(InviteStore::seeded())),
@@ -34,6 +37,7 @@ impl InviteRepository {
         }
     }
 
+    /// 从数据库恢复邀请仓储状态，确保重启后邀请关系可继续使用。
     pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
         let store = load_invite_store(&persistence).await?;
         Ok(Self {
@@ -42,6 +46,7 @@ impl InviteRepository {
         })
     }
 
+    /// 获取全部邀请关系，返回可直接渲染到管理页的列表数据。
     pub async fn list(&self) -> ApiResult<Vec<InviteRecord>> {
         self.inner
             .read()
@@ -49,6 +54,7 @@ impl InviteRepository {
             .map(|store| store.list())
     }
 
+    /// 按关系 ID 获取单条邀请关系记录。
     pub async fn get(&self, id: &str) -> ApiResult<InviteRecord> {
         self.inner
             .read()
@@ -56,6 +62,7 @@ impl InviteRepository {
             .get(id)
     }
 
+    /// 创建邀请关系：校验邀请人与被邀用户、邀请码归属及策略后保存，并写回数据库。
     pub async fn create(
         &self,
         request: CreateInviteRecordRequest,
@@ -74,6 +81,7 @@ impl InviteRepository {
         Ok(result)
     }
 
+    /// 更新邀请关系状态/返利开关/备注，保持 updated_at 与关系记录同步更新。
     pub async fn update(
         &self,
         id: &str,
@@ -91,6 +99,7 @@ impl InviteRepository {
         Ok(result)
     }
 
+    /// 将邀请仓储快照落库，支持持久化与服务重启恢复。
     async fn persist(&self, store: &InviteStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_invite_store(persistence, store).await?;
@@ -106,6 +115,7 @@ struct InviteStore {
 }
 
 async fn load_invite_store(database: &BusinessDatabase) -> ApiResult<InviteStore> {
+    // 从数据库读取全部邀请关系；空库时写入种子关系后返回默认状态。
     let mut records = BTreeMap::new();
 
     for row in sqlx::query(
@@ -170,6 +180,7 @@ async fn load_invite_store(database: &BusinessDatabase) -> ApiResult<InviteStore
 }
 
 async fn save_invite_store(database: &BusinessDatabase, store: &InviteStore) -> ApiResult<()> {
+    // 全量重建邀请关系表：先清表再插入快照中的全部记录，最后提交事务。
     let mut tx = database
         .pool()
         .begin()
@@ -210,6 +221,7 @@ async fn save_invite_store(database: &BusinessDatabase, store: &InviteStore) -> 
 }
 
 impl InviteStore {
+    /// 使用固定种子邀请关系初始化仓储，支持开发环境与首次启动快速可见关系数据。
     fn seeded() -> Self {
         let records = seed_invites()
             .into_iter()
@@ -219,10 +231,12 @@ impl InviteStore {
         Self { records }
     }
 
+    /// 返回完整数据列表。
     fn list(&self) -> Vec<InviteRecord> {
         self.records.values().cloned().collect()
     }
 
+    /// 按 ID 查询邀请关系，不存在时返回友好错误。
     fn get(&self, id: &str) -> ApiResult<InviteRecord> {
         self.records
             .get(id)
@@ -230,6 +244,7 @@ impl InviteStore {
             .ok_or_else(|| ApiError::NotFound(format!("invite record `{id}` not found")))
     }
 
+    /// 创建邀请关系：校验 ID、用户存在、邀请码归属与策略，重复关系直接拒绝。
     fn create(
         &mut self,
         request: CreateInviteRecordRequest,
@@ -290,6 +305,7 @@ impl InviteStore {
         Ok(record)
     }
 
+    /// 更新关系状态和返利选项，始终刷新更新时间。
     fn update(&mut self, id: &str, request: UpdateInviteRecordRequest) -> ApiResult<InviteRecord> {
         let record = self
             .records
@@ -304,6 +320,7 @@ impl InviteStore {
     }
 }
 
+/// 校验邀请码是否存在且归属邀请人本人，且必须是代理身份，返回邀请人用户信息。
 fn validate_invite_code<'a>(
     invite_code: &str,
     inviter_user_id: &str,
@@ -323,6 +340,7 @@ fn validate_invite_code<'a>(
     Ok(owner)
 }
 
+/// 按当前平台策略校验邀请人身份是否允许创建邀请关系。
 fn validate_inviter(inviter: &UserSummary, policy: &InvitePolicySummary) -> ApiResult<()> {
     match inviter.kind {
         UserKind::Agent if policy.agents_can_invite => Ok(()),
@@ -336,6 +354,7 @@ fn validate_inviter(inviter: &UserSummary, policy: &InvitePolicySummary) -> ApiR
     }
 }
 
+/// 去除字符串空白并校验不能为空，用于所有包含 id/用户名等必填字段。
 fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     let value = value.trim().to_string();
     if value.is_empty() {
@@ -344,11 +363,14 @@ fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     Ok(value)
 }
 
+/// 当前本地时间戳，作为 invite_records 的创建与更新时间字段展示用。
 fn current_time_label() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
+/// 固定邀请关系种子：提供演示数据和重启恢复的一致性起点。
 fn seed_invites() -> Vec<InviteRecord> {
+    const AGENT_INVITE_CODE: &str = "KJHGFDSA";
     vec![
         InviteRecord {
             id: "INV-10001".to_string(),
@@ -356,7 +378,7 @@ fn seed_invites() -> Vec<InviteRecord> {
             inviter_username: "agent_alpha".to_string(),
             invitee_user_id: "U10001".to_string(),
             invitee_username: "demo_user".to_string(),
-            invite_code: "AGENT10001".to_string(),
+            invite_code: AGENT_INVITE_CODE.to_string(),
             status: InviteStatus::Active,
             rebate_enabled: true,
             note: "默认代理邀请关系".to_string(),
@@ -369,7 +391,7 @@ fn seed_invites() -> Vec<InviteRecord> {
             inviter_username: "agent_alpha".to_string(),
             invitee_user_id: "U10004".to_string(),
             invitee_username: "risk_watch".to_string(),
-            invite_code: "AGENT10001".to_string(),
+            invite_code: AGENT_INVITE_CODE.to_string(),
             status: InviteStatus::Pending,
             rebate_enabled: false,
             note: "风险观察用户暂不返利".to_string(),
@@ -410,6 +432,12 @@ mod tests {
             .get()
             .await
             .expect("policy can load");
+        let inviter_code = access
+            .users
+            .iter()
+            .find(|user| user.id == "U90001")
+            .map(|user| user.invite_code.clone())
+            .expect("inviter invite code exists");
 
         let created = invites
             .create(
@@ -417,7 +445,7 @@ mod tests {
                     id: " INV-NEW ".to_string(),
                     inviter_user_id: "U90001".to_string(),
                     invitee_user_id: "U20001".to_string(),
-                    invite_code: " AGENT10001 ".to_string(),
+                    invite_code: format!(" {inviter_code} "),
                     rebate_enabled: true,
                     note: " 新邀请 ".to_string(),
                 },
@@ -430,7 +458,7 @@ mod tests {
         assert_eq!(created.id, "INV-NEW");
         assert_eq!(created.inviter_username, "agent_alpha");
         assert_eq!(created.invitee_username, "fresh_invitee");
-        assert_eq!(created.invite_code, "AGENT10001");
+        assert_eq!(created.invite_code, inviter_code);
         assert_eq!(created.note, "新邀请");
 
         let updated = invites
@@ -455,10 +483,22 @@ mod tests {
             .snapshot()
             .await
             .expect("access snapshot can load");
+        let inviter_code = access
+            .users
+            .iter()
+            .find(|user| user.id == "U90001")
+            .map(|user| user.invite_code.clone())
+            .expect("inviter invite code exists");
         let policy = RebateRepository::memory_seeded()
             .get()
             .await
             .expect("policy can load");
+        let regular_user_code = access
+            .users
+            .iter()
+            .find(|user| user.id == "U10001")
+            .map(|user| user.invite_code.clone())
+            .expect("regular invite code exists");
 
         let error = invites
             .create(
@@ -466,7 +506,7 @@ mod tests {
                     id: "INV-REGULAR".to_string(),
                     inviter_user_id: "U10001".to_string(),
                     invitee_user_id: "U10004".to_string(),
-                    invite_code: "USER10001".to_string(),
+                    invite_code: regular_user_code,
                     rebate_enabled: true,
                     note: String::new(),
                 },
@@ -500,7 +540,12 @@ mod tests {
                     id: "INV-AGENT-DISABLED".to_string(),
                     inviter_user_id: "U90001".to_string(),
                     invitee_user_id: "U10004".to_string(),
-                    invite_code: "AGENT10001".to_string(),
+                    invite_code: access
+                        .users
+                        .iter()
+                        .find(|user| user.id == "U90001")
+                        .map(|user| user.invite_code.clone())
+                        .expect("inviter invite code exists"),
                     rebate_enabled: true,
                     note: String::new(),
                 },
@@ -566,6 +611,12 @@ mod tests {
             .get()
             .await
             .expect("policy can load");
+        let inviter_code = access
+            .users
+            .iter()
+            .find(|user| user.id == "U90001")
+            .map(|user| user.invite_code.clone())
+            .expect("inviter invite code exists");
 
         let created = invites
             .create(
@@ -573,7 +624,7 @@ mod tests {
                     id: "INV-REUSE-CODE".to_string(),
                     inviter_user_id: "U90001".to_string(),
                     invitee_user_id: "U20002".to_string(),
-                    invite_code: "AGENT10001".to_string(),
+                    invite_code: inviter_code.clone(),
                     rebate_enabled: true,
                     note: String::new(),
                 },
@@ -583,6 +634,6 @@ mod tests {
             .await
             .expect("agent code can be reused for another invitee");
 
-        assert_eq!(created.invite_code, "AGENT10001");
+        assert_eq!(created.invite_code, inviter_code);
     }
 }

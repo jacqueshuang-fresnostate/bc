@@ -1,3 +1,5 @@
+//! 后台看板聚合服务，输出模块状态与指标摘要
+
 use serde::Serialize;
 
 use crate::domain::{
@@ -66,6 +68,7 @@ pub enum ModuleStatus {
     Scaffolded,
 }
 
+/// 组装完整看板摘要并返回核心指标与模块列表。
 pub fn dashboard_summary_with_orders(
     lotteries: Vec<LotteryKind>,
     draw_sources: Vec<DrawSource>,
@@ -116,6 +119,7 @@ pub fn dashboard_summary_with_orders(
     }
 }
 
+/// 按管理员权限范围过滤看板内容，移除无权限模块。
 pub fn dashboard_summary_for_scopes(
     mut summary: DashboardSummary,
     scopes: &[PermissionScope],
@@ -174,6 +178,7 @@ pub fn dashboard_summary_for_scopes(
     summary
 }
 
+/// 判断并返回布尔结果。
 fn is_allowed(scope: Option<PermissionScope>, scopes: &[PermissionScope]) -> bool {
     match scope {
         Some(scope) => has_scope(scopes, &scope),
@@ -181,10 +186,12 @@ fn is_allowed(scope: Option<PermissionScope>, scopes: &[PermissionScope]) -> boo
     }
 }
 
+/// 检查是否存在目标条件。
 fn has_scope(scopes: &[PermissionScope], scope: &PermissionScope) -> bool {
     scopes.contains(scope)
 }
 
+/// 处理 metric_scope 的具体内部流程。
 fn metric_scope(key: &str) -> Option<PermissionScope> {
     match key {
         "users" => Some(PermissionScope::Users),
@@ -195,6 +202,7 @@ fn metric_scope(key: &str) -> Option<PermissionScope> {
     }
 }
 
+/// 处理 module_scope 的具体内部流程。
 fn module_scope(key: &str) -> Option<PermissionScope> {
     match key {
         "users" | "registration" => Some(PermissionScope::Users),
@@ -212,6 +220,7 @@ fn module_scope(key: &str) -> Option<PermissionScope> {
     }
 }
 
+/// 处理 redacted_finance_overview 的具体内部流程。
 fn redacted_finance_overview() -> FinanceOverview {
     FinanceOverview {
         total_balance_minor: 0,
@@ -221,6 +230,7 @@ fn redacted_finance_overview() -> FinanceOverview {
     }
 }
 
+/// 处理 redacted_registration_config 的具体内部流程。
 fn redacted_registration_config() -> RegistrationConfig {
     RegistrationConfig {
         username_enabled: false,
@@ -229,6 +239,7 @@ fn redacted_registration_config() -> RegistrationConfig {
     }
 }
 
+/// 处理 redacted_invite_policy 的具体内部流程。
 fn redacted_invite_policy() -> InvitePolicySummary {
     InvitePolicySummary {
         agents_can_invite: false,
@@ -239,12 +250,14 @@ fn redacted_invite_policy() -> InvitePolicySummary {
     }
 }
 
+/// 处理 money_label 的具体内部流程。
 fn money_label(amount_minor: i64) -> String {
     let sign = if amount_minor < 0 { "-" } else { "" };
     let abs_amount = amount_minor.checked_abs().unwrap_or(i64::MAX);
     format!("{sign}¥{}.{:02}", abs_amount / 100, abs_amount % 100)
 }
 
+/// 处理 metric 的具体内部流程。
 fn metric(
     key: impl Into<String>,
     label: impl Into<String>,
@@ -259,6 +272,7 @@ fn metric(
     }
 }
 
+/// 处理 module_groups 的具体内部流程。
 fn module_groups() -> Vec<ModuleGroup> {
     vec![
         ModuleGroup {
@@ -406,6 +420,7 @@ fn module_groups() -> Vec<ModuleGroup> {
     ]
 }
 
+/// 处理 module 的具体内部流程。
 fn module(
     key: impl Into<String>,
     name: impl Into<String>,
@@ -559,6 +574,7 @@ mod tests {
         assert!(summary.invite_policy.agents_can_invite);
     }
 
+    /// 构造样例摘要视图。
     fn sample_summary(access: AccessSnapshot) -> DashboardSummary {
         dashboard_summary_with_orders(
             seed_lotteries(),

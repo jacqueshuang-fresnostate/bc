@@ -62,6 +62,7 @@ use crate::{
 
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
+/// 组装并返回当前模块对应的路由树。
 pub fn router(state: AppState) -> Router<AppState> {
     let protected_routes = Router::new()
         .route("/dashboard", get(get_dashboard_summary))
@@ -209,6 +210,7 @@ async fn require_admin_auth(
     Ok(next.run(request).await)
 }
 
+/// 处理 bearer_token 的具体内部流程。
 fn bearer_token(request: &Request) -> ApiResult<&str> {
     let header = request
         .headers()
@@ -224,6 +226,7 @@ fn bearer_token(request: &Request) -> ApiResult<&str> {
     Ok(token)
 }
 
+/// 处理 required_scope_for_path 的具体内部流程。
 fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
     let path = path.trim_start_matches('/');
     let path = path.strip_prefix("admin/").unwrap_or(path);
@@ -1208,6 +1211,7 @@ mod tests {
     use crate::domain::permission::PermissionScope;
 
     #[test]
+    /// 处理 required_scope_maps_admin_paths 的具体内部流程。
     fn required_scope_maps_admin_paths() {
         assert_eq!(required_scope_for_path("/dashboard"), None);
         assert_eq!(

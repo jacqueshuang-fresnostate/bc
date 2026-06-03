@@ -1,3 +1,5 @@
+//! 彩种与开奖来源领域模型，定义开奖方式和销售与合买配置
+
 use serde::{Deserialize, Serialize};
 
 use crate::domain::play::PlayRuleCode;
@@ -106,6 +108,7 @@ mod tests {
     use super::DrawSchedule;
 
     #[test]
+    /// 处理 draw_schedule_uses_camel_case_variant_fields 的具体内部流程。
     fn draw_schedule_uses_camel_case_variant_fields() {
         let schedule = DrawSchedule::Periodic {
             interval_seconds: 60,
@@ -117,6 +120,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 draw_schedule_accepts_camel_case_variant_fields 的具体内部流程。
     fn draw_schedule_accepts_camel_case_variant_fields() {
         let schedule: DrawSchedule =
             serde_json::from_value(json!({ "periodic": { "intervalSeconds": 60 } }))

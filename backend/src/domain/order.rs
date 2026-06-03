@@ -1,3 +1,5 @@
+//! 订单领域模型，定义订单生命周期、金额和结算相关结构
+
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
@@ -78,6 +80,7 @@ pub struct OrderDetail {
 }
 
 impl OrderDetail {
+    /// 生成当前实体对象的汇总信息。
     pub fn summary(&self) -> OrderSummary {
         OrderSummary {
             id: self.id.clone(),

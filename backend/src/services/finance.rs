@@ -1,3 +1,5 @@
+//! 财务领域模型，定义账户汇总、流水与账户调整参数
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, RwLock},
@@ -28,6 +30,7 @@ pub struct FinanceRepository {
 }
 
 impl FinanceRepository {
+    /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(FinanceStore::seeded())),
@@ -35,6 +38,7 @@ impl FinanceRepository {
         }
     }
 
+    /// 从数据库加载历史数据并初始化持久化仓储。
     pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
         let store = load_finance_store(&persistence).await?;
         Ok(Self {
@@ -43,6 +47,7 @@ impl FinanceRepository {
         })
     }
 
+    /// 返回财务总览指标。
     pub async fn overview(&self) -> ApiResult<FinanceOverview> {
         self.inner
             .read()
@@ -50,6 +55,7 @@ impl FinanceRepository {
             .overview()
     }
 
+    /// 返回全部财务账户列表。
     pub async fn accounts(&self) -> ApiResult<Vec<FinancialAccountSummary>> {
         self.inner
             .read()
@@ -57,6 +63,7 @@ impl FinanceRepository {
             .map(|store| store.accounts())
     }
 
+    /// 返回财务流水列表。
     pub async fn ledger_entries(&self) -> ApiResult<Vec<LedgerEntry>> {
         self.inner
             .read()
@@ -64,6 +71,7 @@ impl FinanceRepository {
             .map(|store| store.ledger_entries())
     }
 
+    /// 校验用户余额是否可支付指定金额。
     pub async fn ensure_available(&self, user_id: &str, amount_minor: i64) -> ApiResult<()> {
         self.inner
             .read()
@@ -71,6 +79,7 @@ impl FinanceRepository {
             .ensure_available(user_id, amount_minor)
     }
 
+    /// 校验订单是否满足退款条件。
     pub async fn ensure_order_can_refund(&self, order: &OrderDetail) -> ApiResult<()> {
         self.inner
             .read()
@@ -78,6 +87,7 @@ impl FinanceRepository {
             .ensure_order_can_refund(order)
     }
 
+    /// 执行财务手工增减并记录流水。
     pub async fn manual_adjust(
         &self,
         payload: ManualBalanceAdjustmentRequest,
@@ -94,6 +104,7 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 按订单扣减用户资金。
     pub async fn debit_order(&self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
         let (result, snapshot) = {
             let mut store = self
@@ -107,6 +118,7 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 按订单执行退款并回写流水。
     pub async fn refund_order(&self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
         let (result, snapshot) = {
             let mut store = self
@@ -120,6 +132,7 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 将结算金额回写给用户。
     pub async fn credit_settlement(
         &self,
         settlement: &SettlementRun,
@@ -302,6 +315,7 @@ async fn save_finance_store(database: &BusinessDatabase, store: &FinanceStore) -
 }
 
 impl FinanceStore {
+    /// 构建并返回种子数据。
     fn seeded() -> Self {
         let mut store = Self::default();
         store.seed_account("U10001", 12_000, 2_000);
@@ -312,6 +326,7 @@ impl FinanceStore {
         store
     }
 
+    /// 返回内置种子或测试数据。
     fn seed_account(
         &mut self,
         user_id: &str,
@@ -328,6 +343,7 @@ impl FinanceStore {
         );
     }
 
+    /// 处理 overview 的具体内部流程。
     fn overview(&self) -> ApiResult<FinanceOverview> {
         let mut total_balance_minor = 0_i64;
         for account in self.accounts.values() {
@@ -354,14 +370,17 @@ impl FinanceStore {
         })
     }
 
+    /// 处理 accounts 的具体内部流程。
     fn accounts(&self) -> Vec<FinancialAccountSummary> {
         self.accounts.values().cloned().collect()
     }
 
+    /// 处理 ledger_entries 的具体内部流程。
     fn ledger_entries(&self) -> Vec<LedgerEntry> {
         self.ledger_entries.iter().rev().cloned().collect()
     }
 
+    /// 处理 ensure_available 的具体内部流程。
     fn ensure_available(&self, user_id: &str, amount_minor: i64) -> ApiResult<()> {
         if amount_minor <= 0 {
             return Err(ApiError::BadRequest(
@@ -379,6 +398,7 @@ impl FinanceStore {
         Ok(())
     }
 
+    /// 处理 ensure_order_can_refund 的具体内部流程。
     fn ensure_order_can_refund(&self, order: &OrderDetail) -> ApiResult<()> {
         if !self.has_reference(&LedgerEntryKind::OrderDebit, &order.id) {
             return Err(ApiError::BadRequest(
@@ -395,6 +415,7 @@ impl FinanceStore {
         Ok(())
     }
 
+    /// 处理 manual_adjust 的具体内部流程。
     fn manual_adjust(&mut self, payload: ManualBalanceAdjustmentRequest) -> ApiResult<LedgerEntry> {
         let user_id = payload.user_id.trim();
         if user_id.is_empty() {
@@ -422,6 +443,7 @@ impl FinanceStore {
         )
     }
 
+    /// 处理 debit_order 的具体内部流程。
     fn debit_order(&mut self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
         if self.has_reference(&LedgerEntryKind::OrderDebit, &order.id) {
             return Err(ApiError::Conflict(format!(
@@ -443,6 +465,7 @@ impl FinanceStore {
         )
     }
 
+    /// 处理 refund_order 的具体内部流程。
     fn refund_order(&mut self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
         if let Some(entry) = self.reference_entry(&LedgerEntryKind::OrderRefund, &order.id) {
             return Ok(entry);
@@ -458,6 +481,7 @@ impl FinanceStore {
         )
     }
 
+    /// 处理 credit_settlement 的具体内部流程。
     fn credit_settlement(&mut self, settlement: &SettlementRun) -> ApiResult<Vec<LedgerEntry>> {
         let mut entries = Vec::new();
 
@@ -486,6 +510,7 @@ impl FinanceStore {
         Ok(entries)
     }
 
+    /// 处理 account 的具体内部流程。
     fn account(&self, user_id: &str) -> ApiResult<&FinancialAccountSummary> {
         let user_id = user_id.trim();
         self.accounts
@@ -493,6 +518,7 @@ impl FinanceStore {
             .ok_or_else(|| ApiError::NotFound(format!("financial account `{user_id}` not found")))
     }
 
+    /// 处理 apply_available_delta 的具体内部流程。
     fn apply_available_delta(
         &mut self,
         user_id: &str,
@@ -537,10 +563,12 @@ impl FinanceStore {
         Ok(entry)
     }
 
+    /// 检查是否存在目标条件。
     fn has_reference(&self, kind: &LedgerEntryKind, reference_id: &str) -> bool {
         self.reference_entry(kind, reference_id).is_some()
     }
 
+    /// 处理 reference_entry 的具体内部流程。
     fn reference_entry(&self, kind: &LedgerEntryKind, reference_id: &str) -> Option<LedgerEntry> {
         self.ledger_entries
             .iter()
@@ -551,6 +579,7 @@ impl FinanceStore {
     }
 }
 
+/// 处理 current_timestamp_label 的具体内部流程。
 fn current_timestamp_label() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -573,6 +602,7 @@ mod tests {
     };
 
     #[test]
+    /// 处理 store_debits_order_and_records_ledger 的具体内部流程。
     fn store_debits_order_and_records_ledger() {
         let mut store = FinanceStore::seeded();
         let order = order_detail("O000000000001", "U10001", 200, 0);
@@ -588,6 +618,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_rejects_insufficient_order_balance 的具体内部流程。
     fn store_rejects_insufficient_order_balance() {
         let mut store = FinanceStore::seeded();
         let order = order_detail("O000000000001", "U10004", 200, 0);
@@ -600,6 +631,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_refunds_order_once 的具体内部流程。
     fn store_refunds_order_once() {
         let mut store = FinanceStore::seeded();
         let order = order_detail("O000000000001", "U10001", 200, 0);
@@ -616,6 +648,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_credits_winning_settlement 的具体内部流程。
     fn store_credits_winning_settlement() {
         let mut store = FinanceStore::seeded();
         let settlement = settlement_run("S000000000001", "U10001", 2_000);
@@ -634,6 +667,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_applies_manual_adjustment 的具体内部流程。
     fn store_applies_manual_adjustment() {
         let mut store = FinanceStore::seeded();
 
@@ -651,6 +685,7 @@ mod tests {
         assert_eq!(account.available_balance_minor, 13_000);
     }
 
+    /// 处理 order_detail 的具体内部流程。
     fn order_detail(id: &str, user_id: &str, amount_minor: i64, payout_minor: i64) -> OrderDetail {
         OrderDetail {
             id: id.to_string(),
@@ -675,6 +710,7 @@ mod tests {
         }
     }
 
+    /// 处理 settlement_run 的具体内部流程。
     fn settlement_run(id: &str, user_id: &str, payout_minor: i64) -> SettlementRun {
         SettlementRun {
             id: id.to_string(),

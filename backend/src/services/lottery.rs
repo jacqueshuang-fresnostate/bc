@@ -1,3 +1,5 @@
+//! 彩种与开奖来源领域模型，定义开奖方式和销售与合买配置
+
 use std::{collections::BTreeMap, error::Error, sync::Arc};
 
 use serde::{de::DeserializeOwned, Serialize};
@@ -27,6 +29,7 @@ enum LotteryRepositoryKind {
 }
 
 impl LotteryRepository {
+    /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(LotteryRepositoryKind::Memory(std::sync::RwLock::new(
@@ -35,6 +38,7 @@ impl LotteryRepository {
         }
     }
 
+    /// 基于连接字符串创建数据库连接池并执行迁移。
     pub async fn postgres(database_url: &str) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let pool = PgPoolOptions::new()
             .max_connections(5)
@@ -51,6 +55,7 @@ impl LotteryRepository {
         })
     }
 
+    /// 返回完整列表。
     pub async fn list(&self) -> ApiResult<Vec<LotteryKind>> {
         match self.inner.as_ref() {
             LotteryRepositoryKind::Memory(store) => store
@@ -61,6 +66,7 @@ impl LotteryRepository {
         }
     }
 
+    /// 按 ID 查询单条记录。
     pub async fn get(&self, id: &str) -> ApiResult<LotteryKind> {
         match self.inner.as_ref() {
             LotteryRepositoryKind::Memory(store) => store
@@ -71,6 +77,7 @@ impl LotteryRepository {
         }
     }
 
+    /// 校验入参并创建一条新记录。
     pub async fn create(&self, lottery: LotteryKind) -> ApiResult<LotteryKind> {
         match self.inner.as_ref() {
             LotteryRepositoryKind::Memory(store) => store
@@ -81,6 +88,7 @@ impl LotteryRepository {
         }
     }
 
+    /// 更新现有记录并持久化变更。
     pub async fn update(&self, id: &str, lottery: LotteryKind) -> ApiResult<LotteryKind> {
         match self.inner.as_ref() {
             LotteryRepositoryKind::Memory(store) => store
@@ -91,6 +99,7 @@ impl LotteryRepository {
         }
     }
 
+    /// 删除现有记录并返回被删对象。
     pub async fn delete(&self, id: &str) -> ApiResult<LotteryKind> {
         match self.inner.as_ref() {
             LotteryRepositoryKind::Memory(store) => store
@@ -101,6 +110,7 @@ impl LotteryRepository {
         }
     }
 
+    /// 更新彩种售卖开关。
     pub async fn set_sale_enabled(&self, id: &str, sale_enabled: bool) -> ApiResult<LotteryKind> {
         match self.inner.as_ref() {
             LotteryRepositoryKind::Memory(store) => store
@@ -120,10 +130,12 @@ pub struct LotteryStore {
 }
 
 impl LotteryStore {
+    /// 返回内置种子数据。
     pub fn seeded() -> Self {
         Self::from_lotteries(seed_lotteries())
     }
 
+    /// 处理 from_lotteries 的具体内部流程。
     fn from_lotteries(lotteries: Vec<LotteryKind>) -> Self {
         Self {
             lotteries: lotteries
@@ -133,10 +145,12 @@ impl LotteryStore {
         }
     }
 
+    /// 返回完整列表。
     pub fn list(&self) -> Vec<LotteryKind> {
         self.lotteries.values().cloned().collect()
     }
 
+    /// 按 ID 查询单条记录。
     pub fn get(&self, id: &str) -> ApiResult<LotteryKind> {
         self.lotteries
             .get(id)
@@ -144,6 +158,7 @@ impl LotteryStore {
             .ok_or_else(|| ApiError::NotFound(format!("lottery `{id}` not found")))
     }
 
+    /// 校验入参并创建一条新记录。
     pub fn create(&mut self, lottery: LotteryKind) -> ApiResult<LotteryKind> {
         let lottery = normalize_lottery(lottery)?;
 
@@ -158,6 +173,7 @@ impl LotteryStore {
         Ok(lottery)
     }
 
+    /// 更新现有记录并持久化变更。
     pub fn update(&mut self, id: &str, lottery: LotteryKind) -> ApiResult<LotteryKind> {
         let lottery = normalize_lottery(lottery)?;
 
@@ -175,12 +191,14 @@ impl LotteryStore {
         Ok(lottery)
     }
 
+    /// 删除现有记录并返回被删对象。
     pub fn delete(&mut self, id: &str) -> ApiResult<LotteryKind> {
         self.lotteries
             .remove(id)
             .ok_or_else(|| ApiError::NotFound(format!("lottery `{id}` not found")))
     }
 
+    /// 更新彩种售卖开关。
     pub fn set_sale_enabled(&mut self, id: &str, sale_enabled: bool) -> ApiResult<LotteryKind> {
         let lottery = self
             .lotteries
@@ -370,6 +388,7 @@ impl PostgresLotteryStore {
     }
 }
 
+/// 返回平台内置彩种默认数据。
 pub fn seed_lotteries() -> Vec<LotteryKind> {
     vec![
         LotteryKind {
@@ -566,6 +585,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
     ]
 }
 
+/// 标准化输入并返回规范值。
 fn normalize_lottery(mut lottery: LotteryKind) -> ApiResult<LotteryKind> {
     validate_lottery_base(&lottery)?;
 
@@ -587,6 +607,7 @@ fn normalize_lottery(mut lottery: LotteryKind) -> ApiResult<LotteryKind> {
     Ok(lottery)
 }
 
+/// 校验输入参数并返回校验结果。
 fn validate_lottery_base(lottery: &LotteryKind) -> ApiResult<()> {
     if lottery.id.trim().is_empty() {
         return Err(ApiError::BadRequest("lottery id is required".to_string()));
@@ -649,6 +670,7 @@ fn validate_lottery_base(lottery: &LotteryKind) -> ApiResult<()> {
     Ok(())
 }
 
+/// 标准化输入并返回规范值。
 fn normalize_play_configs(
     number_type: &LotteryNumberType,
     play_categories: &[PlayCategory],
@@ -695,6 +717,7 @@ fn normalize_play_configs(
     Ok(configs)
 }
 
+/// 处理 enabled_play_categories 的具体内部流程。
 fn enabled_play_categories(play_configs: &[LotteryPlayConfig]) -> Vec<PlayCategory> {
     let mut categories = Vec::new();
     for config in play_configs.iter().filter(|config| config.enabled) {
@@ -706,6 +729,7 @@ fn enabled_play_categories(play_configs: &[LotteryPlayConfig]) -> Vec<PlayCatego
     categories
 }
 
+/// 处理 play_configs_with_overrides 的具体内部流程。
 fn play_configs_with_overrides(
     number_type: LotteryNumberType,
     play_categories: &[PlayCategory],
@@ -730,6 +754,7 @@ fn play_configs_with_overrides(
         .collect()
 }
 
+/// 处理 default_odds_basis_points_for_rule 的具体内部流程。
 fn default_odds_basis_points_for_rule(rule_code: &PlayRuleCode) -> i64 {
     match play_category_for_rule(rule_code) {
         PlayCategory::Direct | PlayCategory::DirectCombination => 100_000,
@@ -738,6 +763,7 @@ fn default_odds_basis_points_for_rule(rule_code: &PlayRuleCode) -> i64 {
     }
 }
 
+/// 处理 group_buy_config 的具体内部流程。
 fn group_buy_config() -> GroupBuyConfig {
     GroupBuyConfig {
         enabled: true,
@@ -747,6 +773,7 @@ fn group_buy_config() -> GroupBuyConfig {
     }
 }
 
+/// 处理 lottery_from_row 的具体内部流程。
 fn lottery_from_row(row: sqlx::postgres::PgRow) -> ApiResult<LotteryKind> {
     let number_type = enum_from_string(row.try_get("number_type").map_err(database_error)?)?;
     let draw_mode = enum_from_string(row.try_get("draw_mode").map_err(database_error)?)?;
@@ -768,6 +795,7 @@ fn lottery_from_row(row: sqlx::postgres::PgRow) -> ApiResult<LotteryKind> {
     })
 }
 
+/// 处理 enum_value 的具体内部流程。
 fn enum_value<T: Serialize>(value: &T) -> ApiResult<String> {
     let value = serde_json::to_value(value).map_err(serde_error)?;
 
@@ -777,6 +805,7 @@ fn enum_value<T: Serialize>(value: &T) -> ApiResult<String> {
     })
 }
 
+/// 处理 enum_from_string 的具体内部流程。
 fn enum_from_string<T: DeserializeOwned>(value: String) -> ApiResult<T> {
     serde_json::from_value(Value::String(value)).map_err(|_| {
         tracing::error!(
@@ -787,10 +816,12 @@ fn enum_from_string<T: DeserializeOwned>(value: String) -> ApiResult<T> {
     })
 }
 
+/// 处理 json_value 的具体内部流程。
 fn json_value<T: Serialize>(value: &T) -> ApiResult<Value> {
     serde_json::to_value(value).map_err(serde_error)
 }
 
+/// 处理 json_from_value 的具体内部流程。
 fn json_from_value<T: DeserializeOwned>(value: Value) -> ApiResult<T> {
     serde_json::from_value(value).map_err(|_| {
         tracing::error!(
@@ -801,6 +832,7 @@ fn json_from_value<T: DeserializeOwned>(value: Value) -> ApiResult<T> {
     })
 }
 
+/// 处理 serde_error 的具体内部流程。
 fn serde_error(_: serde_json::Error) -> ApiError {
     tracing::error!(
         error = "错误详情已按中文日志规则隐藏",
@@ -809,6 +841,7 @@ fn serde_error(_: serde_json::Error) -> ApiError {
     ApiError::Internal("彩种 JSON 序列化失败".to_string())
 }
 
+/// 处理 database_error 的具体内部流程。
 fn database_error(_: sqlx::Error) -> ApiError {
     tracing::error!(error = "错误详情已按中文日志规则隐藏", "彩种数据库操作失败");
     ApiError::Internal("彩种数据库操作失败".to_string())
@@ -823,6 +856,7 @@ mod tests {
     use crate::domain::lottery::{DrawMode, DrawSchedule, LotteryKind, LotteryNumberType};
 
     #[test]
+    /// 处理 store_creates_and_lists_lottery 的具体内部流程。
     fn store_creates_and_lists_lottery() {
         let mut store = LotteryStore::seeded();
         let mut lottery = seed_lotteries()
@@ -838,6 +872,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 seeded_lotteries_include_au5_api_lottery 的具体内部流程。
     fn seeded_lotteries_include_au5_api_lottery() {
         let lottery = seed_lotteries()
             .into_iter()
@@ -856,6 +891,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 seeded_lotteries_include_txffc_api_lottery 的具体内部流程。
     fn seeded_lotteries_include_txffc_api_lottery() {
         let lottery = seed_lotteries()
             .into_iter()
@@ -874,6 +910,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_rejects_duplicate_id 的具体内部流程。
     fn store_rejects_duplicate_id() {
         let mut store = LotteryStore::seeded();
         let lottery = store.get("fc3d").expect("seed lottery exists");
@@ -884,6 +921,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_rejects_invalid_periodic_schedule 的具体内部流程。
     fn store_rejects_invalid_periodic_schedule() {
         let mut store = LotteryStore::seeded();
         let mut lottery: LotteryKind = store.get("ssc60").expect("seed lottery exists");
@@ -900,6 +938,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 store_toggles_sale_status 的具体内部流程。
     fn store_toggles_sale_status() {
         let mut store = LotteryStore::seeded();
 
@@ -911,6 +950,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 lottery_database_values_use_frontend_contract_names 的具体内部流程。
     fn lottery_database_values_use_frontend_contract_names() {
         let lottery = seed_lotteries()
             .into_iter()
@@ -925,6 +965,7 @@ mod tests {
     }
 
     #[test]
+    /// 处理 lottery_database_values_round_trip_to_domain_types 的具体内部流程。
     fn lottery_database_values_round_trip_to_domain_types() {
         let draw_mode: DrawMode = enum_from_string("manual".to_string()).unwrap();
         let schedule: DrawSchedule = json_from_value(serde_json::json!({

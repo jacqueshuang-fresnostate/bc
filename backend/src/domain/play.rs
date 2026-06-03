@@ -1,3 +1,5 @@
+//! 玩法规则领域模型，定义玩法代码、选号和评估结果
+
 use serde::{Deserialize, Serialize};
 
 use crate::domain::lottery::{LotteryNumberType, PlayCategory};

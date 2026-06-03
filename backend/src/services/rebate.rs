@@ -1,3 +1,5 @@
+//! 返利领域模型，定义邀请返利模式与配置更新参数
+
 use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +19,7 @@ pub struct RebateRepository {
 }
 
 impl RebateRepository {
+    /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(RebateStore::seeded())),
@@ -24,6 +27,7 @@ impl RebateRepository {
         }
     }
 
+    /// 从数据库加载历史数据并初始化持久化仓储。
     pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
         let store = load_rebate_store(&persistence).await?;
         Ok(Self {
@@ -32,6 +36,7 @@ impl RebateRepository {
         })
     }
 
+    /// 按 ID 查询单条记录。
     pub async fn get(&self) -> ApiResult<InvitePolicySummary> {
         self.inner
             .read()
@@ -39,6 +44,7 @@ impl RebateRepository {
             .map(|store| store.policy())
     }
 
+    /// 更新现有记录并持久化变更。
     pub async fn update(
         &self,
         request: InvitePolicyUpdateRequest,
@@ -137,6 +143,7 @@ async fn save_rebate_store(database: &BusinessDatabase, store: &RebateStore) -> 
 }
 
 impl RebateStore {
+    /// 构建并返回种子数据。
     fn seeded() -> Self {
         Self {
             agents_can_invite: true,
@@ -146,6 +153,7 @@ impl RebateStore {
         }
     }
 
+    /// 处理 policy 的具体内部流程。
     fn policy(&self) -> InvitePolicySummary {
         InvitePolicySummary {
             agents_can_invite: self.agents_can_invite,
@@ -156,6 +164,7 @@ impl RebateStore {
         }
     }
 
+    /// 校验入参并更新指定记录。
     fn update(&mut self, request: InvitePolicyUpdateRequest) -> ApiResult<InvitePolicySummary> {
         validate_policy(&request)?;
 
@@ -168,6 +177,7 @@ impl RebateStore {
     }
 }
 
+/// 校验返利策略的字段与范围。
 fn validate_policy(request: &InvitePolicyUpdateRequest) -> ApiResult<()> {
     if !request.agents_can_invite && !request.regular_users_can_invite {
         return Err(ApiError::BadRequest(
@@ -184,6 +194,7 @@ fn validate_policy(request: &InvitePolicyUpdateRequest) -> ApiResult<()> {
     Ok(())
 }
 
+/// 处理 supported_rebate_modes 的具体内部流程。
 fn supported_rebate_modes() -> Vec<RebateMode> {
     vec![RebateMode::Immediate, RebateMode::RechargeTiered]
 }

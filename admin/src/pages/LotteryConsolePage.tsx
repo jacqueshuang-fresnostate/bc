@@ -14,6 +14,7 @@ import { MetricCard } from '../components/MetricCard';
 import { useLotteryConsole } from '../hooks/useLotteryConsole';
 import type { DrawMode, LotteryKind, LotteryNumberType } from '../types/dashboard';
 import type { DrawIssue, DrawIssueStatus, LotteryDrawControl } from '../types/draws';
+import type { DrawSchedulerStatus } from '../types/scheduler';
 
 interface LotteryConsolePageProps {
   onDashboardRefresh: () => void;
@@ -25,6 +26,8 @@ interface LotteryConsoleItem {
   drawControl: LotteryDrawControl | null;
   recentDrawnIssue: DrawIssue | null;
   issueCount: number;
+  waitingIssue: DrawIssue | null;
+  waitingIssueCount: number;
 }
 
 interface LotteryDrawControlFormState {
@@ -57,6 +60,7 @@ export function LotteryConsolePage({
     loading,
     lotteries,
     refresh,
+    schedulerStatus,
     saveDrawControl,
   } = useLotteryConsole();
   const [now, setNow] = useState(() => new Date());
@@ -97,12 +101,15 @@ export function LotteryConsolePage({
     [drawControlByLotteryId, issues, lotteries],
   );
   const statusFilterOptions = useMemo(
-    () => lotteryConsoleStatusFilterOptions(items),
-    [items],
+    () => lotteryConsoleStatusFilterOptions(items, now),
+    [items, now],
   );
   const filteredItems = useMemo(
-    () => items.filter((item) => lotteryConsoleItemMatchesFilter(item, statusFilter)),
-    [items, statusFilter],
+    () =>
+      items.filter((item) =>
+        lotteryConsoleItemMatchesFilter(item, statusFilter, now),
+      ),
+    [items, statusFilter, now],
   );
 
   const metrics = useMemo(() => {
@@ -110,8 +117,8 @@ export function LotteryConsolePage({
     const openCount = items.filter(
       (item) => item.currentIssue?.status === 'open',
     ).length;
-    const waitingDrawCount = items.filter(
-      (item) => item.currentIssue?.status === 'closed',
+    const waitingDrawCount = items.filter((item) =>
+      lotteryConsoleItemIsWaitingDraw(item, now),
     ).length;
     const controlEnabledCount = items.filter(
       (item) => item.drawControl?.enabled,
@@ -143,7 +150,7 @@ export function LotteryConsolePage({
         value: `${waitingDrawCount}`,
       },
     ];
-  }, [items, lotteries]);
+  }, [items, lotteries, now]);
 
   const openControlSheet = (item: LotteryConsoleItem) => {
     setSelectedControlItem(item);
@@ -202,6 +209,13 @@ export function LotteryConsolePage({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Tag color="cyan">本地时间 {formatClock(now)}</Tag>
+          {schedulerStatus ? (
+            <Tag color={schedulerStatus.enabled ? 'green' : 'red'}>
+              {schedulerStatus.enabled
+                ? `调度运行中 ${schedulerStatus.config.intervalSeconds}秒`
+                : '调度已关闭'}
+            </Tag>
+          ) : null}
           <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
             刷新
           </Button>
@@ -242,6 +256,7 @@ export function LotteryConsolePage({
               key={item.lottery.id}
               item={item}
               now={now}
+              schedulerStatus={schedulerStatus}
               onOpenControl={openControlSheet}
             />
           ))}
@@ -311,15 +326,21 @@ function LotteryConsoleStatusFilterBar({
 function LotteryConsoleCard({
   item,
   now,
+  schedulerStatus,
   onOpenControl,
 }: {
   item: LotteryConsoleItem;
   now: Date;
+  schedulerStatus: DrawSchedulerStatus | null;
   onOpenControl: (item: LotteryConsoleItem) => void;
 }) {
   const { currentIssue, drawControl, lottery, recentDrawnIssue } = item;
-  const drawNumber = currentIssue?.drawNumber ?? recentDrawnIssue?.drawNumber ?? null;
-  const drawNumberLabel = currentIssue?.drawNumber ? '本期开奖号码' : '最近开奖号码';
+  const currentIssueDrawNumber =
+    currentIssue?.status === 'drawn' && currentIssue.drawNumber
+      ? currentIssue.drawNumber
+      : null;
+  const drawNumber = currentIssueDrawNumber ?? recentDrawnIssue?.drawNumber ?? null;
+  const drawNumberLabel = currentIssueDrawNumber ? '本期开奖号码' : '最近开奖号码';
   const controlEnabled = Boolean(drawControl?.enabled);
 
   return (
@@ -349,6 +370,9 @@ function LotteryConsoleCard({
         <Tag color={controlEnabled ? 'red' : 'grey'}>
           {controlEnabled ? '控制开奖' : '未控制'}
         </Tag>
+        {item.waitingIssueCount > 0 && item.waitingIssue?.id !== currentIssue?.id ? (
+          <Tag color="orange">待补开奖 {item.waitingIssueCount}</Tag>
+        ) : null}
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -360,7 +384,7 @@ function LotteryConsoleCard({
         <CountdownBlock
           icon={<Timer size={16} />}
           label="开奖倒计时"
-          value={countdownText(currentIssue?.scheduledAt, now, '等待开奖', '暂无期号')}
+          value={drawCountdownText(currentIssue, now, schedulerStatus)}
         />
       </div>
 
@@ -578,6 +602,7 @@ function CountdownBlock({
 
 function lotteryConsoleStatusFilterOptions(
   items: LotteryConsoleItem[],
+  now: Date,
 ): LotteryConsoleStatusFilterOption[] {
   return [
     { count: items.length, key: 'all', label: '全部' },
@@ -597,7 +622,8 @@ function lotteryConsoleStatusFilterOptions(
       label: '开盘中',
     },
     {
-      count: items.filter((item) => item.currentIssue?.status === 'closed').length,
+      count: items.filter((item) => lotteryConsoleItemIsWaitingDraw(item, now))
+        .length,
       key: 'closed',
       label: '待开奖',
     },
@@ -617,12 +643,13 @@ function lotteryConsoleStatusFilterOptions(
 function lotteryConsoleItemMatchesFilter(
   item: LotteryConsoleItem,
   filter: LotteryConsoleStatusFilter,
+  now: Date,
 ) {
   switch (filter) {
     case 'all':
       return true;
     case 'closed':
-      return item.currentIssue?.status === 'closed';
+      return lotteryConsoleItemIsWaitingDraw(item, now);
     case 'drawn':
       return item.recentDrawnIssue !== null;
     case 'noCurrent':
@@ -636,19 +663,44 @@ function lotteryConsoleItemMatchesFilter(
   }
 }
 
+function lotteryConsoleItemIsWaitingDraw(item: LotteryConsoleItem, now: Date) {
+  const issue = item.currentIssue;
+  if (item.waitingIssueCount > 0) {
+    return true;
+  }
+  if (!issue) {
+    return false;
+  }
+  if (issue.status === 'closed') {
+    return true;
+  }
+  const scheduledAt = parseTimeLabel(issue.scheduledAt);
+  return issue.status === 'open' && scheduledAt !== null && scheduledAt <= now.getTime();
+}
+
 function lotteryConsoleItem(
   lottery: LotteryKind,
   allIssues: DrawIssue[],
   drawControl: LotteryDrawControl | null,
 ): LotteryConsoleItem {
   const issues = allIssues.filter((issue) => issue.lotteryId === lottery.id);
+  const issuesByStatus = (status: DrawIssueStatus) =>
+    issues.filter((issue) => issue.status === status);
+  const openIssue =
+    pickLatestIssue(issuesByStatus('open'));
+  const waitingIssues = issues
+    .filter((issue) => issue.status === 'closed')
+    .sort((left, right) => issueTimeValue(left) - issueTimeValue(right));
+  const waitingIssue = waitingIssues[0] ?? null;
   const currentIssue =
-    issues
-      .filter((issue) => issue.status === 'open' || issue.status === 'closed')
-      .sort((left, right) => issueTimeValue(left) - issueTimeValue(right))[0] ?? null;
+    openIssue ??
+    pickLatestIssue(issuesByStatus('closed')) ??
+    pickLatestIssue(issuesByStatus('drawn')) ??
+    pickLatestIssue(issuesByStatus('cancelled')) ??
+    null;
   const recentDrawnIssue =
-    issues
-      .filter((issue) => issue.status === 'drawn' && issue.drawNumber)
+    issuesByStatus('drawn')
+      .filter((issue) => issue.drawNumber)
       .sort((left, right) => latestIssueTimeValue(right) - latestIssueTimeValue(left))[0] ??
     null;
 
@@ -658,7 +710,13 @@ function lotteryConsoleItem(
     issueCount: issues.length,
     lottery,
     recentDrawnIssue,
+    waitingIssue,
+    waitingIssueCount: waitingIssues.length,
   };
+}
+
+function pickLatestIssue(issues: DrawIssue[]) {
+  return issues.sort((left, right) => issueTimeValue(right) - issueTimeValue(left))[0] ?? null;
 }
 
 function emptyDrawControlForm(): LotteryDrawControlFormState {
@@ -694,6 +752,29 @@ function countdownText(
   }
 
   return formatDuration(diffMs);
+}
+
+function drawCountdownText(
+  issue: DrawIssue | null | undefined,
+  now: Date,
+  schedulerStatus: DrawSchedulerStatus | null,
+) {
+  const targetMs = parseTimeLabel(issue?.scheduledAt);
+  if (!issue || targetMs === null) {
+    return '暂无期号';
+  }
+
+  const diffMs = targetMs - now.getTime();
+  if (diffMs > 0) {
+    return formatDuration(diffMs);
+  }
+  if (!schedulerStatus?.enabled) {
+    return '调度已关闭';
+  }
+  if (issue.drawMode === 'api') {
+    return '等待开奖源';
+  }
+  return '等待调度';
 }
 
 function formatDuration(diffMs: number) {

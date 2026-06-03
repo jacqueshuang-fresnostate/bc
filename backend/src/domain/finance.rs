@@ -1,3 +1,5 @@
+//! 财务领域模型，定义账户汇总、流水与账户调整参数
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

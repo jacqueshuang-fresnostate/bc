@@ -1,3 +1,5 @@
+//! 开奖源服务层，管理第三方开奖接口和开奖结果解析
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, RwLock},
@@ -58,10 +60,12 @@ pub struct ApiDrawSourceRepository {
 
 impl ApiDrawSourceRepository {
     #[allow(dead_code)]
+    /// 创建一个空的开奖源仓储实例（用于测试场景）。
     pub fn empty() -> Self {
         Self::new(Vec::new())
     }
 
+    /// 创建预置 API68 和 KJ API 的开奖源仓储实例。
     pub fn api68_seeded() -> Self {
         Self::new(vec![
             ApiDrawSourceConfig::api68_fc3d(),
@@ -70,6 +74,7 @@ impl ApiDrawSourceRepository {
         ])
     }
 
+    /// 创建并初始化新实例。
     fn new(sources: Vec<ApiDrawSourceConfig>) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -79,6 +84,7 @@ impl ApiDrawSourceRepository {
         }
     }
 
+    /// 从数据库恢复开奖源并构建持久化仓储。
     pub async fn persistent_api68_seeded(persistence: BusinessDatabase) -> ApiResult<Self> {
         let store = load_draw_source_store(&persistence).await?;
         Ok(Self {
@@ -90,6 +96,7 @@ impl ApiDrawSourceRepository {
     }
 
     #[cfg(test)]
+    /// 使用静态响应内容创建 API68 预置源，便于测试。
     pub fn api68_seeded_with_static_response(response_body: impl Into<String>) -> Self {
         let mut static_responses = BTreeMap::new();
         let response_body = response_body.into();
@@ -109,6 +116,7 @@ impl ApiDrawSourceRepository {
     }
 
     #[cfg(test)]
+    /// 使用静态响应内容创建 KJAPI 预置源，便于测试。
     pub fn kj_seeded_with_static_response(response_body: impl Into<String>) -> Self {
         let mut static_responses = BTreeMap::new();
         static_responses.insert(KJ_TXFFC_SOURCE_ID.to_string(), response_body.into());
@@ -125,6 +133,7 @@ impl ApiDrawSourceRepository {
         }
     }
 
+    /// 返回完整列表。
     pub async fn list(&self) -> ApiResult<Vec<DrawSource>> {
         self.inner
             .read()
@@ -132,6 +141,7 @@ impl ApiDrawSourceRepository {
             .map(|store| store.list())
     }
 
+    /// 校验入参并创建一条新记录。
     pub async fn create(
         &self,
         payload: SaveDrawSourceRequest,
@@ -149,6 +159,7 @@ impl ApiDrawSourceRepository {
         Ok(result)
     }
 
+    /// 更新现有记录并持久化变更。
     pub async fn update(
         &self,
         id: &str,
@@ -167,6 +178,7 @@ impl ApiDrawSourceRepository {
         Ok(result)
     }
 
+    /// 删除现有记录并返回被删对象。
     pub async fn delete(&self, id: &str) -> ApiResult<DrawSource> {
         let (result, snapshot) = {
             let mut store = self
@@ -180,6 +192,7 @@ impl ApiDrawSourceRepository {
         Ok(result)
     }
 
+    /// 按期号所属彩种从对应开奖源抓取开奖号码；非 API 模式返回空。
     pub async fn draw_number_for(&self, issue: &DrawIssue) -> ApiResult<Option<String>> {
         if issue.draw_mode != DrawMode::Api {
             return Ok(None);
@@ -214,6 +227,7 @@ impl ApiDrawSourceRepository {
         result.map(Some)
     }
 
+    /// 获取指定彩种的开奖源最新期号信息。
     pub async fn latest_issue_for_lottery(
         &self,
         lottery_id: &str,
@@ -261,19 +275,19 @@ impl ApiDrawSourceRepository {
             .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
             .send()
             .await
-            .map_err(|_| ApiError::Internal("api draw source request failed".to_string()))?;
+            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
 
         let status = response.status();
         if !status.is_success() {
             return Err(ApiError::Internal(format!(
-                "api draw source returned http status {status}"
+                "API 开奖源返回 HTTP 状态 {status}"
             )));
         }
 
         let response_body = response
             .text()
             .await
-            .map_err(|_| ApiError::Internal("api draw source response read failed".to_string()))?;
+            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
 
         parse_api68_draw_number(&response_body, issue)
     }
@@ -292,19 +306,19 @@ impl ApiDrawSourceRepository {
             .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
             .send()
             .await
-            .map_err(|_| ApiError::Internal("api draw source request failed".to_string()))?;
+            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
 
         let status = response.status();
         if !status.is_success() {
             return Err(ApiError::Internal(format!(
-                "api draw source returned http status {status}"
+                "API 开奖源返回 HTTP 状态 {status}"
             )));
         }
 
         let response_body = response
             .text()
             .await
-            .map_err(|_| ApiError::Internal("api draw source response read failed".to_string()))?;
+            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
 
         parse_api68_latest_issue(&response_body)
     }
@@ -324,19 +338,19 @@ impl ApiDrawSourceRepository {
             .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
             .send()
             .await
-            .map_err(|_| ApiError::Internal("api draw source request failed".to_string()))?;
+            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
 
         let status = response.status();
         if !status.is_success() {
             return Err(ApiError::Internal(format!(
-                "api draw source returned http status {status}"
+                "API 开奖源返回 HTTP 状态 {status}"
             )));
         }
 
         let response_body = response
             .text()
             .await
-            .map_err(|_| ApiError::Internal("api draw source response read failed".to_string()))?;
+            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
 
         parse_kj_draw_number(&response_body, issue)
     }
@@ -355,19 +369,19 @@ impl ApiDrawSourceRepository {
             .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
             .send()
             .await
-            .map_err(|_| ApiError::Internal("api draw source request failed".to_string()))?;
+            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
 
         let status = response.status();
         if !status.is_success() {
             return Err(ApiError::Internal(format!(
-                "api draw source returned http status {status}"
+                "API 开奖源返回 HTTP 状态 {status}"
             )));
         }
 
         let response_body = response
             .text()
             .await
-            .map_err(|_| ApiError::Internal("api draw source response read failed".to_string()))?;
+            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
 
         parse_kj_latest_issue(&response_body)
     }
@@ -421,17 +435,16 @@ async fn load_draw_source_store(database: &BusinessDatabase) -> ApiResult<ApiDra
         });
     }
 
-    let mut store = ApiDrawSourceStore::new(sources);
-    let mut changed = false;
-    for source in default_api_draw_sources() {
-        if !store.sources.contains_key(&source.id) {
-            store.sources.insert(source.id.clone(), source);
-            changed = true;
-        }
-    }
+    let store = ApiDrawSourceStore::new(sources);
 
-    if changed {
-        save_draw_source_store(database, &store).await?;
+    if store.sources.is_empty() {
+        let mut migrated_store = store;
+        for source in default_api_draw_sources() {
+            migrated_store.sources.insert(source.id.clone(), source);
+        }
+
+        save_draw_source_store(database, &migrated_store).await?;
+        return Ok(migrated_store);
     }
 
     Ok(store)
@@ -474,6 +487,7 @@ async fn save_draw_source_store(
 }
 
 impl ApiDrawSourceStore {
+    /// 创建并初始化新实例。
     fn new(sources: Vec<ApiDrawSourceConfig>) -> Self {
         Self {
             sources: sources
@@ -483,6 +497,7 @@ impl ApiDrawSourceStore {
         }
     }
 
+    /// 返回完整数据列表。
     fn list(&self) -> Vec<DrawSource> {
         self.sources
             .values()
@@ -490,6 +505,7 @@ impl ApiDrawSourceStore {
             .collect()
     }
 
+    /// 按彩种查找绑定配置。
     fn find_for_lottery(&self, lottery_id: &str) -> Option<ApiDrawSourceConfig> {
         self.sources
             .values()
@@ -502,6 +518,7 @@ impl ApiDrawSourceStore {
             .cloned()
     }
 
+    /// 校验入参并创建新记录。
     fn create(
         &mut self,
         payload: SaveDrawSourceRequest,
@@ -520,6 +537,7 @@ impl ApiDrawSourceStore {
         Ok(source.summary())
     }
 
+    /// 校验入参并更新指定记录。
     fn update(
         &mut self,
         id: &str,
@@ -536,6 +554,7 @@ impl ApiDrawSourceStore {
         Ok(source.summary())
     }
 
+    /// 删除指定记录并返回删除结果。
     fn delete(&mut self, id: &str) -> ApiResult<DrawSource> {
         self.sources
             .remove(id)
@@ -543,6 +562,7 @@ impl ApiDrawSourceStore {
             .ok_or_else(|| ApiError::NotFound(format!("draw source `{id}` not found")))
     }
 
+    /// 处理 source_from_request 的具体内部流程。
     fn source_from_request(
         &self,
         payload: SaveDrawSourceRequest,
@@ -605,6 +625,7 @@ impl ApiDrawSourceStore {
         })
     }
 
+    /// 校验输入参数并返回校验结果。
     fn validate_lottery_bindings(
         &self,
         source: &ApiDrawSourceConfig,
@@ -639,6 +660,7 @@ struct ApiDrawSourceConfig {
 }
 
 impl ApiDrawSourceConfig {
+    /// 处理 api68_fc3d 的具体内部流程。
     fn api68_fc3d() -> Self {
         Self {
             id: API68_FC3D_SOURCE_ID.to_string(),
@@ -653,6 +675,7 @@ impl ApiDrawSourceConfig {
         }
     }
 
+    /// 处理 api68_au5 的具体内部流程。
     fn api68_au5() -> Self {
         Self {
             id: API68_AU5_SOURCE_ID.to_string(),
@@ -664,6 +687,7 @@ impl ApiDrawSourceConfig {
         }
     }
 
+    /// 处理 kj_txffc 的具体内部流程。
     fn kj_txffc() -> Self {
         Self {
             id: KJ_TXFFC_SOURCE_ID.to_string(),
@@ -675,6 +699,7 @@ impl ApiDrawSourceConfig {
         }
     }
 
+    /// 处理 url 的具体内部流程。
     fn url(&self) -> String {
         match self.provider {
             DrawSourceProvider::Api68 => source_url(&self.endpoint, "lotCode", &self.lot_code),
@@ -682,6 +707,7 @@ impl ApiDrawSourceConfig {
         }
     }
 
+    /// 聚合并返回摘要结果。
     fn summary(&self) -> DrawSource {
         DrawSource {
             editable: true,
@@ -696,6 +722,7 @@ impl ApiDrawSourceConfig {
     }
 }
 
+/// 返回系统内置开奖源配置快照。
 pub fn platform_draw_source_summaries() -> Vec<DrawSource> {
     vec![DrawSource {
         editable: false,
@@ -709,18 +736,22 @@ pub fn platform_draw_source_summaries() -> Vec<DrawSource> {
     }]
 }
 
+/// 处理 default_api68_quanguocai_endpoint 的具体内部流程。
 fn default_api68_quanguocai_endpoint() -> String {
     DEFAULT_API68_QUANGUOCAI_ENDPOINT.to_string()
 }
 
+/// 处理 default_api68_cqshicai_endpoint 的具体内部流程。
 fn default_api68_cqshicai_endpoint() -> String {
     DEFAULT_API68_CQSHICAI_ENDPOINT.to_string()
 }
 
+/// 处理 default_kj_endpoint 的具体内部流程。
 fn default_kj_endpoint() -> String {
     DEFAULT_KJ_ENDPOINT.to_string()
 }
 
+/// 处理 normalized_endpoint 的具体内部流程。
 fn normalized_endpoint(endpoint: Option<&str>, provider: &DrawSourceProvider) -> String {
     endpoint
         .map(str::trim)
@@ -732,6 +763,7 @@ fn normalized_endpoint(endpoint: Option<&str>, provider: &DrawSourceProvider) ->
         })
 }
 
+/// 处理 default_api_draw_sources 的具体内部流程。
 fn default_api_draw_sources() -> Vec<ApiDrawSourceConfig> {
     vec![
         ApiDrawSourceConfig::api68_fc3d(),
@@ -740,6 +772,7 @@ fn default_api_draw_sources() -> Vec<ApiDrawSourceConfig> {
     ]
 }
 
+/// 处理 source_url 的具体内部流程。
 fn source_url(endpoint: &str, query_key: &str, lot_code: &str) -> String {
     if endpoint.contains(&format!("{query_key}=")) {
         return endpoint.to_string();
@@ -748,6 +781,7 @@ fn source_url(endpoint: &str, query_key: &str, lot_code: &str) -> String {
     format!("{endpoint}{separator}{query_key}={lot_code}")
 }
 
+/// 处理 reusable_lottery_ids 的具体内部流程。
 fn reusable_lottery_ids(values: Vec<String>) -> ApiResult<Vec<String>> {
     let mut unique = BTreeSet::new();
     let ids = values
@@ -766,6 +800,7 @@ fn reusable_lottery_ids(values: Vec<String>) -> ApiResult<Vec<String>> {
     Ok(ids)
 }
 
+/// 校验输入参数并返回校验结果。
 fn validate_reusable_lotteries(
     reusable_for_lottery_ids: &[String],
     lotteries: &[LotteryKind],
@@ -796,22 +831,27 @@ pub(crate) fn parse_api68_draw_number(
     }
 
     let result = parse_api68_result(response_body)?;
+    let returned_issue = result
+        .data
+        .first()
+        .and_then(|draw| api68_issue_value(&draw.pre_draw_issue));
 
     let Some(draw) = result.data.into_iter().find(|draw| {
         api68_issue_value(&draw.pre_draw_issue)
             .as_deref()
             .is_some_and(|issue| issue == expected_issue)
     }) else {
+        let detail = returned_issue
+            .map(|issue| format!("，当前返回期号 `{issue}`"))
+            .unwrap_or_default();
         return Err(ApiError::NotFound(format!(
-            "api draw number for issue `{expected_issue}` not found"
+            "API 开奖源未找到期号 `{expected_issue}` 的开奖号码{detail}"
         )));
     };
 
     let draw_code = draw.pre_draw_code.trim();
     if draw_code.is_empty() {
-        return Err(ApiError::Internal(
-            "api draw source draw number is empty".to_string(),
-        ));
+        return Err(ApiError::Internal("API 开奖源开奖号码为空".to_string()));
     }
 
     Ok(draw_code.to_string())
@@ -822,12 +862,10 @@ pub(crate) fn parse_api68_latest_issue(response_body: &str) -> ApiResult<ApiDraw
     let Some(draw) = result.data.into_iter().find(|draw| {
         api68_issue_value(&draw.pre_draw_issue).is_some_and(|issue| !issue.trim().is_empty())
     }) else {
-        return Err(ApiError::Internal(
-            "api draw source latest issue is missing".to_string(),
-        ));
+        return Err(ApiError::Internal("API 开奖源最新期号为空".to_string()));
     };
     let issue = api68_issue_value(&draw.pre_draw_issue)
-        .ok_or_else(|| ApiError::Internal("api draw source latest issue is missing".to_string()))?;
+        .ok_or_else(|| ApiError::Internal("API 开奖源最新期号为空".to_string()))?;
     let draw_time = draw
         .pre_draw_time
         .map(|value| value.trim().to_string())
@@ -849,21 +887,17 @@ pub(crate) fn parse_kj_draw_number(response_body: &str, expected_issue: &str) ->
 
     let data = parse_kj_data(response_body)?;
     let Some(issue) = api68_issue_value(&data.pre_draw_issue) else {
-        return Err(ApiError::Internal(
-            "kj api latest issue is missing".to_string(),
-        ));
+        return Err(ApiError::Internal("KJAPI 最新期号为空".to_string()));
     };
     if issue != expected_issue {
         return Err(ApiError::NotFound(format!(
-            "api draw number for issue `{expected_issue}` not found"
+            "API 开奖源未找到期号 `{expected_issue}` 的开奖号码，当前返回期号 `{issue}`"
         )));
     }
 
     let draw_code = data.pre_draw_code.trim();
     if draw_code.is_empty() {
-        return Err(ApiError::Internal(
-            "api draw source draw number is empty".to_string(),
-        ));
+        return Err(ApiError::Internal("API 开奖源开奖号码为空".to_string()));
     }
 
     Ok(draw_code.to_string())
@@ -872,7 +906,7 @@ pub(crate) fn parse_kj_draw_number(response_body: &str, expected_issue: &str) ->
 pub(crate) fn parse_kj_latest_issue(response_body: &str) -> ApiResult<ApiDrawSourceLatestIssue> {
     let data = parse_kj_data(response_body)?;
     let issue = api68_issue_value(&data.pre_draw_issue)
-        .ok_or_else(|| ApiError::Internal("kj api latest issue is missing".to_string()))?;
+        .ok_or_else(|| ApiError::Internal("KJAPI 最新期号为空".to_string()))?;
     let draw_time = data
         .pre_draw_time
         .map(|value| value.trim().to_string())
@@ -895,24 +929,25 @@ pub(crate) fn parse_kj_latest_issue(response_body: &str) -> ApiResult<ApiDrawSou
     })
 }
 
+/// 解析输入并返回结构化值。
 fn parse_api68_result(response_body: &str) -> ApiResult<Api68Result> {
     let envelope = serde_json::from_str::<Api68Envelope>(response_body)
-        .map_err(|_| ApiError::Internal("api draw source response cannot be parsed".to_string()))?;
+        .map_err(|_| ApiError::Internal("API 开奖源响应无法解析".to_string()))?;
 
     if envelope.error_code != 0 {
         return Err(ApiError::Internal(format!(
-            "api draw source returned error code {}",
+            "API 开奖源返回错误码 {}",
             envelope.error_code
         )));
     }
 
     let result = envelope
         .result
-        .ok_or_else(|| ApiError::Internal("api draw source result is missing".to_string()))?;
+        .ok_or_else(|| ApiError::Internal("API 开奖源 result 为空".to_string()))?;
 
     if result.business_code != 0 {
         return Err(ApiError::Internal(format!(
-            "api draw source returned business code {}",
+            "API 开奖源返回业务码 {}",
             result.business_code
         )));
     }
@@ -920,13 +955,14 @@ fn parse_api68_result(response_body: &str) -> ApiResult<Api68Result> {
     Ok(result)
 }
 
+/// 解析输入并返回结构化值。
 fn parse_kj_data(response_body: &str) -> ApiResult<KjData> {
     let envelope = serde_json::from_str::<KjEnvelope>(response_body)
-        .map_err(|_| ApiError::Internal("api draw source response cannot be parsed".to_string()))?;
+        .map_err(|_| ApiError::Internal("API 开奖源响应无法解析".to_string()))?;
 
     if envelope.error_code != 0 {
         return Err(ApiError::Internal(format!(
-            "api draw source returned error code {}",
+            "API 开奖源返回错误码 {}",
             envelope.error_code
         )));
     }
@@ -934,9 +970,10 @@ fn parse_kj_data(response_body: &str) -> ApiResult<KjData> {
     envelope
         .result
         .and_then(|result| result.data)
-        .ok_or_else(|| ApiError::Internal("kj api result data is missing".to_string()))
+        .ok_or_else(|| ApiError::Internal("KJAPI result.data 为空".to_string()))
 }
 
+/// 处理 api68_issue_value 的具体内部流程。
 fn api68_issue_value(value: &Value) -> Option<String> {
     match value {
         Value::String(value) => Some(value.trim().to_string()),
@@ -1041,6 +1078,7 @@ mod tests {
     }"#;
 
     #[test]
+    /// 解析输入并返回结构化值。
     fn parse_api68_draw_number_matches_numeric_issue() {
         let draw_number =
             parse_api68_draw_number(API68_SAMPLE, "2026143").expect("draw number can be parsed");
@@ -1049,6 +1087,7 @@ mod tests {
     }
 
     #[test]
+    /// 解析输入并返回结构化值。
     fn parse_api68_draw_number_matches_string_issue() {
         let draw_number =
             parse_api68_draw_number(API68_SAMPLE, "2026142").expect("draw number can be parsed");
@@ -1057,14 +1096,16 @@ mod tests {
     }
 
     #[test]
+    /// 解析输入并返回结构化值。
     fn parse_api68_draw_number_rejects_missing_issue() {
         let error = parse_api68_draw_number(API68_SAMPLE, "2099999")
             .expect_err("missing issue is rejected");
 
-        assert!(error.to_string().contains("not found"));
+        assert!(error.to_string().contains("未找到"));
     }
 
     #[test]
+    /// 解析输入并返回结构化值。
     fn parse_api68_draw_number_rejects_business_failure() {
         let error = parse_api68_draw_number(
             r#"{"errorCode":0,"result":{"businessCode":1,"data":[]}}"#,
@@ -1072,10 +1113,11 @@ mod tests {
         )
         .expect_err("business failure is rejected");
 
-        assert!(error.to_string().contains("business code 1"));
+        assert!(error.to_string().contains("业务码 1"));
     }
 
     #[test]
+    /// 解析输入并返回结构化值。
     fn parse_api68_latest_issue_uses_first_result_issue() {
         let latest = parse_api68_latest_issue(API68_SAMPLE).expect("latest issue can be parsed");
 
@@ -1084,6 +1126,7 @@ mod tests {
     }
 
     #[test]
+    /// 解析输入并返回结构化值。
     fn parse_kj_draw_number_matches_current_issue() {
         let draw_number =
             parse_kj_draw_number(KJ_SAMPLE, "202606031178").expect("draw number can be parsed");
@@ -1092,6 +1135,7 @@ mod tests {
     }
 
     #[test]
+    /// 解析输入并返回结构化值。
     fn parse_kj_latest_issue_uses_current_and_next_issue() {
         let latest = parse_kj_latest_issue(KJ_SAMPLE).expect("latest issue can be parsed");
 
@@ -1240,6 +1284,7 @@ mod tests {
         assert!(error.to_string().contains("not api draw mode"));
     }
 
+    /// 处理 draw_source_payload 的具体内部流程。
     fn draw_source_payload(id: &str, lottery_ids: &[&str]) -> SaveDrawSourceRequest {
         SaveDrawSourceRequest {
             endpoint: None,

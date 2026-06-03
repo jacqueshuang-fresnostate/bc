@@ -1,3 +1,5 @@
+//! 机器人领域模型，定义机器人类型、状态与配置项
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, RwLock},
@@ -23,6 +25,7 @@ pub struct RobotRepository {
 }
 
 impl RobotRepository {
+    /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(RobotStore::seeded())),
@@ -30,6 +33,7 @@ impl RobotRepository {
         }
     }
 
+    /// 从数据库加载历史数据并初始化持久化仓储。
     pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
         let store = load_robot_store(&persistence).await?;
         Ok(Self {
@@ -38,6 +42,7 @@ impl RobotRepository {
         })
     }
 
+    /// 返回完整列表。
     pub async fn list(&self) -> ApiResult<Vec<RobotConfigSummary>> {
         self.inner
             .read()
@@ -45,6 +50,7 @@ impl RobotRepository {
             .map(|store| store.list())
     }
 
+    /// 按 ID 查询单条记录。
     pub async fn get(&self, id: &str) -> ApiResult<RobotConfigSummary> {
         self.inner
             .read()
@@ -52,6 +58,7 @@ impl RobotRepository {
             .get(id)
     }
 
+    /// 校验入参并创建一条新记录。
     pub async fn create(
         &self,
         robot: RobotConfigSummary,
@@ -69,6 +76,7 @@ impl RobotRepository {
         Ok(result)
     }
 
+    /// 更新现有记录并持久化变更。
     pub async fn update(
         &self,
         id: &str,
@@ -87,6 +95,7 @@ impl RobotRepository {
         Ok(result)
     }
 
+    /// 删除现有记录并返回被删对象。
     pub async fn delete(&self, id: &str) -> ApiResult<RobotConfigSummary> {
         let (result, snapshot) = {
             let mut store = self
@@ -100,6 +109,7 @@ impl RobotRepository {
         Ok(result)
     }
 
+    /// 更新机器人的运行状态。
     pub async fn set_status(&self, id: &str, status: RobotStatus) -> ApiResult<RobotConfigSummary> {
         let (result, snapshot) = {
             let mut store = self
@@ -243,6 +253,7 @@ async fn save_robot_store(database: &BusinessDatabase, store: &RobotStore) -> Ap
 }
 
 impl RobotStore {
+    /// 构建并返回种子数据。
     fn seeded() -> Self {
         Self {
             robots: seed_robots()
@@ -252,10 +263,12 @@ impl RobotStore {
         }
     }
 
+    /// 返回完整数据列表。
     fn list(&self) -> Vec<RobotConfigSummary> {
         self.robots.values().cloned().collect()
     }
 
+    /// 按标识查询并返回单条记录。
     fn get(&self, id: &str) -> ApiResult<RobotConfigSummary> {
         self.robots
             .get(id)
@@ -263,6 +276,7 @@ impl RobotStore {
             .ok_or_else(|| ApiError::NotFound(format!("robot `{id}` not found")))
     }
 
+    /// 校验入参并创建新记录。
     fn create(
         &mut self,
         robot: RobotConfigSummary,
@@ -280,6 +294,7 @@ impl RobotStore {
         Ok(robot)
     }
 
+    /// 校验入参并更新指定记录。
     fn update(
         &mut self,
         id: &str,
@@ -300,12 +315,14 @@ impl RobotStore {
         Ok(robot)
     }
 
+    /// 删除指定记录并返回删除结果。
     fn delete(&mut self, id: &str) -> ApiResult<RobotConfigSummary> {
         self.robots
             .remove(id)
             .ok_or_else(|| ApiError::NotFound(format!("robot `{id}` not found")))
     }
 
+    /// 更新并持久化状态。
     fn set_status(&mut self, id: &str, status: RobotStatus) -> ApiResult<RobotConfigSummary> {
         let robot = self
             .robots
@@ -316,6 +333,7 @@ impl RobotStore {
     }
 }
 
+/// 标准化输入并返回规范值。
 fn normalize_robot(
     mut robot: RobotConfigSummary,
     lotteries: &[LotteryKind],
@@ -358,6 +376,7 @@ fn normalize_robot(
     Ok(robot)
 }
 
+/// 去除空白并校验必填字段。
 fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     let value = value.trim().to_string();
     if value.is_empty() {
@@ -366,6 +385,7 @@ fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     Ok(value)
 }
 
+/// 返回内置种子或测试数据。
 fn seed_robots() -> Vec<RobotConfigSummary> {
     vec![
         RobotConfigSummary {

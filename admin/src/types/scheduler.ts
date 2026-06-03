@@ -1,3 +1,5 @@
+import type { DrawAutomationSkippedIssue } from './draws';
+
 export type DrawSchedulerRunStatus = 'success' | 'failed';
 export type DrawSchedulerRunTrigger = 'automatic';
 
@@ -23,6 +25,13 @@ export interface DrawSchedulerRunRecord {
   generatedIssueCount: number;
   skippedIssueCount: number;
   skippedLotteryCount: number;
+  skippedIssues: DrawAutomationSkippedIssue[];
+  skippedLotteries: DrawSchedulerSkippedLottery[];
+}
+
+export interface DrawSchedulerSkippedLottery {
+  lotteryId: string;
+  reason: string;
 }
 
 export interface DrawSchedulerStatus {

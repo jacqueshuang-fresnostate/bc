@@ -1,3 +1,5 @@
+//! 开奖期号生成与平台号码生成服务，实现规则化期号流转
+
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
 use std::collections::HashSet;
 
@@ -19,6 +21,7 @@ const MAX_UNIQUE_ATTEMPTS_PER_ISSUE: u32 = 100;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const ISSUE_FORMAT: &str = "%Y%m%d%H%M%S";
 
+/// 生成当前开奖流程下一期的开奖期号。
 pub async fn generate_next_draw_issue(
     draws: &DrawRepository,
     lottery: &LotteryKind,
@@ -42,6 +45,7 @@ pub async fn generate_next_draw_issue(
         .ok_or_else(|| ApiError::Internal("draw issue was not generated".to_string()))
 }
 
+/// 预生成一期或多期计划但不落库，用于展示。
 pub async fn preview_draw_issue_generation(
     draws: &DrawRepository,
     lottery: &LotteryKind,
@@ -50,6 +54,7 @@ pub async fn preview_draw_issue_generation(
     plan_draw_issue_generation(draws, lottery, payload).await
 }
 
+/// 按批次参数生成开奖期并持久化写入。
 pub async fn generate_draw_issue_batch(
     draws: &DrawRepository,
     lottery: &LotteryKind,
@@ -145,6 +150,7 @@ async fn plan_draw_issue_generation(
     ))
 }
 
+/// 校验请求参数并返回错误信息。
 fn validate_request(lottery: &LotteryKind, payload: &GenerateDrawIssuesRequest) -> ApiResult<()> {
     if payload.lottery_id.trim().is_empty() {
         return Err(ApiError::BadRequest("lottery id is required".to_string()));
@@ -161,6 +167,7 @@ fn validate_request(lottery: &LotteryKind, payload: &GenerateDrawIssuesRequest) 
     Ok(())
 }
 
+/// 处理 latest_scheduled_at 的具体内部流程。
 fn latest_scheduled_at(issues: &[DrawIssue], lottery_id: &str) -> ApiResult<Option<NaiveDateTime>> {
     let mut latest = None;
 
@@ -186,6 +193,7 @@ struct ApiIssueAnchor {
     next_draw_time: Option<NaiveDateTime>,
 }
 
+/// 处理 api_issue_anchor 的具体内部流程。
 fn api_issue_anchor(
     lottery_id: &str,
     existing_issues: &[DrawIssue],
@@ -197,7 +205,7 @@ fn api_issue_anchor(
     let latest_external_issue =
         parse_api_sequence_issue(&latest_api_issue.issue).ok_or_else(|| {
             ApiError::Internal(format!(
-                "api draw source latest issue `{}` is not a numeric issue",
+                "API 开奖源最新期号 `{}` 不是数字期号",
                 latest_api_issue.issue
             ))
         })?;
@@ -219,9 +227,7 @@ fn api_issue_anchor(
         .as_deref()
         .map(|value| {
             parse_api_sequence_issue(value).ok_or_else(|| {
-                ApiError::Internal(format!(
-                    "api draw source next issue `{value}` is not a numeric issue"
-                ))
+                ApiError::Internal(format!("API 开奖源下一期 `{value}` 不是数字期号"))
             })
         })
         .transpose()?;
@@ -240,6 +246,7 @@ fn api_issue_anchor(
     }))
 }
 
+/// 处理 generation_baseline 的具体内部流程。
 fn generation_baseline(
     lottery: &LotteryKind,
     existing_issues: &[DrawIssue],
@@ -274,9 +281,7 @@ fn generation_baseline(
 
         let issue_offset = latest_issue
             .checked_sub(*latest_external_issue)
-            .ok_or_else(|| {
-                ApiError::Internal("api draw source issue sequence is invalid".to_string())
-            })?;
+            .ok_or_else(|| ApiError::Internal("API 开奖源期号序列无效".to_string()))?;
         let offset_seconds = i64::from(*interval_seconds) * issue_offset_count(issue_offset)?;
         return latest_draw_time
             .checked_add_signed(Duration::seconds(offset_seconds))
@@ -287,11 +292,13 @@ fn generation_baseline(
     Ok(if baseline > now { baseline } else { now })
 }
 
+/// 处理 issue_offset_count 的具体内部流程。
 fn issue_offset_count(issue_offset: u64) -> ApiResult<i64> {
     i64::try_from(issue_offset)
-        .map_err(|_| ApiError::Internal("api draw source issue offset is out of range".to_string()))
+        .map_err(|_| ApiError::Internal("API 开奖源期号偏移超出范围".to_string()))
 }
 
+/// 处理 next_scheduled_at 的具体内部流程。
 fn next_scheduled_at(schedule: &DrawSchedule, baseline: NaiveDateTime) -> ApiResult<NaiveDateTime> {
     match schedule {
         DrawSchedule::Periodic { interval_seconds } => {
@@ -346,16 +353,19 @@ fn next_scheduled_at(schedule: &DrawSchedule, baseline: NaiveDateTime) -> ApiRes
     }
 }
 
+/// 按给定格式解析时间戳。
 fn parse_timestamp(value: &str, label: &str) -> ApiResult<NaiveDateTime> {
     NaiveDateTime::parse_from_str(value.trim(), TIMESTAMP_FORMAT)
         .map_err(|_| ApiError::BadRequest(format!("{label} must use YYYY-MM-DD HH:mm:ss format")))
 }
 
+/// 解析时分秒格式字符串。
 fn parse_time(value: &str, label: &str) -> ApiResult<NaiveTime> {
     NaiveTime::parse_from_str(value.trim(), "%H:%M:%S")
         .map_err(|_| ApiError::BadRequest(format!("{label} must use HH:mm:ss format")))
 }
 
+/// 解析并标准化周几配置。
 fn parse_weekdays(values: &[String]) -> ApiResult<Vec<Weekday>> {
     if values.is_empty() {
         return Err(ApiError::BadRequest(
@@ -380,14 +390,17 @@ fn parse_weekdays(values: &[String]) -> ApiResult<Vec<Weekday>> {
         .collect()
 }
 
+/// 处理 combine_date_time 的具体内部流程。
 fn combine_date_time(date: NaiveDate, time: NaiveTime) -> ApiResult<NaiveDateTime> {
     Ok(date.and_time(time))
 }
 
+/// 按固定格式转换输出。
 fn format_timestamp(value: NaiveDateTime) -> String {
     value.format(TIMESTAMP_FORMAT).to_string()
 }
 
+/// 按固定格式转换输出。
 fn format_issue(value: NaiveDateTime) -> String {
     value.format(ISSUE_FORMAT).to_string()
 }
@@ -398,31 +411,35 @@ enum IssueLabeler {
 }
 
 impl IssueLabeler {
+    /// 处理 for_api_anchor 的具体内部流程。
     fn for_api_anchor(api_anchor: Option<&ApiIssueAnchor>) -> ApiResult<Self> {
         let Some(api_anchor) = api_anchor else {
             return Ok(Self::Timestamp);
         };
-        let next_issue = api_anchor.latest_issue.checked_add(1).ok_or_else(|| {
-            ApiError::Internal("api draw source latest issue is out of range".to_string())
-        })?;
+        let next_issue = api_anchor
+            .latest_issue
+            .checked_add(1)
+            .ok_or_else(|| ApiError::Internal("API 开奖源最新期号超出范围".to_string()))?;
 
         Ok(Self::Sequential { next_issue })
     }
 
+    /// 处理 next_issue 的具体内部流程。
     fn next_issue(&mut self, scheduled_at: NaiveDateTime) -> ApiResult<String> {
         match self {
             Self::Timestamp => Ok(format_issue(scheduled_at)),
             Self::Sequential { next_issue } => {
                 let issue = *next_issue;
-                *next_issue = (*next_issue).checked_add(1).ok_or_else(|| {
-                    ApiError::Internal("api draw source issue sequence is out of range".to_string())
-                })?;
+                *next_issue = (*next_issue)
+                    .checked_add(1)
+                    .ok_or_else(|| ApiError::Internal("API 开奖源期号序列超出范围".to_string()))?;
                 Ok(issue.to_string())
             }
         }
     }
 }
 
+/// 解析 API 返回的期号文本并提取序号。
 fn parse_api_sequence_issue(value: &str) -> Option<u64> {
     let value = value.trim();
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -903,10 +920,12 @@ mod tests {
             .contains("draw issue generation count must be between 1 and 50"));
     }
 
+    /// 处理 request 的具体内部流程。
     fn request(now: &str) -> GenerateDrawIssueRequest {
         request_for("fc3d", now)
     }
 
+    /// 处理 request_for 的具体内部流程。
     fn request_for(lottery_id: &str, now: &str) -> GenerateDrawIssueRequest {
         GenerateDrawIssueRequest {
             lottery_id: lottery_id.to_string(),
@@ -915,6 +934,7 @@ mod tests {
         }
     }
 
+    /// 处理 batch_request 的具体内部流程。
     fn batch_request(now: &str, count: u32) -> GenerateDrawIssuesRequest {
         GenerateDrawIssuesRequest {
             lottery_id: "fc3d".to_string(),
@@ -924,6 +944,7 @@ mod tests {
         }
     }
 
+    /// 处理 lottery 的具体内部流程。
     fn lottery(schedule: DrawSchedule) -> LotteryKind {
         LotteryKind {
             id: "fc3d".to_string(),

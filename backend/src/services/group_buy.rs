@@ -1,3 +1,5 @@
+//! 合买领域模型，定义合买计划、参与人和份额约束
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, RwLock},
@@ -28,6 +30,7 @@ pub struct GroupBuyRepository {
 }
 
 impl GroupBuyRepository {
+    /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
         Self {
             inner: Arc::new(RwLock::new(GroupBuyStore::seeded())),
@@ -35,6 +38,7 @@ impl GroupBuyRepository {
         }
     }
 
+    /// 从数据库加载历史数据并初始化持久化仓储。
     pub async fn persistent(persistence: BusinessDatabase) -> ApiResult<Self> {
         let store = load_group_buy_store(&persistence).await?;
         Ok(Self {
@@ -43,6 +47,7 @@ impl GroupBuyRepository {
         })
     }
 
+    /// 返回完整列表。
     pub async fn list(&self) -> ApiResult<Vec<GroupBuyPlanSummary>> {
         self.inner
             .read()
@@ -50,6 +55,7 @@ impl GroupBuyRepository {
             .map(|store| store.list())
     }
 
+    /// 按 ID 查询单条记录。
     pub async fn get(&self, id: &str) -> ApiResult<GroupBuyPlan> {
         self.inner
             .read()
@@ -57,6 +63,7 @@ impl GroupBuyRepository {
             .get(id)
     }
 
+    /// 校验入参并创建一条新记录。
     pub async fn create(
         &self,
         request: CreateGroupBuyPlanRequest,
@@ -75,6 +82,7 @@ impl GroupBuyRepository {
         Ok(result)
     }
 
+    /// 更新现有记录并持久化变更。
     pub async fn update(
         &self,
         id: &str,
@@ -92,6 +100,7 @@ impl GroupBuyRepository {
         Ok(result)
     }
 
+    /// 为团购方案添加参与者。
     pub async fn add_participant(
         &self,
         id: &str,
@@ -315,6 +324,7 @@ async fn save_group_buy_store(database: &BusinessDatabase, store: &GroupBuyStore
 }
 
 impl GroupBuyStore {
+    /// 构建并返回种子数据。
     fn seeded() -> Self {
         let plans = seed_group_buy_plans()
             .into_iter()
@@ -324,10 +334,12 @@ impl GroupBuyStore {
         Self { plans }
     }
 
+    /// 返回完整数据列表。
     fn list(&self) -> Vec<GroupBuyPlanSummary> {
         self.plans.values().map(GroupBuyPlan::summary).collect()
     }
 
+    /// 按标识查询并返回单条记录。
     fn get(&self, id: &str) -> ApiResult<GroupBuyPlan> {
         self.plans
             .get(id)
@@ -335,6 +347,7 @@ impl GroupBuyStore {
             .ok_or_else(|| ApiError::NotFound(format!("group buy plan `{id}` not found")))
     }
 
+    /// 校验入参并创建新记录。
     fn create(
         &mut self,
         request: CreateGroupBuyPlanRequest,
@@ -430,6 +443,7 @@ impl GroupBuyStore {
         Ok(plan)
     }
 
+    /// 校验入参并更新指定记录。
     fn update(&mut self, id: &str, request: UpdateGroupBuyPlanRequest) -> ApiResult<GroupBuyPlan> {
         let plan = self
             .plans
@@ -453,6 +467,7 @@ impl GroupBuyStore {
         Ok(plan.clone())
     }
 
+    /// 处理 add_participant 的具体内部流程。
     fn add_participant(
         &mut self,
         id: &str,
@@ -529,12 +544,14 @@ impl GroupBuyStore {
     }
 }
 
+/// 处理 participant_min_amount 的具体内部流程。
 fn participant_min_amount(plan: &GroupBuyPlan) -> i64 {
     plan.participant_min_amount_minor
         .max(plan.min_share_amount_minor)
         .max(1)
 }
 
+/// 在列表中查找指定彩种。
 fn find_lottery<'a>(lotteries: &'a [LotteryKind], id: &str) -> ApiResult<&'a LotteryKind> {
     lotteries
         .iter()
@@ -542,6 +559,7 @@ fn find_lottery<'a>(lotteries: &'a [LotteryKind], id: &str) -> ApiResult<&'a Lot
         .ok_or_else(|| ApiError::NotFound(format!("lottery `{id}` not found")))
 }
 
+/// 在列表中查找指定用户。
 fn find_user<'a>(users: &'a [UserSummary], id: &str) -> ApiResult<&'a UserSummary> {
     users
         .iter()
@@ -549,6 +567,7 @@ fn find_user<'a>(users: &'a [UserSummary], id: &str) -> ApiResult<&'a UserSummar
         .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))
 }
 
+/// 校验输入参数并返回校验结果。
 fn validate_positive_amount(amount: i64, label: &str) -> ApiResult<()> {
     if amount <= 0 {
         return Err(ApiError::BadRequest(format!(
@@ -559,6 +578,7 @@ fn validate_positive_amount(amount: i64, label: &str) -> ApiResult<()> {
     Ok(())
 }
 
+/// 校验输入参数并返回校验结果。
 fn validate_share_amount(amount: i64, min_share_amount_minor: i64, label: &str) -> ApiResult<()> {
     if min_share_amount_minor <= 0 {
         return Err(ApiError::BadRequest(
@@ -575,6 +595,7 @@ fn validate_share_amount(amount: i64, min_share_amount_minor: i64, label: &str) 
     Ok(())
 }
 
+/// 处理 minimum_amount_by_percent 的具体内部流程。
 fn minimum_amount_by_percent(total_amount_minor: i64, percent: u8) -> ApiResult<i64> {
     let raw = total_amount_minor
         .checked_mul(i64::from(percent))
@@ -583,6 +604,7 @@ fn minimum_amount_by_percent(total_amount_minor: i64, percent: u8) -> ApiResult<
     Ok((raw + 99) / 100)
 }
 
+/// 处理 share_count 的具体内部流程。
 fn share_count(amount_minor: i64, min_share_amount_minor: i64) -> ApiResult<u32> {
     validate_share_amount(amount_minor, min_share_amount_minor, "amount")?;
     let shares = amount_minor / min_share_amount_minor;
@@ -590,6 +612,7 @@ fn share_count(amount_minor: i64, min_share_amount_minor: i64) -> ApiResult<u32>
         .map_err(|_| ApiError::BadRequest("group buy share count is too large".to_string()))
 }
 
+/// 去除空白并校验必填字段。
 fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     let value = value.trim().to_string();
     if value.is_empty() {
@@ -598,10 +621,12 @@ fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     Ok(value)
 }
 
+/// 返回当前时间的展示文本。
 fn current_time_label() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
+/// 返回内置种子或测试数据。
 fn seed_group_buy_plans() -> Vec<GroupBuyPlan> {
     vec![GroupBuyPlan {
         id: "G202606020001".to_string(),

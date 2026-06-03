@@ -1,3 +1,5 @@
+//! 业务数据库封装，负责连接池与迁移执行
+
 use std::error::Error;
 
 use serde::{de::DeserializeOwned, Serialize};
@@ -12,6 +14,7 @@ pub struct BusinessDatabase {
 }
 
 impl BusinessDatabase {
+    /// 基于连接字符串创建数据库连接池并执行迁移。
     pub async fn postgres(database_url: &str) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let pool = PgPoolOptions::new()
             .max_connections(5)
@@ -23,6 +26,7 @@ impl BusinessDatabase {
         Ok(Self { pool })
     }
 
+    /// 返回数据库连接池引用。
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
