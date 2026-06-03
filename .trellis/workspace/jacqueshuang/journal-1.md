@@ -1003,3 +1003,42 @@
 ### Next Steps
 
 - 开奖源配置 CRUD、API68 原始响应留痕、失败重试队列、排列 3 复用福彩 3D 结果映射和开奖期号持久化。
+
+
+## Session 30: 开奖源配置与多彩种复用
+
+**Date**: 2026-06-03
+**Task**: 开奖源配置与多彩种复用
+**Branch**: `main`
+
+### Summary
+
+完成后台开奖源配置维护能力，API68 来源可绑定并复用到多个 API 彩种，前端新增开奖源配置面板并完成 API 冒烟验证。
+
+### Main Changes
+
+- 完成后端开奖源配置仓储与 CRUD 接口，默认 `api68-fc3d` 可复用到 `fc3d`、`pl3`。
+- 完成前端“开奖源配置”维护面板，可新增、编辑、删除 API68 来源并绑定多个 API 彩种。
+- 完成 `pl3/2026143` 复用 API68 `lotCode=10041` 开奖验证，开奖号码为 `3,7,6`。
+- 完成重复绑定冲突验证，重复绑定 `fc3d` 返回 HTTP 409。
+- 已更新 `架构设计.md`、`TODO.md` 与 `.trellis/spec/backend/api-contracts.md`。
+- 验证：`cargo fmt --check`、`cargo check`、`cargo test` 通过；`npm run build` 通过，仅保留既有 chunk size warning；浏览器自动化因当前环境缺少可用 browser tool/Playwright 未执行。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9fd8f23` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 29
+- **Total Sessions**: 30
 - **Last Active**: 2026-06-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~964 | Active |
+| `journal-1.md` | ~1044 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-06-03 | 开奖源配置与多彩种复用 | `9fd8f23` | `main` |
 | 29 | 2026-06-03 | 管理员密码哈希与重置基础 | `09f4657` | `main` |
 | 28 | 2026-06-03 | dashboard 数据按权限裁剪 | `ed78d37` | `main` |
 | 27 | 2026-06-02 | 后台登录鉴权与权限拦截 | `1d758e1` | `main` |
