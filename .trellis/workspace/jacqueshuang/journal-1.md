@@ -1422,3 +1422,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 42: 全业务关系表数据库持久化
+
+**Date**: 2026-06-03
+**Task**: 全业务关系表数据库持久化
+**Branch**: `main`
+
+### Summary
+
+将所有已落地后台业务从 state_documents 迁移为独立 PostgreSQL 业务表持久化，删除运行时 StateDocumentRepository，补充 BusinessDatabase、业务表迁移、中文架构文档与 TODO，并完成后端和前端质量检查。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5950881` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
