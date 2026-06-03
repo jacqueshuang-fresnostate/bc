@@ -88,6 +88,8 @@ YYYYMMDDHHMMSS_describe_change.sql
 - 如果 `lotteries` 表为空，写入种子彩种。
 - 如果 `lotteries` 表已有数据，不覆盖已有彩种。
 
+Docker Compose 本地部署必须提供 PostgreSQL 服务和持久化 volume，并把应用 `DATABASE_URL` 指向 Compose 网络内的数据库。当前只有彩种管理和玩法赔率配置使用 PostgreSQL；其它模块仍是内存仓储时，运行日志和文档必须明确说明，不能误导为全系统持久化。
+
 `lotteries` 表字段：
 
 | 字段 | 类型 | 说明 |

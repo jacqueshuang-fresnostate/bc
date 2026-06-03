@@ -19,8 +19,10 @@
 ### 3. Contracts
 
 - `BACKEND_PORT`：可选，容器内后端监听端口，默认 `8080`，必须是纯数字。
+- `APP_PORT`：可选，Compose 模式下宿主机暴露端口，默认 `8080`。
 - `RUST_LOG`：可选，后端日志级别，默认 `info`。
 - `DATABASE_URL`：可选，配置后后端使用 PostgreSQL；未配置时使用内存演示仓储。
+- `docker-compose.yml` 必须启动独立 PostgreSQL 服务并把应用 `DATABASE_URL` 指向 Compose 网络内的数据库。
 - Nginx 对外监听 `80`，前端静态资源位于 `/usr/share/nginx/html`。
 - Nginx 必须把 `/api/` 反向代理到 `127.0.0.1:${BACKEND_PORT}`。
 - 非 `/api/` 路径必须使用 SPA fallback 到 `/index.html`。
@@ -31,16 +33,20 @@
 - 后端未能启动 -> `/api/health` 失败，Docker healthcheck 变为 unhealthy。
 - Nginx 未按 `BACKEND_PORT` 渲染代理端口 -> 首页可能正常但 `/api/health` 失败。
 - `DATABASE_URL` 未配置 -> 后端输出中文日志，使用内存演示仓储。
+- Compose 中 PostgreSQL 未健康 -> 应用容器不得抢先启动，避免连接失败后误判部署成功。
 
 ### 5. Good/Base/Bad Cases
 
 - Good: `BACKEND_PORT=18080 docker run --rm -p 8080:80 bc-platform:latest`，Nginx 代理到容器内 `18080`，`/api/health` 成功。
 - Base: 不传环境变量，后端监听 `8080`，Nginx 对外服务 `80`，`/` 与 `/api/health` 均成功。
 - Bad: `BACKEND_PORT=abc docker run ...`，入口脚本拒绝启动并输出 `BACKEND_PORT 必须是数字`。
+- Compose Good: `docker compose up --build` 同时启动 PostgreSQL 和应用，应用日志显示已配置 `DATABASE_URL`。
+- Compose Good: `APP_PORT=18081 docker compose up --build` 可在宿主机端口冲突时切换对外端口，容器内仍由 Nginx 监听 `80`。
 
 ### 6. Tests Required
 
 - 每次修改 Dockerfile、Nginx 或入口脚本后运行 `docker build -t bc-platform:latest .`。
+- 每次修改 Compose 数据库配置后运行 `docker compose up --build`，确认 PostgreSQL healthcheck 和应用健康检查都通过。
 - 启动临时容器后验证 `curl -I http://127.0.0.1:<host-port>/` 返回 200。
 - 验证 `curl http://127.0.0.1:<host-port>/api/health` 返回 `success=true`。
 - 验证 `docker ps` 中临时容器状态为 `healthy`。

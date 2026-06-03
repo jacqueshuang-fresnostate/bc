@@ -1,11 +1,32 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bc
+      POSTGRES_PASSWORD: bc_password
+      POSTGRES_DB: bc
+    volumes:
+      - bc_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bc -d bc"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   bc:
     build:
       context: .
       dockerfile: Dockerfile
     image: bc-platform:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
-      - "8080:80"
+      - "${APP_PORT:-8080}:80"
     environment:
       BACKEND_PORT: "8080"
       RUST_LOG: "info"
+      DATABASE_URL: "postgres://bc:bc_password@postgres:5432/bc"
+
+volumes:
+  bc_postgres_data:

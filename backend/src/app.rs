@@ -63,7 +63,7 @@ impl AppState {
 
         let lotteries = LotteryRepository::postgres(&database_url).await?;
 
-        tracing::info!("已配置 DATABASE_URL，使用 PostgreSQL 彩种仓储");
+        tracing::info!("已配置 DATABASE_URL，使用 PostgreSQL 彩种仓储，其它业务模块仍使用内存仓储");
         Ok(Self {
             access: AccessRepository::memory_seeded(),
             draws: default_draw_repository(),

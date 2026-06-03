@@ -338,3 +338,16 @@
 - 完成任务：优化 GitHub Actions action 版本，按 GitHub API 查询结果升级到 `actions/checkout@v6`、`actions/setup-node@v6`、`actions/cache@v5`、`docker/setup-buildx-action@v4`、`docker/login-action@v4`、`docker/metadata-action@v6`、`docker/build-push-action@v7`，并显式启用 Node.js 24 action runtime。
 - 解决问题：第一次云端 CI 已通过并成功发布 GHCR 镜像，但 GitHub 提示旧版 action 运行在 Node.js 20，2026-06-16 后会强制切到 Node.js 24；本次提前升级，降低后续 workflow 警告和运行时兼容风险。
 - 后续动作：提交并推送 action 版本升级，重新观察 GitHub Actions 运行状态。
+
+## 2026-06-03 数据库持久化接入
+
+- 完成任务：启动 `06-03-database-persistence` 数据库持久化接入阶段，确认当前只有彩种管理已经有 PostgreSQL 仓储和 migrations，其它后台模块仍是内存仓储。
+- 解决问题：此前 `docker compose up --build` 只启动应用容器，不会配置 `DATABASE_URL`，因此即使镜像支持 PostgreSQL，部署仍默认走内存模式；本次把 Compose 改为同时启动 PostgreSQL，并把应用连接到 Compose 内数据库。
+- 后续动作：验证 Compose 模式下 PostgreSQL healthcheck、应用健康检查和 `lotteries` 表 migrations；随后提交本阶段改动，并继续规划用户、订单、开奖、资金、权限等模块的 PostgreSQL 持久化。
+
+## 2026-06-03 12:58 HKT 数据库持久化接入验证
+
+- 完成任务：完成 Compose 数据库接入验证，`docker compose up -d --build` 已能启动 PostgreSQL 与同一个前后端应用镜像，`APP_PORT=18081 docker compose up -d --build` 已验证宿主机端口可覆盖。
+- 解决问题：本机 `8080` 和 `18080` 已被其它进程占用，固定端口会干扰本地部署验证；本次把 Compose 端口改为 `${APP_PORT:-8080}:80`，默认不变，冲突时可以切换端口。
+- 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；Compose 中应用和 PostgreSQL 均为 healthy，`/api/health` 返回成功，PostgreSQL 已生成 `_sqlx_migrations` 和 `lotteries` 表，并能查询到 `au5`、`fc3d`、`pl3`、`ssc60` 等彩种。
+- 后续动作：提交并推送本阶段改动；下一阶段继续把用户、订单、开奖期号、开奖源、资金、权限等内存仓储分批迁移到 PostgreSQL。
