@@ -399,3 +399,11 @@
 - 技术说明：`spawn_draw_scheduler` 现在始终创建后台任务；`enabled=false` 时任务每 1 秒读取配置并跳过执行，后台保存 `enabled=true` 后无需重启即可进入自动封盘、开奖、结算和补期流程。
 - 验证结果：`cargo test scheduler_ -- --nocapture` 已通过，13 个调度测试全部成功；`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过，后端 126 个测试全部成功。前端构建仍只有既有 chunk size warning。
 - 后续动作：提交并推送本阶段改动；后续可继续补前端提示文案，明确“保存启用后后台任务会自动生效”。
+
+## 2026-06-03 17:10 HKT 澳洲 5 分彩端到端开奖流程跑通
+
+- 完成任务：启动 `06-03-au5-draw-flow-e2e` 并使用最新代码重新 `APP_PORT=18081 docker compose up -d --build`，完成 Docker 单镜像、PostgreSQL 迁移、后台登录、调度启用、澳洲 5 分彩 API 开奖、订单结算、资金入账和下一期开盘的端到端联调。
+- 解决问题：此前本地运行容器仍是旧镜像状态，PostgreSQL 只执行到早期 `lotteries` 迁移，缺少 `draw_issues`、`draw_sources`、`draw_scheduler_config` 等业务表；同时调度配置为 `enabled=false`、`runCount=0`，所以到达开奖时间不会自动拉取 API68 开奖。
+- 技术说明：重建最新镜像后 `_sqlx_migrations` 已包含 `20260603143000_create_state_documents` 和 `20260603152000_create_business_tables`；`au5` 彩种为 API 开奖、销售开启，`api68-au5` 绑定 `https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do` 和 `lotCode=10010`。本次使用 API68 最新期号 `51320918`、开奖号码 `9,8,1,3,2` 创建到期测试期号和一笔前 3 直选订单。
+- 验证结果：调度器后台开启后，`51320918` 已从 `open` 自动进入 `drawn`，保存开奖号码 `9,8,1,3,2`；测试订单 `O000000000001` 已结算为 `won`，命中 `981`，派奖 `950`；数据库写入结算批次 `S000000000001` 和投注扣款/中奖派奖资金流水；系统自动补出下一期 `51320919`，状态为 `open`。前端首页返回 HTTP 200，`/api/health` 返回成功，调度器最终配置恢复为 `enabled=true, intervalSeconds=60, futureIssueCount=1, saleCloseLeadSeconds=30`。
+- 后续动作：真实运营时如果某个旧期号已不在 API68 返回列表中，会继续等待开奖；需要取消旧期号或重新按 API68 当前期号生成，并建议后续补 API68 原始响应留痕、失败重试和调度历史中关键运行记录的长期保留。
