@@ -313,3 +313,9 @@
 - 解决问题：此前项目没有统一容器部署入口，前端、后端需要分别启动；本次改为单镜像多阶段构建，前端使用 Node 构建静态资源，后端使用 Rust 构建 release 二进制，运行时由 Nginx 对外服务前端并反向代理 `/api/` 到同容器后端。入口脚本会按 `BACKEND_PORT` 动态渲染 Nginx 反代端口，并校验端口必须为数字，避免后端端口环境变量与 Nginx 配置不一致。
 - 验证结果：`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过；`docker build -t bc-platform:latest .` 成功生成 `bc-platform:latest` 镜像，镜像大小约 216MB。临时容器使用 `docker run -d --name bc-platform-smoke -p 18085:80 bc-platform:latest` 启动后状态为 `healthy`，`curl -I http://127.0.0.1:18085/` 返回 200，`curl http://127.0.0.1:18085/api/health` 返回后端健康检查成功；临时容器已清理。
 - 后续动作：提交本阶段 Docker 与部署文档改动；当前仓库尚未配置 GitHub remote，需要提供 GitHub 仓库地址或允许创建仓库后再执行 `git push -u origin main`。
+
+## 2026-06-03 12:04:05 HKT
+
+- 完成任务：完成 GitHub 上传阶段，使用已登录的 GitHub 账号 `sydneypoole` 创建私有仓库 `sydneypoole/bc`，配置 `origin` 并推送 `main` 分支。
+- 解决问题：此前仓库没有 remote，无法执行上传；本次确认 `origin=https://github.com/sydneypoole/bc.git`，并完成 `main -> origin/main` 的首次推送。
+- 后续动作：如后续需要把 Docker image 推到 GitHub Container Registry，可在仓库中继续补 GitHub Actions 和 GHCR 发布配置。
