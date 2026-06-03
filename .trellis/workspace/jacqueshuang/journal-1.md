@@ -1257,3 +1257,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 37: GitHub Actions CI 与 GHCR 发布
+
+**Date**: 2026-06-03
+**Task**: GitHub Actions CI 与 GHCR 发布
+**Branch**: `main`
+
+### Summary
+
+新增 GitHub Actions CI workflow：push/PR/手动触发时运行 Rust 与前端质量检查并构建 Docker 单镜像；main 分支 push 时发布 ghcr.io/sydneypoole/bc 的 latest 与 sha 标签；同步更新部署说明、架构设计、TODO 和容器部署规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `183ec9b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

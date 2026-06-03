@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 36
+- **Total Sessions**: 37
 - **Last Active**: 2026-06-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1259 | Active |
+| `journal-1.md` | ~1292 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 37 | 2026-06-03 | GitHub Actions CI 与 GHCR 发布 | `183ec9b` | `main` |
 | 36 | 2026-06-03 | Docker 单镜像打包与 GitHub 上传 | `d33c04a` | `main` |
 | 35 | 2026-06-03 | 全员邀请码中文日志与澳洲5分彩接入 | `a4c987c` | `main` |
 | 34 | 2026-06-03 | 用户管理显示邀请码 | `b37bbb9` | `main` |
