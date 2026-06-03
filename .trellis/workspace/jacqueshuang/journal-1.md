@@ -1455,3 +1455,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 43: 开奖后自动开盘下一期修复
+
+**Date**: 2026-06-03
+**Task**: 开奖后自动开盘下一期修复
+**Branch**: `main`
+
+### Summary
+
+修复常驻调度未来期号缓冲统计，把 closed 期号排除出可投注未来期，确保当前期封盘后自动生成下一期 open 期号；补充回归测试、架构设计、TODO 和后端 API 契约规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bc53bfb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
