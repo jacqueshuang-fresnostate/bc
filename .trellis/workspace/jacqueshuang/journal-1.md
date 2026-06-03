@@ -1120,3 +1120,41 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 33: 彩种控制台状态筛选
+
+**Date**: 2026-06-03
+**Task**: 彩种控制台状态筛选
+**Branch**: `main`
+
+### Summary
+
+彩种控制台新增本地状态筛选条，可按销售开启、已停售、开盘中、待开奖、已开奖和无当前期过滤彩种卡片。
+
+### Main Changes
+
+- 新增彩种控制台状态筛选：全部、销售开启、已停售、开盘中、待开奖、已开奖、无当前期。
+- 每个筛选项显示匹配数量，当前筛选高亮，卡片列表即时按前端本地数据过滤。
+- 无匹配结果时显示筛选空状态，不影响原有接口和轮询逻辑。
+- 已更新 `架构设计.md` 和 `TODO.md`。
+- 验证：`npm run build` 通过，仅保留既有 chunk size warning。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `db54d8c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
