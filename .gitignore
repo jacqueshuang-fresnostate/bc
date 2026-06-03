@@ -4,5 +4,14 @@ admin/dist/
 admin/*.tsbuildinfo
 admin/vite.config.js
 admin/vite.config.d.ts
+.env
+.env.local
+.env.*.local
+backend/.env
+backend/.env.local
+backend/.env.*.local
+admin/.env
+admin/.env.local
+admin/.env.*.local
 *.log
 .DS_Store

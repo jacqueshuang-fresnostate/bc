@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-03 18:42 HKT 本地 env 文件配置
+
+- 完成任务：新增本地 env 配置方案，后端支持加载项目根目录和 `backend/` 下的 `.env`、`.env.local`，前端新增 `admin/.env.example` 和本机 `admin/.env.local`。
+- 解决问题：此前本地测试只能在命令行手动传 `DATABASE_URL`、`PORT` 和 `VITE_API_BASE_URL`，没有可复用的配置文件；现在后端和前端都有明确的本地 env 文件入口。
+- 技术说明：真实 PostgreSQL 密码只写入被 `.gitignore` 忽略的 `.env.local`，可提交的 `.env.example` 只保留 `postgres://root:<密码>@192.168.2.3:15432/postgres` 模板；后端 shell 环境变量优先级高于 env 文件。
+- 后续动作：使用 `cd backend && cargo run`、`cd admin && npm run dev -- --host 127.0.0.1 --port <空闲端口>` 做本地联调，并继续以外部 PostgreSQL 验证业务流程。
+
 ## 2026-06-03 18:32 HKT 本地测试规则更新
 
 - 完成任务：在 `AGENTS.md` 中补充后续测试规则，明确功能验证和联调测试直接本地启动后端、前端服务，不再通过 Docker 打包镜像测试。
