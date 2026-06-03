@@ -10,6 +10,8 @@ use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
+use chrono::Local;
+use chrono::TimeZone;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -20,7 +22,11 @@ use crate::{
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         user::{
             AdminPasswordResetRequest, AdminSaveRequest, AdminSummary, RegistrationConfig,
-            UserStatus, UserSummary,
+            UserAuthSession, UserBindEmailRequest, UserChangePasswordRequest,
+            UserForgotPasswordRequest, UserForgotPasswordResponse, UserKind, UserLoginRequest,
+            UserLogoutResponse, UserRegisterRequest, UserResetPasswordRequest,
+            UserResetPasswordResponse, UserStatus, UserSummary, WithdrawalMethod,
+            WithdrawalMethodRequest, WithdrawalMethodType,
         },
     },
     error::{ApiError, ApiResult},
@@ -35,6 +41,17 @@ const INVITE_CODE_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DEMO_USER_INVITE_CODE: &str = "QWERTYPA";
 const DEMO_AGENT_INVITE_CODE: &str = "KJHGFDSA";
 const RISK_USER_INVITE_CODE: &str = "ZXCVBNML";
+const DEFAULT_SEED_USER_PASSWORD: &str = "12345678";
+const MIN_USER_PASSWORD_LEN: usize = 8;
+const USER_RESET_TOKEN_BYTES: usize = 24;
+const USER_RESET_TOKEN_TTL_SECONDS: i64 = 15 * 60;
+const WITHDRAWAL_METHOD_ID_BYTES: usize = 6;
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct PasswordResetTokenRecord {
+    pub user_id: String,
+    pub expires_at_unix: i64,
+}
 
 #[derive(Debug, Clone)]
 pub struct AccessSnapshot {
@@ -130,6 +147,187 @@ impl AccessRepository {
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
             let result = store.set_user_status(id, status)?;
             (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 注册用户：按当前注册策略校验输入、创建用户并保存独立密码哈希。
+    pub async fn register_user(&self, payload: UserRegisterRequest) -> ApiResult<UserSummary> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.register_user(payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 用户登录：支持用户名和邮箱两种登录标识，返回用户会话。
+    pub async fn login_user(&self, payload: UserLoginRequest) -> ApiResult<UserAuthSession> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.login_user(payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 通过用户 token 解析当前登录会话。
+    pub async fn session_from_user_token(&self, token: &str) -> ApiResult<UserAuthSession> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .session_from_user_token(token)
+    }
+
+    /// 用户登出：清理 token 后返回登出结果。
+    pub async fn logout_user(&self, token: &str) -> ApiResult<UserLogoutResponse> {
+        let snapshot = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            store.logout_user(token);
+            store.clone()
+        };
+        self.persist(&snapshot).await?;
+
+        Ok(UserLogoutResponse { logged_out: true })
+    }
+
+    /// 绑定邮箱：后续登录可直接用邮箱作为登录凭证。
+    pub async fn bind_email(
+        &self,
+        user_id: &str,
+        payload: UserBindEmailRequest,
+    ) -> ApiResult<UserSummary> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.bind_email(user_id, payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 修改密码：校验旧密码后写入新密码哈希。
+    pub async fn change_password(
+        &self,
+        user_id: &str,
+        payload: UserChangePasswordRequest,
+    ) -> ApiResult<UserSummary> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.change_password(user_id, payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 发起忘记密码流程：返回重置码和过期时间。
+    pub async fn request_forgot_password(
+        &self,
+        payload: UserForgotPasswordRequest,
+    ) -> ApiResult<UserForgotPasswordResponse> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.request_forgot_password(payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 使用重置码完成密码重置。
+    pub async fn reset_password(
+        &self,
+        payload: UserResetPasswordRequest,
+    ) -> ApiResult<UserResetPasswordResponse> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.reset_password(payload)?;
+            let snapshot = store.clone();
+            (result, snapshot)
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 列出当前用户绑定的全部提现方式。
+    pub async fn list_withdrawal_methods(&self, user_id: &str) -> ApiResult<Vec<WithdrawalMethod>> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .list_withdrawal_methods(user_id)
+    }
+
+    /// 新增提现方式：支持设置默认方式，默认方式会自动覆盖同用户历史默认。
+    pub async fn create_withdrawal_method(
+        &self,
+        user_id: &str,
+        payload: WithdrawalMethodRequest,
+    ) -> ApiResult<WithdrawalMethod> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.create_withdrawal_method(user_id, payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 更新提现方式：会重置同用户默认状态并校验归属关系。
+    pub async fn update_withdrawal_method(
+        &self,
+        user_id: &str,
+        method_id: &str,
+        payload: WithdrawalMethodRequest,
+    ) -> ApiResult<WithdrawalMethod> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.update_withdrawal_method(user_id, method_id, payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 删除提现方式：不影响其他提现方式的默认配置。
+    pub async fn delete_withdrawal_method(&self, user_id: &str, method_id: &str) -> ApiResult<()> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            store.delete_withdrawal_method(user_id, method_id)?;
+            ((), store.clone())
         };
         self.persist(&snapshot).await?;
         Ok(result)
@@ -369,10 +567,16 @@ struct AccessStore {
     users: BTreeMap<String, UserSummary>,
     admins: BTreeMap<String, AdminSummary>,
     admin_password_hashes: BTreeMap<String, String>,
+    user_password_hashes: BTreeMap<String, String>,
+    user_id_counter: u64,
     roles: BTreeMap<String, AdminRole>,
     sessions: BTreeMap<String, String>,
+    user_sessions: BTreeMap<String, String>,
+    user_password_reset_tokens: BTreeMap<String, PasswordResetTokenRecord>,
+    user_withdrawal_methods: BTreeMap<String, WithdrawalMethod>,
     settings: BTreeMap<String, SystemSetting>,
     session_counter: u64,
+    user_session_counter: u64,
     registration: RegistrationConfig,
 }
 
@@ -510,6 +714,115 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
         })
         .collect::<ApiResult<BTreeMap<String, String>>>()?;
 
+    let user_password_hashes =
+        sqlx::query("SELECT user_id, password_hash FROM user_password_hashes")
+            .fetch_all(pool)
+            .await
+            .map_err(|_| ApiError::Internal("用户密码数据读取失败".to_string()))?
+            .into_iter()
+            .map(|row| {
+                let user_id = row
+                    .try_get("user_id")
+                    .map_err(|_| ApiError::Internal("用户密码数据读取失败".to_string()))?;
+                let password_hash = row
+                    .try_get("password_hash")
+                    .map_err(|_| ApiError::Internal("用户密码数据读取失败".to_string()))?;
+                Ok((user_id, password_hash))
+            })
+            .collect::<ApiResult<BTreeMap<String, String>>>()?;
+
+    let user_sessions = sqlx::query("SELECT token, user_id FROM user_sessions")
+        .fetch_all(pool)
+        .await
+        .map_err(|_| ApiError::Internal("用户会话数据读取失败".to_string()))?
+        .into_iter()
+        .map(|row| {
+            let token = row
+                .try_get("token")
+                .map_err(|_| ApiError::Internal("用户会话数据读取失败".to_string()))?;
+            let user_id = row
+                .try_get("user_id")
+                .map_err(|_| ApiError::Internal("用户会话数据读取失败".to_string()))?;
+            Ok((token, user_id))
+        })
+        .collect::<ApiResult<BTreeMap<String, String>>>()?;
+
+    let user_password_reset_tokens =
+        sqlx::query("SELECT token, user_id, expires_at_unix FROM user_password_reset_tokens")
+            .fetch_all(pool)
+            .await
+            .map_err(|_| ApiError::Internal("用户重置码数据读取失败".to_string()))?
+            .into_iter()
+            .map(|row| {
+                let token = row
+                    .try_get("token")
+                    .map_err(|_| ApiError::Internal("用户重置码数据读取失败".to_string()))?;
+                let user_id = row
+                    .try_get("user_id")
+                    .map_err(|_| ApiError::Internal("用户重置码数据读取失败".to_string()))?;
+                let expires_at_unix = row
+                    .try_get("expires_at_unix")
+                    .map_err(|_| ApiError::Internal("用户重置码数据读取失败".to_string()))?;
+
+                Ok((
+                    token,
+                    PasswordResetTokenRecord {
+                        user_id,
+                        expires_at_unix,
+                    },
+                ))
+            })
+            .collect::<ApiResult<BTreeMap<String, PasswordResetTokenRecord>>>()?;
+
+    let user_withdrawal_methods = sqlx::query(
+        "SELECT id, user_id, method_type, account_holder, account_number,
+                    bank_name, is_default, created_at, updated_at
+             FROM user_withdrawal_methods
+             ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("提现方式数据读取失败".to_string()))?
+    .into_iter()
+    .map(|row| {
+        let id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("提现方式数据读取失败".to_string()))?;
+
+        Ok((
+            id.clone(),
+            WithdrawalMethod {
+                id,
+                user_id: row
+                    .try_get("user_id")
+                    .map_err(|_| ApiError::Internal("提现方式数据读取失败".to_string()))?,
+                method_type: enum_from_string(
+                    row.try_get("method_type")
+                        .map_err(|_| ApiError::Internal("提现方式数据读取失败".to_string()))?,
+                )?,
+                account_holder: row
+                    .try_get("account_holder")
+                    .map_err(|_| ApiError::Internal("提现方式数据读取失败".to_string()))?,
+                account_number: row
+                    .try_get("account_number")
+                    .map_err(|_| ApiError::Internal("提现方式数据读取失败".to_string()))?,
+                bank_name: row
+                    .try_get("bank_name")
+                    .map_err(|_| ApiError::Internal("提现方式数据读取失败".to_string()))?,
+                is_default: row
+                    .try_get("is_default")
+                    .map_err(|_| ApiError::Internal("提现方式数据读取失败".to_string()))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(|_| ApiError::Internal("提现方式数据读取失败".to_string()))?,
+                updated_at: row
+                    .try_get("updated_at")
+                    .map_err(|_| ApiError::Internal("提现方式数据读取失败".to_string()))?,
+            },
+        ))
+    })
+    .collect::<ApiResult<BTreeMap<String, WithdrawalMethod>>>()?;
+
     let mut settings = BTreeMap::new();
     for row in sqlx::query("SELECT key, value, description FROM system_settings ORDER BY key ASC")
         .fetch_all(pool)
@@ -564,6 +877,22 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
     .map_err(|_| ApiError::Internal("用户权限运行数据读取失败".to_string()))?
     .unwrap_or_default();
 
+    let user_session_counter = sqlx::query_scalar::<_, i64>(
+        "SELECT value FROM access_runtime WHERE key = 'user_session_counter'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::Internal("用户权限运行数据读取失败".to_string()))?
+    .unwrap_or_default();
+
+    let user_id_counter = sqlx::query_scalar::<_, i64>(
+        "SELECT value FROM access_runtime WHERE key = 'user_id_counter'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::Internal("用户权限运行数据读取失败".to_string()))?
+    .unwrap_or_default();
+
     let Some(registration) = registration else {
         let seeded = AccessStore::seeded();
         save_access_store(database, &seeded).await?;
@@ -577,13 +906,23 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
     }
 
     Ok(AccessStore {
-        users,
+        users: users.clone(),
         admins,
         admin_password_hashes,
+        user_password_hashes,
         roles,
         sessions,
+        user_sessions,
+        user_password_reset_tokens,
+        user_withdrawal_methods,
         settings,
         session_counter: u64::try_from(session_counter).unwrap_or_default(),
+        user_session_counter: u64::try_from(user_session_counter).unwrap_or_default(),
+        user_id_counter: if user_id_counter > 0 {
+            u64::try_from(user_id_counter).unwrap_or_default()
+        } else {
+            next_user_id_from_users(&users)
+        },
         registration,
     })
 }
@@ -598,6 +937,10 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
     for table in [
         "admin_sessions",
         "admin_password_hashes",
+        "user_sessions",
+        "user_password_hashes",
+        "user_password_reset_tokens",
+        "user_withdrawal_methods",
         "admins",
         "admin_roles",
         "system_settings",
@@ -663,6 +1006,15 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
             .map_err(|_| ApiError::Internal("管理员密码数据保存失败".to_string()))?;
     }
 
+    for (user_id, password_hash) in &store.user_password_hashes {
+        sqlx::query("INSERT INTO user_password_hashes (user_id, password_hash) VALUES ($1, $2)")
+            .bind(user_id)
+            .bind(password_hash)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("用户密码数据保存失败".to_string()))?;
+    }
+
     for (token, admin_id) in &store.sessions {
         sqlx::query("INSERT INTO admin_sessions (token, admin_id) VALUES ($1, $2)")
             .bind(token)
@@ -670,6 +1022,47 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
             .execute(&mut *tx)
             .await
             .map_err(|_| ApiError::Internal("管理员会话数据保存失败".to_string()))?;
+    }
+
+    for (token, user_id) in &store.user_sessions {
+        sqlx::query("INSERT INTO user_sessions (token, user_id) VALUES ($1, $2)")
+            .bind(token)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("用户会话数据保存失败".to_string()))?;
+    }
+
+    for (token, reset_token) in &store.user_password_reset_tokens {
+        sqlx::query(
+            "INSERT INTO user_password_reset_tokens (token, user_id, expires_at_unix) VALUES ($1, $2, $3)",
+        )
+        .bind(token)
+        .bind(&reset_token.user_id)
+        .bind(reset_token.expires_at_unix)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("用户重置码数据保存失败".to_string()))?;
+    }
+
+    for method in store.user_withdrawal_methods.values() {
+        sqlx::query(
+            "INSERT INTO user_withdrawal_methods
+             (id, user_id, method_type, account_holder, account_number, bank_name, is_default, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(&method.id)
+        .bind(&method.user_id)
+        .bind(enum_to_string(&method.method_type)?)
+        .bind(&method.account_holder)
+        .bind(&method.account_number)
+        .bind(&method.bank_name)
+        .bind(method.is_default)
+        .bind(&method.created_at)
+        .bind(&method.updated_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("提现方式数据保存失败".to_string()))?;
     }
 
     for setting in store.settings.values() {
@@ -696,8 +1089,22 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
 
     let session_counter = i64::try_from(store.session_counter)
         .map_err(|_| ApiError::Internal("管理员会话序号过大".to_string()))?;
+    let user_session_counter = i64::try_from(store.user_session_counter)
+        .map_err(|_| ApiError::Internal("用户会话序号过大".to_string()))?;
+    let user_id_counter = i64::try_from(store.user_id_counter)
+        .map_err(|_| ApiError::Internal("用户序号过大".to_string()))?;
     sqlx::query("INSERT INTO access_runtime (key, value) VALUES ('session_counter', $1)")
         .bind(session_counter)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("用户权限运行数据保存失败".to_string()))?;
+    sqlx::query("INSERT INTO access_runtime (key, value) VALUES ('user_session_counter', $1)")
+        .bind(user_session_counter)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("用户权限运行数据保存失败".to_string()))?;
+    sqlx::query("INSERT INTO access_runtime (key, value) VALUES ('user_id_counter', $1)")
+        .bind(user_id_counter)
         .execute(&mut *tx)
         .await
         .map_err(|_| ApiError::Internal("用户权限运行数据保存失败".to_string()))?;
@@ -723,6 +1130,8 @@ impl AccessStore {
             .into_iter()
             .map(|user| (user.id.clone(), user))
             .collect();
+        let user_password_hashes = seed_user_password_hashes(&users);
+        let user_id_counter = next_user_id_from_users(&users);
         let settings = seed_settings()
             .into_iter()
             .map(|setting| (setting.key.clone(), setting))
@@ -732,10 +1141,16 @@ impl AccessStore {
             users,
             admins,
             admin_password_hashes,
+            user_password_hashes,
+            user_id_counter,
             roles,
             sessions: BTreeMap::new(),
+            user_sessions: BTreeMap::new(),
+            user_password_reset_tokens: BTreeMap::new(),
+            user_withdrawal_methods: BTreeMap::new(),
             settings,
             session_counter: 0,
+            user_session_counter: 0,
             registration: RegistrationConfig {
                 username_enabled: true,
                 email_enabled: false,
@@ -808,6 +1223,434 @@ impl AccessStore {
 
         self.users.insert(id.to_string(), user.clone());
         Ok(user)
+    }
+
+    /// 处理用户注册：校验注册策略、邀请码和唯一性，并创建用户和密码记录。
+    fn register_user(&mut self, payload: UserRegisterRequest) -> ApiResult<UserSummary> {
+        let password = validate_user_password(&payload.password)?;
+        let username_provided = payload.username.is_some();
+        let email_provided = payload.email.is_some();
+        let username = payload
+            .username
+            .map(|value| required_trimmed(value, "username"))
+            .transpose()?
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                payload
+                    .email
+                    .as_ref()
+                    .map(|value| required_trimmed(value.clone(), "email"))
+                    .transpose()
+                    .ok()
+                    .flatten()
+            })
+            .filter(|value| !value.is_empty());
+
+        let username = username.ok_or_else(|| {
+            ApiError::BadRequest("username 或 email 至少填写一项用于注册".to_string())
+        })?;
+
+        if username_provided && !self.registration.username_enabled {
+            return Err(ApiError::BadRequest("当前系统禁止用户名注册".to_string()));
+        }
+
+        let email = payload
+            .email
+            .map(|value| required_trimmed(value, "email"))
+            .transpose()?
+            .filter(|value| !value.is_empty() && value.contains('@'));
+
+        if email_provided && email.is_none() {
+            return Err(ApiError::BadRequest("邮箱格式不正确".to_string()));
+        }
+
+        if !username_provided && !self.registration.email_enabled {
+            return Err(ApiError::BadRequest("当前系统禁止邮箱注册".to_string()));
+        }
+
+        if !username_provided
+            && email_provided
+            && self.registration.agent_invite_required
+            && payload.invite_code.is_none()
+        {
+            return Err(ApiError::BadRequest("邀请码不能为空".to_string()));
+        }
+
+        let invite_code = payload.invite_code;
+        let agent_id = match invite_code {
+            Some(code) => {
+                let code = required_trimmed(code, "invite code")?;
+                let inviter = self
+                    .users
+                    .values()
+                    .find(|user| user.invite_code == code)
+                    .filter(|user| user.kind == UserKind::Agent)
+                    .ok_or_else(|| ApiError::BadRequest("邀请码无效".to_string()))?;
+                Some(inviter.id.clone())
+            }
+            None => {
+                if self.registration.agent_invite_required {
+                    return Err(ApiError::BadRequest("邀请码不能为空".to_string()));
+                }
+                None
+            }
+        };
+
+        for other in self.users.values() {
+            if other.username == username {
+                return Err(ApiError::Conflict("用户名已存在".to_string()));
+            }
+            if let Some(email) = &email {
+                if let Some(existing_email) = &other.email {
+                    if existing_email == email {
+                        return Err(ApiError::Conflict("该邮箱已被绑定".to_string()));
+                    }
+                }
+            }
+        }
+
+        let user_id = next_user_id(&self.users, &mut self.user_id_counter)?;
+        let invite_code = random_invite_code(&self.users)?;
+        let user = UserSummary {
+            id: user_id,
+            username,
+            email,
+            kind: UserKind::Regular,
+            status: UserStatus::Active,
+            balance_minor: 0,
+            agent_id,
+            invite_code,
+        };
+
+        self.user_password_hashes
+            .insert(user.id.clone(), hash_user_password(&password)?);
+        self.create_user(user.clone())?;
+
+        Ok(user)
+    }
+
+    /// 处理用户登录：支持用户名/邮箱两种标识，并签发用户会话。
+    fn login_user(&mut self, payload: UserLoginRequest) -> ApiResult<UserAuthSession> {
+        let login_key = required_trimmed(payload.login_key, "login key")?;
+        let password = validate_user_password(&payload.password)?;
+        let user = self
+            .users
+            .values()
+            .find(|user| {
+                user.username == login_key || user.email.as_deref() == Some(login_key.as_str())
+            })
+            .ok_or_else(|| ApiError::Unauthorized("用户名/密码错误".to_string()))?
+            .clone();
+
+        if user.status != UserStatus::Active {
+            return Err(ApiError::Forbidden("用户账号未激活".to_string()));
+        }
+
+        let password_hash = self
+            .user_password_hashes
+            .get(&user.id)
+            .ok_or_else(|| ApiError::Internal("用户密码未配置".to_string()))?;
+        if !verify_user_password(&password, password_hash)? {
+            return Err(ApiError::Unauthorized("用户名/密码错误".to_string()));
+        }
+
+        let token = self.next_user_session_token(&user.id)?;
+        self.user_sessions.insert(token.clone(), user.id.clone());
+        self.session_from_user_token(&token)
+    }
+
+    /// 通过 token 解析用户会话，不存在会返回未授权。
+    fn session_from_user_token(&self, token: &str) -> ApiResult<UserAuthSession> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(ApiError::Unauthorized(
+                "authorization token is required".to_string(),
+            ));
+        }
+
+        let user_id = self
+            .user_sessions
+            .get(token)
+            .ok_or_else(|| ApiError::Unauthorized("invalid user session".to_string()))?;
+        let user = self.get_user(user_id)?;
+        if user.status != UserStatus::Active {
+            return Err(ApiError::Forbidden(
+                "user account is not active".to_string(),
+            ));
+        }
+
+        Ok(UserAuthSession {
+            token: token.to_string(),
+            user,
+        })
+    }
+
+    /// 注销用户会话。
+    fn logout_user(&mut self, token: &str) {
+        self.user_sessions.remove(token.trim());
+    }
+
+    /// 绑定邮箱并保持原有用户标识。
+    fn bind_email(
+        &mut self,
+        user_id: &str,
+        payload: UserBindEmailRequest,
+    ) -> ApiResult<UserSummary> {
+        let email = required_trimmed(payload.email, "email")?;
+        if let Some(existing) = self
+            .users
+            .values()
+            .find(|user| user.id != user_id && user.email.as_deref() == Some(email.as_str()))
+        {
+            return Err(ApiError::Conflict(format!(
+                "email `{}` has been used",
+                existing.email.clone().unwrap_or_default()
+            )));
+        }
+
+        let user = self
+            .users
+            .get_mut(user_id)
+            .ok_or_else(|| ApiError::NotFound(format!("user `{user_id}` not found")))?;
+        user.email = Some(email);
+        Ok(user.clone())
+    }
+
+    /// 修改用户密码并刷新密码哈希。
+    fn change_password(
+        &mut self,
+        user_id: &str,
+        payload: UserChangePasswordRequest,
+    ) -> ApiResult<UserSummary> {
+        let old_password = validate_user_password(&payload.old_password)?;
+        let new_password = validate_user_password(&payload.new_password)?;
+
+        let user = self
+            .users
+            .get(user_id)
+            .ok_or_else(|| ApiError::NotFound(format!("user `{user_id}` not found")))?;
+
+        let password_hash = self
+            .user_password_hashes
+            .get(user_id)
+            .ok_or_else(|| ApiError::Internal("用户密码未配置".to_string()))?;
+        if !verify_user_password(&old_password, password_hash)? {
+            return Err(ApiError::Unauthorized("旧密码不正确".to_string()));
+        }
+
+        self.user_password_hashes
+            .insert(user_id.to_string(), hash_user_password(&new_password)?);
+
+        Ok(user.clone())
+    }
+
+    /// 生成忘记密码重置令牌。
+    fn request_forgot_password(
+        &mut self,
+        payload: UserForgotPasswordRequest,
+    ) -> ApiResult<UserForgotPasswordResponse> {
+        let login_key = required_trimmed(payload.login_key, "login key")?;
+        let user = self
+            .users
+            .values()
+            .find(|user| {
+                user.username == login_key || user.email.as_deref() == Some(login_key.as_str())
+            })
+            .ok_or_else(|| ApiError::NotFound("用户不存在".to_string()))?;
+
+        let mut expired_tokens = Vec::new();
+        for (token, record) in &self.user_password_reset_tokens {
+            if record.user_id == user.id && record.expires_at_unix < current_unix_timestamp() {
+                expired_tokens.push(token.to_string());
+            }
+        }
+
+        for token in expired_tokens {
+            self.user_password_reset_tokens.remove(&token);
+        }
+
+        let token = random_alnum_string(USER_RESET_TOKEN_BYTES);
+        let now = current_unix_timestamp();
+        let expires_at_unix = now
+            .checked_add(USER_RESET_TOKEN_TTL_SECONDS)
+            .ok_or_else(|| ApiError::Internal("重置码过期时间计算异常".to_string()))?;
+
+        self.user_password_reset_tokens.insert(
+            token.clone(),
+            PasswordResetTokenRecord {
+                user_id: user.id.clone(),
+                expires_at_unix,
+            },
+        );
+
+        Ok(UserForgotPasswordResponse {
+            reset_token: token,
+            expires_at: format_unix_timestamp(expires_at_unix),
+        })
+    }
+
+    /// 使用重置码更新密码并清理 token。
+    fn reset_password(
+        &mut self,
+        payload: UserResetPasswordRequest,
+    ) -> ApiResult<UserResetPasswordResponse> {
+        let new_password = validate_user_password(&payload.new_password)?;
+        let now = current_unix_timestamp();
+        let token = required_trimmed(payload.reset_token, "reset token")?;
+
+        let record = self
+            .user_password_reset_tokens
+            .remove(&token)
+            .ok_or_else(|| ApiError::Unauthorized("重置码无效".to_string()))?;
+        if record.expires_at_unix < now {
+            return Err(ApiError::Unauthorized("重置码已过期".to_string()));
+        }
+
+        let user = self
+            .users
+            .get(&record.user_id)
+            .ok_or_else(|| ApiError::NotFound(format!("user `{}` not found", record.user_id)))?;
+        self.user_password_hashes
+            .insert(user.id.clone(), hash_user_password(&new_password)?);
+
+        Ok(UserResetPasswordResponse { reset: true })
+    }
+
+    /// 列出指定用户的提现方式。
+    fn list_withdrawal_methods(&self, user_id: &str) -> ApiResult<Vec<WithdrawalMethod>> {
+        if !self.users.contains_key(user_id) {
+            return Err(ApiError::NotFound(format!("user `{user_id}` not found")));
+        }
+
+        Ok(self
+            .user_withdrawal_methods
+            .values()
+            .filter(|method| method.user_id == user_id)
+            .cloned()
+            .collect())
+    }
+
+    /// 新增提现方式。
+    fn create_withdrawal_method(
+        &mut self,
+        user_id: &str,
+        payload: WithdrawalMethodRequest,
+    ) -> ApiResult<WithdrawalMethod> {
+        if !self.users.contains_key(user_id) {
+            return Err(ApiError::NotFound(format!("user `{user_id}` not found")));
+        }
+
+        let account_holder = required_trimmed(payload.account_holder, "account holder")?;
+        let account_number = required_trimmed(payload.account_number, "account number")?;
+        let bank_name = payload
+            .bank_name
+            .map(|value| required_trimmed(value, "bank name"))
+            .transpose()?;
+        if payload.method_type == WithdrawalMethodType::BankCard && bank_name.is_none() {
+            return Err(ApiError::BadRequest("bank card 必填银行卡名称".to_string()));
+        }
+
+        if payload.is_default {
+            for method in self
+                .user_withdrawal_methods
+                .values_mut()
+                .filter(|method| method.user_id == user_id)
+            {
+                method.is_default = false;
+                method.updated_at = format_local_time();
+            }
+        }
+
+        let method_id =
+            random_withdrawal_method_id(&self.user_withdrawal_methods, WITHDRAWAL_METHOD_ID_BYTES)?;
+        let now = format_local_time();
+        let method = WithdrawalMethod {
+            id: method_id,
+            user_id: user_id.to_string(),
+            method_type: payload.method_type,
+            account_holder,
+            account_number,
+            bank_name,
+            is_default: payload.is_default,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        self.user_withdrawal_methods
+            .insert(method.id.clone(), method.clone());
+        Ok(method)
+    }
+
+    /// 更新提现方式。
+    fn update_withdrawal_method(
+        &mut self,
+        user_id: &str,
+        method_id: &str,
+        payload: WithdrawalMethodRequest,
+    ) -> ApiResult<WithdrawalMethod> {
+        if !self.users.contains_key(user_id) {
+            return Err(ApiError::NotFound(format!("user `{user_id}` not found")));
+        }
+
+        let account_holder = required_trimmed(payload.account_holder, "account holder")?;
+        let account_number = required_trimmed(payload.account_number, "account number")?;
+        let bank_name = payload
+            .bank_name
+            .map(|value| required_trimmed(value, "bank name"))
+            .transpose()?;
+        if payload.method_type == WithdrawalMethodType::BankCard && bank_name.is_none() {
+            return Err(ApiError::BadRequest("bank card 必填银行卡名称".to_string()));
+        }
+
+        if payload.is_default {
+            let now = format_local_time();
+            for method in self
+                .user_withdrawal_methods
+                .values_mut()
+                .filter(|method| method.user_id == user_id)
+            {
+                method.is_default = false;
+                method.updated_at = now.clone();
+            }
+        }
+
+        let method = self
+            .user_withdrawal_methods
+            .get_mut(method_id)
+            .ok_or_else(|| {
+                ApiError::NotFound(format!("withdrawal method `{method_id}` not found"))
+            })?;
+
+        if method.user_id != user_id {
+            return Err(ApiError::Forbidden(
+                "withdrawal method permission denied".to_string(),
+            ));
+        }
+
+        method.method_type = payload.method_type;
+        method.account_holder = account_holder;
+        method.account_number = account_number;
+        method.bank_name = bank_name;
+        method.is_default = payload.is_default;
+        method.updated_at = format_local_time();
+
+        Ok(method.clone())
+    }
+
+    /// 删除提现方式。
+    fn delete_withdrawal_method(&mut self, user_id: &str, method_id: &str) -> ApiResult<()> {
+        let method = self.user_withdrawal_methods.get(method_id).ok_or_else(|| {
+            ApiError::NotFound(format!("withdrawal method `{method_id}` not found"))
+        })?;
+        if method.user_id != user_id {
+            return Err(ApiError::Forbidden(
+                "withdrawal method permission denied".to_string(),
+            ));
+        }
+
+        self.user_withdrawal_methods
+            .remove(method_id)
+            .map(|_| ())
+            .ok_or_else(|| ApiError::NotFound(format!("withdrawal method `{method_id}` not found")))
     }
 
     /// 切换用户状态并返回最新用户快照。
@@ -1108,6 +1951,20 @@ impl AccessStore {
             self.session_counter
         ))
     }
+
+    /// 处理 next_user_session_token 的具体内部流程。
+    fn next_user_session_token(&mut self, user_id: &str) -> ApiResult<String> {
+        self.user_session_counter = self.user_session_counter.saturating_add(1);
+        let unix_millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| ApiError::Internal("系统时间先于 unix 时间戳基准".to_string()))?
+            .as_millis();
+
+        Ok(format!(
+            "user-{user_id}-{unix_millis}-{}",
+            self.user_session_counter
+        ))
+    }
 }
 
 /// 统一归一化用户提交字段：去空格、检查必填项并校验余额非负数。
@@ -1168,6 +2025,133 @@ fn normalize_admin(
     admin.role_name = role.name.clone();
 
     Ok(admin)
+}
+
+/// 基于前缀 U 生成下一个用户 ID，并保证与现有用户主键不冲突。
+fn next_user_id(users: &BTreeMap<String, UserSummary>, counter: &mut u64) -> ApiResult<String> {
+    if *counter == 0 {
+        *counter = next_user_id_from_users(users);
+    }
+
+    for _ in 0..2048 {
+        *counter = counter
+            .checked_add(1)
+            .ok_or_else(|| ApiError::Internal("用户 ID 序号溢出".to_string()))?;
+        let user_id = format!("U{:0>5}", *counter);
+        if !users.contains_key(&user_id) {
+            return Ok(user_id);
+        }
+    }
+
+    Err(ApiError::Internal("用户 ID 生成失败".to_string()))
+}
+
+/// 基于现有用户集合推导下一个用户 ID 自增序号。
+fn next_user_id_from_users(users: &BTreeMap<String, UserSummary>) -> u64 {
+    users
+        .keys()
+        .filter_map(|id| id.strip_prefix('U'))
+        .filter_map(|suffix| suffix.parse::<u64>().ok())
+        .max()
+        .unwrap_or(10000)
+}
+
+/// 验证普通用户密码规则。
+fn validate_user_password(password: &str) -> ApiResult<String> {
+    let password = required_trimmed(password.to_string(), "password")?;
+    if password.chars().count() < MIN_USER_PASSWORD_LEN {
+        return Err(ApiError::BadRequest(format!(
+            "用户密码至少 {MIN_USER_PASSWORD_LEN} 位字符"
+        )));
+    }
+
+    Ok(password)
+}
+
+/// 对用户密码进行安全哈希。
+fn hash_user_password(password: &str) -> ApiResult<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|_| ApiError::Internal("用户密码哈希失败".to_string()))
+}
+
+/// 校验用户密码是否匹配。
+fn verify_user_password(password: &str, password_hash: &str) -> ApiResult<bool> {
+    let parsed_hash = PasswordHash::new(password_hash)
+        .map_err(|_| ApiError::Internal("用户密码哈希格式无效".to_string()))?;
+
+    Ok(Argon2::default()
+        .verify_password(password.as_bytes(), &parsed_hash)
+        .is_ok())
+}
+
+/// 返回当前系统时间 Unix 秒级时间戳。
+fn current_unix_timestamp() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// 将 Unix 秒级时间戳转换为本地可读时间。
+fn format_unix_timestamp(timestamp: i64) -> String {
+    Local
+        .timestamp_opt(timestamp, 0)
+        .single()
+        .map(|datetime| datetime.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| format!("{timestamp}"))
+}
+
+/// 格式化当前本地时间。
+fn format_local_time() -> String {
+    Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// 生成随机数字字母组合。
+fn random_alnum_string(length: usize) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    let mut bytes = vec![0u8; length];
+    OsRng.fill_bytes(&mut bytes);
+    let max = ALPHABET.len() as u8;
+
+    bytes
+        .into_iter()
+        .map(|byte| {
+            let index = usize::from(byte % max);
+            ALPHABET[index] as char
+        })
+        .collect()
+}
+
+/// 生成不重复的提现方式 ID。
+fn random_withdrawal_method_id(
+    methods: &BTreeMap<String, WithdrawalMethod>,
+    byte_len: usize,
+) -> ApiResult<String> {
+    for _ in 0..256 {
+        let random = random_alnum_string(byte_len);
+        let id = format!("WM-{random}");
+        if !methods.contains_key(&id) {
+            return Ok(id);
+        }
+    }
+
+    Err(ApiError::Internal("提现方式 ID 生成失败".to_string()))
+}
+
+/// 按现有用户集合生成用户密码哈希映射。
+fn seed_user_password_hashes(users: &BTreeMap<String, UserSummary>) -> BTreeMap<String, String> {
+    users
+        .keys()
+        .map(|user_id| {
+            let hash = hash_user_password(DEFAULT_SEED_USER_PASSWORD)
+                .unwrap_or_else(|_| panic!("种子用户密码哈希失败"));
+            (user_id.clone(), hash)
+        })
+        .collect()
 }
 
 /// 校验输入参数并返回校验结果。
@@ -1344,6 +2328,11 @@ fn seed_settings() -> Vec<SystemSetting> {
 mod tests {
     use super::*;
     use crate::domain::user::UserKind;
+    use crate::domain::user::WithdrawalMethodType;
+    use crate::domain::user::{
+        UserChangePasswordRequest, UserForgotPasswordRequest, UserLoginRequest,
+        UserRegisterRequest, UserResetPasswordRequest, WithdrawalMethodRequest,
+    };
 
     #[tokio::test]
     async fn access_repository_creates_and_updates_user() {
@@ -1533,6 +2522,234 @@ mod tests {
             .await
             .expect("new admin can login with individual password");
         assert_eq!(session.admin.id, "A20001");
+    }
+
+    #[tokio::test]
+    async fn access_repository_registers_user_by_username_or_email() {
+        let access = AccessRepository::memory_seeded();
+
+        let username_user = access
+            .register_user(UserRegisterRequest {
+                username: Some("new_member".to_string()),
+                email: None,
+                password: "newPassword123".to_string(),
+                invite_code: None,
+            })
+            .await
+            .expect("username register should succeed");
+
+        assert_eq!(username_user.username, "new_member");
+        assert!(username_user.invite_code.len() == INVITE_CODE_LENGTH);
+
+        let _ = access
+            .update_registration(RegistrationConfig {
+                username_enabled: false,
+                email_enabled: true,
+                agent_invite_required: false,
+            })
+            .await
+            .expect("register policy can be updated");
+
+        let email_user = access
+            .register_user(UserRegisterRequest {
+                username: None,
+                email: Some("mail_reg@example.com".to_string()),
+                password: "emailPassword123".to_string(),
+                invite_code: None,
+            })
+            .await
+            .expect("email register should succeed");
+
+        assert_eq!(email_user.username, "mail_reg@example.com");
+        assert!(access
+            .login_user(UserLoginRequest {
+                login_key: "mail_reg@example.com".to_string(),
+                password: "emailPassword123".to_string(),
+            })
+            .await
+            .is_ok());
+
+        assert_eq!(
+            access
+                .registration()
+                .await
+                .expect("registration can be loaded")
+                .email_enabled,
+            true
+        );
+        assert_eq!(email_user.invite_code.len(), INVITE_CODE_LENGTH);
+
+        assert_ne!(username_user.username, email_user.username);
+    }
+
+    #[tokio::test]
+    async fn access_repository_rejects_invalid_user_email_register_when_username_only_disabled() {
+        let access = AccessRepository::memory_seeded();
+
+        let _ = access
+            .update_registration(RegistrationConfig {
+                username_enabled: false,
+                email_enabled: true,
+                agent_invite_required: false,
+            })
+            .await
+            .expect("register policy can be updated");
+
+        let error = access
+            .register_user(UserRegisterRequest {
+                username: Some("still_forbidden".to_string()),
+                email: None,
+                password: "forbidPassword123".to_string(),
+                invite_code: None,
+            })
+            .await
+            .expect_err("username register should be rejected");
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn access_repository_supports_user_password_change() {
+        let access = AccessRepository::memory_seeded();
+
+        access
+            .change_password(
+                "U10001",
+                UserChangePasswordRequest {
+                    old_password: "12345678".to_string(),
+                    new_password: "newpass123".to_string(),
+                },
+            )
+            .await
+            .expect("password can be updated");
+
+        assert!(access
+            .login_user(UserLoginRequest {
+                login_key: "demo_user".to_string(),
+                password: "newpass123".to_string(),
+            })
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn access_repository_forget_and_reset_password_flow() {
+        let access = AccessRepository::memory_seeded();
+
+        let forgot = access
+            .request_forgot_password(UserForgotPasswordRequest {
+                login_key: "demo_user".to_string(),
+            })
+            .await
+            .expect("forgot password can be requested");
+
+        assert!(!forgot.reset_token.trim().is_empty());
+
+        let reset = access
+            .reset_password(UserResetPasswordRequest {
+                reset_token: forgot.reset_token.clone(),
+                new_password: "resetPass123".to_string(),
+            })
+            .await
+            .expect("reset token should be accepted");
+
+        assert!(reset.reset);
+
+        assert!(access
+            .login_user(UserLoginRequest {
+                login_key: "demo_user".to_string(),
+                password: "resetPass123".to_string(),
+            })
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn access_repository_manage_user_withdrawal_methods() {
+        let access = AccessRepository::memory_seeded();
+
+        assert_eq!(
+            access
+                .list_withdrawal_methods("U10001")
+                .await
+                .expect("can read user withdrawal methods")
+                .len(),
+            0
+        );
+
+        let wechat = access
+            .create_withdrawal_method(
+                "U10001",
+                WithdrawalMethodRequest {
+                    method_type: WithdrawalMethodType::Wechat,
+                    account_holder: "收款人".to_string(),
+                    account_number: "wechat_id_01".to_string(),
+                    bank_name: None,
+                    is_default: true,
+                },
+            )
+            .await
+            .expect("wechat withdrawal method created");
+
+        let alipay = access
+            .create_withdrawal_method(
+                "U10001",
+                WithdrawalMethodRequest {
+                    method_type: WithdrawalMethodType::Alipay,
+                    account_holder: "收款人".to_string(),
+                    account_number: "alipay_01".to_string(),
+                    bank_name: None,
+                    is_default: false,
+                },
+            )
+            .await
+            .expect("alipay withdrawal method created");
+
+        let methods = access
+            .list_withdrawal_methods("U10001")
+            .await
+            .expect("can list withdrawal methods");
+        assert_eq!(methods.len(), 2);
+        assert!(methods
+            .iter()
+            .find(|method| method.id == wechat.id)
+            .is_some_and(|m| m.is_default));
+
+        let updated = access
+            .update_withdrawal_method(
+                "U10001",
+                &alipay.id,
+                WithdrawalMethodRequest {
+                    method_type: WithdrawalMethodType::BankCard,
+                    account_holder: "收款人".to_string(),
+                    account_number: "6227001234567890".to_string(),
+                    bank_name: Some("招商银行".to_string()),
+                    is_default: true,
+                },
+            )
+            .await
+            .expect("can set bank card as default method");
+
+        assert!(updated.is_default);
+        assert_eq!(updated.bank_name.as_deref(), Some("招商银行"));
+
+        let methods = access
+            .list_withdrawal_methods("U10001")
+            .await
+            .expect("list updated methods");
+        let default_count = methods.iter().filter(|method| method.is_default).count();
+        assert_eq!(default_count, 1);
+
+        access
+            .delete_withdrawal_method("U10001", &wechat.id)
+            .await
+            .expect("withdrawal method can be deleted");
+
+        let methods = access
+            .list_withdrawal_methods("U10001")
+            .await
+            .expect("final methods list");
+        assert_eq!(methods.len(), 1);
     }
 
     #[tokio::test]

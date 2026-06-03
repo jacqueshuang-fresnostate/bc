@@ -483,7 +483,7 @@ mod tests {
             .snapshot()
             .await
             .expect("access snapshot can load");
-        let inviter_code = access
+        let _inviter_code = access
             .users
             .iter()
             .find(|user| user.id == "U90001")

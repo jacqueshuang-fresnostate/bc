@@ -79,6 +79,21 @@ impl FinanceRepository {
             .ensure_available(user_id, amount_minor)
     }
 
+    /// 获取用户资金账户，不存在时自动创建默认账户后返回。
+    pub async fn account_or_create(&self, user_id: &str) -> ApiResult<FinancialAccountSummary> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.account_or_create(user_id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+
+        Ok(result)
+    }
+
     /// 校验订单是否满足退款条件。
     pub async fn ensure_order_can_refund(&self, order: &OrderDetail) -> ApiResult<()> {
         self.inner
@@ -396,6 +411,27 @@ impl FinanceStore {
         }
 
         Ok(())
+    }
+
+    /// 处理 account_or_create 的具体内部流程。
+    fn account_or_create(&mut self, user_id: &str) -> ApiResult<FinancialAccountSummary> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
+
+        if let Some(account) = self.accounts.get(user_id) {
+            return Ok(account.clone());
+        }
+
+        let account = FinancialAccountSummary {
+            user_id: user_id.to_string(),
+            available_balance_minor: 0,
+            frozen_balance_minor: 0,
+        };
+        self.accounts
+            .insert(account.user_id.clone(), account.clone());
+        Ok(account)
     }
 
     /// 处理 ensure_order_can_refund 的具体内部流程。

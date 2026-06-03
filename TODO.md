@@ -1,5 +1,17 @@
 # TODO
 
+## 2026-06-03 23:58 HKT 用户接口补齐
+
+- 完成任务：补齐用户相关后端接口链路，支持“用户注册（用户名/邮箱）”“登录（用户名/邮箱）”“绑定邮箱”“修改密码”“忘记密码重置”“查询用户余额”“提现方式（支付宝、微信、银行卡）”完整流程。
+- 解决问题：此前用户端接口在多个版本切换中有部分缺口，用户注册策略、登录标识、密码找回、会话鉴权和提现方式维护未形成统一闭环，前端/联调时缺少可复用的后端契约。
+- 技术实现：
+  - 保持 `backend/src/routes/user.rs` 路由树完整：`/api/user/register`、`/api/user/login`、`/api/user/forgot-password`、`/api/user/reset-password`、`/api/user/me`、`/api/user/logout`、`/api/user/bind-email`、`/api/user/password/change`、`/api/user/balance`、`/api/user/withdrawal-methods`。
+  - `backend/src/services/access.rs` 增加并修复用户生命周期方法：注册、登录、会话解析、登出、绑定邮箱、改密、忘记密码、重置密码、提现方式的增删改查。
+  - 新增访问仓储单元测试，覆盖：用户名注册、邮箱注册、仅邮箱开启后用户名注册失败、修改密码、忘记密码与重置、提现方式 CRUD。
+  - 清理无用常量与告警：移除未使用的用户会话 TTL/Token 长度常量；修复邀请仓储测试无效变量命名告警。
+- 验证：在 `DATABASE_URL=postgres://root:123456@192.168.2.3:15432/postgres` 下运行 `cargo test -q`，通过 143 项测试；无新增失败。
+- 后续动作：将用户端接口能力同步补充到移动端 SDK/接口说明文档，并在下一步将该模块接入登录态统一拦截与前端状态管理。
+
 ## 2026-06-03 23:46 HKT SQL 字段注释补齐
 
 - 完成任务：为数据库迁移 SQL 全量补齐字段级注释，并整理为新迁移 `backend/migrations/20260603234000_add_all_column_comments.sql`。
