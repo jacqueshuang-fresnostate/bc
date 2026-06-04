@@ -31,9 +31,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let port = std::env::var("PORT").unwrap_or_else(|_| "28080".to_string());
     let address = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&address).await?;
+    let router = app::router_from_env().await?;
 
     tracing::info!(address = %address, "后台接口服务已开始监听");
-    axum::serve(listener, app::router_from_env().await?).await?;
+    axum::serve(listener, router).await?;
 
     Ok(())
 }

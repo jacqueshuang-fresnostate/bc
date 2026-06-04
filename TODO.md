@@ -1,5 +1,24 @@
 # TODO
 
+## 2026-06-04 19:48 HKT Docker 数据库连接串错误提示优化
+
+- 完成任务：把 Docker 后端启动时 `DATABASE_URL` 格式错误导致的 `RelativeUrlWithoutBase` 改成明确中文配置错误。
+- 解决问题：用户在镜像启动日志中看到 `Error: Configuration(RelativeUrlWithoutBase)`，无法直接判断是数据库连接串缺少 `postgres://` 或 `postgresql://` 前缀。
+- 具体实现：
+  - 后端新增 `DATABASE_URL` 读取与格式校验，非空时必须以 `postgres://` 或 `postgresql://` 开头。
+  - 空 `DATABASE_URL` 继续视为未配置，使用内存演示仓储。
+  - 主入口调整启动顺序：先初始化路由和数据库依赖，再绑定端口并打印“后台接口服务已开始监听”。
+  - 部署规范和 `架构设计.md` 同步记录 `DATABASE_URL` 格式契约。
+- 验证记录：
+  - `cd backend && cargo fmt` 已执行。
+  - `cd backend && cargo fmt --check` 通过。
+  - `cd backend && cargo check` 通过。
+  - `cd backend && cargo test database_url -- --nocapture` 通过；仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - `docker build -t bc-platform:latest .` 通过。
+  - 使用错误 `DATABASE_URL=root:123456@192.168.2.3:15432/postgres` 启动临时容器，容器按预期退出，日志输出中文错误“DATABASE_URL 配置无效：必须以 postgres:// 或 postgresql:// 开头”。
+  - 错误连接串场景下不再提前输出“后台接口服务已开始监听”，避免误判后端已经成功监听。
+  - 使用新镜像启动正常临时容器，`/api/health` 返回 `success=true`，容器状态为 `running healthy`。
+
 ## 2026-06-04 19:08 HKT Docker 镜像后端 502 修复
 
 - 完成任务：修复单镜像部署时后端失败但 Nginx 继续运行导致接口 502 的问题。

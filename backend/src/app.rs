@@ -1,6 +1,6 @@
 //! 后端应用状态和依赖仓储组装入口，统一创建内存/数据库模式下的状态
 
-use std::error::Error;
+use std::{env::VarError, error::Error, io};
 
 use axum::Router;
 use tower_http::cors::CorsLayer;
@@ -67,7 +67,7 @@ impl AppState {
     pub async fn from_env_with_scheduler(
         scheduler: DrawSchedulerRepository,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        let Some(database_url) = database_url_from_env()? else {
             tracing::info!("未配置 DATABASE_URL，使用内存业务仓储");
             return Ok(Self::new_with_scheduler(scheduler));
         };
@@ -108,6 +108,36 @@ fn default_draw_repository() -> DrawRepository {
     DrawRepository::memory_with_api_sources(ApiDrawSourceRepository::api68_seeded())
 }
 
+/// 读取并校验数据库连接串，避免 SQLx 输出难懂的相对 URL 错误。
+fn database_url_from_env() -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
+    match std::env::var("DATABASE_URL") {
+        Ok(value) => normalize_database_url_value(&value)
+            .map_err(|error| Box::new(error) as Box<dyn Error + Send + Sync>),
+        Err(VarError::NotPresent) => Ok(None),
+        Err(VarError::NotUnicode(_)) => Err(Box::new(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "DATABASE_URL 配置无效：必须是有效 UTF-8 文本",
+        ))),
+    }
+}
+
+/// 处理数据库连接串的空值和协议前缀，保证容器日志给出中文原因。
+fn normalize_database_url_value(value: &str) -> Result<Option<String>, io::Error> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    if !trimmed.starts_with("postgres://") && !trimmed.starts_with("postgresql://") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "DATABASE_URL 配置无效：必须以 postgres:// 或 postgresql:// 开头。示例：postgres://用户名:密码@主机:端口/数据库",
+        ));
+    }
+
+    Ok(Some(trimmed.to_string()))
+}
+
 /// 读取环境变量并返回可启动的应用路由实例。
 pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
     let scheduler = DrawSchedulerRepository::new(DrawSchedulerConfig::default());
@@ -131,4 +161,39 @@ fn router_with_state(state: AppState) -> Router {
         .nest("/api", routes::router(state.clone()))
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_database_url_value;
+
+    #[test]
+    /// 验证空数据库连接串等同于未配置，容器可继续使用内存模式。
+    fn database_url_allows_empty_value_as_unconfigured() {
+        assert_eq!(normalize_database_url_value("").unwrap(), None);
+        assert_eq!(normalize_database_url_value("   ").unwrap(), None);
+    }
+
+    #[test]
+    /// 验证数据库连接串会修剪空白并保留合法 PostgreSQL 协议。
+    fn database_url_accepts_postgres_url() {
+        assert_eq!(
+            normalize_database_url_value(" postgres://bc:pw@postgres:5432/bc ").unwrap(),
+            Some("postgres://bc:pw@postgres:5432/bc".to_string())
+        );
+        assert_eq!(
+            normalize_database_url_value("postgresql://bc:pw@postgres:5432/bc").unwrap(),
+            Some("postgresql://bc:pw@postgres:5432/bc".to_string())
+        );
+    }
+
+    #[test]
+    /// 验证缺少协议前缀时给出中文配置错误，避免出现 RelativeUrlWithoutBase。
+    fn database_url_rejects_relative_value() {
+        let error = normalize_database_url_value("bc:pw@postgres:5432/bc")
+            .expect_err("缺少协议的连接串必须失败");
+
+        assert!(error.to_string().contains("DATABASE_URL 配置无效"));
+        assert!(error.to_string().contains("postgres://"));
+    }
 }
