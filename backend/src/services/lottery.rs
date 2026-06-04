@@ -923,13 +923,6 @@ fn extra_api68_lotteries() -> Vec<LotteryKind> {
             300,
         ),
         api_lottery(
-            "bjkl8",
-            "北京快乐8",
-            "regional",
-            LotteryNumberType::LuckTwenty,
-            300,
-        ),
-        api_lottery(
             "jx11x5",
             "江西11选5",
             "regional",
@@ -1421,7 +1414,6 @@ mod tests {
             ("gd11x5", LotteryNumberType::ElevenFive, false),
             ("au10", LotteryNumberType::Pk10, false),
             ("au20", LotteryNumberType::LuckTwenty, false),
-            ("bjkl8", LotteryNumberType::LuckTwenty, false),
             ("zj11x5", LotteryNumberType::ElevenFive, false),
         ] {
             let lottery = lotteries
@@ -1435,11 +1427,11 @@ mod tests {
         }
 
         for removed_id in [
-            "jsk3", "gxk3", "jlk3", "hebk3", "nmgk3", "ahk3", "fjk3", "hubk3", "bjk3",
+            "jsk3", "gxk3", "jlk3", "hebk3", "nmgk3", "ahk3", "fjk3", "hubk3", "bjk3", "bjkl8",
         ] {
             assert!(
                 !lotteries.iter().any(|item| item.id == removed_id),
-                "已停用的快3彩种不应继续出现在默认种子中"
+                "已停用的 API68 彩种不应继续出现在默认种子中"
             );
         }
     }
@@ -1567,7 +1559,7 @@ mod tests {
 
         let lotteries = repository.list().await.expect("lotteries can be listed");
 
-        assert_eq!(lotteries.len(), 23);
+        assert_eq!(lotteries.len(), 22);
     }
 
     #[tokio::test]

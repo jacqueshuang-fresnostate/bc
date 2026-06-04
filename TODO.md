@@ -1,5 +1,23 @@
 # TODO
 
+## 2026-06-04 14:11 HKT 移除停用 API68 北京快乐8
+
+- 完成任务：删除 API68 北京快乐8（`bjkl8`）的默认彩种、默认开奖源和后台开奖源预设。
+- 解决问题：北京快乐8已经确认不再使用，如果继续保留会导致后台仍可误配置 `api68-bjkl8`，调度器也可能继续对该彩种生成无效期号。
+- 具体实现：
+  - 后端 `seed_lotteries()` 移除 `bjkl8`，默认种子彩种数量从 23 调整为 22。
+  - 后端 `extra_api68_draw_sources()` 移除 `api68-bjkl8` 默认开奖源。
+  - 管理后台“开奖源预设”删除北京快乐8采集入口。
+  - 新增迁移 `backend/migrations/20260605003000_remove_deprecated_bjkl8_lottery.sql`，清理已落库的北京快乐8彩种、开奖源、开奖期号、控制号码、机器人绑定和合买计划；历史订单、结算和资金流水不删除。
+- 验证记录：
+  - `cd backend && cargo fmt && cargo fmt --check` 通过。
+  - `cd backend && cargo check` 通过。
+  - `cd backend && cargo test seeded -- --nocapture` 通过，覆盖默认彩种数量、默认开奖源和共用开奖源测试。
+  - `cd backend && cargo test -- --nocapture` 通过，155 个测试全部通过；仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - `cd admin && npm run build` 通过；Vite 仍提示既有 chunk 体积超过 500kB。
+  - 使用 `DATABASE_URL=postgres://root:123456@192.168.2.3:15432/postgres PORT=18156 cargo run` 启动后端，确认 `_sqlx_migrations` 已执行 `20260605003000 remove deprecated bjkl8 lottery`；数据库中 `bjkl8` 和 `api68-bjkl8` 查询结果均为空，当前彩种数量为 22、开奖源数量为 19。
+  - 本地启动验证时不再出现 `bjkl8` 的期号生成冲突日志；仍观察到既有“开奖调度器历史记录写入失败”，该问题与本次删除北京快乐8无关，后续单独排查。
+
 ## 2026-06-04 13:59 HKT 移除停用 API68 快3彩种
 
 - 完成任务：删除 API68 安徽快3、北京快3、福建快3、广西快3、河北快3、湖北快3、吉林快3、江苏快3、内蒙古快3的默认彩种、默认开奖源和后台开奖源预设。

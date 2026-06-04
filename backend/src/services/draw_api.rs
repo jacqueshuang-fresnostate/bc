@@ -836,12 +836,6 @@ fn extra_api68_draw_sources() -> Vec<ApiDrawSourceConfig> {
             DEFAULT_API68_LUCK_TWENTY_ENDPOINT,
         ),
         ApiDrawSourceConfig::api68_source(
-            "bjkl8",
-            "北京快乐8",
-            "10014",
-            DEFAULT_API68_LUCK_TWENTY_ENDPOINT,
-        ),
-        ApiDrawSourceConfig::api68_source(
             "jx11x5",
             "江西11选5",
             "10015",
@@ -1447,10 +1441,11 @@ mod tests {
             "api68-fjk3",
             "api68-hubk3",
             "api68-bjk3",
+            "api68-bjkl8",
         ] {
             assert!(
                 !sources.iter().any(|source| source.id == removed_source_id),
-                "已停用的快3开奖源不应继续出现在默认来源中"
+                "已停用的 API68 开奖源不应继续出现在默认来源中"
             );
         }
     }

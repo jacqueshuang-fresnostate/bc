@@ -123,7 +123,6 @@ const DRAW_SOURCE_PRESETS: Array<{ label: string; form: DrawSourceFormState }> =
     ['gd11x5', '广东11选5', '10006', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
     ['au10', '澳洲幸运10', '10012', 'https://api.api68.com/pks/getLotteryPksInfo.do'],
     ['au20', '澳洲幸运20', '10013', 'https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do'],
-    ['bjkl8', '北京快乐8', '10014', 'https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do'],
     ['jx11x5', '江西11选5', '10015', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
     ['js11x5', '江苏11选5', '10016', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
     ['ah11x5', '安徽11选5', '10017', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
