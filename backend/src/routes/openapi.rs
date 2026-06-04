@@ -989,6 +989,33 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/lottery/groups",
+        "用户端内容",
+        "手机端彩种分组",
+        "返回手机端开奖历史页可筛选的销售中彩种分组。",
+        AuthMode::None,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/lottery/history/latest",
+        "用户端内容",
+        "手机端最新开奖",
+        "返回每个销售中彩种最近一期已开奖数据，支持按彩种或分组筛选。",
+        AuthMode::None,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/lottery/history",
+        "用户端内容",
+        "手机端开奖历史",
+        "返回单彩种或筛选范围内的已开奖历史。",
+        AuthMode::None,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
         "/user/mobile/advertisements",
         "用户端内容",
         "手机端轮播广告",
@@ -1568,6 +1595,9 @@ mod tests {
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/reject"]["post"].is_object());
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
         assert!(document["paths"]["/lottery/home"]["get"].is_object());
+        assert!(document["paths"]["/lottery/groups"]["get"].is_object());
+        assert!(document["paths"]["/lottery/history/latest"]["get"].is_object());
+        assert!(document["paths"]["/lottery/history"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/advertisements"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/site-config"]["get"].is_object());
         assert!(document["paths"]["/user/register-options"]["get"].is_object());

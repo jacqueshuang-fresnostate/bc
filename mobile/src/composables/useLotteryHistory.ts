@@ -1,14 +1,20 @@
 import { computed, ref } from 'vue'
-import http from '../api/http'
+import {
+  fetchLatestLotteryHistory,
+  fetchLotteryGroups,
+  fetchLotteryHistory,
+  type LotteryHistoryGroup,
+  type LotteryHistoryItem,
+} from '../api/lottery'
 
 export function useLotteryHistory() {
   const activeGroupCode = ref('all')
-  const lotteryGroups = ref<any[]>([])
-  const drawItems = ref<any[]>([])
+  const lotteryGroups = ref<LotteryHistoryGroup[]>([])
+  const drawItems = ref<LotteryHistoryItem[]>([])
   const selectedLotteryCode = ref<string | null>(null)
   const selectedLotteryName = ref('')
   const selectedLotteryVisible = ref(false)
-  const selectedLotteryItems = ref<any[]>([])
+  const selectedLotteryItems = ref<LotteryHistoryItem[]>([])
   const loadingDraws = ref(false)
   const drawRequestSeq = ref(0)
   const lotteryGroupsRequestSeq = ref(0)
@@ -26,9 +32,9 @@ export function useLotteryHistory() {
   async function loadLotteryGroups() {
     const requestId = ++lotteryGroupsRequestSeq.value
     try {
-      const res = await http.get('/lottery/groups')
+      const groups = await fetchLotteryGroups()
       if (requestId !== lotteryGroupsRequestSeq.value) return
-      lotteryGroups.value = Array.isArray(res.data) ? res.data : []
+      lotteryGroups.value = Array.isArray(groups) ? groups : []
     } catch {
       if (requestId !== lotteryGroupsRequestSeq.value) return
       lotteryGroups.value = []
@@ -41,9 +47,9 @@ export function useLotteryHistory() {
     loadingDraws.value = true
     try {
       const params = activeGroupCode.value === 'all' ? undefined : { group_code: activeGroupCode.value }
-      const res = await http.get('/lottery/history/latest', { params })
+      const data = await fetchLatestLotteryHistory(params)
       if (requestId !== drawRequestSeq.value || activeGroupCode.value !== groupCode) return
-      drawItems.value = Array.isArray(res.data?.items) ? res.data.items : []
+      drawItems.value = Array.isArray(data.items) ? data.items : []
     } catch {
       if (requestId !== drawRequestSeq.value || activeGroupCode.value !== groupCode) return
       drawItems.value = []
@@ -58,9 +64,9 @@ export function useLotteryHistory() {
     const requestId = ++selectedLotteryRequestSeq.value
     loadingSelectedLottery.value = true
     try {
-      const res = await http.get('/lottery/history', { params: { lottery_code: lotteryCode } })
+      const data = await fetchLotteryHistory({ lottery_code: lotteryCode })
       if (requestId !== selectedLotteryRequestSeq.value || selectedLotteryCode.value !== lotteryCode) return
-      selectedLotteryItems.value = Array.isArray(res.data?.items) ? res.data.items : []
+      selectedLotteryItems.value = Array.isArray(data.items) ? data.items : []
     } catch {
       if (requestId !== selectedLotteryRequestSeq.value || selectedLotteryCode.value !== lotteryCode) return
       selectedLotteryItems.value = []

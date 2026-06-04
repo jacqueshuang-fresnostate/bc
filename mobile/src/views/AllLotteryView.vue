@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
-import http from '../api/http'
+import { fetchLotteryGroups } from '../api/lottery'
 import { fetchCurrentUserProfile } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import { useBrandingStore } from '../stores/branding'
@@ -111,9 +111,9 @@ async function loadLotteryGroups() {
   const requestId = ++groupsRequestSeq.value
   loadingGroups.value = true
   try {
-    const res = await http.get('/lottery/groups')
+    const groups = await fetchLotteryGroups()
     if (requestId !== groupsRequestSeq.value) return
-    lotteryGroups.value = Array.isArray(res.data?.items) ? res.data.items : Array.isArray(res.data) ? res.data : []
+    lotteryGroups.value = Array.isArray(groups) ? groups : []
   } catch {
     if (requestId !== groupsRequestSeq.value) return
     lotteryGroups.value = []

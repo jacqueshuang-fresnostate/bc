@@ -1,13 +1,10 @@
 import { computed, onBeforeUnmount, ref, type Ref } from 'vue'
 import { showToast } from 'vant'
 import http from '../api/http'
+import { fetchLatestLotteryHistory, type LotteryHistoryItem } from '../api/lottery'
 import { parseChinaDateTime } from '../utils/lotteryFormat'
 
-export type LatestDrawItem = {
-  issue: string
-  result: string
-  result_numbers?: string[]
-}
+export type LatestDrawItem = Pick<LotteryHistoryItem, 'issue' | 'result' | 'result_numbers'>
 
 export function useBettingRound(lotteryCode: Ref<string>) {
   const issue = ref('')
@@ -59,8 +56,8 @@ export function useBettingRound(lotteryCode: Ref<string>) {
 
   async function loadLatestFc3dDraw() {
     try {
-      const res = await http.get('/lottery/history/latest', { params: { lottery_code: 'fc3d' } })
-      const items = Array.isArray(res.data?.items) ? res.data.items : []
+      const data = await fetchLatestLotteryHistory({ lottery_code: 'fc3d' })
+      const items = Array.isArray(data.items) ? data.items : []
       latestFc3dDraw.value = items[0] || null
     } catch {
       latestFc3dDraw.value = null

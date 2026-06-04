@@ -3403,6 +3403,9 @@ await createWithdrawalOrder({ methodId, amountMinor });
 ### 2. 签名
 
 - `GET /api/lottery/home`
+- `GET /api/lottery/groups`
+- `GET /api/lottery/history/latest?group_code=all&lottery_code=fc3d`
+- `GET /api/lottery/history?lottery_code=fc3d&page=1&page_size=50`
 
 ### 3. 契约
 
@@ -3491,6 +3494,60 @@ await createWithdrawalOrder({ methodId, amountMinor });
 - 后端需要覆盖只返回销售中彩种、按分类分组、带最近开奖号码。
 - OpenAPI 测试需要覆盖 `/lottery/home` 路径。
 - 手机端需要运行 `npm run build`，确认 `camelCase` 首页字段和组件消费一致。
+
+### 7. 补充分组与历史接口契约
+
+`/api/lottery/groups`、`/api/lottery/history/latest`、`/api/lottery/history` 当前服务于手机端全部彩种、开奖历史、合买创建入口。它们也必须返回统一 API 信封；为了兼容这些既有手机端页面，数据字段沿用当前页面消费的 `snake_case` 形状，例如 `lottery_code`、`result_numbers`、`opened_at`、`page_size`。
+
+`/api/lottery/groups` 返回销售中彩种分组：
+
+```json
+[
+  {
+    "code": "welfare",
+    "name": "福利彩种",
+    "lotteries": [
+      {
+        "code": "fc3d",
+        "name": "福彩 3D",
+        "category": "welfare",
+        "logo_url": null,
+        "draw_interval": null,
+        "daily_draw_time": "21:00:15",
+        "group_sort_order": 0,
+        "is_recommended": false
+      }
+    ]
+  }
+]
+```
+
+`/api/lottery/history/latest` 返回每个销售中彩种最近一期已开奖数据；`/api/lottery/history` 返回分页历史：
+
+```json
+{
+  "items": [
+    {
+      "id": "D000000000001",
+      "lottery_code": "fc3d",
+      "lottery_name": "福彩 3D",
+      "category": "welfare",
+      "logo_url": null,
+      "issue": "20260605001",
+      "result": "1,2,3",
+      "result_numbers": ["1", "2", "3"],
+      "opened_at": "2026-06-05 21:00:15",
+      "status": "drawn"
+    }
+  ],
+  "total_count": 1,
+  "page": 1,
+  "page_size": 50,
+  "total_pages": 1
+}
+```
+
+这三个接口必须过滤停售彩种；开奖历史只返回 `status=drawn` 且有开奖号码的期号。`latest` 接口不分页，每个彩种最多返回一条最新开奖记录；`history` 接口需要按 `page/page_size` 分页，并把 `page_size` 限制在安全上限内。
 
 ---
 

@@ -1,5 +1,24 @@
 # TODO
 
+## 2026-06-05 00:47 HKT 手机端彩种分组与开奖历史接口补齐
+
+- 完成任务：补齐手机端彩种分组、最新开奖和开奖历史接口，并接入相关手机端页面。
+- 解决问题：
+  - 全部彩种页、开奖历史页和合买创建入口仍直接请求旧 `/lottery/groups`、`/lottery/history/latest`、`/lottery/history` 裸响应。
+  - 本项目后端没有这些用户端彩票接口，手机端页面在本地后端环境下会拿不到彩种分组和开奖记录。
+- 具体实现：
+  - 后端 `routes/lottery.rs` 新增 `GET /lottery/groups`、`GET /lottery/history/latest`、`GET /lottery/history`。
+  - 彩种分组只返回销售中彩种；开奖历史只返回销售中彩种的已开奖且有开奖号码记录。
+  - `mobile/src/api/lottery.ts` 新增分组、最新开奖和开奖历史的类型化封装。
+  - `AllLotteryView.vue`、`useLotteryHistory.ts`、`useBettingRound.ts`、`features/group-buy/api.ts` 改为复用统一彩票 API client。
+  - OpenAPI 文档同步新增三条用户端彩票路径。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml --check` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml routes::lottery -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture` 通过。
+  - `cd mobile && npm run build` 通过。
+
 ## 2026-06-05 00:33 HKT 手机端首页销售中彩种分组接口
 
 - 完成任务：接好手机端首页彩种接口，返回所有销售中的彩种、分类分组和最近开奖号码。

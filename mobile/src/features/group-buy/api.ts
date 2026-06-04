@@ -1,4 +1,5 @@
 import http from '../../api/http'
+import { fetchLotteryGroups as fetchMobileLotteryGroups } from '../../api/lottery'
 import { fetchCurrentUserProfile } from '../../api/user'
 import type { CreateGroupBuyPayload } from './types'
 
@@ -22,8 +23,8 @@ export function fetchMyGroupBuys() {
   return http.get('/group-buys/my')
 }
 
-export function fetchLotteryGroups() {
-  return http.get('/lottery/groups')
+export async function fetchLotteryGroups() {
+  return { data: await fetchMobileLotteryGroups() }
 }
 
 export function fetchGroupBuyCreateOptions(requestedLotteryCode: string) {
