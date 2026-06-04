@@ -821,6 +821,7 @@ async fn create_user(
     Json(payload): Json<UserSummary>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
     let user = state.access.create_user(payload).await?;
+    state.finance.account_or_create(&user.id).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
 }

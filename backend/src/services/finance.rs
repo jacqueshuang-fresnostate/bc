@@ -289,17 +289,47 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
     .map_err(|_| ApiError::Internal("资金运行数据读取失败".to_string()))?
     .unwrap_or_default();
 
+    let mut reconciled_missing_accounts = false;
+    for row in sqlx::query("SELECT id FROM users ORDER BY id ASC")
+        .fetch_all(pool)
+        .await
+        .map_err(|_| ApiError::Internal("用户资金账户补齐数据读取失败".to_string()))?
+    {
+        let user_id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("用户资金账户补齐数据读取失败".to_string()))?;
+        if accounts.contains_key(&user_id) {
+            continue;
+        }
+
+        accounts.insert(
+            user_id.clone(),
+            FinancialAccountSummary {
+                user_id,
+                available_balance_minor: 0,
+                frozen_balance_minor: 0,
+            },
+        );
+        reconciled_missing_accounts = true;
+    }
+
     if accounts.is_empty() && ledger_entries.is_empty() {
         let seeded = FinanceStore::seeded();
         save_finance_store(database, &seeded).await?;
         return Ok(seeded);
     }
 
-    Ok(FinanceStore {
+    let store = FinanceStore {
         accounts,
         ledger_entries,
         next_sequence: u64::try_from(next_sequence).unwrap_or_default(),
-    })
+    };
+
+    if reconciled_missing_accounts {
+        save_finance_store(database, &store).await?;
+    }
+
+    Ok(store)
 }
 
 async fn save_finance_store(database: &BusinessDatabase, store: &FinanceStore) -> ApiResult<()> {
@@ -446,13 +476,21 @@ impl FinanceStore {
 
     /// 处理 ensure_available 的具体内部流程。
     fn ensure_available(&self, user_id: &str, amount_minor: i64) -> ApiResult<()> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
         if amount_minor <= 0 {
             return Err(ApiError::BadRequest(
                 "amount must be greater than zero".to_string(),
             ));
         }
 
-        let account = self.account(user_id)?;
+        let Some(account) = self.accounts.get(user_id) else {
+            return Err(ApiError::BadRequest(
+                "insufficient available balance".to_string(),
+            ));
+        };
         if account.available_balance_minor < amount_minor {
             return Err(ApiError::BadRequest(
                 "insufficient available balance".to_string(),
@@ -631,6 +669,7 @@ impl FinanceStore {
     }
 
     /// 处理 account 的具体内部流程。
+    #[cfg(test)]
     fn account(&self, user_id: &str) -> ApiResult<&FinancialAccountSummary> {
         let user_id = user_id.trim();
         self.accounts
@@ -748,6 +787,33 @@ mod tests {
             .expect_err("zero balance user cannot bet")
             .to_string()
             .contains("insufficient available balance"));
+    }
+
+    #[test]
+    /// 缺少资金账户的历史用户下注时按 0 余额处理，不向用户暴露账户缺失错误。
+    fn store_rejects_missing_account_as_insufficient_balance() {
+        let mut store = FinanceStore::default();
+        let order = order_detail("O000000000001", "U-MISSING", 200, 0);
+
+        assert!(store
+            .debit_order(&order)
+            .expect_err("missing account user cannot bet")
+            .to_string()
+            .contains("insufficient available balance"));
+    }
+
+    #[test]
+    /// 查询或注册后的账户初始化会创建 0 余额资金账户。
+    fn store_account_or_create_creates_zero_balance_account() {
+        let mut store = FinanceStore::default();
+
+        let account = store
+            .account_or_create("U-NEW")
+            .expect("missing account should be created");
+
+        assert_eq!(account.user_id, "U-NEW");
+        assert_eq!(account.available_balance_minor, 0);
+        assert_eq!(account.frozen_balance_minor, 0);
     }
 
     #[test]

@@ -1,5 +1,23 @@
 # TODO
 
+## 2026-06-04 21:49 HKT 新用户资金账户自动初始化
+
+- 完成任务：修复新注册用户或后台新建用户缺少资金账户导致的 `financial account not found`。
+- 解决问题：手机端测试用户 `U90004` 已有用户记录，但 `financial_accounts` 中没有对应账户；后续余额校验、投注扣款或财务读取会报 `not found: financial account \`U90004\` not found`。
+- 具体实现：
+  - 用户端注册接口 `POST /api/user/register` 成功创建用户后立即调用 `finance.account_or_create()` 初始化 0 余额资金账户。
+  - 后台新建用户接口成功创建用户后同样初始化 0 余额资金账户。
+  - PostgreSQL 财务仓储启动加载时会扫描 `users` 表，对已有用户中缺失 `financial_accounts` 的记录自动补 0 余额账户并持久化。
+  - 财务余额校验遇到历史缺失账户时按 0 余额处理，返回 `insufficient available balance`，不再向用户暴露内部账户缺失错误。
+  - 新增财务单元测试覆盖“缺账户用户下注返回余额不足”和“账户初始化创建 0 余额账户”。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml --check` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml finance::tests -- --nocapture` 通过，9 条财务测试全部成功。
+  - `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 通过，173 条测试全部成功；测试构建仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - 使用用户提供的 PostgreSQL 本地启动后端，注册新用户 `acctfix_80954862` 得到 `U90005`，调用 `/api/user/balance` 返回 0 余额资金账户。
+  - 通过后台 `/api/admin/financial-accounts` 验证历史用户 `U90004` 已自动补齐 `{ availableBalanceMinor: 0, frozenBalanceMinor: 0 }`。
+
 ## 2026-06-04 21:41 HKT 手机端轮播接口对接
 
 - 完成任务：把手机端首页轮播接入后端公开广告接口。

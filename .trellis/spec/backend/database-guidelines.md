@@ -62,6 +62,85 @@ YYYYMMDDHHMMSS_describe_change.sql
 
 ---
 
+## 场景：用户资金账户生命周期
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增用户创建入口、用户注册入口、财务余额校验、投注扣款、充值入账或财务账户持久化恢复逻辑。
+- 范围：`users`、`financial_accounts`、`FinanceRepository::account_or_create`、用户端注册接口、后台用户创建接口、订单扣款前余额校验。
+
+### 2. 签名
+
+- 用户端注册：`POST /api/user/register`
+- 后台新建用户：`POST /api/admin/users`
+- 用户余额：`GET /api/user/balance`
+- 财务账户表：`financial_accounts`
+- 用户表：`users`
+- 账户初始化方法：`FinanceRepository::account_or_create(user_id)`
+
+### 3. 契约
+
+所有用户创建成功后必须拥有一条 0 余额资金账户：
+
+```json
+{
+  "userId": "U90004",
+  "availableBalanceMinor": 0,
+  "frozenBalanceMinor": 0
+}
+```
+
+用户端注册和后台新建用户都必须在用户写入成功后调用 `finance.account_or_create(&user.id)`。配置 PostgreSQL 时，财务仓储启动加载必须读取 `users` 表，并为缺失 `financial_accounts` 的历史用户补齐 0 余额账户且持久化，避免旧数据在投注或余额查询时暴露内部缺表错误。
+
+余额校验遇到缺失账户时必须按 0 余额处理，返回余额不足，不返回 `financial account not found` 给用户端。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 新用户注册成功 | 自动创建 0 余额资金账户 |
+| 后台新建用户成功 | 自动创建 0 余额资金账户 |
+| 历史用户缺少资金账户 | 服务启动加载财务仓储时自动补齐并保存 |
+| 用户余额不足 | 返回余额不足业务错误 |
+| 用户 ID 为空 | 返回 `user id is required` |
+| 金额小于等于 0 | 返回 `amount must be greater than zero` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：用户注册成功后立即请求 `/api/user/balance`，返回当前用户和 0 余额账户。
+- Base：旧数据库中用户已有但账户缺失，服务启动后后台财务账户列表能看到该用户账户。
+- Bad：只创建 `users` 记录，不创建 `financial_accounts`，导致投注时报 `financial account not found`。
+- Bad：把缺账户错误直接返回给手机端；这暴露了内部持久化结构，也让用户误以为账号异常。
+
+### 6. 必要测试
+
+- 财务仓储单元测试必须覆盖 `account_or_create` 创建 0 余额账户。
+- 财务仓储单元测试必须覆盖缺账户用户扣款时返回余额不足。
+- 用户注册或后台新建用户链路变更后，需要通过 API 冒烟验证 `/api/user/balance` 能读取新用户账户。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+let user = state.access.register_user(payload).await?;
+Ok(Json(ApiEnvelope::success(user)))
+```
+
+这个写法只创建用户，不创建资金账户，后续投注扣款会在财务模块找不到账户。
+
+#### 正确
+
+```rust
+let user = state.access.register_user(payload).await?;
+state.finance.account_or_create(&user.id).await?;
+Ok(Json(ApiEnvelope::success(user)))
+```
+
+用户生命周期入口负责触发财务账户初始化，财务模块负责保证账户存在且可持久化。
+
+---
+
 ## 场景：彩种数据库持久化
 
 ### 1. 范围 / 触发条件
