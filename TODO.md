@@ -1,5 +1,24 @@
 # TODO
 
+## 2026-06-04 17:28 HKT 手机端 Logo 与介绍配置
+
+- 完成任务：在系统设置中新增手机端 Logo 图片和站点介绍配置。
+- 解决问题：此前后台没有地方维护手机端基础品牌展示信息，手机端也没有公开接口读取 Logo 和介绍。
+- 具体实现：
+  - 后端 `seed_settings()` 新增 `mobile_logo_image_url` 和 `mobile_site_intro`，已有数据库启动时会自动补齐缺失配置。
+  - 新增手机端公开接口 `GET /api/user/mobile/site-config`，返回 `logoImageUrl` 和 `intro`。
+  - OpenAPI 文档新增“手机端站点配置”接口记录。
+  - 管理后台系统设置新增“手机端设置”Tab，Logo 使用公共图床上传组件，介绍使用 Semi UI `Input` 编辑保存。
+  - 未配置 Logo 使用“未配置”占位，手机端接口会把该占位转换为空值。
+- 验证记录：
+  - `cd backend && cargo fmt` 已执行。
+  - `cd backend && cargo check` 通过。
+  - `cd backend && cargo fmt --check` 通过。
+  - `cd backend && cargo test openapi -- --nocapture` 通过；仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - `cd backend && cargo test mobile_site_config -- --nocapture` 通过；覆盖未配置 Logo 隐藏和真实 Logo 链接返回。
+  - `cd admin && npm run build` 通过；Vite 仍提示既有 chunk 体积超过 500kB。
+  - `git diff --check` 通过。
+
 ## 2026-06-04 16:49 HKT 系统设置 Tabs 分类优化
 
 - 完成任务：把系统设置页改为按功能分类的 Semi UI `Tabs` 展示。

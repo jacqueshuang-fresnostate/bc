@@ -14,6 +14,8 @@ use crate::{
     app::AppState,
     domain::advertisement::MobileAdvertisement,
     domain::finance::{FinancialAccountSummary, LedgerEntry},
+    domain::mobile::MobileSiteConfig,
+    domain::permission::SystemSetting,
     domain::recharge::{
         CreateRechargeOrderRequest, CreateRechargeOrderResponse, RechargeConfigResponse,
         RechargeOrderSummary,
@@ -75,6 +77,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     Router::new()
         .route("/mobile/advertisements", get(list_mobile_advertisements))
+        .route("/mobile/site-config", get(get_mobile_site_config))
         .route(
             "/recharge/epay/notify",
             get(rainbow_epay_notify_query).post(rainbow_epay_notify_form),
@@ -122,6 +125,38 @@ async fn list_mobile_advertisements(
     let advertisements = state.advertisements.list_mobile_carousel().await?;
 
     Ok(Json(ApiEnvelope::success(advertisements)))
+}
+
+async fn get_mobile_site_config(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<MobileSiteConfig>>> {
+    let settings = state.access.settings().await?;
+    let config = mobile_site_config_from_settings(&settings);
+
+    Ok(Json(ApiEnvelope::success(config)))
+}
+
+/// 从系统设置中提取手机端公开展示配置，隐藏未配置占位值。
+fn mobile_site_config_from_settings(settings: &[SystemSetting]) -> MobileSiteConfig {
+    MobileSiteConfig {
+        logo_image_url: optional_config_value(settings, "mobile_logo_image_url"),
+        intro: config_value(settings, "mobile_site_intro")
+            .unwrap_or_else(|| "欢迎使用彩票管理系统，祝您理性购彩、好运常伴。".to_string()),
+    }
+}
+
+/// 读取可公开配置值，自动忽略空字符串和“未配置”占位。
+fn optional_config_value(settings: &[SystemSetting], key: &str) -> Option<String> {
+    config_value(settings, key).filter(|value| value != "未配置")
+}
+
+/// 按配置键读取系统设置值，统一修剪首尾空白。
+fn config_value(settings: &[SystemSetting], key: &str) -> Option<String> {
+    settings
+        .iter()
+        .find(|setting| setting.key == key)
+        .map(|setting| setting.value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 async fn register_user(
@@ -405,4 +440,49 @@ async fn delete_withdrawal_method(
         .await?;
 
     Ok(Json(ApiEnvelope::success(())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    /// 验证手机端公开配置会隐藏未配置占位，并保留站点介绍。
+    fn mobile_site_config_hides_unconfigured_logo() {
+        let settings = vec![
+            SystemSetting {
+                key: "mobile_logo_image_url".to_string(),
+                value: "未配置".to_string(),
+                description: "手机端站点 Logo 图片链接".to_string(),
+            },
+            SystemSetting {
+                key: "mobile_site_intro".to_string(),
+                value: "欢迎语".to_string(),
+                description: "手机端站点介绍".to_string(),
+            },
+        ];
+
+        let config = mobile_site_config_from_settings(&settings);
+
+        assert_eq!(config.logo_image_url, None);
+        assert_eq!(config.intro, "欢迎语");
+    }
+
+    #[test]
+    /// 验证手机端公开配置能返回真实 Logo 图片链接。
+    fn mobile_site_config_returns_logo_url() {
+        let settings = vec![SystemSetting {
+            key: "mobile_logo_image_url".to_string(),
+            value: "https://example.com/logo.png".to_string(),
+            description: "手机端站点 Logo 图片链接".to_string(),
+        }];
+
+        let config = mobile_site_config_from_settings(&settings);
+
+        assert_eq!(
+            config.logo_image_url,
+            Some("https://example.com/logo.png".to_string())
+        );
+        assert!(!config.intro.is_empty());
+    }
 }

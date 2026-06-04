@@ -10,9 +10,11 @@ import {
   Tag,
 } from '@douyinfe/semi-ui';
 import {
+  Image as ImageIcon,
   RefreshCcw,
   Save,
   Settings,
+  Smartphone,
   Upload as UploadIcon,
   ShieldCheck,
   Trash2,
@@ -90,6 +92,14 @@ const ACCESS_SECTIONS: Array<{ key: AccessSection; label: string }> = [
   { key: 'admins', label: '管理员管理' },
   { key: 'roles', label: '角色权限' },
 ];
+
+const MOBILE_LOGO_SETTING_KEY = 'mobile_logo_image_url';
+const MOBILE_INTRO_SETTING_KEY = 'mobile_site_intro';
+const UNCONFIGURED_SETTING_VALUE = '未配置';
+const MOBILE_CUSTOM_SETTING_KEYS = new Set([
+  MOBILE_LOGO_SETTING_KEY,
+  MOBILE_INTRO_SETTING_KEY,
+]);
 
 const PERMISSION_SCOPE_OPTIONS: Array<{ label: string; value: PermissionScope }> = [
   { label: '用户', value: 'users' },
@@ -1026,7 +1036,7 @@ function SettingsSection({
     () => settingsGroups(filteredSettings),
     [filteredSettings],
   );
-  const [activeSettingGroup, setActiveSettingGroup] = useState('图床设置');
+  const [activeSettingGroup, setActiveSettingGroup] = useState('手机端设置');
 
   useEffect(() => {
     if (groupedSettings.length === 0) {
@@ -1062,47 +1072,70 @@ function SettingsSection({
             collapsible
             onChange={(key) => setActiveSettingGroup(String(key))}
           >
-            {groupedSettings.map(([groupName, items]) => (
-              <Tabs.TabPane
-                key={groupName}
-                itemKey={groupName}
-                tab={
-                  <span className="inline-flex items-center gap-2">
-                    <span>{groupName}</span>
-                    <Tag color="grey">{items.length}</Tag>
-                  </span>
-                }
-              >
-                <div className="space-y-4 pt-3">
-                  <SettingFields
-                    drafts={drafts}
-                    items={items}
-                    saving={saving}
-                    onDraftChange={onDraftChange}
-                    onSaveSetting={onSaveSetting}
-                  />
+            {groupedSettings.map(([groupName, items]) => {
+              const fieldItems =
+                groupName === '手机端设置'
+                  ? items.filter(
+                      (setting) => !MOBILE_CUSTOM_SETTING_KEYS.has(setting.key),
+                    )
+                  : items;
 
-                  {groupName === '注册与安全' ? (
-                    <RegistrationSettingsPanel
-                      registration={registration}
-                      saving={saving}
-                      onRegistrationChange={onRegistrationChange}
-                      onSaveRegistration={onSaveRegistration}
-                    />
-                  ) : null}
+              return (
+                <Tabs.TabPane
+                  key={groupName}
+                  itemKey={groupName}
+                  tab={
+                    <span className="inline-flex items-center gap-2">
+                      <span>{groupName}</span>
+                      <Tag color="grey">{items.length}</Tag>
+                    </span>
+                  }
+                >
+                  <div className="space-y-4 pt-3">
+                    {fieldItems.length > 0 ? (
+                      <SettingFields
+                        drafts={drafts}
+                        items={fieldItems}
+                        saving={saving}
+                        onDraftChange={onDraftChange}
+                        onSaveSetting={onSaveSetting}
+                      />
+                    ) : null}
 
-                  {groupName === '图床设置' ? (
-                    <ImageBedTestPanel
-                      imageBedMissingConfigs={imageBedMissingConfigs}
-                      imageBedResultUrlField={imageBedResultUrlField}
-                      imageBedUploadField={imageBedUploadField}
-                      imageBedUploadUrl={imageBedUploadUrl}
-                      saving={saving}
-                    />
-                  ) : null}
-                </div>
-              </Tabs.TabPane>
-            ))}
+                    {groupName === '手机端设置' ? (
+                      <MobileSettingsPanel
+                        drafts={drafts}
+                        imageBedMissingConfigs={imageBedMissingConfigs}
+                        imageBedUploadField={imageBedUploadField}
+                        saving={saving}
+                        settings={settings}
+                        onDraftChange={onDraftChange}
+                        onSaveSetting={onSaveSetting}
+                      />
+                    ) : null}
+
+                    {groupName === '注册与安全' ? (
+                      <RegistrationSettingsPanel
+                        registration={registration}
+                        saving={saving}
+                        onRegistrationChange={onRegistrationChange}
+                        onSaveRegistration={onSaveRegistration}
+                      />
+                    ) : null}
+
+                    {groupName === '图床设置' ? (
+                      <ImageBedTestPanel
+                        imageBedMissingConfigs={imageBedMissingConfigs}
+                        imageBedResultUrlField={imageBedResultUrlField}
+                        imageBedUploadField={imageBedUploadField}
+                        imageBedUploadUrl={imageBedUploadUrl}
+                        saving={saving}
+                      />
+                    ) : null}
+                  </div>
+                </Tabs.TabPane>
+              );
+            })}
           </Tabs>
         )}
       </Card>
@@ -1186,6 +1219,103 @@ function SettingFields({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function MobileSettingsPanel({
+  drafts,
+  imageBedMissingConfigs,
+  imageBedUploadField,
+  onDraftChange,
+  onSaveSetting,
+  saving,
+  settings,
+}: {
+  drafts: Record<string, string>;
+  imageBedMissingConfigs: string[];
+  imageBedUploadField: string;
+  onDraftChange: (key: string, value: string) => void;
+  onSaveSetting: (key: string) => void;
+  saving: boolean;
+  settings: SystemSettingItem[];
+}) {
+  const logoValue = draftSettingValue(settings, drafts, MOBILE_LOGO_SETTING_KEY);
+  const introValue = draftSettingValue(settings, drafts, MOBILE_INTRO_SETTING_KEY);
+  const logoImageUrl =
+    logoValue && logoValue !== UNCONFIGURED_SETTING_VALUE ? logoValue : '';
+
+  return (
+    <div className="rounded border border-slate-200 bg-slate-50 p-3">
+      <PanelTitle icon={<Smartphone size={18} />} title="手机端展示配置" />
+      <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <ImageUploadAvatar
+          clearLabel="清空 Logo"
+          description="建议上传清晰的方形或横向透明底图片，上传后点击右侧保存。"
+          disabled={saving}
+          errorTitle="手机端 Logo 上传失败"
+          failureMessage="上传失败"
+          imageUrl={logoImageUrl}
+          missingConfigLabels={imageBedMissingConfigs}
+          requireImageUrl
+          showResultPanel={false}
+          successMessage="Logo 上传成功，记得保存配置"
+          title="手机端 Logo 图片"
+          uploadFieldName={imageBedUploadField || 'file'}
+          uploadingText="正在上传手机端 Logo..."
+          warningTitle="图床配置不完整"
+          onClear={() => onDraftChange(MOBILE_LOGO_SETTING_KEY, UNCONFIGURED_SETTING_VALUE)}
+          onUploaded={(url) => onDraftChange(MOBILE_LOGO_SETTING_KEY, url)}
+        />
+
+        <div className="grid content-start gap-3">
+          <div className="rounded border border-slate-200 bg-white p-3">
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-ink">
+              <ImageIcon size={16} />
+              Logo 图片链接
+            </div>
+            <Input
+              className="form-input"
+              placeholder="上传或粘贴手机端 Logo 图片链接"
+              value={logoValue}
+              onChange={(value) => onDraftChange(MOBILE_LOGO_SETTING_KEY, value)}
+            />
+            <div className="mt-2 flex justify-end">
+              <Button
+                disabled={saving}
+                icon={<Save size={16} />}
+                size="small"
+                onClick={() => onSaveSetting(MOBILE_LOGO_SETTING_KEY)}
+              >
+                保存 Logo
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded border border-slate-200 bg-white p-3">
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-ink">
+              <Settings size={16} />
+              手机端介绍
+            </div>
+            <Input
+              className="form-input"
+              placeholder="填写手机端首页或关于页面展示的介绍"
+              value={introValue}
+              onChange={(value) => onDraftChange(MOBILE_INTRO_SETTING_KEY, value)}
+            />
+            <div className="mt-2 flex justify-end">
+              <Button
+                disabled={saving}
+                icon={<Save size={16} />}
+                size="small"
+                onClick={() => onSaveSetting(MOBILE_INTRO_SETTING_KEY)}
+              >
+                保存介绍
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1320,6 +1450,9 @@ function Field({ children, label }: { children: ReactNode; label: string }) {
 }
 
 function settingGroupName(key: string): string {
+  if (key.startsWith('mobile_')) {
+    return '手机端设置';
+  }
   if (key.startsWith('image_bed_')) {
     return '图床设置';
   }
@@ -1394,10 +1527,25 @@ function settingsGroups(
     }
   }
 
-  const priority = ['图床设置', '充值设置', '注册与安全', '返利设置', '基础设置'];
+  const priority = [
+    '手机端设置',
+    '图床设置',
+    '充值设置',
+    '注册与安全',
+    '返利设置',
+    '基础设置',
+  ];
   return priority
     .filter((name) => (groups.get(name)?.length ?? 0) > 0)
     .map((name) => [name, groups.get(name) ?? []]);
+}
+
+function draftSettingValue(
+  settings: Array<{ key: string; value: string }>,
+  drafts: Record<string, string>,
+  key: string,
+) {
+  return drafts[key] ?? readSettingValue(settings, key);
 }
 
 function ToggleRow({

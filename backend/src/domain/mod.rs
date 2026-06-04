@@ -7,6 +7,7 @@ pub mod finance;
 pub mod group_buy;
 pub mod invite;
 pub mod lottery;
+pub mod mobile;
 pub mod order;
 pub mod permission;
 pub mod play;

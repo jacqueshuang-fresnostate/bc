@@ -952,6 +952,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::None,
     ),
     doc(
+        "get",
+        "/user/mobile/site-config",
+        "用户端内容",
+        "手机端站点配置",
+        "返回手机端 Logo 图片链接和站点介绍。",
+        AuthMode::None,
+        RequestBodyKind::None,
+    ),
+    doc(
         "post",
         "/user/register",
         "用户端账户",
@@ -1483,6 +1492,7 @@ mod tests {
         assert!(document["paths"]["/admin/recharge-orders/{id}/confirm"]["post"].is_object());
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
         assert!(document["paths"]["/user/mobile/advertisements"]["get"].is_object());
+        assert!(document["paths"]["/user/mobile/site-config"]["get"].is_object());
         assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
         assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());
         assert!(document["paths"]["/user/register"]["post"].is_object());
