@@ -4,6 +4,7 @@ import { MetricCard } from '../components/MetricCard';
 import { ModulePanel } from '../components/ModulePanel';
 import type { DashboardSummary, DrawSchedule } from '../types/dashboard';
 import { formatMoney } from '../utils/format';
+import { lotteryNumberTypeText } from '../utils/lotteries';
 import { formatOdds } from '../utils/playRules';
 
 interface DashboardPageProps {
@@ -56,9 +57,6 @@ export function DashboardPage({
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-ink">系统概览</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            示例数据来自 `/api/admin/dashboard`，后续接入数据库后替换为真实统计。
-          </p>
         </div>
         <Button icon={<RefreshCcw size={16} />} onClick={onRefresh}>
           刷新
@@ -98,7 +96,7 @@ export function DashboardPage({
                   <tr key={lottery.id} className="border-b border-slate-100">
                     <td className="py-3 pr-4 font-medium text-ink">{lottery.name}</td>
                     <td className="py-3 pr-4 text-slate-600">
-                      {lottery.numberType === 'threeDigit' ? '3 位号码' : '5 位号码'}
+                      {lotteryNumberTypeText(lottery.numberType)}
                     </td>
                     <td className="py-3 pr-4">
                       <Tag color={drawModeColor(lottery.drawMode)}>

@@ -370,7 +370,7 @@ fn current_time_label() -> String {
 
 /// 固定邀请关系种子：提供演示数据和重启恢复的一致性起点。
 fn seed_invites() -> Vec<InviteRecord> {
-    const AGENT_INVITE_CODE: &str = "KJHGFDSA";
+    const AGENT_INVITE_CODE: &str = "KJHG8DSA";
     vec![
         InviteRecord {
             id: "INV-10001".to_string(),

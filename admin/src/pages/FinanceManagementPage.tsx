@@ -1,4 +1,4 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
 import { Plus, RefreshCcw, WalletCards } from 'lucide-react';
 import {
   useMemo,
@@ -171,30 +171,30 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
             }}
           >
             <Field label="用户 ID">
-              <input
+              <Input
                 className="form-input"
                 value={form.userId}
-                onChange={(event) => setFormValue(setForm, 'userId', event.target.value)}
+                onChange={(value) => setFormValue(setForm, 'userId', value)}
               />
             </Field>
 
             <Field label="调账金额（分）">
-              <input
+              <Input
                 className="form-input"
                 type="number"
                 value={form.amountMinor}
-                onChange={(event) =>
-                  setFormValue(setForm, 'amountMinor', event.target.value)
+                onChange={(value) =>
+                  setFormValue(setForm, 'amountMinor', value)
                 }
               />
             </Field>
 
             <Field label="说明">
-              <input
+              <Input
                 className="form-input"
                 value={form.description}
-                onChange={(event) =>
-                  setFormValue(setForm, 'description', event.target.value)
+                onChange={(value) =>
+                  setFormValue(setForm, 'description', value)
                 }
               />
             </Field>

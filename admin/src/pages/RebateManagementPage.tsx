@@ -1,4 +1,4 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
 import { Percent, RefreshCcw, Save, UserPlus, Users } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
@@ -156,33 +156,33 @@ export function RebateManagementPage({
               </Field>
 
               <Field label="返利模式">
-                <select
+                <Select
                   className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
                   value={form.rebateMode}
-                  onChange={(event) =>
+                  onChange={(value) =>
                     setForm((current) => ({
                       ...current,
-                      rebateMode: event.target.value as RebateMode,
+                      rebateMode: value as RebateMode,
                     }))
                   }
                 >
-                  <option value="immediate">立即返利</option>
-                  <option value="rechargeTiered">充值阶梯返利</option>
-                </select>
+                  <Select.Option value="immediate">立即返利</Select.Option>
+                  <Select.Option value="rechargeTiered">充值阶梯返利</Select.Option>
+                </Select>
               </Field>
 
               <Field icon={<Percent size={16} />} label="默认充值返利比例">
                 <div className="flex items-center gap-2">
-                  <input
+                  <Input
                     className="h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-teal-500"
                     min="0"
                     step="0.01"
                     type="number"
                     value={form.defaultRechargeRebatePercent}
-                    onChange={(event) =>
+                    onChange={(value) =>
                       setForm((current) => ({
                         ...current,
-                        defaultRechargeRebatePercent: event.target.value,
+                        defaultRechargeRebatePercent: value,
                       }))
                     }
                   />

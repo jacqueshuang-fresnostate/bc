@@ -1,4 +1,4 @@
-import { Banner, Button, Card, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
 import {
   Activity,
   Clock3,
@@ -12,9 +12,13 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
 import { useLotteryConsole } from '../hooks/useLotteryConsole';
-import type { DrawMode, LotteryKind, LotteryNumberType } from '../types/dashboard';
+import type { DrawMode, LotteryKind } from '../types/dashboard';
 import type { DrawIssue, DrawIssueStatus, LotteryDrawControl } from '../types/draws';
 import type { DrawSchedulerStatus } from '../types/scheduler';
+import {
+  drawNumberInputMeta,
+  lotteryNumberTypeText as numberTypeText,
+} from '../utils/lotteries';
 
 interface LotteryConsolePageProps {
   onDashboardRefresh: () => void;
@@ -490,8 +494,7 @@ function DrawControlSideSheet({
   visible: boolean;
 }) {
   const lottery = item?.lottery ?? null;
-  const inputMaxLength = lottery?.numberType === 'fiveDigit' ? 9 : 5;
-  const placeholder = lottery?.numberType === 'fiveDigit' ? '7,8,9,4,2' : '2,4,7';
+  const inputMeta = lottery ? drawNumberInputMeta(lottery.numberType) : null;
   const saveDisabled = saving || (form.enabled && !form.drawNumber.trim());
 
   return (
@@ -535,14 +538,14 @@ function DrawControlSideSheet({
           </label>
 
           <Field label={`开奖号码（${numberTypeText(lottery.numberType)}）`}>
-            <input
+            <Input
               className="form-input font-mono"
               disabled={!form.enabled}
-              maxLength={inputMaxLength}
-              placeholder={placeholder}
+              maxLength={inputMeta?.maxLength}
+              placeholder={inputMeta?.placeholder}
               value={form.drawNumber}
-              onChange={(event) =>
-                onChange({ ...form, drawNumber: event.target.value })
+              onChange={(value) =>
+                onChange({ ...form, drawNumber: value })
               }
             />
           </Field>
@@ -821,10 +824,6 @@ function parseTimeLabel(value: string | null | undefined) {
 function formatClock(value: Date) {
   const pad = (part: number) => part.toString().padStart(2, '0');
   return `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
-}
-
-function numberTypeText(numberType: LotteryNumberType) {
-  return numberType === 'threeDigit' ? '3 位号码' : '5 位号码';
 }
 
 function drawModeText(mode: DrawMode) {

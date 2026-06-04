@@ -30,10 +30,21 @@ export interface ModuleGroup {
   modules: AdminModule[];
 }
 
-export type LotteryNumberType = 'threeDigit' | 'fiveDigit';
+export type LotteryNumberType =
+  | 'threeDigit'
+  | 'fiveDigit'
+  | 'pk10'
+  | 'elevenFive'
+  | 'fastThree'
+  | 'luckTwenty';
 export type DrawMode = 'platform' | 'api' | 'manual';
 export type DrawSourceProvider = 'api68' | 'kjApi';
-export type LotteryCategory = 'regional' | 'overseas' | 'welfare' | 'other';
+export type LotteryCategory = string;
+
+export interface LotteryCategoryConfig {
+  code: string;
+  name: string;
+}
 
 export type DrawSchedule =
   | { periodic: { intervalSeconds: number } }
@@ -64,6 +75,7 @@ export interface LotteryKind {
   id: string;
   name: string;
   category: LotteryCategory;
+  logoUrl: string;
   numberType: LotteryNumberType;
   drawMode: DrawMode;
   schedule: DrawSchedule;

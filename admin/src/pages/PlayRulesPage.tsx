@@ -1,4 +1,4 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
 import { Calculator, CheckCircle2, RefreshCcw, Save, XCircle } from 'lucide-react';
 import {
   useEffect,
@@ -32,6 +32,7 @@ import {
   oddsBasisPointsToInput,
   oddsInputToBasisPoints,
 } from '../utils/playRules';
+import { playLotteryNumberTypeText as numberTypeText } from '../utils/lotteries';
 
 interface PlayRulesPageProps {
   onDashboardRefresh: () => void;
@@ -54,6 +55,8 @@ interface OddsDraft {
   oddsInput: string;
 }
 
+type PlayableLotteryNumberType = Extract<LotteryNumberType, 'threeDigit' | 'fiveDigit'>;
+
 const digitAttributeOptions: Array<{ label: string; value: DigitAttribute }> = [
   { label: '大', value: 'big' },
   { label: '小', value: 'small' },
@@ -71,7 +74,7 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
     saving: lotterySaving,
     update,
   } = useLotteries();
-  const [numberType, setNumberType] = useState<LotteryNumberType>('threeDigit');
+  const [numberType, setNumberType] = useState<PlayableLotteryNumberType>('threeDigit');
   const [selectedCode, setSelectedCode] = useState<PlayRuleCode | null>(null);
   const [selectedLotteryId, setSelectedLotteryId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(() => defaultForm(null));
@@ -128,7 +131,7 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
     );
   }, [filteredRules, selectedLottery]);
 
-  const changeNumberType = (nextType: LotteryNumberType) => {
+  const changeNumberType = (nextType: PlayableLotteryNumberType) => {
     const nextRule = rules.find((rule) => rule.numberType === nextType) ?? null;
     const nextLottery = lotteries.find((lottery) => lottery.numberType === nextType) ?? null;
     setNumberType(nextType);
@@ -255,17 +258,17 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
               </div>
 
               <Field label="玩法">
-                <select
+                <Select
                   className="form-input"
                   value={selectedRule?.code ?? ''}
-                  onChange={(event) => changeRule(event.target.value as PlayRuleCode)}
+                  onChange={(value) => changeRule(value as PlayRuleCode)}
                 >
                   {filteredRules.map((rule) => (
-                    <option key={rule.code} value={rule.code}>
+                    <Select.Option key={rule.code} value={rule.code}>
                       {rule.label}
-                    </option>
+                    </Select.Option>
                   ))}
-                </select>
+                </Select>
               </Field>
 
               {selectedRule ? (
@@ -279,10 +282,10 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
               ) : null}
 
               <Field label="开奖号码">
-                <input
+                <Input
                   className="form-input"
                   value={form.drawNumber}
-                  onChange={(event) => setFormValue(setForm, 'drawNumber', event.target.value)}
+                  onChange={(value) => setFormValue(setForm, 'drawNumber', value)}
                 />
               </Field>
 
@@ -313,21 +316,21 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
 
               <div className="mb-4 grid gap-3 md:grid-cols-[260px_1fr_auto] md:items-end">
                 <Field label="彩种">
-                  <select
+                  <Select
                     className="form-input"
                     value={selectedLottery?.id ?? ''}
-                    onChange={(event) => {
-                      setSelectedLotteryId(event.target.value);
+                    onChange={(value) => {
+                      setSelectedLotteryId(String(value ?? ''));
                       setSaveMessage(null);
                       setLocalError(null);
                     }}
                   >
                     {filteredLotteries.map((lottery) => (
-                      <option key={lottery.id} value={lottery.id}>
+                      <Select.Option key={lottery.id} value={lottery.id}>
                         {lottery.name}
-                      </option>
+                      </Select.Option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
                 {selectedLottery ? (
                   <div className="rounded-md border border-line px-3 py-2 text-sm text-slate-600">
@@ -403,14 +406,14 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
                             {windowLabel(rule.window)}
                           </td>
                           <td className="py-3 pr-4">
-                            <input
+                            <Input
                               className="form-input w-28"
                               min="0.01"
                               step="0.01"
                               type="number"
                               value={draft.oddsInput}
-                              onChange={(event) =>
-                                setOddsDraft(rule, { oddsInput: event.target.value }, setOddsDrafts)
+                              onChange={(value) =>
+                                setOddsDraft(rule, { oddsInput: value }, setOddsDrafts)
                               }
                             />
                           </td>
@@ -519,24 +522,24 @@ function renderSelectionFields(
     return (
       <div className="grid gap-3 sm:grid-cols-3">
         <Field label="第 1 位">
-          <input
+          <Input
             className="form-input"
             value={form.positionA}
-            onChange={(event) => setFormValue(setForm, 'positionA', event.target.value)}
+            onChange={(value) => setFormValue(setForm, 'positionA', value)}
           />
         </Field>
         <Field label="第 2 位">
-          <input
+          <Input
             className="form-input"
             value={form.positionB}
-            onChange={(event) => setFormValue(setForm, 'positionB', event.target.value)}
+            onChange={(value) => setFormValue(setForm, 'positionB', value)}
           />
         </Field>
         <Field label="第 3 位">
-          <input
+          <Input
             className="form-input"
             value={form.positionC}
-            onChange={(event) => setFormValue(setForm, 'positionC', event.target.value)}
+            onChange={(value) => setFormValue(setForm, 'positionC', value)}
           />
         </Field>
       </div>
@@ -564,17 +567,17 @@ function renderSelectionFields(
     return (
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="胆码">
-          <input
+          <Input
             className="form-input"
             value={form.bankerNumbers}
-            onChange={(event) => setFormValue(setForm, 'bankerNumbers', event.target.value)}
+            onChange={(value) => setFormValue(setForm, 'bankerNumbers', value)}
           />
         </Field>
         <Field label="拖码">
-          <input
+          <Input
             className="form-input"
             value={form.dragNumbers}
-            onChange={(event) => setFormValue(setForm, 'dragNumbers', event.target.value)}
+            onChange={(value) => setFormValue(setForm, 'dragNumbers', value)}
           />
         </Field>
       </div>
@@ -583,10 +586,10 @@ function renderSelectionFields(
 
   return (
     <Field label="选号">
-      <input
+      <Input
         className="form-input"
         value={form.numbers}
-        onChange={(event) => setFormValue(setForm, 'numbers', event.target.value)}
+        onChange={(value) => setFormValue(setForm, 'numbers', value)}
       />
     </Field>
   );
@@ -877,10 +880,6 @@ function enabledPlayCategories(
   }
 
   return categories;
-}
-
-function numberTypeText(numberType: LotteryNumberType) {
-  return numberType === 'threeDigit' ? '3 位玩法' : '5 位玩法';
 }
 
 function categoryLabel(category: PlayCategory) {

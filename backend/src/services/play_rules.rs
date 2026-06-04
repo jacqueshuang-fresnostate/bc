@@ -590,6 +590,14 @@ fn validate_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> A
     let expected_len = match number_type {
         LotteryNumberType::ThreeDigit => 3,
         LotteryNumberType::FiveDigit => 5,
+        LotteryNumberType::Pk10
+        | LotteryNumberType::ElevenFive
+        | LotteryNumberType::FastThree
+        | LotteryNumberType::LuckTwenty => {
+            return Err(ApiError::BadRequest(
+                "该号码类型暂未接入玩法规则".to_string(),
+            ));
+        }
     };
     let digits = digits_from_string(draw_number)?;
 

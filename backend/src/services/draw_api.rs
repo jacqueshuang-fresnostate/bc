@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sqlx::Row;
 
@@ -28,7 +28,7 @@ pub const API68_FC3D_LOTTERY_ID: &str = "fc3d";
 pub const API68_PL3_LOTTERY_ID: &str = "pl3";
 pub const API68_FC3D_LOT_CODE: &str = "10041";
 pub const API68_AU5_SOURCE_ID: &str = "api68-au5";
-pub const API68_AU5_SOURCE_NAME: &str = "API68 澳洲 5 分彩";
+pub const API68_AU5_SOURCE_NAME: &str = "API68 澳洲幸运5";
 pub const API68_AU5_LOTTERY_ID: &str = "au5";
 pub const API68_AU5_LOT_CODE: &str = "10010";
 pub const KJ_TXFFC_SOURCE_ID: &str = "kj-txffc";
@@ -37,8 +37,15 @@ pub const KJ_TXFFC_LOTTERY_ID: &str = "txffc";
 pub const KJ_TXFFC_LOT_KEY: &str = "txffc";
 const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
     "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do";
-const DEFAULT_API68_CQSHICAI_ENDPOINT: &str =
-    "https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do";
+const DEFAULT_API68_CQSHICAI_SINGLE_ENDPOINT: &str =
+    "https://api.api68.com/CQShiCai/getBaseCQShiCai.do";
+const DEFAULT_API68_PKS_ENDPOINT: &str = "https://api.api68.com/pks/getLotteryPksInfo.do";
+const DEFAULT_API68_ELEVEN_FIVE_ENDPOINT: &str =
+    "https://api.api68.com/ElevenFive/getElevenFiveInfo.do";
+const DEFAULT_API68_FAST_THREE_ENDPOINT: &str =
+    "https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do";
+const DEFAULT_API68_LUCK_TWENTY_ENDPOINT: &str =
+    "https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do";
 const DEFAULT_KJ_ENDPOINT: &str = "https://kjapi.net/hall/hallajax/getLotteryInfo";
 const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
 
@@ -67,11 +74,7 @@ impl ApiDrawSourceRepository {
 
     /// 创建预置 API68 和 KJ API 的开奖源仓储实例。
     pub fn api68_seeded() -> Self {
-        Self::new(vec![
-            ApiDrawSourceConfig::api68_fc3d(),
-            ApiDrawSourceConfig::api68_au5(),
-            ApiDrawSourceConfig::kj_txffc(),
-        ])
+        Self::new(default_api_draw_sources())
     }
 
     /// 创建并初始化新实例。
@@ -105,11 +108,9 @@ impl ApiDrawSourceRepository {
 
         Self {
             client: reqwest::Client::new(),
-            inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(vec![
-                ApiDrawSourceConfig::api68_fc3d(),
-                ApiDrawSourceConfig::api68_au5(),
-                ApiDrawSourceConfig::kj_txffc(),
-            ]))),
+            inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(
+                default_api_draw_sources(),
+            ))),
             static_responses: Arc::new(static_responses),
             persistence: None,
         }
@@ -123,11 +124,9 @@ impl ApiDrawSourceRepository {
 
         Self {
             client: reqwest::Client::new(),
-            inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(vec![
-                ApiDrawSourceConfig::api68_fc3d(),
-                ApiDrawSourceConfig::api68_au5(),
-                ApiDrawSourceConfig::kj_txffc(),
-            ]))),
+            inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(
+                default_api_draw_sources(),
+            ))),
             static_responses: Arc::new(static_responses),
             persistence: None,
         }
@@ -435,19 +434,32 @@ async fn load_draw_source_store(database: &BusinessDatabase) -> ApiResult<ApiDra
         });
     }
 
-    let store = ApiDrawSourceStore::new(sources);
-
-    if store.sources.is_empty() {
-        let mut migrated_store = store;
-        for source in default_api_draw_sources() {
-            migrated_store.sources.insert(source.id.clone(), source);
-        }
-
-        save_draw_source_store(database, &migrated_store).await?;
-        return Ok(migrated_store);
+    let mut store = ApiDrawSourceStore::new(sources);
+    if fill_missing_default_sources(&mut store) {
+        save_draw_source_store(database, &store).await?;
     }
 
     Ok(store)
+}
+
+/// 补齐系统内置开奖源；已存在同 ID 或已绑定对应彩种的来源不会被覆盖。
+fn fill_missing_default_sources(store: &mut ApiDrawSourceStore) -> bool {
+    let mut changed = false;
+    for source in default_api_draw_sources() {
+        let source_exists = store.sources.contains_key(&source.id);
+        let lottery_already_bound = source
+            .reusable_for_lottery_ids
+            .iter()
+            .any(|lottery_id| store.find_for_lottery(lottery_id).is_some());
+        if source_exists || lottery_already_bound {
+            continue;
+        }
+
+        store.sources.insert(source.id.clone(), source);
+        changed = true;
+    }
+
+    changed
 }
 
 async fn save_draw_source_store(
@@ -682,8 +694,20 @@ impl ApiDrawSourceConfig {
             name: API68_AU5_SOURCE_NAME.to_string(),
             provider: DrawSourceProvider::Api68,
             lot_code: API68_AU5_LOT_CODE.to_string(),
-            endpoint: default_api68_cqshicai_endpoint(),
+            endpoint: default_api68_cqshicai_single_endpoint(),
             reusable_for_lottery_ids: vec![API68_AU5_LOTTERY_ID.to_string()],
+        }
+    }
+
+    /// 构造 API68 单彩种默认开奖源。
+    fn api68_source(lottery_id: &str, lottery_name: &str, lot_code: &str, endpoint: &str) -> Self {
+        Self {
+            id: format!("api68-{lottery_id}"),
+            name: format!("API68 {lottery_name}"),
+            provider: DrawSourceProvider::Api68,
+            lot_code: lot_code.to_string(),
+            endpoint: endpoint.to_string(),
+            reusable_for_lottery_ids: vec![lottery_id.to_string()],
         }
     }
 
@@ -741,9 +765,9 @@ fn default_api68_quanguocai_endpoint() -> String {
     DEFAULT_API68_QUANGUOCAI_ENDPOINT.to_string()
 }
 
-/// 处理 default_api68_cqshicai_endpoint 的具体内部流程。
-fn default_api68_cqshicai_endpoint() -> String {
-    DEFAULT_API68_CQSHICAI_ENDPOINT.to_string()
+/// 处理 default_api68_cqshicai_single_endpoint 的具体内部流程。
+fn default_api68_cqshicai_single_endpoint() -> String {
+    DEFAULT_API68_CQSHICAI_SINGLE_ENDPOINT.to_string()
 }
 
 /// 处理 default_kj_endpoint 的具体内部流程。
@@ -765,10 +789,174 @@ fn normalized_endpoint(endpoint: Option<&str>, provider: &DrawSourceProvider) ->
 
 /// 处理 default_api_draw_sources 的具体内部流程。
 fn default_api_draw_sources() -> Vec<ApiDrawSourceConfig> {
-    vec![
+    let mut sources = vec![
         ApiDrawSourceConfig::api68_fc3d(),
         ApiDrawSourceConfig::api68_au5(),
         ApiDrawSourceConfig::kj_txffc(),
+    ];
+    sources.extend(extra_api68_draw_sources());
+    sources
+}
+
+/// 返回用户要求新增接入的 API68 开奖源默认配置。
+fn extra_api68_draw_sources() -> Vec<ApiDrawSourceConfig> {
+    vec![
+        ApiDrawSourceConfig::api68_source(
+            "bjpk10",
+            "北京PK10",
+            "10001",
+            DEFAULT_API68_PKS_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "tjssc",
+            "天津时时彩",
+            "10003",
+            DEFAULT_API68_CQSHICAI_SINGLE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "xjssc",
+            "新疆时时彩",
+            "10004",
+            DEFAULT_API68_CQSHICAI_SINGLE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "gd11x5",
+            "广东11选5",
+            "10006",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "jsk3",
+            "江苏快3",
+            "10007",
+            DEFAULT_API68_FAST_THREE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "au10",
+            "澳洲幸运10",
+            "10012",
+            DEFAULT_API68_PKS_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "au20",
+            "澳洲幸运20",
+            "10013",
+            DEFAULT_API68_LUCK_TWENTY_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "bjkl8",
+            "北京快乐8",
+            "10014",
+            DEFAULT_API68_LUCK_TWENTY_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "jx11x5",
+            "江西11选5",
+            "10015",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "js11x5",
+            "江苏11选5",
+            "10016",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "ah11x5",
+            "安徽11选5",
+            "10017",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "sh11x5",
+            "上海11选5",
+            "10018",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "ln11x5",
+            "辽宁11选5",
+            "10019",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "hb11x5",
+            "湖北11选5",
+            "10020",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "gx11x5",
+            "广西11选5",
+            "10022",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "jl11x5",
+            "吉林11选5",
+            "10023",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "nmg11x5",
+            "内蒙古11选5",
+            "10024",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "zj11x5",
+            "浙江11选5",
+            "10025",
+            DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "gxk3",
+            "广西快3",
+            "10026",
+            DEFAULT_API68_FAST_THREE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "jlk3",
+            "吉林快3",
+            "10027",
+            DEFAULT_API68_FAST_THREE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "hebk3",
+            "河北快3",
+            "10028",
+            DEFAULT_API68_FAST_THREE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "nmgk3",
+            "内蒙古快3",
+            "10029",
+            DEFAULT_API68_FAST_THREE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "ahk3",
+            "安徽快3",
+            "10030",
+            DEFAULT_API68_FAST_THREE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "fjk3",
+            "福建快3",
+            "10031",
+            DEFAULT_API68_FAST_THREE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "hubk3",
+            "湖北快3",
+            "10032",
+            DEFAULT_API68_FAST_THREE_ENDPOINT,
+        ),
+        ApiDrawSourceConfig::api68_source(
+            "bjk3",
+            "北京快3",
+            "10033",
+            DEFAULT_API68_FAST_THREE_ENDPOINT,
+        ),
     ]
 }
 
@@ -870,12 +1058,21 @@ pub(crate) fn parse_api68_latest_issue(response_body: &str) -> ApiResult<ApiDraw
         .pre_draw_time
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    let next_issue = draw
+        .draw_issue
+        .as_ref()
+        .and_then(api68_issue_value)
+        .filter(|value| !value.trim().is_empty());
+    let next_draw_time = draw
+        .draw_time
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     Ok(ApiDrawSourceLatestIssue {
         issue,
         draw_time,
-        next_issue: None,
-        next_draw_time: None,
+        next_issue,
+        next_draw_time,
     })
 }
 
@@ -994,7 +1191,7 @@ struct Api68Envelope {
 #[serde(rename_all = "camelCase")]
 struct Api68Result {
     business_code: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_api68_data")]
     data: Vec<Api68Draw>,
 }
 
@@ -1005,6 +1202,30 @@ struct Api68Draw {
     pre_draw_code: String,
     #[serde(default)]
     pre_draw_time: Option<String>,
+    #[serde(default)]
+    draw_issue: Option<Value>,
+    #[serde(default)]
+    draw_time: Option<String>,
+}
+
+/// 兼容 API68 不同彩种接口返回数组或单对象的 data 字段。
+fn deserialize_api68_data<'de, D>(deserializer: D) -> Result<Vec<Api68Draw>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::Array(items) => items
+            .into_iter()
+            .map(serde_json::from_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(de::Error::custom),
+        Value::Object(_) => serde_json::from_value(value)
+            .map(|draw| vec![draw])
+            .map_err(de::Error::custom),
+        Value::Null => Ok(Vec::new()),
+        _ => Err(de::Error::custom("API68 data must be object or array")),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1057,6 +1278,21 @@ mod tests {
                 { "preDrawIssue": 2026143, "preDrawCode": "3,7,6", "preDrawTime": "2026-06-02 21:15:00" },
                 { "preDrawIssue": "2026142", "preDrawCode": "8,9,4", "preDrawTime": "2026-06-01 21:15:00" }
             ]
+        }
+    }"#;
+    const API68_OBJECT_SAMPLE: &str = r#"{
+        "errorCode": 0,
+        "message": "操作成功",
+        "result": {
+            "businessCode": 0,
+            "message": "操作成功",
+            "data": {
+                "preDrawIssue": "20260604001",
+                "preDrawCode": "01,06,02,04,03,05,07,09,10,08",
+                "preDrawTime": "2026-06-04 12:00:00",
+                "drawIssue": "20260604002",
+                "drawTime": "2026-06-04 12:10:00"
+            }
         }
     }"#;
     const KJ_SAMPLE: &str = r#"{
@@ -1123,6 +1359,24 @@ mod tests {
 
         assert_eq!(latest.issue, "2026143");
         assert_eq!(latest.draw_time.as_deref(), Some("2026-06-02 21:15:00"));
+    }
+
+    #[test]
+    /// 解析 API68 单对象 data 响应并返回结构化值。
+    fn parse_api68_object_data_response() {
+        let draw_number = parse_api68_draw_number(API68_OBJECT_SAMPLE, "20260604001")
+            .expect("draw number can be parsed");
+        let latest =
+            parse_api68_latest_issue(API68_OBJECT_SAMPLE).expect("latest issue can be parsed");
+
+        assert_eq!(draw_number, "01,06,02,04,03,05,07,09,10,08");
+        assert_eq!(latest.issue, "20260604001");
+        assert_eq!(latest.draw_time.as_deref(), Some("2026-06-04 12:00:00"));
+        assert_eq!(latest.next_issue.as_deref(), Some("20260604002"));
+        assert_eq!(
+            latest.next_draw_time.as_deref(),
+            Some("2026-06-04 12:10:00")
+        );
     }
 
     #[test]
@@ -1195,9 +1449,61 @@ mod tests {
         assert_eq!(source.lot_code.as_deref(), Some("10010"));
         assert_eq!(
             source.endpoint.as_deref(),
-            Some("https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do")
+            Some("https://api.api68.com/CQShiCai/getBaseCQShiCai.do")
         );
         assert_eq!(source.reusable_for_lottery_ids, vec!["au5".to_string()]);
+    }
+
+    #[tokio::test]
+    /// 默认开奖源包含用户新增的 API68 彩种。
+    async fn seeded_sources_include_requested_api68_sources() {
+        let repository = ApiDrawSourceRepository::api68_seeded();
+        let sources = repository.list().await.expect("sources can be listed");
+
+        for (source_id, lottery_id, lot_code, endpoint) in [
+            (
+                "api68-bjpk10",
+                "bjpk10",
+                "10001",
+                "https://api.api68.com/pks/getLotteryPksInfo.do",
+            ),
+            (
+                "api68-gd11x5",
+                "gd11x5",
+                "10006",
+                "https://api.api68.com/ElevenFive/getElevenFiveInfo.do",
+            ),
+            (
+                "api68-jsk3",
+                "jsk3",
+                "10007",
+                "https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do",
+            ),
+            (
+                "api68-au20",
+                "au20",
+                "10013",
+                "https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do",
+            ),
+            (
+                "api68-bjk3",
+                "bjk3",
+                "10033",
+                "https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do",
+            ),
+        ] {
+            let source = sources
+                .iter()
+                .find(|source| source.id == source_id)
+                .expect("seeded source exists");
+
+            assert_eq!(source.lot_code.as_deref(), Some(lot_code));
+            assert_eq!(source.endpoint.as_deref(), Some(endpoint));
+            assert_eq!(
+                source.reusable_for_lottery_ids,
+                vec![lottery_id.to_string()]
+            );
+        }
     }
 
     #[tokio::test]

@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         tracing::info!(path = %env_file.display(), "已加载本地环境变量文件");
     }
 
-    let port = std::env::var("PORT").unwrap_or_else(|_| "18080".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "28080".to_string());
     let address = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&address).await?;
 

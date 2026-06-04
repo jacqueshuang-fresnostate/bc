@@ -1,4 +1,4 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
 import { Calculator, RefreshCcw } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useDraws } from '../hooks/useDraws';
@@ -119,17 +119,17 @@ export function SettlementManagementPage({
             </div>
           ) : drawnIssues.length > 0 ? (
             <div className="space-y-3">
-              <select
+              <Select
                 className="form-input"
                 value={selectedDrawIssue?.id ?? ''}
-                onChange={(event) => setSelectedDrawIssueId(event.target.value)}
+                onChange={(value) => setSelectedDrawIssueId(value as string)}
               >
                 {drawnIssues.map((issue) => (
-                  <option key={issue.id} value={issue.id}>
+                  <Select.Option key={issue.id} value={issue.id}>
                     {issue.lotteryName} {issue.issue}（{issue.drawNumber ?? '未记录'}）
-                  </option>
+                  </Select.Option>
                 ))}
-              </select>
+              </Select>
 
               {selectedDrawIssue ? (
                 <DrawIssueSummary

@@ -9,7 +9,7 @@ use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use crate::{
     domain::{
         lottery::{
-            DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategory, LotteryKind,
+            DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategoryConfig, LotteryKind,
             LotteryNumberType, LotteryPlayConfig, PlayCategory,
         },
         play::PlayRuleCode,
@@ -88,6 +88,61 @@ impl LotteryRepository {
         }
     }
 
+    /// 返回全部可用的彩种分类。
+    pub async fn categories(&self) -> ApiResult<Vec<LotteryCategoryConfig>> {
+        match self.inner.as_ref() {
+            LotteryRepositoryKind::Memory(store) => store
+                .read()
+                .map_err(|_| ApiError::Internal("lottery store lock poisoned".to_string()))
+                .map(|store| store.categories()),
+            LotteryRepositoryKind::Postgres(store) => store.list_categories().await,
+        }
+    }
+
+    /// 新增一条彩种分类。
+    pub async fn create_category(
+        &self,
+        category: LotteryCategoryConfig,
+    ) -> ApiResult<LotteryCategoryConfig> {
+        let category = normalize_category_config(category)?;
+
+        match self.inner.as_ref() {
+            LotteryRepositoryKind::Memory(store) => store
+                .write()
+                .map_err(|_| ApiError::Internal("lottery store lock poisoned".to_string()))?
+                .create_category(category),
+            LotteryRepositoryKind::Postgres(store) => store.create_category(category).await,
+        }
+    }
+
+    /// 更新彩种分类名称。
+    pub async fn update_category(
+        &self,
+        code: &str,
+        category: LotteryCategoryConfig,
+    ) -> ApiResult<LotteryCategoryConfig> {
+        let category = normalize_category_config(category)?;
+
+        match self.inner.as_ref() {
+            LotteryRepositoryKind::Memory(store) => store
+                .write()
+                .map_err(|_| ApiError::Internal("lottery store lock poisoned".to_string()))?
+                .update_category(code, category),
+            LotteryRepositoryKind::Postgres(store) => store.update_category(code, category).await,
+        }
+    }
+
+    /// 删除一条彩种分类。
+    pub async fn delete_category(&self, code: &str) -> ApiResult<LotteryCategoryConfig> {
+        match self.inner.as_ref() {
+            LotteryRepositoryKind::Memory(store) => store
+                .write()
+                .map_err(|_| ApiError::Internal("lottery store lock poisoned".to_string()))?
+                .delete_category(code),
+            LotteryRepositoryKind::Postgres(store) => store.delete_category(code).await,
+        }
+    }
+
     /// 更新现有记录并持久化变更。
     pub async fn update(&self, id: &str, lottery: LotteryKind) -> ApiResult<LotteryKind> {
         match self.inner.as_ref() {
@@ -127,6 +182,7 @@ impl LotteryRepository {
 #[derive(Debug, Clone)]
 pub struct LotteryStore {
     lotteries: BTreeMap<String, LotteryKind>,
+    categories: BTreeMap<String, LotteryCategoryConfig>,
 }
 
 impl LotteryStore {
@@ -142,7 +198,16 @@ impl LotteryStore {
                 .into_iter()
                 .map(|lottery| (lottery.id.clone(), lottery))
                 .collect(),
+            categories: lottery_categories()
+                .into_iter()
+                .map(|category| (category.code.clone(), category))
+                .collect(),
         }
+    }
+
+    /// 返回可选分类。
+    pub fn categories(&self) -> Vec<LotteryCategoryConfig> {
+        self.categories.values().cloned().collect()
     }
 
     /// 返回完整列表。
@@ -162,6 +227,13 @@ impl LotteryStore {
     pub fn create(&mut self, lottery: LotteryKind) -> ApiResult<LotteryKind> {
         let lottery = normalize_lottery(lottery)?;
 
+        if !self.categories.contains_key(&lottery.category) {
+            return Err(ApiError::BadRequest(format!(
+                "lottery category `{}` not found",
+                lottery.category
+            )));
+        }
+
         if self.lotteries.contains_key(&lottery.id) {
             return Err(ApiError::Conflict(format!(
                 "lottery `{}` already exists",
@@ -176,6 +248,13 @@ impl LotteryStore {
     /// 更新现有记录并持久化变更。
     pub fn update(&mut self, id: &str, lottery: LotteryKind) -> ApiResult<LotteryKind> {
         let lottery = normalize_lottery(lottery)?;
+
+        if !self.categories.contains_key(&lottery.category) {
+            return Err(ApiError::BadRequest(format!(
+                "lottery category `{}` not found",
+                lottery.category
+            )));
+        }
 
         if id != lottery.id {
             return Err(ApiError::BadRequest(
@@ -208,6 +287,55 @@ impl LotteryStore {
         lottery.sale_enabled = sale_enabled;
         Ok(lottery.clone())
     }
+
+    /// 新增一条分类。
+    pub fn create_category(
+        &mut self,
+        category: LotteryCategoryConfig,
+    ) -> ApiResult<LotteryCategoryConfig> {
+        if self.categories.contains_key(&category.code) {
+            return Err(ApiError::Conflict(format!(
+                "lottery category `{}` already exists",
+                category.code
+            )));
+        }
+
+        self.categories
+            .insert(category.code.clone(), category.clone());
+        Ok(category)
+    }
+
+    /// 更新分类名称。
+    pub fn update_category(
+        &mut self,
+        code: &str,
+        category: LotteryCategoryConfig,
+    ) -> ApiResult<LotteryCategoryConfig> {
+        let existing = self
+            .categories
+            .get_mut(code)
+            .ok_or_else(|| ApiError::NotFound(format!("lottery category `{code}` not found")))?;
+
+        existing.name = category.name;
+        Ok(existing.clone())
+    }
+
+    /// 删除分类。
+    pub fn delete_category(&mut self, code: &str) -> ApiResult<LotteryCategoryConfig> {
+        let is_used = self
+            .lotteries
+            .values()
+            .any(|lottery| lottery.category == code);
+        if is_used {
+            return Err(ApiError::BadRequest(
+                "分类已被彩种引用，无法删除".to_string(),
+            ));
+        }
+
+        self.categories
+            .remove(code)
+            .ok_or_else(|| ApiError::NotFound(format!("lottery category `{code}` not found")))
+    }
 }
 
 struct PostgresLotteryStore {
@@ -220,12 +348,152 @@ impl PostgresLotteryStore {
             self.insert_seed_lottery(lottery).await?;
         }
 
+        self.insert_seed_categories().await?;
+
+        Ok(())
+    }
+
+    async fn list_categories(&self) -> ApiResult<Vec<LotteryCategoryConfig>> {
+        let rows = sqlx::query(
+            "SELECT code, name
+             FROM lottery_categories
+             ORDER BY sort_order ASC, code ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(database_error)?;
+
+        let mut categories = Vec::new();
+        for row in rows {
+            categories.push(LotteryCategoryConfig {
+                code: row.try_get("code").map_err(database_error)?,
+                name: row.try_get("name").map_err(database_error)?,
+            });
+        }
+
+        Ok(categories)
+    }
+
+    async fn create_category(
+        &self,
+        category: LotteryCategoryConfig,
+    ) -> ApiResult<LotteryCategoryConfig> {
+        sqlx::query(
+            "INSERT INTO lottery_categories (code, name)
+             VALUES ($1, $2)",
+        )
+        .bind(&category.code)
+        .bind(&category.name)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            tracing::error!(error = error.to_string(), "创建彩种分类失败");
+            database_error(error)
+        })?;
+
+        Ok(category)
+    }
+
+    async fn update_category(
+        &self,
+        code: &str,
+        category: LotteryCategoryConfig,
+    ) -> ApiResult<LotteryCategoryConfig> {
+        if code != category.code {
+            return Err(ApiError::BadRequest("分类代码不能修改".to_string()));
+        }
+
+        let updated = sqlx::query(
+            "UPDATE lottery_categories
+             SET name = $2,
+                 updated_at = now()
+             WHERE code = $1
+             RETURNING code, name",
+        )
+        .bind(code)
+        .bind(&category.name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("lottery category `{code}` not found")))?;
+
+        Ok(LotteryCategoryConfig {
+            code: updated.try_get("code").map_err(database_error)?,
+            name: updated.try_get("name").map_err(database_error)?,
+        })
+    }
+
+    async fn delete_category(&self, code: &str) -> ApiResult<LotteryCategoryConfig> {
+        let in_use = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM lotteries WHERE category = $1)",
+        )
+        .bind(code)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(database_error)?;
+
+        if in_use {
+            return Err(ApiError::BadRequest(
+                "分类已被彩种引用，无法删除".to_string(),
+            ));
+        }
+
+        let deleted = sqlx::query(
+            "DELETE FROM lottery_categories
+             WHERE code = $1
+             RETURNING code, name",
+        )
+        .bind(code)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("lottery category `{code}` not found")))?;
+
+        Ok(LotteryCategoryConfig {
+            code: deleted.try_get("code").map_err(database_error)?,
+            name: deleted.try_get("name").map_err(database_error)?,
+        })
+    }
+
+    async fn ensure_category_exists(&self, category: &str) -> ApiResult<()> {
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM lottery_categories WHERE code = $1)",
+        )
+        .bind(category)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(database_error)?;
+
+        if !exists {
+            return Err(ApiError::BadRequest(format!(
+                "lottery category `{category}` not found",
+            )));
+        }
+
+        Ok(())
+    }
+
+    async fn insert_seed_categories(&self) -> ApiResult<()> {
+        for (sort_order, category) in lottery_categories().into_iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO lottery_categories (code, name, sort_order)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (code) DO NOTHING",
+            )
+            .bind(&category.code)
+            .bind(&category.name)
+            .bind(i32::try_from(sort_order).unwrap_or(0))
+            .execute(&self.pool)
+            .await
+            .map_err(database_error)?;
+        }
+
         Ok(())
     }
 
     async fn list(&self) -> ApiResult<Vec<LotteryKind>> {
         let rows = sqlx::query(
-            "SELECT id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
+            "SELECT id, name, category, logo_url, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              FROM lotteries
              ORDER BY id ASC",
         )
@@ -238,7 +506,7 @@ impl PostgresLotteryStore {
 
     async fn get(&self, id: &str) -> ApiResult<LotteryKind> {
         let row = sqlx::query(
-            "SELECT id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
+            "SELECT id, name, category, logo_url, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              FROM lotteries
              WHERE id = $1",
         )
@@ -254,18 +522,20 @@ impl PostgresLotteryStore {
 
     async fn create(&self, lottery: LotteryKind) -> ApiResult<LotteryKind> {
         let lottery = normalize_lottery(lottery)?;
+        self.ensure_category_exists(&lottery.category).await?;
 
         let created = sqlx::query(
             "INSERT INTO lotteries (
-                id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
+                id, name, category, logo_url, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (id) DO NOTHING
-             RETURNING id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, logo_url, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(&lottery.id)
         .bind(&lottery.name)
         .bind(enum_value(&lottery.category)?)
+        .bind(lottery.logo_url.trim())
         .bind(enum_value(&lottery.number_type)?)
         .bind(enum_value(&lottery.draw_mode)?)
         .bind(json_value(&lottery.schedule)?)
@@ -288,14 +558,15 @@ impl PostgresLotteryStore {
 
         sqlx::query(
             "INSERT INTO lotteries (
-                id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
+                id, name, category, logo_url, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (id) DO NOTHING",
         )
         .bind(&lottery.id)
         .bind(&lottery.name)
         .bind(enum_value(&lottery.category)?)
+        .bind(lottery.logo_url.trim())
         .bind(enum_value(&lottery.number_type)?)
         .bind(enum_value(&lottery.draw_mode)?)
         .bind(json_value(&lottery.schedule)?)
@@ -312,6 +583,7 @@ impl PostgresLotteryStore {
 
     async fn update(&self, id: &str, lottery: LotteryKind) -> ApiResult<LotteryKind> {
         let lottery = normalize_lottery(lottery)?;
+        self.ensure_category_exists(&lottery.category).await?;
 
         if id != lottery.id {
             return Err(ApiError::BadRequest(
@@ -323,20 +595,22 @@ impl PostgresLotteryStore {
             "UPDATE lotteries
              SET name = $2,
                  category = $3,
-                 number_type = $4,
-                 draw_mode = $5,
-                 schedule = $6,
-                 sale_enabled = $7,
-                 group_buy = $8,
-                 play_categories = $9,
-                 play_configs = $10,
+                 logo_url = $4,
+                 number_type = $5,
+                 draw_mode = $6,
+                 schedule = $7,
+                 sale_enabled = $8,
+                 group_buy = $9,
+                 play_categories = $10,
+                 play_configs = $11,
                  updated_at = now()
              WHERE id = $1
-             RETURNING id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, logo_url, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .bind(&lottery.name)
         .bind(enum_value(&lottery.category)?)
+        .bind(lottery.logo_url.trim())
         .bind(enum_value(&lottery.number_type)?)
         .bind(enum_value(&lottery.draw_mode)?)
         .bind(json_value(&lottery.schedule)?)
@@ -358,7 +632,7 @@ impl PostgresLotteryStore {
         let deleted = sqlx::query(
             "DELETE FROM lotteries
              WHERE id = $1
-             RETURNING id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, logo_url, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -377,7 +651,7 @@ impl PostgresLotteryStore {
              SET sale_enabled = $2,
                  updated_at = now()
              WHERE id = $1
-             RETURNING id, name, category, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, logo_url, number_type, draw_mode, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .bind(sale_enabled)
@@ -394,11 +668,12 @@ impl PostgresLotteryStore {
 
 /// 返回平台内置彩种默认数据。
 pub fn seed_lotteries() -> Vec<LotteryKind> {
-    vec![
+    let mut lotteries = vec![
         LotteryKind {
             id: "fc3d".to_string(),
             name: "福彩 3D".to_string(),
-            category: LotteryCategory::Regional,
+            category: "regional".to_string(),
+            logo_url: String::new(),
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode: DrawMode::Api,
             schedule: DrawSchedule::Daily {
@@ -430,7 +705,8 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         LotteryKind {
             id: "pl3".to_string(),
             name: "排列 3".to_string(),
-            category: LotteryCategory::Regional,
+            category: "regional".to_string(),
+            logo_url: String::new(),
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode: DrawMode::Api,
             schedule: DrawSchedule::Daily {
@@ -461,8 +737,9 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         },
         LotteryKind {
             id: "au5".to_string(),
-            name: "澳洲 5 分彩".to_string(),
-            category: LotteryCategory::Overseas,
+            name: "澳洲幸运5".to_string(),
+            category: "overseas".to_string(),
+            logo_url: String::new(),
             number_type: LotteryNumberType::FiveDigit,
             draw_mode: DrawMode::Api,
             schedule: DrawSchedule::Periodic {
@@ -497,7 +774,8 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         LotteryKind {
             id: "txffc".to_string(),
             name: "腾讯分分彩".to_string(),
-            category: LotteryCategory::Overseas,
+            category: "overseas".to_string(),
+            logo_url: String::new(),
             number_type: LotteryNumberType::FiveDigit,
             draw_mode: DrawMode::Api,
             schedule: DrawSchedule::Periodic {
@@ -532,7 +810,8 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         LotteryKind {
             id: "ssc60".to_string(),
             name: "60 秒时时彩".to_string(),
-            category: LotteryCategory::Overseas,
+            category: "overseas".to_string(),
+            logo_url: String::new(),
             number_type: LotteryNumberType::FiveDigit,
             draw_mode: DrawMode::Platform,
             schedule: DrawSchedule::Periodic {
@@ -567,7 +846,8 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         LotteryKind {
             id: "manual-test".to_string(),
             name: "指定号码测试彩".to_string(),
-            category: LotteryCategory::Other,
+            category: "other".to_string(),
+            logo_url: String::new(),
             number_type: LotteryNumberType::FiveDigit,
             draw_mode: DrawMode::Manual,
             schedule: DrawSchedule::Weekly {
@@ -592,12 +872,296 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
                 ],
             ),
         },
+    ];
+    lotteries.extend(extra_api68_lotteries());
+    lotteries
+}
+
+/// 返回用户要求新增接入的 API68 彩种默认数据。
+fn extra_api68_lotteries() -> Vec<LotteryKind> {
+    vec![
+        api_lottery(
+            "bjpk10",
+            "北京PK10",
+            "regional",
+            LotteryNumberType::Pk10,
+            600,
+        ),
+        api_lottery(
+            "tjssc",
+            "天津时时彩",
+            "regional",
+            LotteryNumberType::FiveDigit,
+            1200,
+        ),
+        api_lottery(
+            "xjssc",
+            "新疆时时彩",
+            "regional",
+            LotteryNumberType::FiveDigit,
+            1200,
+        ),
+        api_lottery(
+            "gd11x5",
+            "广东11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "jsk3",
+            "江苏快3",
+            "regional",
+            LotteryNumberType::FastThree,
+            600,
+        ),
+        api_lottery(
+            "au10",
+            "澳洲幸运10",
+            "overseas",
+            LotteryNumberType::Pk10,
+            300,
+        ),
+        api_lottery(
+            "au20",
+            "澳洲幸运20",
+            "overseas",
+            LotteryNumberType::LuckTwenty,
+            300,
+        ),
+        api_lottery(
+            "bjkl8",
+            "北京快乐8",
+            "regional",
+            LotteryNumberType::LuckTwenty,
+            300,
+        ),
+        api_lottery(
+            "jx11x5",
+            "江西11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "js11x5",
+            "江苏11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "ah11x5",
+            "安徽11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "sh11x5",
+            "上海11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "ln11x5",
+            "辽宁11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "hb11x5",
+            "湖北11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "gx11x5",
+            "广西11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "jl11x5",
+            "吉林11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "nmg11x5",
+            "内蒙古11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "zj11x5",
+            "浙江11选5",
+            "regional",
+            LotteryNumberType::ElevenFive,
+            600,
+        ),
+        api_lottery(
+            "gxk3",
+            "广西快3",
+            "regional",
+            LotteryNumberType::FastThree,
+            600,
+        ),
+        api_lottery(
+            "jlk3",
+            "吉林快3",
+            "regional",
+            LotteryNumberType::FastThree,
+            600,
+        ),
+        api_lottery(
+            "hebk3",
+            "河北快3",
+            "regional",
+            LotteryNumberType::FastThree,
+            600,
+        ),
+        api_lottery(
+            "nmgk3",
+            "内蒙古快3",
+            "regional",
+            LotteryNumberType::FastThree,
+            600,
+        ),
+        api_lottery(
+            "ahk3",
+            "安徽快3",
+            "regional",
+            LotteryNumberType::FastThree,
+            600,
+        ),
+        api_lottery(
+            "fjk3",
+            "福建快3",
+            "regional",
+            LotteryNumberType::FastThree,
+            600,
+        ),
+        api_lottery(
+            "hubk3",
+            "湖北快3",
+            "regional",
+            LotteryNumberType::FastThree,
+            600,
+        ),
+        api_lottery(
+            "bjk3",
+            "北京快3",
+            "regional",
+            LotteryNumberType::FastThree,
+            600,
+        ),
     ]
+}
+
+/// 构造 API 彩种默认值，已接入玩法的号码类型会自动补玩法配置。
+fn api_lottery(
+    id: &str,
+    name: &str,
+    category: &str,
+    number_type: LotteryNumberType,
+    interval_seconds: u32,
+) -> LotteryKind {
+    let play_categories = default_play_categories_for_number_type(&number_type);
+    let play_configs = play_configs_with_overrides(number_type.clone(), &play_categories, &[]);
+
+    LotteryKind {
+        id: id.to_string(),
+        name: name.to_string(),
+        category: category.to_string(),
+        logo_url: String::new(),
+        number_type,
+        draw_mode: DrawMode::Api,
+        schedule: DrawSchedule::Periodic { interval_seconds },
+        sale_enabled: true,
+        group_buy: group_buy_config(),
+        play_categories,
+        play_configs,
+    }
+}
+
+/// 返回已接入投注玩法号码类型的默认玩法分类；其它采集型彩种暂不开放投注玩法。
+fn default_play_categories_for_number_type(number_type: &LotteryNumberType) -> Vec<PlayCategory> {
+    match number_type {
+        LotteryNumberType::ThreeDigit => vec![
+            PlayCategory::Direct,
+            PlayCategory::GroupThree,
+            PlayCategory::GroupSix,
+        ],
+        LotteryNumberType::FiveDigit => vec![
+            PlayCategory::Direct,
+            PlayCategory::DirectCombination,
+            PlayCategory::GroupThree,
+            PlayCategory::GroupSix,
+            PlayCategory::BigSmallOddEven,
+        ],
+        LotteryNumberType::Pk10
+        | LotteryNumberType::ElevenFive
+        | LotteryNumberType::FastThree
+        | LotteryNumberType::LuckTwenty => Vec::new(),
+    }
+}
+
+/// 返回默认彩种分类配置。
+fn lottery_categories() -> Vec<LotteryCategoryConfig> {
+    vec![
+        LotteryCategoryConfig {
+            code: "regional".to_string(),
+            name: "地方彩种".to_string(),
+        },
+        LotteryCategoryConfig {
+            code: "overseas".to_string(),
+            name: "海外彩种".to_string(),
+        },
+        LotteryCategoryConfig {
+            code: "welfare".to_string(),
+            name: "福利彩种".to_string(),
+        },
+        LotteryCategoryConfig {
+            code: "other".to_string(),
+            name: "其他".to_string(),
+        },
+    ]
+}
+
+fn normalize_category_config(category: LotteryCategoryConfig) -> ApiResult<LotteryCategoryConfig> {
+    let code = category.code.trim().to_string();
+    let name = category.name.trim().to_string();
+
+    if code.is_empty() {
+        return Err(ApiError::BadRequest(
+            "category code is required".to_string(),
+        ));
+    }
+    if name.is_empty() {
+        return Err(ApiError::BadRequest(
+            "category name is required".to_string(),
+        ));
+    }
+
+    Ok(LotteryCategoryConfig { code, name })
 }
 
 /// 标准化输入并返回规范值。
 fn normalize_lottery(mut lottery: LotteryKind) -> ApiResult<LotteryKind> {
     validate_lottery_base(&lottery)?;
+
+    if !number_type_supports_play_rules(&lottery.number_type) {
+        lottery.play_categories = Vec::new();
+        lottery.play_configs = Vec::new();
+        return Ok(lottery);
+    }
 
     let play_configs = normalize_play_configs(
         &lottery.number_type,
@@ -627,7 +1191,7 @@ fn validate_lottery_base(lottery: &LotteryKind) -> ApiResult<()> {
         return Err(ApiError::BadRequest("lottery name is required".to_string()));
     }
 
-    if lottery.play_categories.is_empty() {
+    if number_type_supports_play_rules(&lottery.number_type) && lottery.play_categories.is_empty() {
         return Err(ApiError::BadRequest(
             "at least one play category is required".to_string(),
         ));
@@ -678,6 +1242,14 @@ fn validate_lottery_base(lottery: &LotteryKind) -> ApiResult<()> {
     }
 
     Ok(())
+}
+
+/// 判断当前号码类型是否已经接入投注玩法和赔率配置。
+fn number_type_supports_play_rules(number_type: &LotteryNumberType) -> bool {
+    matches!(
+        number_type,
+        LotteryNumberType::ThreeDigit | LotteryNumberType::FiveDigit
+    )
 }
 
 /// 标准化输入并返回规范值。
@@ -788,6 +1360,7 @@ fn lottery_from_row(row: sqlx::postgres::PgRow) -> ApiResult<LotteryKind> {
     let number_type = enum_from_string(row.try_get("number_type").map_err(database_error)?)?;
     let draw_mode = enum_from_string(row.try_get("draw_mode").map_err(database_error)?)?;
     let category = enum_from_string(row.try_get("category").map_err(database_error)?)?;
+    let logo_url: String = row.try_get("logo_url").map_err(database_error)?;
     let schedule = json_from_value(row.try_get("schedule").map_err(database_error)?)?;
     let group_buy = json_from_value(row.try_get("group_buy").map_err(database_error)?)?;
     let play_categories = json_from_value(row.try_get("play_categories").map_err(database_error)?)?;
@@ -797,6 +1370,7 @@ fn lottery_from_row(row: sqlx::postgres::PgRow) -> ApiResult<LotteryKind> {
         id: row.try_get("id").map_err(database_error)?,
         name: row.try_get("name").map_err(database_error)?,
         category,
+        logo_url: logo_url.trim().to_string(),
         number_type,
         draw_mode,
         schedule,
@@ -891,7 +1465,7 @@ mod tests {
             .find(|item| item.id == "au5")
             .expect("au5 seed lottery exists");
 
-        assert_eq!(lottery.name, "澳洲 5 分彩");
+        assert_eq!(lottery.name, "澳洲幸运5");
         assert_eq!(lottery.number_type, LotteryNumberType::FiveDigit);
         assert_eq!(lottery.draw_mode, DrawMode::Api);
         assert_eq!(
@@ -900,6 +1474,33 @@ mod tests {
                 interval_seconds: 300
             }
         );
+    }
+
+    #[test]
+    /// 内置彩种包含用户要求新增的 API68 彩种和正确号码类型。
+    fn seeded_lotteries_include_requested_api68_lotteries() {
+        let lotteries = seed_lotteries();
+
+        for (id, number_type, has_play_rules) in [
+            ("bjpk10", LotteryNumberType::Pk10, false),
+            ("tjssc", LotteryNumberType::FiveDigit, true),
+            ("gd11x5", LotteryNumberType::ElevenFive, false),
+            ("jsk3", LotteryNumberType::FastThree, false),
+            ("au10", LotteryNumberType::Pk10, false),
+            ("au20", LotteryNumberType::LuckTwenty, false),
+            ("bjkl8", LotteryNumberType::LuckTwenty, false),
+            ("zj11x5", LotteryNumberType::ElevenFive, false),
+            ("bjk3", LotteryNumberType::FastThree, false),
+        ] {
+            let lottery = lotteries
+                .iter()
+                .find(|item| item.id == id)
+                .expect("seed lottery exists");
+
+            assert_eq!(lottery.number_type, number_type);
+            assert_eq!(lottery.draw_mode, DrawMode::Api);
+            assert_eq!(lottery.play_configs.is_empty(), !has_play_rules);
+        }
     }
 
     #[test]
@@ -1004,7 +1605,7 @@ mod tests {
 
         let lotteries = repository.list().await.expect("lotteries can be listed");
 
-        assert_eq!(lotteries.len(), 6);
+        assert_eq!(lotteries.len(), 32);
     }
 
     #[tokio::test]

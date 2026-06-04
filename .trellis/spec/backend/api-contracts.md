@@ -664,14 +664,16 @@ await createOrder({
 }
 ```
 
-`platform` 开奖模式可以传空对象 `{}`，后端本地生成逗号分隔开奖号码。`api` 开奖模式可以传空对象 `{}`，后端按彩种查找外部开奖源；已配置外部源的彩种不能静默回退到本地生成器。`manual` 开奖模式必须传 `drawNumber`，格式为英文逗号分隔数字，例如 `2,4,7` 或 `7,8,9,4,2`。后端兼容读取旧的紧凑数字串，但保存和返回统一使用逗号分隔格式。
+`platform` 开奖模式可以传空对象 `{}`，后端本地生成逗号分隔开奖号码。`api` 开奖模式可以传空对象 `{}`，后端按彩种查找外部开奖源；已配置外部源的彩种不能静默回退到本地生成器。`manual` 开奖模式必须传 `drawNumber`，格式为英文逗号分隔数字，例如 `2,4,7`、`7,8,9,4,2` 或 `1,6,2,4,3,5,7,9,10,8`。后端对 3 位和 5 位号码兼容读取旧的紧凑数字串，其它号码类型必须使用英文逗号分隔；保存和返回统一使用英文逗号分隔格式。
 
 当前已接入的外部开奖源：
 
 - `api68-fc3d`：`fc3d` 福彩 3D 和 `pl3` 排列 3 默认复用 API68 全国彩接口，`lotCode=10041`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为开奖号码。
-- `api68-au5`：`au5` 澳洲 5 分彩默认使用 API68 CQShiCai 接口，`lotCode=10010`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为英文逗号分隔开奖号码。
+- `api68-au5`：`au5` 澳洲幸运5默认使用 API68 CQShiCai 单彩种接口，`lotCode=10010`，响应中按 `result.data.preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为英文逗号分隔开奖号码。
+- API68 批量接入彩种：`bjpk10`、`tjssc`、`xjssc`、`gd11x5`、`jsk3`、`au10`、`au20`、`bjkl8`、`jx11x5`、`js11x5`、`ah11x5`、`sh11x5`、`ln11x5`、`hb11x5`、`gx11x5`、`jl11x5`、`nmg11x5`、`zj11x5`、`gxk3`、`jlk3`、`hebk3`、`nmgk3`、`ahk3`、`fjk3`、`hubk3`、`bjk3`。这些来源按彩种分别绑定 API68 的 PKS、CQShiCai、ElevenFive、FastThree 或 LuckTwenty endpoint。
 - `kj-txffc`：`txffc` 腾讯分分彩默认使用 KJAPI 接口，`lotKey=txffc`，响应中按 `result.data.preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为英文逗号分隔开奖号码；生成下一期时优先读取 `result.data.drawIssue` 和 `result.data.drawTime`。
 - `preDrawCode` 必须继续经过后端开奖号码校验，保存和返回仍统一为英文逗号分隔格式。
+- API68 解析器必须兼容 `result.data` 为数组或单对象两种形态；单对象接口还应读取 `drawIssue` 和 `drawTime` 作为下一期锚点。
 - 暂未配置外部源的 API 彩种仍保留本地生成器占位能力，仅用于当前内存演示阶段；生产接入时需要显式配置来源。
 
 开奖源响应：
@@ -702,7 +704,7 @@ await createOrder({
 }
 ```
 
-`endpoint` 可为空；为空时后端按供应商写入默认 endpoint。福彩 3D/排列 3 默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfoList.do`；澳洲 5 分彩默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do`；腾讯分分彩默认来源写入 `draw_sources` 表，endpoint 为 `https://kjapi.net/hall/hallajax/getLotteryInfo`。后续修改 endpoint 必须通过后台“开奖源配置”或开奖源 API 写入数据库，不通过环境变量覆盖。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
+`endpoint` 可为空；为空时后端按供应商写入默认 endpoint。福彩 3D/排列 3 默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfoList.do`；澳洲幸运5默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/CQShiCai/getBaseCQShiCai.do`；腾讯分分彩默认来源写入 `draw_sources` 表，endpoint 为 `https://kjapi.net/hall/hallajax/getLotteryInfo`。后续修改 endpoint 必须通过后台“开奖源配置”或开奖源 API 写入数据库，不通过环境变量覆盖。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
 
 KJAPI 来源的 `lotCode` 字段在当前跨层模型中复用为 `lotKey`，例如腾讯分分彩保存 `lotCode="txffc"`；后端请求时会按供应商自动拼接 `lotKey=txffc`，不是 `lotCode=txffc`。后台展示标签可写为 `lotCode / lotKey`。
 
@@ -745,15 +747,16 @@ KJAPI 来源的 `lotCode` 字段在当前跨层模型中复用为 `lotKey`，例
 | 同一彩种重复创建同一期号 | HTTP 409，返回期号重复 |
 | 开奖源 ID 为空或包含非法字符 | HTTP 400，返回开奖源 ID 错误 |
 | 开奖源名称为空 | HTTP 400，返回开奖源名称必填 |
-| `lotCode` 为空或包含非数字字符 | HTTP 400，返回 `lot code` 错误 |
+| `lotCode / lotKey` 为空或包含非字母数字、连字符、下划线字符 | HTTP 400，返回 `lot code` 错误 |
 | 复用彩种为空 | HTTP 400，返回复用彩种必填 |
 | 复用彩种不存在 | HTTP 404，返回彩种不存在 |
 | 复用彩种不是 `api` 开奖模式 | HTTP 400，返回彩种不是 API 开奖模式 |
 | 同一 API 彩种已绑定其他开奖源 | HTTP 409，返回彩种已绑定其他来源 |
 | 关闭非 `open` 期号 | HTTP 400，返回 `only open draw issues can be closed` |
 | 手动开奖缺少号码 | HTTP 400，返回 `manual draw requires draw number` |
-| 3 位彩种号码不是 3 位数字 | HTTP 400，返回号码长度或数字错误 |
-| 5 位彩种号码不是 5 位数字 | HTTP 400，返回号码长度或数字错误 |
+| 3 位彩种号码不是 3 个数字 | HTTP 400，返回号码长度或数字错误 |
+| 5 位彩种号码不是 5 个数字 | HTTP 400，返回号码长度或数字错误 |
+| PK10、11 选 5、快 3、快乐 8/幸运 20 号码不符合长度、范围或去重规则 | HTTP 400，返回号码长度、范围或重复错误 |
 | 已配置外部源的 API 彩种未匹配到当前期号 | HTTP 404，返回 API 开奖号码未找到 |
 | 已配置外部源请求失败或响应结构异常 | HTTP 500，返回外部开奖源错误，不生成假号码 |
 | 已开奖或已取消期号再次开奖 | HTTP 400，返回 `draw issue cannot be drawn in current status` |
@@ -3049,6 +3052,7 @@ if !has_scope(scopes, &PermissionScope::Finance) {
 | `enabled=true` 且 `drawNumber` 为空 | HTTP 400，返回控制开奖号码必填 |
 | 3 位彩种号码不是 3 个数字 | HTTP 400，返回号码长度错误 |
 | 5 位彩种号码不是 5 个数字 | HTTP 400，返回号码长度错误 |
+| PK10、11 选 5、快 3、快乐 8/幸运 20 控制号码不符合长度、范围或去重规则 | HTTP 400，返回号码校验错误 |
 | 号码包含非数字内容 | HTTP 400，返回号码格式错误 |
 | `enabled=false` 且 `drawNumber` 为空 | HTTP 200，保存关闭状态 |
 | 手动彩种启用控制号码后到期自动任务 | 自动开奖成功，不写入跳过期号 |

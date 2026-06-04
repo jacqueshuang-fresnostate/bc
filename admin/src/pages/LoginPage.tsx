@@ -1,4 +1,4 @@
-import { Banner, Button, Card } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card } from '@douyinfe/semi-ui';
 import { LogIn } from 'lucide-react';
 import { useState } from 'react';
 import type { AdminLoginRequest } from '../types/auth';
@@ -41,21 +41,21 @@ export function LoginPage({ error, loading, onLogin }: LoginPageProps) {
         >
           <label className="block space-y-1">
             <span className="text-xs font-medium text-slate-500">账号</span>
-            <input
+            <Input
               className="form-input"
               autoComplete="username"
               value={username}
-              onChange={(event) => setUsername(event.target.value)}
+              onChange={(value) => setUsername(value)}
             />
           </label>
           <label className="block space-y-1">
             <span className="text-xs font-medium text-slate-500">密码</span>
-            <input
+            <Input
               className="form-input"
               autoComplete="current-password"
               type="password"
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(value) => setPassword(value)}
             />
           </label>
           <Button

@@ -37,10 +37,10 @@ use super::business_database::{enum_from_string, enum_to_string, to_json, Busine
 const DEFAULT_SEED_ADMIN_PASSWORD: &str = "admin123";
 const MIN_ADMIN_PASSWORD_LEN: usize = 8;
 const INVITE_CODE_LENGTH: usize = 8;
-const INVITE_CODE_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-const DEMO_USER_INVITE_CODE: &str = "QWERTYPA";
-const DEMO_AGENT_INVITE_CODE: &str = "KJHGFDSA";
-const RISK_USER_INVITE_CODE: &str = "ZXCVBNML";
+const INVITE_CODE_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const DEMO_USER_INVITE_CODE: &str = "QWER7YPA";
+const DEMO_AGENT_INVITE_CODE: &str = "KJHG8DSA";
+const RISK_USER_INVITE_CODE: &str = "ZXCV9NML";
 const DEFAULT_SEED_USER_PASSWORD: &str = "12345678";
 const MIN_USER_PASSWORD_LEN: usize = 8;
 const USER_RESET_TOKEN_BYTES: usize = 24;
@@ -1214,7 +1214,7 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))
     }
 
-    /// 创建用户并落入内存集合，空邀请码时自动生成随机字母码。
+    /// 创建用户并落入内存集合，空邀请码时自动生成随机字母数字码。
     fn create_user(&mut self, user: UserSummary) -> ApiResult<UserSummary> {
         let mut user = normalize_user(user)?;
         if user.invite_code.is_empty() {
@@ -2029,25 +2029,40 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
     Ok(user)
 }
 
-/// 依据当前用户集合随机生成 8 位大写字母邀请码，最多尝试 128 次防止极端碰撞。
+/// 依据当前用户集合随机生成 8 位大写字母数字邀请码，最多尝试 128 次防止极端碰撞。
 fn random_invite_code(users: &BTreeMap<String, UserSummary>) -> ApiResult<String> {
     for _ in 0..128 {
-        let mut bytes = [0u8; INVITE_CODE_LENGTH];
-        OsRng.fill_bytes(&mut bytes);
-        let code = bytes
-            .iter()
-            .map(|byte| {
-                let index = usize::from(*byte % INVITE_CODE_ALPHABET.len() as u8);
-                INVITE_CODE_ALPHABET[index] as char
-            })
-            .collect::<String>();
+        let code = random_invite_code_candidate();
 
-        if !users.values().any(|user| user.invite_code == code) {
+        if invite_code_has_required_charset(&code)
+            && !users.values().any(|user| user.invite_code == code)
+        {
             return Ok(code);
         }
     }
 
     Err(ApiError::Internal("邀请码生成失败".to_string()))
+}
+
+/// 从允许字符集中生成一个候选邀请码，最终是否可用由格式和唯一性校验决定。
+fn random_invite_code_candidate() -> String {
+    let mut bytes = [0u8; INVITE_CODE_LENGTH];
+    OsRng.fill_bytes(&mut bytes);
+    bytes
+        .iter()
+        .map(|byte| {
+            let index = usize::from(*byte % INVITE_CODE_ALPHABET.len() as u8);
+            INVITE_CODE_ALPHABET[index] as char
+        })
+        .collect::<String>()
+}
+
+/// 校验自动生成的邀请码必须同时包含大写字母和数字，避免退化成纯字母或纯数字。
+fn invite_code_has_required_charset(code: &str) -> bool {
+    code.chars()
+        .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit())
+        && code.chars().any(|ch| ch.is_ascii_uppercase())
+        && code.chars().any(|ch| ch.is_ascii_digit())
 }
 
 /// 标准化输入并返回规范值。
@@ -2406,6 +2421,22 @@ mod tests {
         UserRegisterRequest, UserResetPasswordRequest, WithdrawalMethodRequest,
     };
 
+    fn assert_invite_code_format(code: &str) {
+        assert_eq!(code.len(), INVITE_CODE_LENGTH);
+        assert!(code
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit()));
+        assert!(code.chars().any(|ch| ch.is_ascii_uppercase()));
+        assert!(code.chars().any(|ch| ch.is_ascii_digit()));
+    }
+
+    #[test]
+    fn seed_invite_codes_use_alnum_format() {
+        assert_invite_code_format(DEMO_USER_INVITE_CODE);
+        assert_invite_code_format(DEMO_AGENT_INVITE_CODE);
+        assert_invite_code_format(RISK_USER_INVITE_CODE);
+    }
+
     #[tokio::test]
     async fn access_repository_creates_and_updates_user() {
         let access = AccessRepository::memory_seeded();
@@ -2424,17 +2455,48 @@ mod tests {
             .expect("user can be created");
 
         assert_eq!(created.id, "U20001");
-        assert_eq!(created.invite_code.len(), INVITE_CODE_LENGTH);
-        assert!(created
-            .invite_code
-            .chars()
-            .all(|ch| ch.is_ascii_alphabetic() && ch.is_ascii_uppercase()));
+        assert_invite_code_format(&created.invite_code);
 
         let updated = access
             .set_user_status("U20001", UserStatus::Locked)
             .await
             .expect("status can be updated");
         assert_eq!(updated.status, UserStatus::Locked);
+    }
+
+    #[tokio::test]
+    async fn access_repository_generates_unique_invite_codes() {
+        let access = AccessRepository::memory_seeded();
+        let first = access
+            .create_user(UserSummary {
+                id: "U20003".to_string(),
+                username: "random_invite_a".to_string(),
+                email: None,
+                kind: UserKind::Regular,
+                status: UserStatus::Active,
+                balance_minor: 0,
+                agent_id: None,
+                invite_code: String::new(),
+            })
+            .await
+            .expect("first user can be created");
+        let second = access
+            .create_user(UserSummary {
+                id: "U20004".to_string(),
+                username: "random_invite_b".to_string(),
+                email: None,
+                kind: UserKind::Regular,
+                status: UserStatus::Active,
+                balance_minor: 0,
+                agent_id: None,
+                invite_code: String::new(),
+            })
+            .await
+            .expect("second user can be created");
+
+        assert_invite_code_format(&first.invite_code);
+        assert_invite_code_format(&second.invite_code);
+        assert_ne!(first.invite_code, second.invite_code);
     }
 
     #[tokio::test]
@@ -2611,7 +2673,7 @@ mod tests {
             .expect("username register should succeed");
 
         assert_eq!(username_user.username, "new_member");
-        assert!(username_user.invite_code.len() == INVITE_CODE_LENGTH);
+        assert_invite_code_format(&username_user.invite_code);
 
         let _ = access
             .update_registration(RegistrationConfig {
@@ -2649,7 +2711,7 @@ mod tests {
                 .email_enabled,
             true
         );
-        assert_eq!(email_user.invite_code.len(), INVITE_CODE_LENGTH);
+        assert_invite_code_format(&email_user.invite_code);
 
         assert_ne!(username_user.username, email_user.username);
     }

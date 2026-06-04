@@ -2,6 +2,7 @@
 
 mod admin;
 mod health;
+mod openapi;
 mod user;
 
 use axum::Router;
@@ -12,6 +13,7 @@ use crate::app::AppState;
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .merge(health::router())
+        .merge(openapi::router())
         .nest("/admin", admin::router(state.clone()))
         .nest("/user", user::router(state))
 }

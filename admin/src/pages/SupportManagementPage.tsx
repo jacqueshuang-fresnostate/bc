@@ -1,4 +1,13 @@
-import { Avatar, Banner, Button, Card, Chat, Spin, Tag } from '@douyinfe/semi-ui';
+import {
+  Avatar,
+  Banner,
+  Button,
+  Card,
+  Chat,
+  Select,
+  Spin,
+  Tag,
+} from '@douyinfe/semi-ui';
 import { MessageCircle, RefreshCcw, Save, Send } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
@@ -224,58 +233,58 @@ export function SupportManagementPage({
                   </div>
                   <div className="grid gap-3 md:grid-cols-3">
                     <Field label="状态">
-                      <select
+                      <Select
                         className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
                         value={updateForm.status}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setUpdateFormValue(
                             setUpdateForm,
                             'status',
-                            event.target.value as SupportConversationStatus,
+                            (value as SupportConversationStatus) || 'open',
                           )
                         }
                       >
-                        <option value="open">处理中</option>
-                        <option value="pending">等待用户</option>
-                        <option value="resolved">已解决</option>
-                        <option value="closed">已关闭</option>
-                      </select>
+                        <Select.Option value="open">处理中</Select.Option>
+                        <Select.Option value="pending">等待用户</Select.Option>
+                        <Select.Option value="resolved">已解决</Select.Option>
+                        <Select.Option value="closed">已关闭</Select.Option>
+                      </Select>
                     </Field>
                     <Field label="优先级">
-                      <select
+                      <Select
                         className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
                         value={updateForm.priority}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setUpdateFormValue(
                             setUpdateForm,
                             'priority',
-                            event.target.value as SupportPriority,
+                            (value as SupportPriority) || 'normal',
                           )
                         }
                       >
-                        <option value="normal">普通</option>
-                        <option value="urgent">紧急</option>
-                      </select>
+                        <Select.Option value="normal">普通</Select.Option>
+                        <Select.Option value="urgent">紧急</Select.Option>
+                      </Select>
                     </Field>
                     <Field label="分配客服">
-                      <select
+                      <Select
                         className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
                         value={updateForm.assignedAdminId}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setUpdateFormValue(
                             setUpdateForm,
                             'assignedAdminId',
-                            event.target.value,
+                            String(value ?? ''),
                           )
                         }
                       >
-                        <option value="">未分配</option>
+                        <Select.Option value="">未分配</Select.Option>
                         {admins.map((admin) => (
-                          <option key={admin.id} value={admin.id}>
+                          <Select.Option key={admin.id} value={admin.id}>
                             {admin.username} ({admin.id})
-                          </option>
+                          </Select.Option>
                         ))}
-                      </select>
+                      </Select>
                     </Field>
                   </div>
                   <Button

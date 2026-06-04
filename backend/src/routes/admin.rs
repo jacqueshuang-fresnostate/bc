@@ -28,7 +28,9 @@ use crate::{
             GroupBuyPlanSummary, UpdateGroupBuyPlanRequest,
         },
         invite::{CreateInviteRecordRequest, InviteRecord, UpdateInviteRecordRequest},
-        lottery::{DrawMode, DrawSource, LotteryKind, SaveDrawSourceRequest},
+        lottery::{
+            DrawMode, DrawSource, LotteryCategoryConfig, LotteryKind, SaveDrawSourceRequest,
+        },
         order::{CreateOrderRequest, OrderDetail},
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
@@ -192,6 +194,14 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(get_lottery).put(update_lottery).delete(delete_lottery),
         )
         .route("/lotteries/{id}/sale", patch(set_lottery_sale))
+        .route(
+            "/lottery-categories",
+            get(list_lottery_categories).post(create_lottery_category),
+        )
+        .route(
+            "/lottery-categories/{code}",
+            put(update_lottery_category).delete(delete_lottery_category),
+        )
         .route("/auth/me", get(get_current_admin))
         .route("/auth/logout", post(logout_admin))
         .route_layer(middleware::from_fn_with_state(state, require_admin_auth));
@@ -279,6 +289,9 @@ fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
         || path.starts_with("rebate")
     {
         return Some(PermissionScope::Rebates);
+    }
+    if path.starts_with("lottery-categories") {
+        return Some(PermissionScope::Lotteries);
     }
     if path.starts_with("draw")
         || path.starts_with("lotteries")
@@ -1319,6 +1332,46 @@ async fn set_lottery_sale(
     Ok(Json(ApiEnvelope::success(lottery)))
 }
 
+async fn list_lottery_categories(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<LotteryCategoryConfig>>>> {
+    let categories = state.lotteries.categories().await?;
+
+    Ok(Json(ApiEnvelope::success(categories)))
+}
+
+async fn create_lottery_category(
+    State(state): State<AppState>,
+    Json(payload): Json<LotteryCategoryConfig>,
+) -> ApiResult<Json<ApiEnvelope<LotteryCategoryConfig>>> {
+    let category = state.lotteries.create_category(payload).await?;
+
+    Ok(Json(ApiEnvelope::success(category)))
+}
+
+async fn update_lottery_category(
+    State(state): State<AppState>,
+    Path(code): Path<String>,
+    Json(payload): Json<LotteryCategoryConfig>,
+) -> ApiResult<Json<ApiEnvelope<LotteryCategoryConfig>>> {
+    let payload = LotteryCategoryConfig {
+        code: code.clone(),
+        ..payload
+    };
+    let category = state.lotteries.update_category(&code, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(category)))
+}
+
+async fn delete_lottery_category(
+    State(state): State<AppState>,
+    Path(code): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<LotteryCategoryConfig>>> {
+    let category = state.lotteries.delete_category(&code).await?;
+
+    Ok(Json(ApiEnvelope::success(category)))
+}
+
 async fn align_api_draw_issue_plan_after_sale_on(
     state: &AppState,
     lottery: &LotteryKind,
@@ -1398,6 +1451,10 @@ mod tests {
         assert_eq!(
             required_scope_for_path("/support/conversations"),
             Some(PermissionScope::CustomerService)
+        );
+        assert_eq!(
+            required_scope_for_path("/lottery-categories"),
+            Some(PermissionScope::Lotteries)
         );
         assert_eq!(
             required_scope_for_path("/robots"),

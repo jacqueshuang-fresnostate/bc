@@ -1,4 +1,4 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
 import { Plus, RefreshCcw, Save, Share2, Users } from 'lucide-react';
 import {
   useEffect,
@@ -255,84 +255,84 @@ export function GroupBuyManagementPage({
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <Field label="计划 ID">
-                  <input
+                  <Input
                     className="form-input"
                     value={createForm.id}
-                    onChange={(event) =>
-                      setCreateFormValue(setCreateForm, 'id', event.target.value)
+                    onChange={(value) =>
+                      setCreateFormValue(setCreateForm, 'id', value)
                     }
                   />
                 </Field>
                 <Field label="彩种">
-                  <select
+                  <Select
                     className="form-input"
                     value={createForm.lotteryId}
-                    onChange={(event) =>
-                      setCreateFormValue(setCreateForm, 'lotteryId', event.target.value)
+                    onChange={(value) =>
+                      setCreateFormValue(setCreateForm, 'lotteryId', String(value ?? ''))
                     }
                   >
                     {eligibleLotteries.map((lottery) => (
-                      <option key={lottery.id} value={lottery.id}>
+                      <Select.Option key={lottery.id} value={lottery.id}>
                         {lottery.name}
-                      </option>
+                      </Select.Option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
                 <Field label="发起人">
-                  <select
+                  <Select
                     className="form-input"
                     value={createForm.initiatorUserId}
-                    onChange={(event) =>
+                    onChange={(value) =>
                       setCreateFormValue(
                         setCreateForm,
                         'initiatorUserId',
-                        event.target.value,
+                        String(value ?? ''),
                       )
                     }
                   >
                     {users.map((user) => (
-                      <option key={user.id} value={user.id}>
+                      <Select.Option key={user.id} value={user.id}>
                         {user.username}（{user.id}）
-                      </option>
+                      </Select.Option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
                 <Field label="计划总金额（分）">
-                  <input
+                  <Input
                     className="form-input"
                     min="1"
                     type="number"
                     value={createForm.totalAmountMinor}
-                    onChange={(event) =>
+                    onChange={(value) =>
                       setCreateFormValue(
                         setCreateForm,
                         'totalAmountMinor',
-                        event.target.value,
+                        value,
                       )
                     }
                   />
                 </Field>
                 <Field label="发起人认购（分）">
-                  <input
+                  <Input
                     className="form-input"
                     min="1"
                     type="number"
                     value={createForm.initiatorAmountMinor}
-                    onChange={(event) =>
+                    onChange={(value) =>
                       setCreateFormValue(
                         setCreateForm,
                         'initiatorAmountMinor',
-                        event.target.value,
+                        value,
                       )
                     }
                   />
                 </Field>
                 <Field label="备注">
-                  <input
+                  <Input
                     className="form-input"
                     value={createForm.note}
-                    onChange={(event) =>
-                      setCreateFormValue(setCreateForm, 'note', event.target.value)
+                    onChange={(value) =>
+                      setCreateFormValue(setCreateForm, 'note', value)
                     }
                   />
                 </Field>
@@ -403,31 +403,31 @@ export function GroupBuyManagementPage({
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Field label="状态">
-                      <select
+                      <Select
                         className="form-input"
                         value={updateForm.status}
-                        onChange={(event) =>
-                          setUpdateForm((current) => ({
-                            ...current,
-                            status: event.target.value as GroupBuyPlanStatus,
-                          }))
-                        }
-                      >
-                        <option value="draft">草稿</option>
-                        <option value="open">进行中</option>
-                        <option value="filled">已满单</option>
-                        <option value="cancelled">已取消</option>
-                        <option value="settled">已结算</option>
-                      </select>
+                        onChange={(value) =>
+                        setUpdateForm((current) => ({
+                          ...current,
+                          status: (value as GroupBuyPlanStatus) || 'draft',
+                        }))
+                      }
+                    >
+                        <Select.Option value="draft">草稿</Select.Option>
+                        <Select.Option value="open">进行中</Select.Option>
+                        <Select.Option value="filled">已满单</Select.Option>
+                        <Select.Option value="cancelled">已取消</Select.Option>
+                        <Select.Option value="settled">已结算</Select.Option>
+                      </Select>
                     </Field>
                     <Field label="备注">
-                      <input
+                      <Input
                         className="form-input"
                         value={updateForm.note}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setUpdateForm((current) => ({
                             ...current,
-                            note: event.target.value,
+                            note: value,
                           }))
                         }
                       />
@@ -497,61 +497,61 @@ export function GroupBuyManagementPage({
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Field label="参与记录 ID">
-                      <input
+                      <Input
                         className="form-input"
                         value={participantForm.id}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setParticipantFormValue(
                             setParticipantForm,
                             'id',
-                            event.target.value,
+                            value,
                           )
                         }
                       />
                     </Field>
-                    <Field label="参与用户">
-                      <select
-                        className="form-input"
-                        value={participantForm.userId}
-                        onChange={(event) =>
-                          setParticipantFormValue(
-                            setParticipantForm,
-                            'userId',
-                            event.target.value,
-                          )
-                        }
-                      >
-                        {users.map((user) => (
-                          <option key={user.id} value={user.id}>
-                            {user.username}（{user.id}）
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
+                <Field label="参与用户">
+                  <Select
+                    className="form-input"
+                    value={participantForm.userId}
+                    onChange={(value) =>
+                      setParticipantFormValue(
+                        setParticipantForm,
+                        'userId',
+                        String(value ?? ''),
+                      )
+                    }
+                  >
+                    {users.map((user) => (
+                      <Select.Option key={user.id} value={user.id}>
+                        {user.username}（{user.id}）
+                      </Select.Option>
+                    ))}
+                  </Select>
+                </Field>
                     <Field label="参与金额（分）">
-                      <input
+                      <Input
                         className="form-input"
                         min="1"
                         type="number"
                         value={participantForm.amountMinor}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setParticipantFormValue(
                             setParticipantForm,
                             'amountMinor',
-                            event.target.value,
+                            value,
                           )
                         }
                       />
                     </Field>
                     <Field label="备注">
-                      <input
+                      <Input
                         className="form-input"
                         value={participantForm.note}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setParticipantFormValue(
                             setParticipantForm,
                             'note',
-                            event.target.value,
+                            value,
                           )
                         }
                       />

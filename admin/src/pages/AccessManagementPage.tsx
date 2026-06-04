@@ -1,9 +1,18 @@
-import { Banner, Button, Card, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
+import {
+  Input,
+  Banner,
+  Button,
+  Card,
+  Select,
+  SideSheet,
+  Spin,
+  Tag,
+} from '@douyinfe/semi-ui';
 import {
   RefreshCcw,
   Save,
   Settings,
-  Upload,
+  Upload as UploadIcon,
   ShieldCheck,
   Trash2,
   UserPlus,
@@ -17,8 +26,8 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import { ImageUploadAvatar } from '../components/ImageUploadAvatar';
 import { MetricCard } from '../components/MetricCard';
-import { uploadImageBedFile } from '../api/client';
 import { useAccessManagement } from '../hooks/useAccessManagement';
 import type { AdminSaveRequest } from '../types/access';
 import type {
@@ -53,6 +62,11 @@ interface UserFormState {
 interface SystemSettingItem {
   description: string;
   key: string;
+  value: string;
+}
+
+interface SettingSelectOption {
+  label: string;
   value: string;
 }
 
@@ -513,83 +527,83 @@ function UserSection({
       >
         <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
           <Field label="用户 ID">
-            <input
+            <Input
               className="form-input"
               value={form.id}
-              onChange={(event) => setFormValue(onSetForm, 'id', event.target.value)}
+              onChange={(value) => setFormValue(onSetForm, 'id', value)}
             />
           </Field>
           <Field label="用户名">
-            <input
+            <Input
               className="form-input"
               value={form.username}
-              onChange={(event) =>
-                setFormValue(onSetForm, 'username', event.target.value)
+              onChange={(value) =>
+                setFormValue(onSetForm, 'username', value)
               }
             />
           </Field>
           <Field label="邮箱">
-            <input
+            <Input
               className="form-input"
               value={form.email}
-              onChange={(event) =>
-                setFormValue(onSetForm, 'email', event.target.value)
+              onChange={(value) =>
+                setFormValue(onSetForm, 'email', value)
               }
             />
           </Field>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-            <Field label="用户类型">
-              <select
-                className="form-input"
-                value={form.kind}
-                onChange={(event) =>
-                  setFormValue(onSetForm, 'kind', event.target.value as UserKind)
-                }
-              >
-                <option value="regular">普通用户</option>
-                <option value="agent">代理</option>
-              </select>
-            </Field>
-            <Field label="状态">
-              <select
-                className="form-input"
-                value={form.status}
-                onChange={(event) =>
-                  setFormValue(onSetForm, 'status', event.target.value as UserStatus)
-                }
-              >
-                <option value="active">启用</option>
-                <option value="suspended">停用</option>
-                <option value="locked">锁定</option>
-              </select>
-            </Field>
+          <Field label="用户类型">
+            <Select
+              className="form-input"
+              value={form.kind}
+              onChange={(value) =>
+                setFormValue(onSetForm, 'kind', (value as UserKind) || 'regular')
+              }
+            >
+              <Select.Option value="regular">普通用户</Select.Option>
+              <Select.Option value="agent">代理</Select.Option>
+            </Select>
+          </Field>
+          <Field label="状态">
+            <Select
+              className="form-input"
+              value={form.status}
+              onChange={(value) =>
+                setFormValue(onSetForm, 'status', (value as UserStatus) || 'active')
+              }
+            >
+              <Select.Option value="active">启用</Select.Option>
+              <Select.Option value="suspended">停用</Select.Option>
+              <Select.Option value="locked">锁定</Select.Option>
+            </Select>
+          </Field>
           </div>
           <Field label="余额（分）">
-            <input
+            <Input
               className="form-input"
               type="number"
               value={form.balanceMinor}
-              onChange={(event) =>
-                setFormValue(onSetForm, 'balanceMinor', event.target.value)
+              onChange={(value) =>
+                setFormValue(onSetForm, 'balanceMinor', value)
               }
             />
           </Field>
           <Field label="上级代理 ID">
-            <input
+            <Input
               className="form-input"
               value={form.agentId}
-              onChange={(event) =>
-                setFormValue(onSetForm, 'agentId', event.target.value)
+              onChange={(value) =>
+                setFormValue(onSetForm, 'agentId', value)
               }
             />
           </Field>
           <Field label="邀请码">
-            <input
+            <Input
               className="form-input"
               placeholder="留空时后端自动生成"
               value={form.inviteCode}
-              onChange={(event) =>
-                setFormValue(onSetForm, 'inviteCode', event.target.value)
+              onChange={(value) =>
+                setFormValue(onSetForm, 'inviteCode', value)
               }
             />
           </Field>
@@ -725,61 +739,61 @@ function AdminSection({
       >
         <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
           <Field label="管理员 ID">
-            <input
+            <Input
               className="form-input"
               value={form.id}
-              onChange={(event) => setFormValue(onSetForm, 'id', event.target.value)}
+              onChange={(value) => setFormValue(onSetForm, 'id', value)}
             />
           </Field>
           <Field label="用户名">
-            <input
+            <Input
               className="form-input"
               value={form.username}
-              onChange={(event) =>
-                setFormValue(onSetForm, 'username', event.target.value)
+              onChange={(value) =>
+                setFormValue(onSetForm, 'username', value)
               }
             />
           </Field>
           <Field label={editingId ? '重置密码' : '初始密码'}>
-            <input
+            <Input
               autoComplete="new-password"
               className="form-input"
               placeholder={editingId ? '留空则不修改密码' : '至少 8 位'}
               type="password"
               value={form.password}
-              onChange={(event) =>
-                setFormValue(onSetForm, 'password', event.target.value)
+              onChange={(value) =>
+                setFormValue(onSetForm, 'password', value)
               }
             />
           </Field>
-          <Field label="角色">
-            <select
-              className="form-input"
-              value={form.roleId}
-              onChange={(event) =>
-                setFormValue(onSetForm, 'roleId', event.target.value)
-              }
-            >
-              {roles.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="状态">
-            <select
-              className="form-input"
-              value={form.status}
-              onChange={(event) =>
-                setFormValue(onSetForm, 'status', event.target.value as UserStatus)
-              }
-            >
-              <option value="active">启用</option>
-              <option value="suspended">停用</option>
-              <option value="locked">锁定</option>
-            </select>
-          </Field>
+              <Field label="角色">
+                <Select
+                  className="form-input"
+                  value={form.roleId}
+                  onChange={(value) =>
+                    setFormValue(onSetForm, 'roleId', (value as string) || '')
+                  }
+                >
+                  {roles.map((role) => (
+                    <Select.Option key={role.id} value={role.id}>
+                      {role.name}
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="状态">
+                <Select
+                  className="form-input"
+                  value={form.status}
+                  onChange={(value) =>
+                    setFormValue(onSetForm, 'status', (value as UserStatus) || 'active')
+                  }
+                >
+                  <Select.Option value="active">启用</Select.Option>
+                  <Select.Option value="suspended">停用</Select.Option>
+                <Select.Option value="locked">锁定</Select.Option>
+              </Select>
+            </Field>
           <div className="flex flex-wrap gap-2">
             <Button
               disabled={saving || !form.roleId || (!editingId && form.password.trim().length < 8)}
@@ -896,17 +910,17 @@ function RoleSection({
       >
         <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
           <Field label="角色 ID">
-            <input
+            <Input
               className="form-input"
               value={form.id}
-              onChange={(event) => setFormValue(onSetForm, 'id', event.target.value)}
+              onChange={(value) => setFormValue(onSetForm, 'id', value)}
             />
           </Field>
           <Field label="角色名称">
-            <input
+            <Input
               className="form-input"
               value={form.name}
-              onChange={(event) => setFormValue(onSetForm, 'name', event.target.value)}
+              onChange={(value) => setFormValue(onSetForm, 'name', value)}
             />
           </Field>
           <div className="space-y-2">
@@ -982,15 +996,12 @@ function SettingsSection({
     (drafts['image_bed_result_url_field'] ?? '').trim() ||
     readSettingValue(settings, 'image_bed_result_url_field') ||
     'links.download';
-  const [imageBedFile, setImageBedFile] = useState<File | null>(null);
-  const [imageBedUploadError, setImageBedUploadError] = useState<string | null>(null);
-  const [imageBedUploadResult, setImageBedUploadResult] = useState<unknown>(null);
-  const [imageBedUploading, setImageBedUploading] = useState(false);
-  const canTestImageBedUpload =
-    Boolean(imageBedUploadUrl.trim()) &&
-    Boolean(imageBedUploadToken.trim()) &&
-    Boolean(imageBedFile);
   const [settingKeyword, setSettingKeyword] = useState('');
+  const imageBedMissingConfigs = [
+    imageBedUploadUrl.trim() ? null : '上传地址',
+    imageBedUploadToken.trim() ? null : 'Token',
+    imageBedUploadField.trim() ? null : '上传字段名',
+  ].filter(Boolean) as string[];
 
   const filteredSettings = settings.filter((setting) => {
     const keyword = settingKeyword.trim().toLowerCase();
@@ -1004,27 +1015,6 @@ function SettingsSection({
   });
   const groupedSettings = settingsGroups(filteredSettings);
 
-  const onTestImageBedUpload = async () => {
-    if (!imageBedFile) {
-      setImageBedUploadError('请先选择要上传的图片');
-      return;
-    }
-    setImageBedUploading(true);
-    setImageBedUploadError(null);
-    setImageBedUploadResult(null);
-    try {
-      const response = await uploadImageBedFile(
-        imageBedFile,
-        imageBedUploadField || 'file',
-      );
-      setImageBedUploadResult(response);
-    } catch (requestError: unknown) {
-      setImageBedUploadError(errorMessage(requestError));
-    } finally {
-      setImageBedUploading(false);
-    }
-  };
-
   return (
     <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
       <Card className="rounded-md border border-line">
@@ -1033,11 +1023,11 @@ function SettingsSection({
           <Tag color="cyan">{settings.length} 项</Tag>
         </div>
         <div className="mb-3">
-          <input
+          <Input
             className="form-input"
             placeholder="搜索配置项 / 说明"
             value={settingKeyword}
-            onChange={(event) => setSettingKeyword(event.target.value)}
+            onChange={(value) => setSettingKeyword(value)}
           />
         </div>
         <div className="space-y-3">
@@ -1047,50 +1037,79 @@ function SettingsSection({
             </div>
           ) : (
             groupedSettings.map(([groupName, items]) => (
-            <div
-              key={groupName}
-              className="rounded-lg border border-slate-200 bg-white p-3"
-            >
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-sm font-medium text-slate-700">{groupName}</h3>
-                <Tag color="grey">{items.length} 项</Tag>
-              </div>
-              <div className="space-y-3">
-                {items.map((setting) => (
-                  <div
-                    key={setting.key}
-                    className="grid gap-2 rounded border border-slate-100 p-2"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-ink">
-                          {setting.key}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {setting.description}
-                        </p>
+              <div
+                key={groupName}
+                className="rounded-lg border border-slate-200 bg-white p-3"
+              >
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-slate-700">
+                    {groupName}
+                  </h3>
+                  <Tag color="grey">{items.length} 项</Tag>
+                </div>
+                <div className="space-y-3">
+                  {items.map((setting) => {
+                    const draftValue = drafts[setting.key] ?? setting.value;
+                    const selectOptions = settingSelectOptions(
+                      setting.key,
+                      draftValue,
+                    );
+
+                    return (
+                      <div
+                        key={setting.key}
+                        className="grid gap-2 rounded border border-slate-100 p-2"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-ink">
+                              {setting.key}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {setting.description}
+                            </p>
+                          </div>
+                          <div>
+                            <Button
+                              disabled={saving}
+                              size="small"
+                              onClick={() => onSaveSetting(setting.key)}
+                            >
+                              保存
+                            </Button>
+                          </div>
+                        </div>
+                        {selectOptions.length > 0 ? (
+                          <Select
+                            className="form-input"
+                            value={draftValue}
+                            onChange={(value) =>
+                              onDraftChange(setting.key, String(value ?? ''))
+                            }
+                          >
+                            {selectOptions.map((option) => (
+                              <Select.Option
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {option.label}
+                              </Select.Option>
+                            ))}
+                          </Select>
+                        ) : (
+                          <Input
+                            className="form-input"
+                            value={draftValue}
+                            onChange={(value) =>
+                              onDraftChange(setting.key, value)
+                            }
+                          />
+                        )}
                       </div>
-                      <div>
-                        <Button
-                          disabled={saving}
-                          size="small"
-                          onClick={() => onSaveSetting(setting.key)}
-                        >
-                          保存
-                        </Button>
-                      </div>
-                    </div>
-                    <input
-                      className="form-input"
-                      value={drafts[setting.key] ?? setting.value}
-                      onChange={(event) =>
-                        onDraftChange(setting.key, event.target.value)
-                      }
-                    />
-                  </div>
-                ))}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
             ))
           )}
         </div>
@@ -1146,74 +1165,43 @@ function SettingsSection({
           )}
         </Card>
         <Card className="rounded-md border border-line">
-          <PanelTitle icon={<Upload size={18} />} title="图床上传测试" />
+          <PanelTitle icon={<UploadIcon size={18} />} title="图床上传测试" />
           <div className="space-y-4">
-            <Field label="当前生效上传字段名">
-              <input
-                className="form-input"
-                readOnly
-                value={imageBedUploadField || 'file'}
-              />
-            </Field>
-            <Field label="当前生效返回链接字段（支持 . 分割）">
-              <input
-                className="form-input"
-                readOnly
-                value={imageBedResultUrlField}
-              />
-            </Field>
-            <Field label="测试文件">
-              <input
-                accept="image/*"
-                className="form-input"
-                type="file"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  setImageBedFile(file ?? null);
-                  setImageBedUploadError(null);
-                  setImageBedUploadResult(null);
-                }}
-              />
-            </Field>
-            <div className="space-y-1 text-sm text-slate-600">
-              <p>说明：请先在上方保存图床地址、Token 和上传字段名。</p>
-              <p>当前地址：{imageBedUploadUrl || '未配置'}</p>
-            </div>
-            <div>
-              <Button
-                disabled={saving || imageBedUploading || !canTestImageBedUpload}
-                icon={<Upload size={16} />}
-                loading={imageBedUploading}
-                onClick={() => {
-                  void onTestImageBedUpload();
-                }}
-              >
-                测试上传
-              </Button>
-              {imageBedUploading ? (
-                <span className="ml-2 text-sm text-slate-500">正在上传...</span>
-              ) : null}
-              {imageBedFile ? (
-                <span className="ml-2 text-sm text-slate-500">
-                  已选择：{imageBedFile.name}
+            <div className="grid gap-2 text-sm text-slate-600">
+              <div className="flex items-center justify-between gap-3 rounded border border-slate-200 bg-slate-50 px-3 py-2">
+                <span>上传地址</span>
+                <span className="min-w-0 truncate font-mono text-xs text-slate-700">
+                  {imageBedUploadUrl || '未配置'}
                 </span>
-              ) : null}
-            </div>
-            {imageBedUploadError ? (
-              <Banner
-                description={imageBedUploadError}
-                title="图床上传失败"
-                type="danger"
-              />
-            ) : null}
-            {imageBedUploadResult ? (
-              <div>
-                <p className="mb-2 text-sm text-slate-600">上传返回内容</p>
-                <pre className="max-h-48 overflow-auto rounded bg-slate-50 p-3 text-xs text-slate-700">
-                  {JSON.stringify(imageBedUploadResult, null, 2)}
-                </pre>
               </div>
-            ) : null}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-xs text-slate-500">上传字段名</p>
+                  <p className="mt-1 truncate font-mono text-sm text-slate-700">
+                    {imageBedUploadField || 'file'}
+                  </p>
+                </div>
+                <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-xs text-slate-500">返回链接字段</p>
+                  <p className="mt-1 truncate font-mono text-sm text-slate-700">
+                    {imageBedResultUrlField}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <ImageUploadAvatar
+              description="上传成功后会自动展示图片链接和预览。"
+              disabled={saving}
+              errorTitle="图床上传失败"
+              failureMessage="上传失败"
+              missingConfigLabels={imageBedMissingConfigs}
+              successMessage="图片上传成功"
+              title="点击图片区域选择并测试上传"
+              uploadFieldName={imageBedUploadField || 'file'}
+              uploadingText="正在请求图床服务..."
+              warningTitle="图床配置不完整"
+            />
           </div>
         </Card>
       </div>
@@ -1252,6 +1240,38 @@ function settingGroupName(key: string): string {
     return '返利设置';
   }
   return '基础设置';
+}
+
+function settingSelectOptions(
+  key: string,
+  currentValue: string,
+): SettingSelectOption[] {
+  const optionsByKey: Record<string, SettingSelectOption[]> = {
+    email_registration_enabled: [
+      { label: '开启邮箱注册', value: 'true' },
+      { label: '关闭邮箱注册', value: 'false' },
+    ],
+    recharge_rebate_mode: [
+      { label: '立即返利', value: 'immediate' },
+      { label: '充值阶梯返利', value: 'rechargeTiered' },
+    ],
+  };
+  const options = optionsByKey[key] ?? [];
+  const normalizedCurrentValue = currentValue.trim();
+  if (
+    normalizedCurrentValue &&
+    options.length > 0 &&
+    !options.some((option) => option.value === normalizedCurrentValue)
+  ) {
+    return [
+      ...options,
+      {
+        label: `当前值：${normalizedCurrentValue}`,
+        value: normalizedCurrentValue,
+      },
+    ];
+  }
+  return options;
 }
 
 function settingsGroups(
@@ -1313,13 +1333,6 @@ function readSettingValue(
   key: string,
 ) {
   return settings.find((item) => item.key === key)?.value ?? '';
-}
-
-function errorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message || '请求失败';
-  }
-  return '请求失败';
 }
 
 function accessTotals(users: UserSummary[], admins: AdminSummary[]) {

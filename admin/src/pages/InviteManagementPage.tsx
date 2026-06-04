@@ -1,4 +1,4 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
 import { Link2, RefreshCcw, Save, UserPlus } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
@@ -257,61 +257,58 @@ export function InviteManagementPage({
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <Field label="关系 ID">
-                  <input
+                  <Input
                     className="h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-teal-500"
                     value={createForm.id}
-                    onChange={(event) =>
-                      setCreateFormValue(setCreateForm, 'id', event.target.value)
+                    onChange={(value) =>
+                      setCreateFormValue(setCreateForm, 'id', value)
                     }
                   />
                 </Field>
                 <Field label="邀请码">
-                  <input
+                  <Input
                     className="h-10 w-full rounded-md border border-line bg-slate-50 px-3 text-sm text-slate-600 outline-none"
                     readOnly
                     value={createForm.inviteCode}
                   />
                 </Field>
                 <Field label="邀请人">
-                  <select
+                  <Select
                     className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
                     value={createForm.inviterUserId}
-                    onChange={(event) => {
+                    onChange={(value) => {
+                      const inviterId = String(value ?? '');
                       const inviter = inviterCandidates.find(
-                        (user) => user.id === event.target.value,
+                        (user) => user.id === inviterId,
                       );
                       setCreateForm((current) => ({
                         ...current,
                         inviteCode: inviter?.inviteCode ?? '',
-                        inviterUserId: event.target.value,
+                        inviterUserId: inviterId,
                       }));
                     }}
                   >
                     {inviterCandidates.map((user) => (
-                      <option key={user.id} value={user.id}>
+                      <Select.Option key={user.id} value={user.id}>
                         {user.username} ({userKindText(user.kind)})
-                      </option>
+                      </Select.Option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
                 <Field label="被邀请人">
-                  <select
+                  <Select
                     className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
                     value={createForm.inviteeUserId}
-                    onChange={(event) =>
-                      setCreateFormValue(
-                        setCreateForm,
-                        'inviteeUserId',
-                        event.target.value,
-                      )
+                    onChange={(value) =>
+                      setCreateFormValue(setCreateForm, 'inviteeUserId', String(value ?? ''))
                     }
                   >
                     {inviteeCandidates.map((user) => (
-                      <option key={user.id} value={user.id}>
+                      <Select.Option key={user.id} value={user.id}>
                         {user.username} ({user.id})
-                      </option>
+                      </Select.Option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
                 <Field label="备注">
                   <textarea
@@ -380,23 +377,23 @@ export function InviteManagementPage({
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Field label="状态">
-                    <select
-                      className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
-                      value={updateForm.status}
-                      onChange={(event) =>
+                <Field label="状态">
+                  <Select
+                    className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-teal-500"
+                    value={updateForm.status}
+                    onChange={(value) =>
                         setUpdateFormValue(
                           setUpdateForm,
                           'status',
-                          event.target.value as InviteStatus,
+                          (value as InviteStatus) || 'active',
                         )
                       }
                     >
-                      <option value="pending">待确认</option>
-                      <option value="active">有效</option>
-                      <option value="disabled">停用</option>
-                    </select>
-                  </Field>
+                    <Select.Option value="pending">待确认</Select.Option>
+                    <Select.Option value="active">有效</Select.Option>
+                    <Select.Option value="disabled">停用</Select.Option>
+                  </Select>
+                </Field>
                   <Field label="返利资格">
                     <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                       <input

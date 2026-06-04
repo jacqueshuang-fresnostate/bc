@@ -1,5 +1,297 @@
 # TODO
 
+## 2026-06-04 12:47 HKT API68 批量彩种接入
+
+- 完成任务：按用户提供的 API68 接口批量新增北京PK10、天津时时彩、新疆时时彩、广东11选5、江苏快3、澳洲幸运10、澳洲幸运20、北京快乐8、各省 11 选 5、各省快3等彩种，并为这些彩种补齐默认开奖源配置。
+- 解决问题：此前系统只支持少量 3 位/5 位彩种，新提供的 PK10、11选5、快3、快乐8/幸运20 接口无法在后台彩种管理、开奖源配置、期号调度和彩种控制台中正确落地。
+- 具体实现：
+  - 后端 `LotteryNumberType` 新增 `pk10`、`elevenFive`、`fastThree`、`luckTwenty`，并按号码类型校验开奖号码长度、范围和是否去重。
+  - `seed_lotteries()` 新增 26 个 API68 彩种，内存种子总数更新为 32；PostgreSQL 启动时会补齐缺失彩种，不覆盖已有同 ID 彩种。
+  - `draw_sources` 默认源新增本次 API68 批量彩种来源；已有数据库启动时会补齐缺失默认源，不覆盖已绑定彩种的现有来源。
+  - API68 解析器兼容 `result.data` 数组和单对象响应，并读取单对象响应中的 `drawIssue`、`drawTime` 作为下一期锚点。
+  - 澳洲幸运5默认 endpoint 更新为 `https://api.api68.com/CQShiCai/getBaseCQShiCai.do`。
+  - 管理后台新增共享号码类型工具，彩种管理、开奖期号、开奖源预设、彩种控制台和概览页均能正确展示新增号码类型。
+  - PK10、11选5、快3、快乐8/幸运20 当前先接开奖采集、期号调度和控制号码；投注玩法暂不伪造，后续补玩法规则时再扩展。
+- 验证记录：
+  - `cd backend && cargo fmt && cargo fmt --check` 通过。
+  - `cd backend && cargo check` 通过。
+  - `cd backend && cargo test api68 -- --nocapture` 通过，覆盖 API68 数组/单对象响应解析和新增默认开奖源。
+  - `cd backend && cargo test normalize_draw_number_supports_new_lottery_number_types -- --nocapture` 通过。
+  - `cd backend && cargo test seeded_lotteries_include_requested_api68_lotteries -- --nocapture` 通过。
+  - `cd backend && cargo test -- --nocapture` 通过，154 个测试全部通过；仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - `cd admin && npm run build` 通过；Vite 仍提示已有 chunk 体积超过 500kB。
+
+## 2026-06-04 12:11 HKT 后端接入 OpenAPI 文档能力
+
+- 完成任务：新增后端 OpenAPI 文档入口和 Swagger UI 页面，方便接口联调与后续移动端/前端按统一契约开发。
+- 解决问题：此前项目没有可访问的 OpenAPI 规范，接口路径、鉴权方式和请求体只能从代码中查找；本次把当前健康检查、管理后台和用户端接口整理为可读取的 OpenAPI 3.1 文档。
+- 具体实现：
+  - 新增 `GET /api/openapi.json`，返回 OpenAPI JSON。
+  - 新增 `GET /api/docs`，返回 Swagger UI 页面并指向 `/api/openapi.json`。
+  - OpenAPI 文档按中文模块标签分组，受保护接口统一声明 `bearerAuth`。
+  - 新增 `backend/src/routes/openapi.rs`，并为文档生成、路径参数、请求体、响应体、安全方案等方法补充中文注释。
+- 验证记录：
+  - `cargo fmt` 已执行。
+  - `cargo fmt --check` 通过。
+  - `cargo check` 通过。
+  - `cargo test openapi -- --nocapture` 通过，覆盖核心路径、安全方案、Swagger UI 指向和路径参数提取。
+  - `cargo test -- --nocapture` 通过，后端 150 个测试全部通过；测试编译仍提示 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - 使用 `PORT=18132 DATABASE_URL=postgres://root:123456@192.168.2.3:15432/postgres cargo run` 启动本地后端后，`curl http://127.0.0.1:18132/api/openapi.json` 返回 OpenAPI JSON，`curl -I http://127.0.0.1:18132/api/docs` 返回 `200 OK`。
+  - 本地启动过程中调度器仍打印“开奖调度器历史记录写入失败”，该日志与 OpenAPI 文档入口无关，后续可单独排查调度历史表/数据库状态。
+
+## 2026-06-04 11:57 HKT 邀请码改为字母数字且保证唯一
+
+- 完成任务：将用户邀请码自动生成规则从纯大写字母调整为 8 位大写字母数字组合，并继续保证每个用户的邀请码唯一。
+- 解决问题：此前自动邀请码只会生成纯字母，和“随机字母加数字”的最新要求不一致；邀请关系种子也引用旧代理示例码，空库演示数据容易继续出现旧格式。
+- 具体实现：
+  - 自动生成字符集改为 `A-Z + 0-9`。
+  - 生成结果必须同时包含大写字母和数字，避免生成纯字母或纯数字的邀请码。
+  - 生成时检查现有用户集合，遇到重复会重新生成；用户保存时继续执行唯一性校验。
+  - 种子用户邀请码更新为包含数字的固定示例码，并同步邀请关系种子的代理邀请码。
+- 验证记录：
+  - `cargo fmt` 已执行。
+  - `cargo fmt --check` 通过。
+  - `cargo check` 通过。
+  - `cargo test invite_code -- --nocapture` 通过，覆盖种子码格式、自动生成唯一邀请码、重复邀请码拒绝和普通用户邀请码无效。
+  - `cargo test -- --nocapture` 通过，后端 146 个测试全部通过；测试编译仍提示 4 个既有 `LotteryCategory` 未使用导入 warning。
+
+## 2026-06-04 11:45 HKT 机器人配置改为 SideSheet
+
+- 完成任务：将“机器人配置”里的新增和编辑维护表单从页面右侧常驻卡片改为 Semi UI `SideSheet` 抽屉。
+- 解决问题：此前机器人列表和配置维护表单同屏堆叠，占用列表扫描空间；现在只在新增或编辑时打开抽屉。
+- 具体实现：
+  - 页面顶部新增“新增配置”按钮，点击后按当前机器人类型初始化表单并打开“新增机器人配置”抽屉。
+  - 点击机器人名称或列表“编辑”按钮时加载该机器人数据并打开“编辑机器人配置”抽屉。
+  - 保存成功或删除成功后自动关闭抽屉，并继续刷新工作台概览。
+  - 切换外层机器人模块时关闭已打开抽屉，避免编辑状态残留。
+- 验证记录：
+  - `cd admin && npm run build` 通过。
+  - 浏览器验证 `http://127.0.0.1:5176/`：进入“机器人配置”时没有常驻 `.semi-sidesheet`。
+  - 浏览器验证点击“新增配置”后打开“新增机器人配置” SideSheet，点击列表“编辑”后打开“编辑机器人配置” SideSheet。
+
+## 2026-06-04 11:33 HKT 彩种新增编辑改为 SideSheet
+
+- 完成任务：将“彩种管理”里的新增彩种和编辑彩种表单从页面右侧常驻卡片改为 Semi UI `SideSheet` 抽屉。
+- 解决问题：此前彩种列表和新增/编辑表单同屏堆叠，占用列表扫描空间；运营只想维护某个彩种时再打开表单。
+- 具体实现：
+  - 点击顶部“新增彩种”按钮时清空表单并打开“新增彩种”抽屉。
+  - 点击列表中的彩种名称或“编辑”按钮时加载该彩种数据并打开“编辑彩种”抽屉。
+  - 保存成功或删除成功后自动关闭抽屉，并继续刷新工作台概览。
+  - 主页面保留彩种列表、快速改分类、分类管理、玩法配置和刷新入口。
+- 验证记录：
+  - `cd admin && npm run build` 通过。
+  - 浏览器验证 `http://127.0.0.1:5176/`：进入“彩种管理”时没有常驻 `.semi-sidesheet`。
+  - 浏览器验证点击“新增彩种”后打开“新增彩种” SideSheet，点击列表“编辑”后打开“编辑彩种” SideSheet。
+
+## 2026-06-04 11:29 HKT Semi Input 与 Select 尺寸对齐
+
+- 完成任务：修正全局 `.semi-input-wrapper.form-input` 样式，让 Semi `Input` 的高度和左右内边距与 Semi `Select` 保持一致。
+- 解决问题：此前 Semi `Input` wrapper 被兼容样式压到 32px，高度低于 `Select` 的 40px，并且 wrapper 左右 padding 为 0，导致同一表单里输入框和下拉框不齐。
+- 具体实现：
+  - `.semi-input-wrapper.form-input` 调整为 `min-height: 40px`、`display: flex`、`align-items: center`、`padding: 0 10px`。
+  - `.semi-input-wrapper.form-input .semi-input` 调整为 `height: 20px`、`line-height: 20px`、`padding: 0`，让文字区域与 Select 文本行高一致。
+- 验证记录：
+  - `cd admin && npm run build` 通过。
+  - 浏览器验证系统设置页：`.semi-input-wrapper.form-input` 与 `.semi-select.form-input` 高度均为 40px，左右 padding 均为 10px。
+
+## 2026-06-04 11:24 HKT 系统设置枚举项改为下拉框
+
+- 完成任务：将“系统设置”中“注册与安全”和“返利设置”的枚举配置改为 Semi UI `Select` 下拉框。
+- 解决问题：`email_registration_enabled` 和 `recharge_rebate_mode` 原来使用普通文本输入，运营容易填入非标准值；现在只能从明确选项中选择。
+- 具体实现：
+  - `email_registration_enabled` 提供“开启邮箱注册 / 关闭邮箱注册”两个选项，保存值仍为 `true / false`。
+  - `recharge_rebate_mode` 提供“立即返利 / 充值阶梯返利”两个选项，保存值仍为 `immediate / rechargeTiered`。
+  - 若数据库已有历史非标准值，页面会追加“当前值”选项用于展示，避免打开页面时丢失现有值。
+- 验证记录：
+  - `cd admin && npm run build` 通过。
+  - 浏览器验证 `http://127.0.0.1:5176/`：“注册与安全”和“返利设置”共渲染 2 个 `.semi-select.form-input`。
+  - 浏览器验证邮箱注册下拉包含“开启邮箱注册 / 关闭邮箱注册”，返利模式下拉包含“立即返利 / 充值阶梯返利”。
+
+## 2026-06-04 11:14 HKT 全局文本输入统一为 Semi Input
+
+- 完成任务：将管理后台内所有文本类、数字类、密码类原生 `<input>` 统一替换为 `@douyinfe/semi-ui` 的 `Input` 组件。
+- 解决问题：此前后台页面虽然下拉框已统一为 Semi UI，但文本输入仍大量使用原生 `<input>`，导致输入框样式、交互和回调语义不一致。
+- 具体实现：
+  - 覆盖页面：
+    - `AccessManagementPage`
+    - `DrawManagementPage`
+    - `FinanceManagementPage`
+    - `GroupBuyManagementPage`
+    - `InviteManagementPage`
+    - `LoginPage`
+    - `LotteryConsolePage`
+    - `LotteryManagementPage`
+    - `OrderManagementPage`
+    - `PlayRulesPage`
+    - `RebateManagementPage`
+    - `RobotManagementPage`
+  - 为相关页面引入 `import { Input } from '@douyinfe/semi-ui';`。
+  - 将 Semi `Input` 的 `onChange(value)` 回调适配到原有表单状态更新逻辑。
+  - `admin/src/index.css` 为 `.semi-input-wrapper.form-input` 增加兼容样式，清除旧原生 `.form-input` 叠加到 Semi wrapper 的 `padding` 与 `min-height`，避免输入框高度和内边距异常。
+  - 保留 checkbox 类型原生 `<input>`，因为其不属于 Semi `Input` 文本输入组件范围。
+- 验证记录：
+  - `cd admin && npm run build` 通过。
+  - `rg -n "<input\\b" admin/src` 剩余项均为 `type="checkbox"`。
+  - 浏览器验证 `http://127.0.0.1:5176/` 的“订单管理”表单，文本输入渲染为 `.semi-input-wrapper / .semi-input`。
+  - 浏览器验证 `.semi-input-wrapper.form-input` 的 wrapper `padding-left/right=0px`、`min-height=0px`，内层 `.semi-input` 保留 Semi 默认 `12px` padding。
+
+## 2026-06-04 11:05 HKT 彩种 Logo 上传精简为 semi-upload-add
+
+- 完成任务：将“彩种管理”新增/编辑表单中的 LOGO 上传入口精简为 Semi UI 图片上传的 `semi-upload-add` 样式入口。
+- 解决问题：此前彩种 LOGO 上传复用了完整图片上传面板，会显示上传说明、当前文件、清空按钮等额外内容；用户反馈彩种上传 LOGO 只需要显示 `semi-upload-add`。
+- 具体实现：
+  - `admin/src/components/ImageUploadAvatar.tsx` 增加 `variant="uploadAdd"` 精简模式，内部使用 `Upload listType="picture"` 生成 `semi-upload-add / semi-upload-picture-add` 上传入口。
+  - `admin/src/pages/LotteryManagementPage.tsx` 的 LOGO 字段切换到 `uploadAdd` 模式，只保留上传方块；上传成功后仍回填 `form.logoUrl`。
+  - 移除彩种表单中 LOGO 下方的“图床上传字段名”只读展示，字段名继续在内部按系统设置使用。
+- 验证记录：
+  - `cd admin && npm run build` 通过。
+  - 浏览器验证 `http://127.0.0.1:5176/`：“彩种管理”中存在 `.lottery-logo-upload .semi-upload-add` 和 `.semi-upload-picture-add`，旧的 LOGO 上传说明文案与“图床上传字段名”不再显示。
+
+## 2026-06-04 10:26 HKT 公共图片上传组件复用
+
+- 完成任务：新增公共图片上传组件 `ImageUploadAvatar`，将系统设置的图床上传测试和彩种编辑的 Logo 上传统一改为复用同一组件。
+- 解决问题：此前图床测试和彩种 Logo 上传各自维护 `Upload + Avatar + Toast + IconCamera`、文件预览、上传状态、返回链接提取和错误提示逻辑，后续修改图床上传体验时容易两边行为不一致。
+- 具体实现：
+  - `admin/src/components/ImageUploadAvatar.tsx` 统一承载图片选择、头像预览、上传中提示、上传结果展示、复制链接、打开图片、清空图片和配置缺失提示。
+  - `admin/src/pages/AccessManagementPage.tsx` 的“图床上传测试”改为直接使用公共组件，保留上传地址、字段名、返回链接字段的配置展示。
+  - `admin/src/pages/LotteryManagementPage.tsx` 的新增/编辑彩种 Logo 上传改为使用公共组件，上传成功后回填 `form.logoUrl`，保存彩种后持久化。
+  - 清理两个页面内重复的文件预览、图片链接提取、上传错误和头像蒙层 helper。
+- 验证记录：
+  - `cd admin && npm run build` 通过。
+  - 浏览器验证 `http://127.0.0.1:5176/`：“彩种管理”可见“点击图片区域上传 LOGO”，“系统设置”可见“点击图片区域选择并测试上传”。
+
+## 2026-06-04 10:18 HKT 彩种分类抽屉化与 Logo 上传组件优化
+
+- 完成任务：优化“彩种管理”页面结构，将“彩种分类管理”从彩种列表上方移出，改为顶部“分类管理”按钮打开独立 `SideSheet` 维护。
+- 完成任务：按 Semi UI `Upload + Avatar + Toast + IconCamera` 风格优化新增/编辑彩种里的 Logo 上传组件。
+- 解决问题：此前彩种分类管理卡片和彩种列表堆在同一页面区域，运营扫描彩种列表时被分类维护表单干扰；Logo 上传仍是原生文件输入和按钮，不符合前面确定的图床上传组件样式。
+- 具体实现：
+  - `admin/src/pages/LotteryManagementPage.tsx` 新增分类管理抽屉，分类新增、编辑、删除都在抽屉内完成。
+  - 彩种管理顶部新增“分类管理”按钮，主页面保留彩种列表、快速改分类和新增/编辑彩种表单。
+  - Logo 上传改为 Semi UI `Upload` 包裹 `Avatar`，hover 显示 `IconCamera` 相机蒙层。
+  - `Upload.customRequest` 继续调用后台图床代理 `uploadImageBedFile`，上传成功后自动写入 `form.logoUrl`，并通过 `Toast` 提示成功/失败。
+- 验证记录：
+  - `cd admin && npm run build` 通过。
+  - 浏览器验证 `http://127.0.0.1:5176/` 的“彩种管理”页面：可见“分类管理”按钮，分类配置默认不与列表同屏堆叠；新增/编辑彩种中显示头像式 Logo 上传入口；点击“分类管理”可打开分类维护抽屉。
+
+## 2026-06-04 09:57 HKT 图床上传测试组件头像化优化
+
+- 完成任务：按 Semi UI 示例风格优化“图床上传测试”组件，改为 `Upload + Avatar + Toast + IconCamera` 的图片上传入口。
+- 解决问题：原测试组件是通用文件选择/拖拽形态，测试图床时不够直观；现在点击头像式图片区域即可选择并上传，hover 时显示相机图标，成功/失败通过 Toast 即时提示。
+- 具体实现：
+  - `admin/src/pages/AccessManagementPage.tsx` 引入 Semi UI `Avatar`、`Upload`、`Toast` 和 `@douyinfe/semi-icons` 的 `IconCamera`。
+  - 使用 `Upload.customRequest` 继续调用已有 `uploadImageBedFile`，保证上传仍走后台图床代理和数据库中的图床配置。
+  - 上传成功后展示图片链接、图片预览、复制链接、打开图片和原始响应折叠区。
+  - 配置缺失时展示中文提示，并阻止上传，避免无效请求。
+- 验证记录：
+  - `cd admin && npm run build` 通过。
+
+## 2026-06-04 01:10 HKT 全项目下拉控件统一 UI 标准
+
+- 完成任务：将管理后台中所有原生 HTML `<select>` 替换为 `@douyinfe/semi-ui` 的 `Select` 组件，确保筛选、状态选择、角色/玩法/彩种下拉等交互在同一 UI 体系下运行。
+- 解决问题：此前项目内仍存在部分原生 `select`，与 Semi UI 设计规范和统一交互风格不一致，影响可维护性与可用性一致性。
+- 具体实现：
+  - 覆盖页面：
+    - `admin/src/pages/AccessManagementPage.tsx`
+    - `admin/src/pages/DrawManagementPage.tsx`
+    - `admin/src/pages/GroupBuyManagementPage.tsx`
+    - `admin/src/pages/InviteManagementPage.tsx`
+    - `admin/src/pages/LotteryManagementPage.tsx`
+    - `admin/src/pages/OrderManagementPage.tsx`
+    - `admin/src/pages/PlayRulesPage.tsx`
+    - `admin/src/pages/RebateManagementPage.tsx`
+    - `admin/src/pages/RobotManagementPage.tsx`
+    - `admin/src/pages/SettlementManagementPage.tsx`
+    - `admin/src/pages/SupportManagementPage.tsx`
+  - 每个页面补充 `Select` 与 `Select.Option` 的导入与使用，不再使用原生 `select` 元素。
+  - 将 `onChange` 回调从事件对象改为 `Select` 值回调，统一按 `string`/类型转换处理，避免 `undefined` 与类型兼容问题。
+  - 涉及状态值（销售状态、角色、彩种、玩法、优先级、管理员分配等）均已保持原有语义映射。
+- 验证记录：
+  - 已执行 `cd admin && npm run build`（含 `tsc --noEmit` 与 `vite build`）验证通过。
+  - 全局搜索确认 `rg -n "<select|</select>" admin/src` 无匹配结果。
+
+## 2026-06-04 23:58 HKT 彩种分类管理界面补齐
+
+- 完成任务：在“彩种管理”页面补齐“彩种分类”新增/编辑/删除入口，新增分类后直接可在列表与表单中使用；修复分类下拉从静态枚举切换为后端配置数据源。
+- 解决问题：用户反馈“没有地方可以编辑添加彩种分类”，之前仅有分类显示而无维护入口，且分类选择是写死常量导致新增分类无法落地。
+- 具体实现：
+  - 后端：
+    - 已有 `GET/POST/PUT/DELETE /api/admin/lottery-categories` 接口接入前端，不再仅依赖前端静态常量。
+    - `LotteryKind.category` 继续使用字符串编码，避免固定枚举约束。
+  - 前端：
+    - `admin/src/api/client.ts` 新增分类配置接口方法：
+      - `fetchLotteryCategories`
+      - `createLotteryCategory`
+      - `updateLotteryCategory`
+      - `deleteLotteryCategory`
+    - 新增 `admin/src/hooks/useLotteryCategories.ts` 统一管理分类列表与增改删状态。
+    - `admin/src/pages/LotteryManagementPage.tsx` 新增“彩种分类管理”区块：
+      - 可查看现有分类列表；
+      - 可新增分类；
+      - 可编辑分类名称；
+      - 可删除分类（含保护提示）。
+    - 彩种列表快速改分类下拉和表单分类下拉改为使用后端分类数据。
+- 验证记录：
+  - 代码静态联调后执行 `cd admin && npm run build`，`cd backend && cargo check`。
+
+## 2026-06-04 21:50 HKT 彩种支持上传 Logo 链路
+
+- 完成任务：在彩种管理页补齐“每个彩种可上传 logo”能力，并在列表与编辑页回显图片；并确保彩种 API/仓储/数据库都持久化 `logoUrl`。
+- 解决问题：先前彩种管理仅支持文字字段，运营无法直接在后台给每个彩种绑定视觉标识，后续导入到前端卡片或看板时缺少图像信息。
+- 具体实现：
+  - 后端：
+    - `backend/src/domain/lottery.rs` 增加 `LotteryKind.logo_url`，并在 `seed_lotteries` 与测试级构造体里补默认值。
+    - `backend/src/services/lottery.rs` 的 `list/get/create/update` SQL 增加 `logo_url` 字段读写。
+    - 新增迁移 `backend/migrations/20260604202000_add_lottery_logo_url.sql`，为 `lotteries` 增加 `logo_url TEXT NOT NULL DEFAULT ''`。
+    - 新增 `comment` 脚本补齐字段注释。
+  - 前端：
+    - `admin/src/types/dashboard.ts` 的 `LotteryKind` 增加 `logoUrl`。
+    - `admin/src/App.tsx` 传递系统设置到 `LotteryManagementPage`。
+    - `admin/src/pages/LotteryManagementPage.tsx` 新增 Logo 显示、文件选择、上传按钮，并复用图床配置 `image_bed_upload_field`。
+    - 上传后将返回的图片链接回填到 `form.logoUrl`，并随保存同步下发到后端。
+- 验证记录：
+  - `cd backend && cargo check` 通过。
+  - `cd admin && npm run build` 通过。
+- 后续动作：
+  - 若需要按 `image_bed_result_url_field` 自定义读取字段，在该页增加可选覆盖输入项；目前复用系统设置默认值。
+  - 可继续扩展为“logo 上传预览失败重试和图片链接校验提示”。
+
+## 2026-06-04 23:58 HKT 彩种 Logo 能力本地回归确认
+
+- 完成任务：对“每个彩种可上传 Logo”链路做本地回归，确认后端持久化、前端回显与构建联动已可用。
+- 解决问题：上次只做了静态联动，需要再确认字段映射和构建验证无报错。
+- 具体动作：
+  - 复核 `LotteryKind.logo_url` 在域模型、仓储 SQL、迁移脚本中的读写链路。
+  - 复核 `LotteryManagementPage` 列表与编辑页：新增/编辑可选 LOGO 上传、缩略图展示、清空与保存回传。
+  - 补充 `架构设计.md` 后续记录，保持需求变更可追溯。
+- 验证记录：
+  - `cargo check -q`（backend）通过。
+  - `cd admin && npm run build` 通过。
+
+## 2026-06-04 23:59 HKT 彩种分类可直接编辑入口补齐
+
+- 完成任务：在彩种管理列表页补充“快速修改分类”入口，避免需要先进入编辑态才能更改分类。
+- 解决问题：当前分类虽有下拉框，但位于编辑表单，运维高频操作不够直接，用户反馈“没有地方可以编辑分类”。
+- 具体实现：
+  - 在“彩种列表”增加“快速改分类”列。
+  - 每行展示分类下拉框，直接调用更新接口改写 `category` 并刷新列表。
+  - 已选中的彩种在列表与表单内同步更新，避免编辑态显示与列表状态不一致。
+- 验证记录：
+  - `cd admin && npm run build` 通过。
+
+## 2026-06-05 00:10 HKT 系统设置独立顶级分类
+
+- 完成任务：把“系统设置”从“公共功能”中独立拆分为单独一级分类，在侧边栏中独立展示。
+- 解决问题：当前“系统设置”和“用户管理 / 管理员管理 / 角色权限”放在同一分组，难以快速找到配置入口。
+- 具体实现：
+  - 在后端 `backend/src/services/dashboard.rs` 的 `module_groups()` 中新增独立 `settings` 分组。
+  - 将 `settings` 模块从 `common` 分组移除，放到独立分组。
+  - 保持 `settings` 权限校验、路由入口、保存与读取逻辑不变。
+- 验证记录：
+  - `cargo check` 通过。
+  - `cargo test` 通过。
+  - `cd admin && npm run build` 通过。
+
 ## 2026-06-04 23:55 HKT 图床返回链接字段可配置
 
 - 完成任务：图床上传返回为图片链接时，可通过配置项 `image_bed_result_url_field` 指定返回字段路径（如 `links.download`），避免前端拿到不稳定的原始回包。

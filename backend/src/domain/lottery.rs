@@ -4,20 +4,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::play::PlayRuleCode;
 
+/// 彩种分类配置，允许按代码和展示名进行自定义。
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum LotteryCategory {
-    Regional,
-    Overseas,
-    Welfare,
-    Other,
+pub struct LotteryCategoryConfig {
+    pub code: String,
+    pub name: String,
 }
+
+/// 彩种分类标识，采用可扩展文本编码。
+pub type LotteryCategory = String;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum LotteryNumberType {
     ThreeDigit,
     FiveDigit,
+    Pk10,
+    ElevenFive,
+    FastThree,
+    LuckTwenty,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -101,6 +107,9 @@ pub struct LotteryKind {
     pub id: String,
     pub name: String,
     pub category: LotteryCategory,
+    /// 彩种 LOGO 地址，未上传时可为空。
+    #[serde(default)]
+    pub logo_url: String,
     pub number_type: LotteryNumberType,
     pub draw_mode: DrawMode,
     pub schedule: DrawSchedule,

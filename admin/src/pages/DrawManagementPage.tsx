@@ -1,4 +1,4 @@
-import { Banner, Button, Card, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
 import {
   Activity,
   CalendarPlus,
@@ -32,7 +32,6 @@ import type {
   DrawSource,
   DrawSourceProvider,
   LotteryKind,
-  LotteryNumberType,
   SaveDrawSourceRequest,
 } from '../types/dashboard';
 import type {
@@ -48,6 +47,10 @@ import type {
   DrawSchedulerStatus,
   DrawSchedulerConfig,
 } from '../types/scheduler';
+import {
+  drawNumberInputMeta,
+  lotteryNumberTypeText as numberTypeText,
+} from '../utils/lotteries';
 
 interface DrawManagementPageProps {
   onDashboardRefresh: () => void;
@@ -92,12 +95,12 @@ const DRAW_SOURCE_PRESETS: Array<{ label: string; form: DrawSourceFormState }> =
     },
   },
   {
-    label: '澳洲 5 分彩采集',
+    label: '澳洲幸运5采集',
     form: {
-      endpoint: 'https://api.api68.com/CQShiCai/getBaseCQShiCaiList.do',
+      endpoint: 'https://api.api68.com/CQShiCai/getBaseCQShiCai.do',
       id: 'api68-au5',
       lotCode: '10010',
-      name: 'API68 澳洲 5 分彩',
+      name: 'API68 澳洲幸运5',
       provider: 'api68',
       reusableForLotteryIds: ['au5'],
     },
@@ -113,6 +116,44 @@ const DRAW_SOURCE_PRESETS: Array<{ label: string; form: DrawSourceFormState }> =
       reusableForLotteryIds: ['fc3d', 'pl3'],
     },
   },
+  ...[
+    ['bjpk10', '北京PK10', '10001', 'https://api.api68.com/pks/getLotteryPksInfo.do'],
+    ['tjssc', '天津时时彩', '10003', 'https://api.api68.com/CQShiCai/getBaseCQShiCai.do'],
+    ['xjssc', '新疆时时彩', '10004', 'https://api.api68.com/CQShiCai/getBaseCQShiCai.do'],
+    ['gd11x5', '广东11选5', '10006', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['jsk3', '江苏快3', '10007', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
+    ['au10', '澳洲幸运10', '10012', 'https://api.api68.com/pks/getLotteryPksInfo.do'],
+    ['au20', '澳洲幸运20', '10013', 'https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do'],
+    ['bjkl8', '北京快乐8', '10014', 'https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do'],
+    ['jx11x5', '江西11选5', '10015', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['js11x5', '江苏11选5', '10016', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['ah11x5', '安徽11选5', '10017', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['sh11x5', '上海11选5', '10018', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['ln11x5', '辽宁11选5', '10019', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['hb11x5', '湖北11选5', '10020', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['gx11x5', '广西11选5', '10022', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['jl11x5', '吉林11选5', '10023', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['nmg11x5', '内蒙古11选5', '10024', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['zj11x5', '浙江11选5', '10025', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
+    ['gxk3', '广西快3', '10026', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
+    ['jlk3', '吉林快3', '10027', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
+    ['hebk3', '河北快3', '10028', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
+    ['nmgk3', '内蒙古快3', '10029', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
+    ['ahk3', '安徽快3', '10030', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
+    ['fjk3', '福建快3', '10031', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
+    ['hubk3', '湖北快3', '10032', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
+    ['bjk3', '北京快3', '10033', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
+  ].map(([lotteryId, lotteryName, lotCode, endpoint]) => ({
+    label: `${lotteryName}采集`,
+    form: {
+      endpoint,
+      id: `api68-${lotteryId}`,
+      lotCode,
+      name: `API68 ${lotteryName}`,
+      provider: 'api68' as DrawSourceProvider,
+      reusableForLotteryIds: [lotteryId],
+    },
+  })),
 ];
 
 export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPageProps) {
@@ -695,31 +736,33 @@ function IssueManagementSection({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Tag color="cyan">{totalCount} 个期号</Tag>
-          <select
+          <Select
             className="form-input min-w-[220px]"
             value={lotteryFilter}
-            onChange={(event) => onIssueLotteryFilterChange(event.target.value)}
+            onChange={(value) =>
+              onIssueLotteryFilterChange(String(value ?? ''))
+            }
           >
-            <option value="">全部玩法</option>
+            <Select.Option value="">全部玩法</Select.Option>
             {lotteryFilterOptions.map((option) => (
-              <option key={option.value} value={option.value}>
+              <Select.Option key={option.value} value={option.value}>
                 {option.label}
-              </option>
+              </Select.Option>
             ))}
-          </select>
+          </Select>
           <label className="text-xs text-slate-500">
             每页
-            <select
+            <Select
               className="ml-1 form-input min-w-[90px]"
               value={pageSize}
-              onChange={(event) => onIssuePageSizeChange(Number(event.target.value))}
+              onChange={(value) => onIssuePageSizeChange(Number(value ?? 10))}
             >
               {[10, 20, 50, 100].map((size) => (
-                <option key={size} value={size}>
+                <Select.Option key={size} value={size}>
                   {size}
-                </option>
+                </Select.Option>
               ))}
-            </select>
+            </Select>
             条
           </label>
           <div className="flex items-center gap-2 text-xs">
@@ -987,10 +1030,10 @@ function AutomationManagementSection({
         </div>
         <div className="space-y-4">
           <Field label="执行时间">
-            <input
+            <Input
               className="form-input"
               value={automationNow}
-              onChange={(event) => onAutomationNowChange(event.target.value)}
+              onChange={(value) => onAutomationNowChange(value)}
             />
           </Field>
           <Button
@@ -1107,49 +1150,49 @@ function CreateIssueSideSheet({
       onCancel={onClose}
     >
       <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
-        <Field label="彩种">
-          <select
+          <Field label="彩种">
+          <Select
             className="form-input"
             value={selectedLottery?.id ?? ''}
-            onChange={(event) =>
+            onChange={(value) =>
               onFormChange((current) => ({
                 ...current,
-                lotteryId: event.target.value,
+                lotteryId: String(value ?? ''),
               }))
             }
           >
             {lotteries.map((lottery) => (
-              <option key={lottery.id} value={lottery.id}>
+              <Select.Option key={lottery.id} value={lottery.id}>
                 {lottery.name}（{drawModeText(lottery.drawMode)}）
-              </option>
+              </Select.Option>
             ))}
-          </select>
+          </Select>
         </Field>
 
         <Field label="期号">
-          <input
+          <Input
             className="form-input"
             value={form.issue}
-            onChange={(event) => setFormValue(onFormChange, 'issue', event.target.value)}
+            onChange={(value) => setFormValue(onFormChange, 'issue', value)}
           />
         </Field>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="封盘时间">
-            <input
+            <Input
               className="form-input"
               value={form.saleClosedAt}
-              onChange={(event) =>
-                setFormValue(onFormChange, 'saleClosedAt', event.target.value)
+              onChange={(value) =>
+                setFormValue(onFormChange, 'saleClosedAt', value)
               }
             />
           </Field>
           <Field label="开奖时间">
-            <input
+            <Input
               className="form-input"
               value={form.scheduledAt}
-              onChange={(event) =>
-                setFormValue(onFormChange, 'scheduledAt', event.target.value)
+              onChange={(value) =>
+                setFormValue(onFormChange, 'scheduledAt', value)
               }
             />
           </Field>
@@ -1157,20 +1200,20 @@ function CreateIssueSideSheet({
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="计划基准时间">
-            <input
+            <Input
               className="form-input"
               value={automationNow}
-              onChange={(event) => onAutomationNowChange(event.target.value)}
+              onChange={(value) => onAutomationNowChange(value)}
             />
           </Field>
           <Field label="预生成数量">
-            <input
+            <Input
               className="form-input"
               max={50}
               min={1}
               type="number"
               value={generationCount}
-              onChange={(event) => onGenerationCountChange(event.target.value)}
+              onChange={(value) => onGenerationCountChange(value)}
             />
             {!generationCountValue ? (
               <span className="mt-1 block text-xs text-amber-600">
@@ -1241,6 +1284,8 @@ function DrawIssueSideSheet({
   saving: boolean;
   visible: boolean;
 }) {
+  const inputMeta = issue ? drawNumberInputMeta(issue.numberType) : null;
+
   return (
     <SideSheet
       aria-label="执行开奖"
@@ -1255,13 +1300,13 @@ function DrawIssueSideSheet({
 
           {issue.drawMode === 'manual' ? (
             <Field label={`开奖号码（${numberTypeText(issue.numberType)}）`}>
-              <input
+              <Input
                 className="form-input font-mono"
-                maxLength={issue.numberType === 'threeDigit' ? 5 : 9}
-                placeholder={issue.numberType === 'threeDigit' ? '2,4,7' : '7,8,9,4,2'}
+                maxLength={inputMeta?.maxLength}
+                placeholder={inputMeta?.placeholder}
                 value={form.drawNumber}
-                onChange={(event) =>
-                  setFormValue(onFormChange, 'drawNumber', event.target.value)
+                onChange={(value) =>
+                  setFormValue(onFormChange, 'drawNumber', value)
                 }
               />
             </Field>
@@ -1354,21 +1399,21 @@ function DrawSourceSideSheet({
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="来源 ID">
-            <input
+            <Input
               className="form-input font-mono"
               disabled={Boolean(selectedSource?.editable)}
               value={form.id}
-              onChange={(event) =>
-                setSourceFormValue(onFormChange, 'id', event.target.value)
+              onChange={(value) =>
+                setSourceFormValue(onFormChange, 'id', value)
               }
             />
           </Field>
           <Field label="来源名称">
-            <input
+            <Input
               className="form-input"
               value={form.name}
-              onChange={(event) =>
-                setSourceFormValue(onFormChange, 'name', event.target.value)
+              onChange={(value) =>
+                setSourceFormValue(onFormChange, 'name', value)
               }
             />
           </Field>
@@ -1376,38 +1421,38 @@ function DrawSourceSideSheet({
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="供应商">
-            <select
+            <Select
               className="form-input"
               value={form.provider}
-              onChange={(event) =>
+              onChange={(value) =>
                 setSourceFormValue(
                   onFormChange,
                   'provider',
-                  event.target.value as DrawSourceProvider,
+                  value as DrawSourceProvider,
                 )
               }
             >
-              <option value="api68">API68</option>
-              <option value="kjApi">KJAPI</option>
-            </select>
+              <Select.Option value="api68">API68</Select.Option>
+              <Select.Option value="kjApi">KJAPI</Select.Option>
+            </Select>
           </Field>
           <Field label="lotCode / lotKey">
-            <input
+            <Input
               className="form-input font-mono"
               value={form.lotCode}
-              onChange={(event) =>
-                setSourceFormValue(onFormChange, 'lotCode', event.target.value)
+              onChange={(value) =>
+                setSourceFormValue(onFormChange, 'lotCode', value)
               }
             />
           </Field>
         </div>
 
         <Field label="endpoint">
-          <input
+          <Input
             className="form-input"
             value={form.endpoint}
-            onChange={(event) =>
-              setSourceFormValue(onFormChange, 'endpoint', event.target.value)
+            onChange={(value) =>
+              setSourceFormValue(onFormChange, 'endpoint', value)
             }
           />
         </Field>
@@ -1646,47 +1691,47 @@ function SchedulerConfigForm({
           </label>
         </Field>
         <Field label="执行周期（秒）">
-          <input
+          <Input
             className="form-input"
             min="1"
             type="number"
             value={form.intervalSeconds}
-            onChange={(event) =>
+            onChange={(value) =>
               setSchedulerConfigFormValue(
                 onChange,
                 'intervalSeconds',
-                event.target.value,
+                value,
               )
             }
           />
         </Field>
         <Field label="未来期号缓冲">
-          <input
+          <Input
             className="form-input"
             max="50"
             min="1"
             type="number"
             value={form.futureIssueCount}
-            onChange={(event) =>
+            onChange={(value) =>
               setSchedulerConfigFormValue(
                 onChange,
                 'futureIssueCount',
-                event.target.value,
+                value,
               )
             }
           />
         </Field>
         <Field label="封盘提前（秒）">
-          <input
+          <Input
             className="form-input"
             min="1"
             type="number"
             value={form.saleCloseLeadSeconds}
-            onChange={(event) =>
+            onChange={(value) =>
               setSchedulerConfigFormValue(
                 onChange,
                 'saleCloseLeadSeconds',
-                event.target.value,
+                value,
               )
             }
           />
@@ -2022,10 +2067,6 @@ function drawSourceProviderText(provider: DrawSourceProvider) {
     kjApi: 'KJAPI',
   };
   return labels[provider];
-}
-
-function numberTypeText(numberType: LotteryNumberType) {
-  return numberType === 'threeDigit' ? '3 位号码' : '5 位号码';
 }
 
 function statusText(status: DrawIssueStatus) {

@@ -1,5 +1,14 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
-import { Bot, RefreshCcw, Save, Trash2 } from 'lucide-react';
+import {
+  Input,
+  Banner,
+  Button,
+  Card,
+  Select,
+  SideSheet,
+  Spin,
+  Tag,
+} from '@douyinfe/semi-ui';
+import { Bot, Plus, RefreshCcw, Save, Trash2 } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -46,6 +55,7 @@ export function RobotManagementPage({
   const [filterKind, setFilterKind] = useState<RobotKind>(
     kindForModule(activeModuleKey),
   );
+  const [robotSheetVisible, setRobotSheetVisible] = useState(false);
   const [form, setForm] = useState<RobotFormState>(() =>
     emptyRobotForm(kindForModule(activeModuleKey)),
   );
@@ -59,6 +69,7 @@ export function RobotManagementPage({
     const nextKind = kindForModule(activeModuleKey);
     setFilterKind(nextKind);
     setForm((current) => ({ ...current, kind: nextKind }));
+    setRobotSheetVisible(false);
   }, [activeModuleKey]);
 
   const refreshAll = () => {
@@ -66,10 +77,24 @@ export function RobotManagementPage({
     onDashboardRefresh();
   };
 
+  const openNewRobot = (kind: RobotKind = filterKind) => {
+    setEditingId(null);
+    setForm(emptyRobotForm(kind));
+    setRobotSheetVisible(true);
+  };
+
+  const openEditRobot = (robot: RobotConfigSummary) => {
+    setEditingId(robot.id);
+    setForm(robotFormFromSummary(robot));
+    setRobotSheetVisible(true);
+  };
+
   const submit = async () => {
     const saved = await save(robotPayload(form), editingId ?? undefined);
     setEditingId(saved.id);
+    setFilterKind(saved.kind);
     setForm(robotFormFromSummary(saved));
+    setRobotSheetVisible(false);
     onDashboardRefresh();
   };
 
@@ -80,6 +105,7 @@ export function RobotManagementPage({
     await remove(editingId);
     setEditingId(null);
     setForm(emptyRobotForm(filterKind));
+    setRobotSheetVisible(false);
     onDashboardRefresh();
   };
 
@@ -92,9 +118,18 @@ export function RobotManagementPage({
             维护合买机器人和购彩机器人适用彩种、状态和说明。
           </p>
         </div>
-        <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
-          刷新
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            theme="solid"
+            icon={<Plus size={16} />}
+            onClick={() => openNewRobot()}
+          >
+            新增配置
+          </Button>
+          <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
+            刷新
+          </Button>
+        </div>
       </section>
 
       {error ? <Banner type="danger" title="机器人接口错误" description={error} /> : null}
@@ -123,7 +158,9 @@ export function RobotManagementPage({
           theme={filterKind === 'groupBuy' ? 'solid' : 'light'}
           onClick={() => {
             setFilterKind('groupBuy');
-            setForm((current) => ({ ...current, kind: 'groupBuy' }));
+            if (!robotSheetVisible) {
+              setForm((current) => ({ ...current, kind: 'groupBuy' }));
+            }
           }}
         >
           合买机器人
@@ -132,7 +169,9 @@ export function RobotManagementPage({
           theme={filterKind === 'purchase' ? 'solid' : 'light'}
           onClick={() => {
             setFilterKind('purchase');
-            setForm((current) => ({ ...current, kind: 'purchase' }));
+            if (!robotSheetVisible) {
+              setForm((current) => ({ ...current, kind: 'purchase' }));
+            }
           }}
         >
           购彩机器人
@@ -146,7 +185,7 @@ export function RobotManagementPage({
           </div>
         </Card>
       ) : (
-        <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
+        <section>
           <Card className="rounded-md border border-line">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-base font-semibold text-ink">
@@ -178,10 +217,7 @@ export function RobotManagementPage({
                           <button
                             className="text-left font-semibold text-accent"
                             type="button"
-                            onClick={() => {
-                              setEditingId(robot.id);
-                              setForm(robotFormFromSummary(robot));
-                            }}
+                            onClick={() => openEditRobot(robot)}
                           >
                             {robot.name}
                           </button>
@@ -208,10 +244,7 @@ export function RobotManagementPage({
                           <div className="flex flex-wrap gap-2">
                             <Button
                               size="small"
-                              onClick={() => {
-                                setEditingId(robot.id);
-                                setForm(robotFormFromSummary(robot));
-                              }}
+                              onClick={() => openEditRobot(robot)}
                             >
                               编辑
                             </Button>
@@ -250,116 +283,127 @@ export function RobotManagementPage({
               </div>
             )}
           </Card>
-
-          <Card className="rounded-md border border-line">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-md bg-teal-50 text-teal-700">
-                <Bot size={18} />
-              </div>
-              <h2 className="text-base font-semibold text-ink">配置维护</h2>
-            </div>
-            <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
-              <Field label="机器人 ID">
-                <input
-                  className="form-input"
-                  value={form.id}
-                  onChange={(event) => setFormValue(setForm, 'id', event.target.value)}
-                />
-              </Field>
-              <Field label="名称">
-                <input
-                  className="form-input"
-                  value={form.name}
-                  onChange={(event) =>
-                    setFormValue(setForm, 'name', event.target.value)
-                  }
-                />
-              </Field>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                <Field label="类型">
-                  <select
-                    className="form-input"
-                    value={form.kind}
-                    onChange={(event) =>
-                      setFormValue(setForm, 'kind', event.target.value as RobotKind)
-                    }
-                  >
-                    <option value="groupBuy">合买机器人</option>
-                    <option value="purchase">购彩机器人</option>
-                  </select>
-                </Field>
-                <Field label="状态">
-                  <select
-                    className="form-input"
-                    value={form.status}
-                    onChange={(event) =>
-                      setFormValue(setForm, 'status', event.target.value as RobotStatus)
-                    }
-                  >
-                    <option value="enabled">启用</option>
-                    <option value="paused">暂停</option>
-                    <option value="disabled">禁用</option>
-                  </select>
-                </Field>
-              </div>
-              <div className="space-y-2">
-                <div className="text-sm font-medium text-slate-600">适用彩种</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {lotteries.map((lottery) => (
-                    <label
-                      key={lottery.id}
-                      className="flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-2 text-sm text-slate-600"
-                    >
-                      <input
-                        checked={form.lotteryIds.includes(lottery.id)}
-                        type="checkbox"
-                        onChange={(event) =>
-                          toggleLottery(setForm, lottery.id, event.target.checked)
-                        }
-                      />
-                      {lottery.name}
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <Field label="说明">
-                <input
-                  className="form-input"
-                  value={form.description}
-                  onChange={(event) =>
-                    setFormValue(setForm, 'description', event.target.value)
-                  }
-                />
-              </Field>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  disabled={saving || form.lotteryIds.length === 0}
-                  icon={<Save size={16} />}
-                  theme="solid"
-                  onClick={() => void submit()}
-                >
-                  {editingId ? '保存配置' : '新增配置'}
-                </Button>
-                <Button
-                  onClick={() => {
-                    setEditingId(null);
-                    setForm(emptyRobotForm(filterKind));
-                  }}
-                >
-                  新建
-                </Button>
-                <Button
-                  disabled={!editingId || saving}
-                  icon={<Trash2 size={16} />}
-                  onClick={() => void deleteCurrent()}
-                >
-                  删除
-                </Button>
-              </div>
-            </form>
-          </Card>
         </section>
       )}
+
+      <SideSheet
+        aria-label={editingId ? '编辑机器人配置' : '新增机器人配置'}
+        title={editingId ? '编辑机器人配置' : '新增机器人配置'}
+        visible={robotSheetVisible}
+        width={560}
+        onCancel={() => setRobotSheetVisible(false)}
+      >
+        <div className="mb-4 flex items-start gap-3 rounded border border-slate-200 bg-slate-50 p-3">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-teal-50 text-teal-700">
+            <Bot size={18} />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-ink">
+              {editingId ? '维护已有机器人配置' : '新增机器人配置'}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              保存后会同步机器人列表和工作台概览。
+            </p>
+          </div>
+        </div>
+        <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
+          <Field label="机器人 ID">
+            <Input
+              className="form-input"
+              value={form.id}
+              onChange={(value) => setFormValue(setForm, 'id', value)}
+            />
+          </Field>
+          <Field label="名称">
+            <Input
+              className="form-input"
+              value={form.name}
+              onChange={(value) =>
+                setFormValue(setForm, 'name', value)
+              }
+            />
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+            <Field label="类型">
+              <Select
+                className="form-input"
+                value={form.kind}
+                onChange={(value) =>
+                  setFormValue(setForm, 'kind', value as RobotKind)
+                }
+              >
+                <Select.Option value="groupBuy">合买机器人</Select.Option>
+                <Select.Option value="purchase">购彩机器人</Select.Option>
+              </Select>
+            </Field>
+            <Field label="状态">
+              <Select
+                className="form-input"
+                value={form.status}
+                onChange={(value) =>
+                  setFormValue(setForm, 'status', value as RobotStatus)
+                }
+              >
+                <Select.Option value="enabled">启用</Select.Option>
+                <Select.Option value="paused">暂停</Select.Option>
+                <Select.Option value="disabled">禁用</Select.Option>
+              </Select>
+            </Field>
+          </div>
+          <div className="space-y-2">
+            <div className="text-sm font-medium text-slate-600">适用彩种</div>
+            <div className="grid grid-cols-2 gap-2">
+              {lotteries.map((lottery) => (
+                <label
+                  key={lottery.id}
+                  className="flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-2 text-sm text-slate-600"
+                >
+                  <input
+                    checked={form.lotteryIds.includes(lottery.id)}
+                    type="checkbox"
+                    onChange={(event) =>
+                      toggleLottery(setForm, lottery.id, event.target.checked)
+                    }
+                  />
+                  {lottery.name}
+                </label>
+              ))}
+            </div>
+          </div>
+          <Field label="说明">
+            <Input
+              className="form-input"
+              value={form.description}
+              onChange={(value) =>
+                setFormValue(setForm, 'description', value)
+              }
+            />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={saving || form.lotteryIds.length === 0}
+              icon={<Save size={16} />}
+              theme="solid"
+              onClick={() => void submit()}
+            >
+              {editingId ? '保存配置' : '新增配置'}
+            </Button>
+            <Button
+              onClick={() => openNewRobot(form.kind)}
+            >
+              新建
+            </Button>
+            <Button
+              disabled={!editingId || saving}
+              icon={<Trash2 size={16} />}
+              onClick={() => void deleteCurrent()}
+            >
+              删除
+            </Button>
+            <Button onClick={() => setRobotSheetVisible(false)}>取消</Button>
+          </div>
+        </form>
+      </SideSheet>
     </div>
   );
 }

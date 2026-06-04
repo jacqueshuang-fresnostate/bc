@@ -73,8 +73,7 @@ export function AppShell({
     <div className="flex min-h-screen bg-panel text-ink">
       <aside className="hidden w-64 shrink-0 border-r border-line bg-white px-4 py-5 lg:block">
         <div className="mb-6">
-          <div className="text-lg font-semibold">彩票管理后台</div>
-          <div className="mt-1 text-xs text-slate-500">Admin Console</div>
+          <div className="text-lg font-semibold">鸿福</div>
         </div>
         <nav className="space-y-5">
           {Object.entries(groups).map(([group, groupItems]) => (

@@ -775,23 +775,40 @@ fn normalize_control_draw_number(
 
 /// 标准化输入并返回规范值。
 fn normalize_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> ApiResult<String> {
-    let expected_len = match number_type {
-        LotteryNumberType::ThreeDigit => 3,
-        LotteryNumberType::FiveDigit => 5,
-    };
-    let digits = draw_number_digits(draw_number)?;
+    let spec = draw_number_spec(number_type);
+    let digits = draw_number_digits(draw_number, number_type)?;
 
-    if digits.len() != expected_len {
+    if digits.len() != spec.len {
         return Err(ApiError::BadRequest(format!(
-            "draw number must be {expected_len} digits"
+            "draw number must contain {} numbers",
+            spec.len
         )));
+    }
+    for digit in &digits {
+        if *digit < spec.min || *digit > spec.max {
+            return Err(ApiError::BadRequest(format!(
+                "draw number must be between {} and {}",
+                spec.min, spec.max
+            )));
+        }
+    }
+    if spec.unique {
+        let mut seen = Vec::new();
+        for digit in &digits {
+            if seen.contains(digit) {
+                return Err(ApiError::BadRequest(
+                    "draw number must not contain duplicate numbers".to_string(),
+                ));
+            }
+            seen.push(*digit);
+        }
     }
 
     Ok(format_draw_number(&digits))
 }
 
 /// 处理 draw_number_digits 的具体内部流程。
-fn draw_number_digits(draw_number: &str) -> ApiResult<Vec<u8>> {
+fn draw_number_digits(draw_number: &str, number_type: &LotteryNumberType) -> ApiResult<Vec<u8>> {
     let value = draw_number.trim();
     if value.contains(',') || value.contains('，') {
         return value
@@ -800,9 +817,18 @@ fn draw_number_digits(draw_number: &str) -> ApiResult<Vec<u8>> {
             .collect();
     }
 
+    if !matches!(
+        number_type,
+        LotteryNumberType::ThreeDigit | LotteryNumberType::FiveDigit
+    ) {
+        return Err(ApiError::BadRequest(
+            "draw number must contain numbers separated by commas".to_string(),
+        ));
+    }
+
     if !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(ApiError::BadRequest(
-            "draw number must contain digits separated by commas".to_string(),
+            "draw number must contain numbers separated by commas".to_string(),
         ));
     }
 
@@ -811,13 +837,15 @@ fn draw_number_digits(draw_number: &str) -> ApiResult<Vec<u8>> {
 
 /// 解析输入并返回结构化值。
 fn parse_draw_digit(value: &str) -> ApiResult<u8> {
-    if value.len() != 1 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    if value.is_empty() || value.len() > 2 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(ApiError::BadRequest(
-            "draw number must contain digits separated by commas".to_string(),
+            "draw number must contain numbers separated by commas".to_string(),
         ));
     }
 
-    Ok(value.as_bytes()[0] - b'0')
+    value.parse::<u8>().map_err(|_| {
+        ApiError::BadRequest("draw number must contain numbers separated by commas".to_string())
+    })
 }
 
 /// 按固定格式转换输出。
@@ -831,25 +859,90 @@ fn format_draw_number(digits: &[u8]) -> String {
 
 /// 处理 generated_draw_number 的具体内部流程。
 fn generated_draw_number(number_type: &LotteryNumberType, lottery_id: &str, issue: &str) -> String {
-    let len = match number_type {
-        LotteryNumberType::ThreeDigit => 3,
-        LotteryNumberType::FiveDigit => 5,
-    };
+    let spec = draw_number_spec(number_type);
     let mut seed = 14_695_981_039_346_656_037u64;
     for byte in lottery_id.bytes().chain(issue.bytes()) {
         seed ^= u64::from(byte);
         seed = seed.wrapping_mul(1_099_511_628_211);
     }
 
-    let digits = (0..len)
-        .map(|index| {
-            seed = seed
-                .wrapping_mul(1_103_515_245)
-                .wrapping_add(12_345 + index as u64);
-            (seed % 10) as u8
-        })
-        .collect::<Vec<_>>();
+    let mut digits = Vec::with_capacity(spec.len);
+    let range = u64::from(spec.max - spec.min + 1);
+    for index in 0..(spec.len * 20) {
+        seed = seed
+            .wrapping_mul(1_103_515_245)
+            .wrapping_add(12_345 + index as u64);
+        let digit = spec.min + (seed % range) as u8;
+        if spec.unique && digits.contains(&digit) {
+            continue;
+        }
+        digits.push(digit);
+        if digits.len() == spec.len {
+            break;
+        }
+    }
+    if spec.unique && digits.len() < spec.len {
+        for digit in spec.min..=spec.max {
+            if !digits.contains(&digit) {
+                digits.push(digit);
+            }
+            if digits.len() == spec.len {
+                break;
+            }
+        }
+    }
+
     format_draw_number(&digits)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DrawNumberSpec {
+    len: usize,
+    min: u8,
+    max: u8,
+    unique: bool,
+}
+
+/// 返回不同彩种号码类型的开奖号码长度、范围和是否去重。
+fn draw_number_spec(number_type: &LotteryNumberType) -> DrawNumberSpec {
+    match number_type {
+        LotteryNumberType::ThreeDigit => DrawNumberSpec {
+            len: 3,
+            min: 0,
+            max: 9,
+            unique: false,
+        },
+        LotteryNumberType::FiveDigit => DrawNumberSpec {
+            len: 5,
+            min: 0,
+            max: 9,
+            unique: false,
+        },
+        LotteryNumberType::Pk10 => DrawNumberSpec {
+            len: 10,
+            min: 1,
+            max: 10,
+            unique: true,
+        },
+        LotteryNumberType::ElevenFive => DrawNumberSpec {
+            len: 5,
+            min: 1,
+            max: 11,
+            unique: true,
+        },
+        LotteryNumberType::FastThree => DrawNumberSpec {
+            len: 3,
+            min: 1,
+            max: 6,
+            unique: false,
+        },
+        LotteryNumberType::LuckTwenty => DrawNumberSpec {
+            len: 20,
+            min: 1,
+            max: 80,
+            unique: true,
+        },
+    }
 }
 
 /// 处理 current_timestamp_label 的具体内部流程。
@@ -1078,7 +1171,38 @@ mod tests {
             .await
             .expect_err("short draw control number is rejected");
 
-        assert!(error.to_string().contains("draw number must be 5 digits"));
+        assert!(error
+            .to_string()
+            .contains("draw number must contain 5 numbers"));
+    }
+
+    #[test]
+    /// 新增号码类型按各自长度、范围和去重规则校验开奖号码。
+    fn normalize_draw_number_supports_new_lottery_number_types() {
+        assert_eq!(
+            super::normalize_draw_number("01,06,02,04,03,05,07,09,10,08", &LotteryNumberType::Pk10)
+                .expect("pk10 draw number is valid"),
+            "1,6,2,4,3,5,7,9,10,8"
+        );
+        assert_eq!(
+            super::normalize_draw_number("1,3,5,7,11", &LotteryNumberType::ElevenFive)
+                .expect("eleven five draw number is valid"),
+            "1,3,5,7,11"
+        );
+        assert_eq!(
+            super::normalize_draw_number("6,6,1", &LotteryNumberType::FastThree)
+                .expect("fast three draw number can repeat"),
+            "6,6,1"
+        );
+
+        let duplicated =
+            super::normalize_draw_number("1,2,3,4,5,6,7,8,9,9", &LotteryNumberType::Pk10)
+                .expect_err("pk10 duplicate is rejected");
+        assert!(duplicated.to_string().contains("duplicate"));
+
+        let compact = super::normalize_draw_number("12345678910", &LotteryNumberType::Pk10)
+            .expect_err("pk10 compact format is rejected");
+        assert!(compact.to_string().contains("separated by commas"));
     }
 
     #[tokio::test]
@@ -1145,7 +1269,8 @@ mod tests {
         LotteryKind {
             id: "fc3d".to_string(),
             name: "福彩 3D".to_string(),
-            category: LotteryCategory::Regional,
+            category: "regional".to_string(),
+            logo_url: String::new(),
             number_type,
             draw_mode,
             schedule: DrawSchedule::Daily {

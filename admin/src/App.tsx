@@ -98,6 +98,7 @@ export function App() {
         />
       ) : activeKey === 'lotteries' ? (
         <LotteryManagementPage
+          settings={filteredData?.settings ?? []}
           onDashboardRefresh={refresh}
           onOpenPlayConfig={() => setActiveKey('play-rules')}
         />

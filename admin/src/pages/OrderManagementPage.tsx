@@ -1,4 +1,4 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
 import { Ban, Plus, RefreshCcw } from 'lucide-react';
 import {
   useEffect,
@@ -314,82 +314,84 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
           >
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="用户 ID">
-                <input
+                <Input
                   className="form-input"
                   value={form.userId}
-                  onChange={(event) => setFormValue(setForm, 'userId', event.target.value)}
+                  onChange={(value) => setFormValue(setForm, 'userId', value)}
                 />
               </Field>
               <Field label="期号">
-                <select
-                  className="form-input"
-                  disabled={availableDrawIssues.length === 0}
-                  value={form.issue}
-                  onChange={(event) => setFormValue(setForm, 'issue', event.target.value)}
-                >
+                <Select
+                className="form-input"
+                disabled={availableDrawIssues.length === 0}
+                value={form.issue}
+                onChange={(value) => setFormValue(setForm, 'issue', String(value ?? ''))}
+              >
                   {availableDrawIssues.length > 0 ? (
                     availableDrawIssues.map((issue) => (
-                      <option key={issue.id} value={issue.issue}>
+                      <Select.Option key={issue.id} value={issue.issue}>
                         {issue.issue}（封盘 {issue.saleClosedAt}）
-                      </option>
+                      </Select.Option>
                     ))
                   ) : (
-                    <option value="">暂无可投注期号</option>
+                    <Select.Option value="">暂无可投注期号</Select.Option>
                   )}
-                </select>
+                </Select>
               </Field>
             </div>
 
             <Field label="彩种">
-              <select
+              <Select
                 className="form-input"
                 value={selectedLottery?.id ?? ''}
-                onChange={(event) =>
+                onChange={(value) => {
+                  const lotteryId = String(value ?? '');
                   setForm((current) => ({
                     ...current,
                     issue: '',
-                    lotteryId: event.target.value,
+                    lotteryId,
                     ruleCode: '',
-                  }))
-                }
+                  }));
+                }}
               >
                 {lotteries.map((lottery) => (
-                  <option key={lottery.id} value={lottery.id}>
+                  <Select.Option key={lottery.id} value={lottery.id}>
                     {lottery.name}（{lottery.saleEnabled ? '销售中' : '停售'}）
-                  </option>
+                  </Select.Option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
             <Field label="玩法">
-              <select
+              <Select
                 className="form-input"
                 value={selectedRule?.code ?? ''}
-                onChange={(event) =>
+                onChange={(value) => {
+                  const ruleCode = String(value ?? '') as PlayRuleCode;
                   setForm((current) => ({
                     ...current,
-                    ...defaultSelectionFields(event.target.value as PlayRuleCode),
-                    ruleCode: event.target.value as PlayRuleCode,
-                  }))
-                }
+                    ...defaultSelectionFields(ruleCode),
+                    ruleCode,
+                  }));
+                }}
               >
                 {availableRules.map((rule) => (
-                  <option key={rule.code} value={rule.code}>
+                  <Select.Option key={rule.code} value={rule.code}>
                     {rule.label}
-                  </option>
+                  </Select.Option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
             {selectedRule ? renderSelectionFields(selectedRule.code, form, setForm) : null}
 
             <Field label="单注金额（分）">
-              <input
+              <Input
                 className="form-input"
                 min="1"
                 type="number"
                 value={form.unitAmountMinor}
-                onChange={(event) => setFormValue(setForm, 'unitAmountMinor', event.target.value)}
+                onChange={(value) => setFormValue(setForm, 'unitAmountMinor', value)}
               />
             </Field>
 
@@ -452,24 +454,24 @@ function renderSelectionFields(
     return (
       <div className="grid gap-3 sm:grid-cols-3">
         <Field label="第 1 位">
-          <input
+          <Input
             className="form-input"
             value={form.positionA}
-            onChange={(event) => setFormValue(setForm, 'positionA', event.target.value)}
+            onChange={(value) => setFormValue(setForm, 'positionA', value)}
           />
         </Field>
         <Field label="第 2 位">
-          <input
+          <Input
             className="form-input"
             value={form.positionB}
-            onChange={(event) => setFormValue(setForm, 'positionB', event.target.value)}
+            onChange={(value) => setFormValue(setForm, 'positionB', value)}
           />
         </Field>
         <Field label="第 3 位">
-          <input
+          <Input
             className="form-input"
             value={form.positionC}
-            onChange={(event) => setFormValue(setForm, 'positionC', event.target.value)}
+            onChange={(value) => setFormValue(setForm, 'positionC', value)}
           />
         </Field>
       </div>
@@ -497,17 +499,17 @@ function renderSelectionFields(
     return (
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="胆码">
-          <input
+          <Input
             className="form-input"
             value={form.bankerNumbers}
-            onChange={(event) => setFormValue(setForm, 'bankerNumbers', event.target.value)}
+            onChange={(value) => setFormValue(setForm, 'bankerNumbers', value)}
           />
         </Field>
         <Field label="拖码">
-          <input
+          <Input
             className="form-input"
             value={form.dragNumbers}
-            onChange={(event) => setFormValue(setForm, 'dragNumbers', event.target.value)}
+            onChange={(value) => setFormValue(setForm, 'dragNumbers', value)}
           />
         </Field>
       </div>
@@ -516,10 +518,10 @@ function renderSelectionFields(
 
   return (
     <Field label="选号">
-      <input
+      <Input
         className="form-input"
         value={form.numbers}
-        onChange={(event) => setFormValue(setForm, 'numbers', event.target.value)}
+        onChange={(value) => setFormValue(setForm, 'numbers', value)}
       />
     </Field>
   );

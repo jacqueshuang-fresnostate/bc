@@ -48,3 +48,28 @@ select {
   background: #f1f5f9;
   color: #64748b;
 }
+
+.semi-input-wrapper.form-input {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  border: 1px solid transparent;
+  background: var(--semi-color-fill-0);
+  padding: 0 10px;
+}
+
+.semi-input-wrapper.form-input .semi-input {
+  height: 20px;
+  padding: 0;
+  line-height: 20px;
+}
+
+.semi-input-wrapper.form-input.semi-input-wrapper-focus {
+  border-color: var(--semi-color-focus-border);
+  box-shadow: none;
+}
+
+.semi-input-wrapper.form-input.semi-input-wrapper-disabled {
+  background: var(--semi-color-disabled-fill);
+  color: var(--semi-color-disabled-text);
+}

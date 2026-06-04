@@ -3,6 +3,7 @@ import type {
   DashboardSummary,
   LotteryKind,
   SaveDrawSourceRequest,
+  LotteryCategoryConfig,
 } from '../types/dashboard';
 import type { DrawSource } from '../types/dashboard';
 import type {
@@ -457,6 +458,41 @@ export function setRobotStatus(id: string, payload: RobotStatusUpdateRequest) {
 
 export function fetchLotteries(signal?: AbortSignal) {
   return requestJson<LotteryKind[]>('/api/admin/lotteries', { signal });
+}
+
+export function fetchLotteryCategories(signal?: AbortSignal) {
+  return requestJson<LotteryCategoryConfig[]>('/api/admin/lottery-categories', {
+    signal,
+  });
+}
+
+export function createLotteryCategory(payload: LotteryCategoryConfig) {
+  return requestJson<LotteryCategoryConfig>('/api/admin/lottery-categories', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateLotteryCategory(
+  code: string,
+  payload: LotteryCategoryConfig,
+) {
+  return requestJson<LotteryCategoryConfig>(
+    `/api/admin/lottery-categories/${encodeURIComponent(code)}`,
+    {
+      body: payload,
+      method: 'PUT',
+    },
+  );
+}
+
+export function deleteLotteryCategory(code: string) {
+  return requestJson<LotteryCategoryConfig>(
+    `/api/admin/lottery-categories/${encodeURIComponent(code)}`,
+    {
+      method: 'DELETE',
+    },
+  );
 }
 
 export function createLottery(payload: LotteryKind) {

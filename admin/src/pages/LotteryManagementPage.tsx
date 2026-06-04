@@ -1,19 +1,45 @@
-import { Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
-import { Calculator, Plus, RefreshCcw, Save, Trash2 } from 'lucide-react';
+import {
+  Input,
+  Banner,
+  Button,
+  Card,
+  Select,
+  SideSheet,
+  Spin,
+  Tag,
+} from '@douyinfe/semi-ui';
+import {
+  Calculator,
+  FolderTree,
+  Plus,
+  RefreshCcw,
+  Save,
+  Trash2,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { ImageUploadAvatar } from '../components/ImageUploadAvatar';
 import { useLotteries } from '../hooks/useLotteries';
+import { useLotteryCategories } from '../hooks/useLotteryCategories';
 import type {
   DrawMode,
   DrawSchedule,
   LotteryCategory,
   LotteryKind,
+  LotteryCategoryConfig,
   LotteryNumberType,
   LotteryPlayConfig,
   PlayCategory,
+  SystemSetting,
 } from '../types/dashboard';
+import {
+  lotteryNumberTypeOptions,
+  lotteryNumberTypeSupportsPlayRules,
+  lotteryNumberTypeText,
+} from '../utils/lotteries';
 import { playCategoryForRule } from '../utils/playRules';
 
 interface LotteryManagementPageProps {
+  settings: SystemSetting[];
   onDashboardRefresh: () => void;
   onOpenPlayConfig: () => void;
 }
@@ -25,6 +51,7 @@ interface LotteryFormState {
   drawMode: DrawMode;
   groupBuyEnabled: boolean;
   id: string;
+  logoUrl: string;
   initiatorMinPercent: string;
   intervalSeconds: string;
   minShareAmountMinor: string;
@@ -47,14 +74,8 @@ const playCategoryOptions: Array<{ label: string; value: PlayCategory }> = [
   { label: '大小单双', value: 'bigSmallOddEven' },
 ];
 
-const lotteryCategoryOptions: Array<{ label: string; value: LotteryCategory }> = [
-  { label: '地方彩种', value: 'regional' },
-  { label: '海外彩种', value: 'overseas' },
-  { label: '福利彩种', value: 'welfare' },
-  { label: '其他', value: 'other' },
-];
-
 export function LotteryManagementPage({
+  settings,
   onDashboardRefresh,
   onOpenPlayConfig,
 }: LotteryManagementPageProps) {
@@ -69,21 +90,93 @@ export function LotteryManagementPage({
     setSaleStatus,
     update,
   } = useLotteries();
+  const {
+    categories,
+    create: createCategory,
+    error: categoryError,
+    loading: categoriesLoading,
+    refresh: refreshCategoryList,
+    remove: removeCategory,
+    saving: categorySaving,
+    update: updateCategory,
+  } = useLotteryCategories();
+  const [categoryDraftCode, setCategoryDraftCode] = useState('');
+  const [categoryDraftName, setCategoryDraftName] = useState('');
+  const [editingCategoryCode, setEditingCategoryCode] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState('');
+  const [categorySheetVisible, setCategorySheetVisible] = useState(false);
+  const [lotterySheetVisible, setLotterySheetVisible] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState<LotteryFormState>(() => emptyForm());
+  const imageBedUploadField =
+    readSettingValue(settings, 'image_bed_upload_field').trim() || 'file';
   const selectedLottery = useMemo(
     () => lotteries.find((lottery) => lottery.id === selectedId) ?? null,
     [lotteries, selectedId],
   );
+  const lotteryCategoryOptions = useMemo(
+    () =>
+      categories
+        .map((item) => ({ label: item.name, value: item.code }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [categories],
+  );
+
+  const allError = categoryError || error;
 
   const selectLottery = (lottery: LotteryKind) => {
     setSelectedId(lottery.id);
     setForm(formFromLottery(lottery));
+    setLotterySheetVisible(true);
+  };
+
+  const refreshAll = () => {
+    refresh();
+    refreshCategoryList();
+  };
+
+  const addLotteryCategory = async () => {
+    const code = categoryDraftCode.trim();
+    const name = categoryDraftName.trim();
+    if (!code || !name) {
+      return;
+    }
+
+    const created = await createCategory({ code, name });
+    setCategoryDraftCode('');
+    setCategoryDraftName('');
+    onDashboardRefresh();
+    return created;
+  };
+
+  const saveCategory = async () => {
+    if (!editingCategoryCode) {
+      return;
+    }
+
+    const category = editingCategoryCode;
+    const name = editingCategoryName.trim();
+    if (!name) {
+      return;
+    }
+
+    await updateCategory(category, {
+      code: category,
+      name,
+    });
+    setEditingCategoryCode(null);
+    onDashboardRefresh();
+  };
+
+  const removeLotteryCategory = async (code: string) => {
+    await removeCategory(code);
+    onDashboardRefresh();
   };
 
   const newLottery = () => {
     setSelectedId(null);
     setForm(emptyForm());
+    setLotterySheetVisible(true);
   };
 
   const saveLottery = async () => {
@@ -94,6 +187,28 @@ export function LotteryManagementPage({
       await create(payload);
       setSelectedId(payload.id);
     }
+    setLotterySheetVisible(false);
+    onDashboardRefresh();
+  };
+
+  const updateLotteryCategory = async (
+    lottery: LotteryKind,
+    category: LotteryCategory,
+  ) => {
+    const payload = {
+      ...lottery,
+      category,
+    };
+
+    await update(lottery.id, payload);
+
+    if (selectedId === lottery.id) {
+      setForm((current) => ({
+        ...current,
+        category,
+      }));
+    }
+
     onDashboardRefresh();
   };
 
@@ -102,7 +217,9 @@ export function LotteryManagementPage({
       return;
     }
     await remove(selectedId);
-    newLottery();
+    setSelectedId(null);
+    setForm(emptyForm());
+    setLotterySheetVisible(false);
     onDashboardRefresh();
   };
 
@@ -127,10 +244,16 @@ export function LotteryManagementPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button
+            icon={<FolderTree size={16} />}
+            onClick={() => setCategorySheetVisible(true)}
+          >
+            分类管理
+          </Button>
           <Button icon={<Calculator size={16} />} onClick={onOpenPlayConfig}>
             玩法配置
           </Button>
-          <Button icon={<RefreshCcw size={16} />} onClick={refresh}>
+          <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
             刷新
           </Button>
           <Button theme="solid" icon={<Plus size={16} />} onClick={newLottery}>
@@ -139,9 +262,11 @@ export function LotteryManagementPage({
         </div>
       </section>
 
-      {error ? <Banner type="danger" title="彩种接口错误" description={error} /> : null}
+      {allError ? (
+        <Banner type="danger" title="接口错误" description={allError} />
+      ) : null}
 
-      <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
+      <section>
         <Card className="rounded-md border border-line">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold text-ink">彩种列表</h2>
@@ -157,7 +282,9 @@ export function LotteryManagementPage({
                 <thead className="border-b border-line text-xs text-slate-500">
                   <tr>
                     <th className="py-2 pr-4 font-medium">彩种</th>
+                    <th className="py-2 pr-4 font-medium">LOGO</th>
                     <th className="py-2 pr-4 font-medium">分类</th>
+                    <th className="py-2 pr-4 font-medium">快速改分类</th>
                     <th className="py-2 pr-4 font-medium">类型</th>
                     <th className="py-2 pr-4 font-medium">开奖</th>
                     <th className="py-2 pr-4 font-medium">时间</th>
@@ -183,9 +310,51 @@ export function LotteryManagementPage({
                         </button>
                         <div className="mt-1 text-xs text-slate-400">{lottery.id}</div>
                       </td>
-                      <td className="py-3 pr-4 text-slate-600">{lotteryCategoryText(lottery.category)}</td>
+                      <td className="py-3 pr-4">
+                        {lottery.logoUrl ? (
+                          <img
+                            alt="彩种 logo"
+                            className="h-8 w-8 rounded border border-line object-cover"
+                            src={lottery.logoUrl}
+                          />
+                        ) : (
+                          <span className="text-xs text-slate-400">未设置</span>
+                        )}
+                      </td>
                       <td className="py-3 pr-4 text-slate-600">
-                        {lottery.numberType === 'threeDigit' ? '3 位号码' : '5 位号码'}
+                        {lotteryCategoryText(lottery.category, categories)}
+                      </td>
+                      <td className="py-3 pr-4">
+                        <Select
+                          className="form-input"
+                          disabled={saving}
+                          value={lottery.category}
+                          onChange={(value) =>
+                            void updateLotteryCategory(
+                              lottery,
+                              value as LotteryCategory,
+                            )
+                          }
+                        >
+                          {lotteryCategoryOptions
+                            .concat(
+                              categoryMissingOption(
+                                lottery.category,
+                                lotteryCategoryOptions,
+                              ),
+                            )
+                            .map((option) => (
+                              <Select.Option
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {option.label}
+                              </Select.Option>
+                            ))}
+                        </Select>
+                      </td>
+                      <td className="py-3 pr-4 text-slate-600">
+                        {lotteryNumberTypeText(lottery.numberType)}
                       </td>
                       <td className="py-3 pr-4">
                         <Tag color={drawModeColor(lottery.drawMode)}>
@@ -216,128 +385,159 @@ export function LotteryManagementPage({
             </div>
           )}
         </Card>
+      </section>
 
-        <Card className="rounded-md border border-line">
-          <div className="mb-4 flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-ink">
-                {selectedLottery ? '编辑彩种' : '新增彩种'}
-              </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                保存后会立即更新后端内存仓储和工作台概览。
-              </p>
-            </div>
-            {selectedLottery ? <Tag color="green">已选择</Tag> : <Tag color="blue">新建</Tag>}
-          </div>
+      <SideSheet
+        aria-label={selectedLottery ? '编辑彩种' : '新增彩种'}
+        title={selectedLottery ? '编辑彩种' : '新增彩种'}
+        visible={lotterySheetVisible}
+        width={720}
+        onCancel={() => setLotterySheetVisible(false)}
+      >
+        <div className="mb-4 flex items-start justify-between gap-3 rounded border border-slate-200 bg-slate-50 p-3">
+          <p className="text-sm text-slate-500">
+            保存后会立即更新后端仓储和工作台概览。
+          </p>
+          {selectedLottery ? (
+            <Tag color="green">已选择</Tag>
+          ) : (
+            <Tag color="blue">新建</Tag>
+          )}
+        </div>
 
-          <form
-            className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-            }}
-          >
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+          }}
+        >
             <Field label="彩种 ID">
-              <input
+              <Input
                 className="form-input"
                 disabled={Boolean(selectedId)}
                 value={form.id}
-                onChange={(event) => setFormValue(setForm, 'id', event.target.value)}
+                onChange={(value) => setFormValue(setForm, 'id', value)}
               />
             </Field>
 
             <Field label="彩种名称">
-              <input
+              <Input
                 className="form-input"
                 value={form.name}
-                onChange={(event) => setFormValue(setForm, 'name', event.target.value)}
+                onChange={(value) => setFormValue(setForm, 'name', value)}
+              />
+            </Field>
+
+            <Field label="LOGO">
+              <ImageUploadAvatar
+                errorTitle="LOGO 上传失败"
+                failureMessage="LOGO 上传失败"
+                imageUrl={form.logoUrl}
+                requireImageUrl
+                showResultPanel={false}
+                successMessage="LOGO 上传成功"
+                uploadFieldName={imageBedUploadField || 'file'}
+                uploadingText="正在上传 LOGO..."
+                variant="uploadAdd"
+                onUploaded={(url) => setFormValue(setForm, 'logoUrl', url)}
               />
             </Field>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="号码类型">
-                <select
+                <Select
                   className="form-input"
                   value={form.numberType}
-                  onChange={(event) =>
+                  onChange={(value) => {
+                    const numberType = value as LotteryNumberType;
+                    const supportsPlayRules =
+                      lotteryNumberTypeSupportsPlayRules(numberType);
                     setForm((current) => ({
                       ...current,
-                      numberType: event.target.value as LotteryNumberType,
-                      playCategories: ['direct'],
+                      numberType,
+                      playCategories: supportsPlayRules ? ['direct'] : [],
                       playConfigs: [],
-                    }))
-                  }
+                    }));
+                  }}
                 >
-                  <option value="threeDigit">3 位号码</option>
-                  <option value="fiveDigit">5 位号码</option>
-                </select>
+                  {lotteryNumberTypeOptions.map((option) => (
+                    <Select.Option key={option.value} value={option.value}>
+                      {option.label}
+                    </Select.Option>
+                  ))}
+                </Select>
               </Field>
               <Field label="开奖模式">
-                <select
+                <Select
                   className="form-input"
                   value={form.drawMode}
-                  onChange={(event) =>
-                    setFormValue(setForm, 'drawMode', event.target.value as DrawMode)
+                  onChange={(value) =>
+                    setFormValue(setForm, 'drawMode', value as DrawMode)
                   }
                 >
-                  <option value="platform">平台开奖</option>
-                  <option value="api">API 接口</option>
-                  <option value="manual">指定号码</option>
-                </select>
+                  <Select.Option value="platform">平台开奖</Select.Option>
+                  <Select.Option value="api">API 接口</Select.Option>
+                  <Select.Option value="manual">指定号码</Select.Option>
+                </Select>
               </Field>
               <Field label="彩种分类">
-                <select
+                <Select
                   className="form-input"
                   value={form.category}
-                  onChange={(event) =>
+                  onChange={(value) =>
                     setFormValue(
                       setForm,
                       'category',
-                      event.target.value as LotteryCategory,
+                      value as LotteryCategory,
                     )
                   }
                 >
-                  {lotteryCategoryOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  {lotteryCategoryOptions
+                    .concat(
+                      categoryMissingOption(form.category, lotteryCategoryOptions),
+                    )
+                    .map((option) => (
+                      <Select.Option key={option.value} value={option.value}>
+                        {option.label}
+                      </Select.Option>
+                    ))}
+                </Select>
               </Field>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="开奖时间类型">
-                <select
+                <Select
                   className="form-input"
                   value={form.scheduleKind}
-                  onChange={(event) =>
-                    setFormValue(setForm, 'scheduleKind', event.target.value as ScheduleKind)
+                  onChange={(value) =>
+                    setFormValue(setForm, 'scheduleKind', value as ScheduleKind)
                   }
                 >
-                  <option value="periodic">周期开奖</option>
-                  <option value="daily">每日固定</option>
-                  <option value="weekly">周开奖</option>
-                </select>
+                  <Select.Option value="periodic">周期开奖</Select.Option>
+                  <Select.Option value="daily">每日固定</Select.Option>
+                  <Select.Option value="weekly">周开奖</Select.Option>
+                </Select>
               </Field>
               {form.scheduleKind === 'periodic' ? (
                 <Field label="周期秒数">
-                  <input
+                  <Input
                     className="form-input"
                     min="1"
                     type="number"
                     value={form.intervalSeconds}
-                    onChange={(event) =>
-                      setFormValue(setForm, 'intervalSeconds', event.target.value)
+                    onChange={(value) =>
+                      setFormValue(setForm, 'intervalSeconds', value)
                     }
                   />
                 </Field>
               ) : (
                 <Field label="开奖时间">
-                  <input
+                  <Input
                     className="form-input"
                     placeholder="21:00:15"
                     value={form.time}
-                    onChange={(event) => setFormValue(setForm, 'time', event.target.value)}
+                    onChange={(value) => setFormValue(setForm, 'time', value)}
                   />
                 </Field>
               )}
@@ -345,29 +545,37 @@ export function LotteryManagementPage({
 
             {form.scheduleKind === 'weekly' ? (
               <Field label="开奖星期">
-                <input
+                <Input
                   className="form-input"
                   placeholder="Tuesday,Thursday"
                   value={form.weekdays}
-                  onChange={(event) => setFormValue(setForm, 'weekdays', event.target.value)}
+                  onChange={(value) => setFormValue(setForm, 'weekdays', value)}
                 />
               </Field>
             ) : null}
 
-            <Field label="玩法分类">
-              <div className="grid gap-2 sm:grid-cols-2">
-                {playCategoryOptions.map((option) => (
-                  <label key={option.value} className="flex items-center gap-2 text-sm">
-                    <input
-                      checked={form.playCategories.includes(option.value)}
-                      type="checkbox"
-                      onChange={() => togglePlayCategory(setForm, option.value)}
-                    />
-                    {option.label}
-                  </label>
-                ))}
-              </div>
-            </Field>
+            {lotteryNumberTypeSupportsPlayRules(form.numberType) ? (
+              <Field label="玩法分类">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {playCategoryOptions.map((option) => (
+                    <label key={option.value} className="flex items-center gap-2 text-sm">
+                      <input
+                        checked={form.playCategories.includes(option.value)}
+                        type="checkbox"
+                        onChange={() => togglePlayCategory(setForm, option.value)}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            ) : (
+              <Banner
+                type="info"
+                title="玩法暂未接入"
+                description="该号码类型当前用于开奖采集、期号调度和开奖号码控制，投注玩法后续可单独扩展。"
+              />
+            )}
 
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="销售状态">
@@ -398,36 +606,36 @@ export function LotteryManagementPage({
 
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label="每份最低金额">
-                <input
+                <Input
                   className="form-input"
                   min="1"
                   type="number"
                   value={form.minShareAmountMinor}
-                  onChange={(event) =>
-                    setFormValue(setForm, 'minShareAmountMinor', event.target.value)
+                  onChange={(value) =>
+                    setFormValue(setForm, 'minShareAmountMinor', value)
                   }
                 />
               </Field>
               <Field label="发起人比例">
-                <input
+                <Input
                   className="form-input"
                   max="100"
                   min="0"
                   type="number"
                   value={form.initiatorMinPercent}
-                  onChange={(event) =>
-                    setFormValue(setForm, 'initiatorMinPercent', event.target.value)
+                  onChange={(value) =>
+                    setFormValue(setForm, 'initiatorMinPercent', value)
                   }
                 />
               </Field>
               <Field label="参与最低金额">
-                <input
+                <Input
                   className="form-input"
                   min="1"
                   type="number"
                   value={form.participantMinAmountMinor}
-                  onChange={(event) =>
-                    setFormValue(setForm, 'participantMinAmountMinor', event.target.value)
+                  onChange={(value) =>
+                    setFormValue(setForm, 'participantMinAmountMinor', value)
                   }
                 />
               </Field>
@@ -451,10 +659,146 @@ export function LotteryManagementPage({
                   删除
                 </Button>
               ) : null}
+              <Button onClick={() => setLotterySheetVisible(false)}>取消</Button>
             </div>
-          </form>
-        </Card>
-      </section>
+        </form>
+      </SideSheet>
+
+      <SideSheet
+        aria-label="彩种分类管理"
+        title="彩种分类管理"
+        visible={categorySheetVisible}
+        width={560}
+        onCancel={() => setCategorySheetVisible(false)}
+      >
+        <div className="space-y-4">
+          <div className="rounded border border-slate-200 bg-slate-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-ink">分类配置</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  新建、编辑与删除分类后，彩种表单和列表的分类下拉会立即使用最新数据。
+                </p>
+              </div>
+              <Tag color="blue">{categories.length} 个分类</Tag>
+            </div>
+          </div>
+
+          {categoriesLoading ? (
+            <div className="grid min-h-[180px] place-items-center">
+              <Spin tip="正在加载分类" />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid gap-2 rounded border border-slate-200 bg-white p-3">
+                <p className="text-sm font-medium text-ink">新增分类</p>
+                <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                  <Input
+                    className="form-input"
+                    placeholder="编码，如 overseas"
+                    value={categoryDraftCode}
+                    onChange={(value) => setCategoryDraftCode(value)}
+                  />
+                  <Input
+                    className="form-input"
+                    placeholder="名称，如 海外彩种"
+                    value={categoryDraftName}
+                    onChange={(value) => setCategoryDraftName(value)}
+                  />
+                  <Button
+                    disabled={!categoryDraftCode.trim() || !categoryDraftName.trim()}
+                    loading={categorySaving}
+                    theme="solid"
+                    onClick={() => {
+                      void addLotteryCategory();
+                    }}
+                  >
+                    新增
+                  </Button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded border border-slate-200">
+                <table className="w-full min-w-[460px] text-left text-sm">
+                  <thead className="border-b border-line bg-slate-50 text-xs text-slate-500">
+                    <tr>
+                      <th className="py-2 pl-3 pr-4 font-medium">分类编码</th>
+                      <th className="py-2 pr-4 font-medium">分类名称</th>
+                      <th className="py-2 pr-3 font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {categories.map((category) => (
+                      <tr key={category.code} className="border-b border-slate-100">
+                        <td className="py-2 pl-3 pr-4 font-mono text-xs text-slate-600">
+                          {category.code}
+                        </td>
+                        <td className="py-2 pr-4">
+                          {editingCategoryCode === category.code ? (
+                            <Input
+                              className="form-input"
+                              value={editingCategoryName}
+                              onChange={(value) =>
+                                setEditingCategoryName(value)
+                              }
+                            />
+                          ) : (
+                            <span className="text-ink">{category.name}</span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {editingCategoryCode === category.code ? (
+                            <div className="flex items-center gap-2">
+                              <Button
+                                loading={categorySaving}
+                                size="small"
+                                onClick={() => {
+                                  void saveCategory();
+                                }}
+                              >
+                                保存
+                              </Button>
+                              <Button
+                                size="small"
+                                onClick={() => setEditingCategoryCode(null)}
+                              >
+                                取消
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="small"
+                                onClick={() => {
+                                  setEditingCategoryCode(category.code);
+                                  setEditingCategoryName(category.name);
+                                }}
+                              >
+                                编辑
+                              </Button>
+                              <Button
+                                size="small"
+                                onClick={() => {
+                                  if (!window.confirm(`确定删除分类【${category.name}】吗？`)) {
+                                    return;
+                                  }
+                                  void removeLotteryCategory(category.code);
+                                }}
+                              >
+                                删除
+                              </Button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </SideSheet>
     </div>
   );
 }
@@ -483,6 +827,7 @@ function emptyForm(): LotteryFormState {
     intervalSeconds: '60',
     minShareAmountMinor: '100',
     name: '',
+    logoUrl: '',
     numberType: 'threeDigit',
     participantMinAmountMinor: '1000',
     playCategories: ['direct'],
@@ -499,6 +844,7 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
 
   return {
     category: lottery.category,
+    logoUrl: lottery.logoUrl,
     drawMode: lottery.drawMode,
     groupBuyEnabled: lottery.groupBuy.enabled,
     id: lottery.id,
@@ -529,8 +875,11 @@ function lotteryFromForm(form: LotteryFormState): LotteryKind {
     },
     id: form.id.trim(),
     name: form.name.trim(),
+    logoUrl: form.logoUrl.trim(),
     numberType: form.numberType,
-    playCategories: form.playCategories,
+    playCategories: lotteryNumberTypeSupportsPlayRules(form.numberType)
+      ? form.playCategories
+      : [],
     playConfigs: playConfigsForForm(form),
     saleEnabled: form.saleEnabled,
     schedule: scheduleFromForm(form),
@@ -538,6 +887,10 @@ function lotteryFromForm(form: LotteryFormState): LotteryKind {
 }
 
 function playConfigsForForm(form: LotteryFormState): LotteryPlayConfig[] {
+  if (!lotteryNumberTypeSupportsPlayRules(form.numberType)) {
+    return [];
+  }
+
   return form.playConfigs
     .map((config) => ({
       ...config,
@@ -605,6 +958,10 @@ function numberField(value: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function readSettingValue(settings: SystemSetting[], key: string) {
+  return settings.find((item) => item.key === key)?.value ?? '';
+}
+
 function setFormValue<K extends keyof LotteryFormState>(
   setForm: React.Dispatch<React.SetStateAction<LotteryFormState>>,
   key: K,
@@ -634,15 +991,20 @@ function drawModeText(mode: string) {
   return labels[mode] ?? mode;
 }
 
-function lotteryCategoryText(category: LotteryCategory) {
-  const names: Record<LotteryCategory, string> = {
-    regional: '地方彩种',
-    overseas: '海外彩种',
-    welfare: '福利彩种',
-    other: '其他',
-  };
+function lotteryCategoryText(
+  category: LotteryCategory,
+  categories: LotteryCategoryConfig[],
+) {
+  const match = categories.find((item) => item.code === category);
+  return match?.name ?? category;
+}
 
-  return names[category];
+function categoryMissingOption(
+  category: LotteryCategory,
+  options: Array<{ label: string; value: LotteryCategory }>,
+) {
+  const exists = options.some((option) => option.value === category);
+  return exists ? [] : [{ label: category, value: category }];
 }
 
 function drawModeColor(mode: string) {
