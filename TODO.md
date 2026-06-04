@@ -1,5 +1,21 @@
 # TODO
 
+## 2026-06-04 14:36 HKT 彩种默认停售与合买关闭
+
+- 完成任务：调整彩种 SQL 和后端种子默认值，让所有默认彩种都是停售状态，并且默认关闭合买。
+- 解决问题：此前部分默认彩种初始化后就是开售且合买开启，可能导致调度器或运营流程在未配置前就开始处理彩种。
+- 具体实现：
+  - 后端 `seed_lotteries()` 默认 `saleEnabled=false`。
+  - 后端默认 `groupBuy.enabled=false`，保留合买阈值参数用于后台开启后的默认值。
+  - 新增迁移 `backend/migrations/20260605005000_default_lotteries_closed.sql`，设置 `lotteries.sale_enabled` 和 `lotteries.group_buy` 的 SQL 默认值，并将已有彩种统一改为停售和关闭合买。
+  - 调整合买和调度相关测试，测试需要开售或开启合买时显式设置前置状态。
+- 验证记录：
+  - `cd backend && cargo fmt --check` 通过。
+  - `cd backend && cargo check` 通过。
+  - `cd backend && cargo test -- --nocapture` 通过，159 个测试全部通过；仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - 使用 `DATABASE_URL=postgres://root:123456@192.168.2.3:15432/postgres PORT=18158 cargo run` 启动后端成功，说明迁移已随服务启动执行。
+  - 通过后台 API 登录并查询 `/api/admin/lotteries`，确认当前 PostgreSQL 中 22 个彩种 `saleEnabled=true` 数量为 0，`groupBuy.enabled=true` 数量为 0。
+
 ## 2026-06-04 14:25 HKT 广告管理与手机端轮播接口
 
 - 完成任务：新增后台“广告管理”模块，并补齐手机端轮播广告公开接口。

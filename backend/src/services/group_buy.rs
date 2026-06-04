@@ -669,7 +669,10 @@ fn seed_group_buy_plans() -> Vec<GroupBuyPlan> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::{access::AccessRepository, lottery::seed_lotteries};
+    use crate::{
+        domain::lottery::LotteryKind,
+        services::{access::AccessRepository, lottery::seed_lotteries},
+    };
 
     #[tokio::test]
     async fn group_buy_repository_creates_plan_with_initiator_participant() {
@@ -678,6 +681,7 @@ mod tests {
             .snapshot()
             .await
             .expect("access snapshot can load");
+        let lotteries = lotteries_with_group_buy_enabled("fc3d");
         let plan = repository
             .create(
                 CreateGroupBuyPlanRequest {
@@ -688,7 +692,7 @@ mod tests {
                     initiator_amount_minor: 10_000,
                     note: "测试计划".to_string(),
                 },
-                &seed_lotteries(),
+                &lotteries,
                 &access.users,
             )
             .await
@@ -708,6 +712,7 @@ mod tests {
             .snapshot()
             .await
             .expect("access snapshot can load");
+        let lotteries = seed_lotteries();
         let error = repository
             .create(
                 CreateGroupBuyPlanRequest {
@@ -718,7 +723,7 @@ mod tests {
                     initiator_amount_minor: 10_000,
                     note: "关闭合买彩种".to_string(),
                 },
-                &seed_lotteries(),
+                &lotteries,
                 &access.users,
             )
             .await
@@ -734,6 +739,7 @@ mod tests {
             .snapshot()
             .await
             .expect("access snapshot can load");
+        let lotteries = lotteries_with_group_buy_enabled("fc3d");
         let error = repository
             .create(
                 CreateGroupBuyPlanRequest {
@@ -744,7 +750,7 @@ mod tests {
                     initiator_amount_minor: 9_900,
                     note: "低于发起人比例".to_string(),
                 },
-                &seed_lotteries(),
+                &lotteries,
                 &access.users,
             )
             .await
@@ -762,6 +768,7 @@ mod tests {
             .snapshot()
             .await
             .expect("access snapshot can load");
+        let lotteries = lotteries_with_group_buy_enabled("fc3d");
         let plan = repository
             .create(
                 CreateGroupBuyPlanRequest {
@@ -772,7 +779,7 @@ mod tests {
                     initiator_amount_minor: 10_000,
                     note: "可满单计划".to_string(),
                 },
-                &seed_lotteries(),
+                &lotteries,
                 &access.users,
             )
             .await
@@ -821,5 +828,17 @@ mod tests {
             .expect_err("participant amount over remaining must be rejected");
 
         assert!(error.to_string().contains("exceeds remaining"));
+    }
+
+    /// 返回显式开启指定彩种合买的测试彩种列表。
+    fn lotteries_with_group_buy_enabled(lottery_id: &str) -> Vec<LotteryKind> {
+        let mut lotteries = seed_lotteries();
+        if let Some(lottery) = lotteries
+            .iter_mut()
+            .find(|lottery| lottery.id == lottery_id)
+        {
+            lottery.group_buy.enabled = true;
+        }
+        lotteries
     }
 }

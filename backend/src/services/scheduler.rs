@@ -829,6 +829,7 @@ mod tests {
     async fn scheduler_generates_future_issues_for_enabled_lotteries() {
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "ssc60").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let config = enabled_config(2);
@@ -865,6 +866,8 @@ mod tests {
             ),
         );
         let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
+        enable_lottery_sale(&lotteries, "ssc60").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let config = enabled_config(1);
@@ -896,6 +899,7 @@ mod tests {
     async fn scheduler_does_not_duplicate_when_future_buffer_is_satisfied() {
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "ssc60").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let config = enabled_config(1);
@@ -928,6 +932,7 @@ mod tests {
     async fn scheduler_runs_due_automation_before_generating_future_issues() {
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "ssc60").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let config = enabled_config(1);
@@ -971,6 +976,7 @@ mod tests {
     async fn scheduler_opens_next_issue_after_current_issue_closes() {
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "ssc60").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let config = enabled_config(1);
@@ -1229,5 +1235,13 @@ mod tests {
             future_issue_count,
             sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
         }
+    }
+
+    /// 为调度测试显式打开指定彩种销售状态。
+    async fn enable_lottery_sale(lotteries: &LotteryRepository, lottery_id: &str) {
+        lotteries
+            .set_sale_enabled(lottery_id, true)
+            .await
+            .expect("lottery sale can be enabled for scheduler test");
     }
 }

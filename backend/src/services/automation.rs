@@ -214,6 +214,7 @@ mod tests {
     async fn automation_closes_draws_settles_and_credits_due_issue() {
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let lottery = lottery(DrawMode::Api);
@@ -307,6 +308,7 @@ mod tests {
     async fn automation_skips_due_manual_issue_without_draw_number() {
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let lottery = lottery(DrawMode::Manual);
@@ -339,6 +341,7 @@ mod tests {
     async fn automation_draws_due_manual_issue_with_control_number() {
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let lottery = lottery(DrawMode::Manual);
@@ -383,6 +386,7 @@ mod tests {
             ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
         );
         let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let lottery = lottery(DrawMode::Api);
@@ -448,6 +452,14 @@ mod tests {
                 odds_basis_points: 10_000,
             }],
         }
+    }
+
+    /// 为自动开奖测试显式打开指定彩种销售状态。
+    async fn enable_lottery_sale(lotteries: &LotteryRepository, lottery_id: &str) {
+        lotteries
+            .set_sale_enabled(lottery_id, true)
+            .await
+            .expect("lottery sale can be enabled for automation test");
     }
 
     /// 处理 full_direct_selection 的具体内部流程。

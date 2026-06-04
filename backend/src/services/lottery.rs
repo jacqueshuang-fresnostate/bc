@@ -679,7 +679,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             schedule: DrawSchedule::Daily {
                 time: "21:00:15".to_string(),
             },
-            sale_enabled: true,
+            sale_enabled: false,
             group_buy: group_buy_config(),
             play_categories: vec![
                 PlayCategory::Direct,
@@ -712,7 +712,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             schedule: DrawSchedule::Daily {
                 time: "21:00:15".to_string(),
             },
-            sale_enabled: true,
+            sale_enabled: false,
             group_buy: group_buy_config(),
             play_categories: vec![
                 PlayCategory::Direct,
@@ -745,7 +745,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 300,
             },
-            sale_enabled: true,
+            sale_enabled: false,
             group_buy: group_buy_config(),
             play_categories: vec![
                 PlayCategory::Direct,
@@ -781,7 +781,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 60,
             },
-            sale_enabled: true,
+            sale_enabled: false,
             group_buy: group_buy_config(),
             play_categories: vec![
                 PlayCategory::Direct,
@@ -817,7 +817,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 60,
             },
-            sale_enabled: true,
+            sale_enabled: false,
             group_buy: group_buy_config(),
             play_categories: vec![
                 PlayCategory::Direct,
@@ -1014,7 +1014,7 @@ fn api_lottery(
         number_type,
         draw_mode: DrawMode::Api,
         schedule: DrawSchedule::Periodic { interval_seconds },
-        sale_enabled: true,
+        sale_enabled: false,
         group_buy: group_buy_config(),
         play_categories,
         play_configs,
@@ -1278,7 +1278,7 @@ fn default_odds_basis_points_for_rule(rule_code: &PlayRuleCode) -> i64 {
 /// 处理 group_buy_config 的具体内部流程。
 fn group_buy_config() -> GroupBuyConfig {
     GroupBuyConfig {
-        enabled: true,
+        enabled: false,
         min_share_amount_minor: 100,
         initiator_min_percent: 10,
         participant_min_amount_minor: 1_000,
@@ -1456,6 +1456,15 @@ mod tests {
     }
 
     #[test]
+    /// 内置彩种默认停售，并默认关闭合买。
+    fn seeded_lotteries_default_to_closed_sale_and_group_buy() {
+        let lotteries = seed_lotteries();
+
+        assert!(lotteries.iter().all(|lottery| !lottery.sale_enabled));
+        assert!(lotteries.iter().all(|lottery| !lottery.group_buy.enabled));
+    }
+
+    #[test]
     /// 处理 store_rejects_duplicate_id 的具体内部流程。
     fn store_rejects_duplicate_id() {
         let mut store = LotteryStore::seeded();
@@ -1489,10 +1498,10 @@ mod tests {
         let mut store = LotteryStore::seeded();
 
         let updated = store
-            .set_sale_enabled("fc3d", false)
+            .set_sale_enabled("fc3d", true)
             .expect("sale status can be changed");
 
-        assert!(!updated.sale_enabled);
+        assert!(updated.sale_enabled);
     }
 
     #[test]
@@ -1584,7 +1593,7 @@ mod tests {
             .await
             .expect("lottery can be created");
         let toggled = repository
-            .set_sale_enabled(&created.id, false)
+            .set_sale_enabled(&created.id, true)
             .await
             .expect("sale status can be toggled");
         let deleted = repository
@@ -1593,7 +1602,7 @@ mod tests {
             .expect("lottery can be deleted");
 
         assert_eq!(created.id, "integration-smoke-3d");
-        assert!(!toggled.sale_enabled);
+        assert!(toggled.sale_enabled);
         assert_eq!(deleted.id, "integration-smoke-3d");
     }
 }
