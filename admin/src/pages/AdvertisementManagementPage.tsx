@@ -295,9 +295,10 @@ export function AdvertisementManagementPage({
 
           <FormField label="广告图片">
             <ImageUploadAvatar
-              description="建议上传适合手机首页轮播的横幅图片。"
+              description="建议上传长方形横幅图片，适合手机首页轮播展示。"
               imageUrl={form.imageUrl}
               missingConfigLabels={missingImageConfigLabels}
+              previewShape="banner"
               requireImageUrl
               showResultPanel={false}
               successMessage="广告图片上传成功"

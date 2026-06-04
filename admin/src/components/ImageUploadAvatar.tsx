@@ -33,6 +33,7 @@ interface ImageUploadAvatarProps {
   title?: string;
   uploadFieldName?: string;
   uploadingText?: string;
+  previewShape?: 'avatar' | 'banner';
   variant?: 'panel' | 'uploadAdd';
   warningTitle?: string;
 }
@@ -53,6 +54,7 @@ export function ImageUploadAvatar({
   title = '点击图片区域上传图片',
   uploadFieldName = 'file',
   uploadingText = '正在上传图片...',
+  previewShape = 'avatar',
   variant = 'panel',
   warningTitle = '图床配置不完整',
 }: ImageUploadAvatarProps) {
@@ -153,52 +155,105 @@ export function ImageUploadAvatar({
       ) : null}
 
       <div className="grid gap-3 rounded border border-slate-200 bg-white p-4">
-        <div className="flex items-center gap-4">
-          <Upload
-            accept="image/*"
-            action="/api/admin/image-bed/upload"
-            className="avatar-upload"
-            disabled={disabled || uploading || missingConfigLabels.length > 0}
-            showUploadList={false}
-            beforeUpload={() => {
-              if (missingConfigLabels.length > 0) {
-                Toast.warning('请先补全图床配置');
-                return false;
-              }
-              return true;
-            }}
-            customRequest={(request) => {
-              void uploadFile(request.fileInstance)
-                .then((response) => request.onSuccess(response))
-                .catch(() => request.onError({ status: 500 }));
-            }}
-            onError={() => Toast.error(failureMessage)}
-          >
-            <Avatar
-              hoverMask={avatarHoverMask}
-              shape="square"
-              size="extra-large"
-              src={avatarUrl || undefined}
-              style={{
-                backgroundColor: 'var(--semi-color-fill-0)',
-                color: 'var(--semi-color-text-2)',
-                margin: 4,
-              }}
-            >
-              <UploadIcon size={34} />
-            </Avatar>
-          </Upload>
+        {previewShape === 'banner' ? (
+          <div className="space-y-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-ink">{title}</p>
+              <p className="mt-1 text-xs text-slate-500">{description}</p>
+              {file ? (
+                <p className="mt-2 truncate text-xs text-slate-500">
+                  当前文件：{file.name}，{formatFileSize(file.size)}
+                </p>
+              ) : null}
+            </div>
 
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-ink">{title}</p>
-            <p className="mt-1 text-xs text-slate-500">{description}</p>
-            {file ? (
-              <p className="mt-2 truncate text-xs text-slate-500">
-                当前文件：{file.name}，{formatFileSize(file.size)}
-              </p>
-            ) : null}
+            <Upload
+              accept="image/*"
+              action="/api/admin/image-bed/upload"
+              className="block w-full"
+              disabled={disabled || uploading || missingConfigLabels.length > 0}
+              showUploadList={false}
+              beforeUpload={() => {
+                if (missingConfigLabels.length > 0) {
+                  Toast.warning('请先补全图床配置');
+                  return false;
+                }
+                return true;
+              }}
+              customRequest={(request) => {
+                void uploadFile(request.fileInstance)
+                  .then((response) => request.onSuccess(response))
+                  .catch(() => request.onError({ status: 500 }));
+              }}
+              onError={() => Toast.error(failureMessage)}
+            >
+              <div className="group relative flex aspect-[16/7] min-h-[150px] w-full cursor-pointer items-center justify-center overflow-hidden rounded-md border border-dashed border-slate-300 bg-slate-50 text-slate-500">
+                {avatarUrl ? (
+                  <img
+                    alt={title}
+                    className="h-full w-full object-cover"
+                    src={avatarUrl}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-2 text-sm">
+                    <UploadIcon size={34} />
+                    <span>上传长方形广告图</span>
+                  </div>
+                )}
+                <div className="absolute inset-0 hidden items-center justify-center bg-slate-900/55 text-white group-hover:flex">
+                  <IconCamera />
+                </div>
+              </div>
+            </Upload>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-4">
+            <Upload
+              accept="image/*"
+              action="/api/admin/image-bed/upload"
+              className="avatar-upload"
+              disabled={disabled || uploading || missingConfigLabels.length > 0}
+              showUploadList={false}
+              beforeUpload={() => {
+                if (missingConfigLabels.length > 0) {
+                  Toast.warning('请先补全图床配置');
+                  return false;
+                }
+                return true;
+              }}
+              customRequest={(request) => {
+                void uploadFile(request.fileInstance)
+                  .then((response) => request.onSuccess(response))
+                  .catch(() => request.onError({ status: 500 }));
+              }}
+              onError={() => Toast.error(failureMessage)}
+            >
+              <Avatar
+                hoverMask={avatarHoverMask}
+                shape="square"
+                size="extra-large"
+                src={avatarUrl || undefined}
+                style={{
+                  backgroundColor: 'var(--semi-color-fill-0)',
+                  color: 'var(--semi-color-text-2)',
+                  margin: 4,
+                }}
+              >
+                <UploadIcon size={34} />
+              </Avatar>
+            </Upload>
+
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-ink">{title}</p>
+              <p className="mt-1 text-xs text-slate-500">{description}</p>
+              {file ? (
+                <p className="mt-2 truncate text-xs text-slate-500">
+                  当前文件：{file.name}，{formatFileSize(file.size)}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        )}
 
         {uploading ? (
           <div className="flex items-center gap-2 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-700">
