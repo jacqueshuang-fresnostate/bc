@@ -1,5 +1,20 @@
 # TODO
 
+## 2026-06-04 21:57 HKT 手机端提现方式管理接口对接
+
+- 完成任务：把手机端“提现管理”的提现方式列表、新增、编辑、删除和设默认接入后端真实接口。
+- 解决问题：手机端提现管理原先按旧接口读取 `items/config`，并使用 `method_type`、`account_no`、`bank/usdt`、`/default` 等旧字段和路由；当前后端真实接口返回统一响应信封和 `camelCase` 字段，导致页面无法正常管理提现方式。
+- 具体实现：
+  - `mobile/src/api/user.ts` 新增提现方式类型和 `fetchWithdrawalMethods()`、`createWithdrawalMethod()`、`updateWithdrawalMethod()`、`deleteWithdrawalMethod()`。
+  - `WithdrawalMethodsView.vue` 改为使用 `alipay`、`wechat`、`bankCard` 三种后端支持类型，并提交 `methodType`、`accountHolder`、`accountNumber`、`bankName`、`isDefault`。
+  - 银行卡保存前校验银行名称；支付宝和微信不再提交无效银行字段。
+  - 设置默认提现方式改为调用 `PUT /api/user/withdrawal-methods/{method_id}` 并传入 `isDefault=true`，不再调用不存在的 `/default` 子路由。
+  - `WithdrawView.vue` 读取收款账户列表时复用同一 API 封装，确保提现申请页能展示管理页维护的收款账户。
+- 当前边界：
+  - 后端当前还没有用户提现申请提交路由，`WithdrawView.vue` 的真正提现提交动作需要后续新增提现订单接口后继续完整接入。
+- 验证记录：
+  - `cd mobile && npm run build` 通过。
+
 ## 2026-06-04 21:53 HKT 手机端个人中心移除快捷充值渠道
 
 - 完成任务：删除手机端个人中心的“快捷充值渠道”模块。

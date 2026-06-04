@@ -52,6 +52,28 @@ export type MobileAdvertisement = {
   sortOrder: number
 }
 
+export type WithdrawalMethodType = 'alipay' | 'wechat' | 'bankCard'
+
+export type WithdrawalMethod = {
+  id: string
+  userId: string
+  methodType: WithdrawalMethodType
+  accountHolder: string
+  accountNumber: string
+  bankName?: string | null
+  isDefault: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type WithdrawalMethodPayload = {
+  methodType: WithdrawalMethodType
+  accountHolder: string
+  accountNumber: string
+  bankName?: string
+  isDefault: boolean
+}
+
 type LoginPayload = {
   loginKey: string
   password: string
@@ -152,4 +174,20 @@ export async function fetchMobileSiteConfig() {
 
 export async function fetchMobileAdvertisements() {
   return unwrapApiData<MobileAdvertisement[]>(await http.get('/user/mobile/advertisements'))
+}
+
+export async function fetchWithdrawalMethods() {
+  return unwrapApiData<WithdrawalMethod[]>(await http.get('/user/withdrawal-methods'))
+}
+
+export async function createWithdrawalMethod(payload: WithdrawalMethodPayload) {
+  return unwrapApiData<WithdrawalMethod>(await http.post('/user/withdrawal-methods', payload))
+}
+
+export async function updateWithdrawalMethod(id: string, payload: WithdrawalMethodPayload) {
+  return unwrapApiData<WithdrawalMethod>(await http.put(`/user/withdrawal-methods/${id}`, payload))
+}
+
+export async function deleteWithdrawalMethod(id: string) {
+  await http.delete(`/user/withdrawal-methods/${id}`)
 }

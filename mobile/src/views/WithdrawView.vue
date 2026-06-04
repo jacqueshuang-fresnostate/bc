@@ -3,53 +3,46 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import http from '../api/http'
-import { errorMessage, fetchCurrentUserProfile } from '../api/user'
+import {
+  errorMessage,
+  fetchCurrentUserProfile,
+  fetchWithdrawalMethods,
+  type WithdrawalMethod,
+  type WithdrawalMethodType,
+} from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 
-type MethodType = 'alipay' | 'wechat' | 'bank' | 'usdt'
-
-type WithdrawalMethod = {
-  id: number
-  method_type: MethodType
-  method_label: string
-  type_enabled: boolean
-  account_name: string
-  account_no: string
-  bank_name?: string | null
-  branch_name?: string | null
-  network?: string | null
-  is_default: boolean
-}
+type MethodType = WithdrawalMethodType
 
 const router = useRouter()
 const profile = ref<any>(null)
 const methods = ref<WithdrawalMethod[]>([])
 const amount = ref('')
-const selectedMethodId = ref<number | null>(null)
+const selectedMethodId = ref<string | null>(null)
 const loading = ref(false)
 const submitting = ref(false)
 
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
-const enabledMethods = computed(() => methods.value.filter(item => item.type_enabled))
+const enabledMethods = computed(() => methods.value)
 const selectedMethod = computed(() => enabledMethods.value.find(item => item.id === selectedMethodId.value) || enabledMethods.value[0] || null)
 
 function methodIcon(type?: MethodType) {
-  if (type === 'usdt') return 'currency_bitcoin'
+  if (type === 'bankCard') return 'account_balance'
+  if (type === 'wechat') return 'chat'
+  if (type === 'alipay') return 'qr_code_scanner'
   return 'account_balance_wallet'
 }
 
 function methodTitle(item: WithdrawalMethod) {
-  if (item.method_type === 'alipay') return item.method_label || '支付宝'
-  if (item.method_type === 'wechat') return item.method_label || '微信'
-  if (item.method_type === 'usdt') return `USDT ${item.network || 'TRC20'}`
-  return item.method_label || '银行卡'
+  if (item.methodType === 'alipay') return '支付宝'
+  if (item.methodType === 'wechat') return '微信'
+  return item.bankName ? `银行卡 · ${item.bankName}` : '银行卡'
 }
 
 function methodDescription(item?: WithdrawalMethod | null) {
   if (!item) return '请先添加收款账户'
-  if (item.method_type === 'usdt') return shortAddress(item.account_no)
-  if (item.method_type === 'bank') return maskAccount(item.account_no)
-  return maskEmail(item.account_no)
+  if (item.methodType === 'bankCard') return maskAccount(item.accountNumber)
+  return maskEmail(item.accountNumber)
 }
 
 function maskAccount(value?: string | null) {
@@ -65,12 +58,6 @@ function maskEmail(value?: string | null) {
   return `${name.slice(0, 4)}***@${domain}`
 }
 
-function shortAddress(value?: string | null) {
-  const text = String(value || '')
-  if (text.length <= 6) return text || '-'
-  return `${text.slice(0, 3)}...${text.slice(-3)}`
-}
-
 function useMaxAmount() {
   amount.value = balanceText.value
 }
@@ -80,11 +67,11 @@ async function loadWithdrawData() {
   try {
     const [currentProfile, methodRes] = await Promise.all([
       fetchCurrentUserProfile(),
-      http.get('/user/withdrawal-methods'),
+      fetchWithdrawalMethods(),
     ])
     profile.value = currentProfile
-    methods.value = methodRes.data?.items || []
-    selectedMethodId.value = methods.value.find(item => item.is_default && item.type_enabled)?.id || enabledMethods.value[0]?.id || null
+    methods.value = methodRes
+    selectedMethodId.value = methods.value.find(item => item.isDefault)?.id || enabledMethods.value[0]?.id || null
   } catch (e: unknown) {
     showToast(errorMessage(e, '加载失败'))
   } finally {
@@ -171,8 +158,8 @@ onMounted(loadWithdrawData)
           >
             <input class="sr-only peer" name="method" type="radio" :value="item.id" :checked="selectedMethod?.id === item.id" @change="selectedMethodId = item.id" />
             <div class="flex min-w-0 items-center gap-4">
-              <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full" :class="item.method_type === 'usdt' ? 'bg-[#26A17B]/10 text-[#26A17B]' : 'bg-[#1677FF]/10 text-[#1677FF]'">
-                <LucideIcon :name="methodIcon(item.method_type)" class="h-5 w-5" />
+              <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#1677FF]/10 text-[#1677FF]">
+                <LucideIcon :name="methodIcon(item.methodType)" class="h-5 w-5" />
               </div>
               <div class="min-w-0">
                 <p class="font-body font-semibold text-on-surface">{{ methodTitle(item) }}</p>
