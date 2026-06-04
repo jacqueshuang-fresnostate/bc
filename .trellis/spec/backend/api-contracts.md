@@ -3113,3 +3113,156 @@ if let Some(draw_number) = active_draw_control_number(&issue.lottery_id)? {
 ```
 
 开奖服务必须先检查控制号码，再按原开奖模式读取 API 或平台生成器。
+
+---
+
+## 场景：用户端充值与客服直充接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增用户端充值下单、彩虹易支付回调、客服直充会话和后台充值订单查询，属于后端 API、服务层、数据库、前端管理页和 OpenAPI 的跨层契约。
+- 范围：用户端充值接口、用户端客服接口、后台充值订单接口、财务流水充值入账类型、系统设置充值配置。
+
+### 2. 签名
+
+- `GET /api/user/recharge/config`
+- `GET /api/user/recharge/orders`
+- `POST /api/user/recharge/orders`
+- `GET /api/user/recharge/epay/notify`
+- `POST /api/user/recharge/epay/notify`
+- `GET /api/user/recharge/epay/return`
+- `GET /api/user/support/conversations`
+- `GET /api/user/support/conversations/{id}`
+- `POST /api/user/support/conversations/{id}/messages`
+- `GET /api/admin/recharge-orders`
+- `POST /api/admin/recharge-orders/{id}/confirm`
+
+### 3. 契约
+
+充值配置返回：
+
+```json
+{
+  "channels": [
+    {
+      "channel": "rainbowEpay",
+      "name": "彩虹易支付",
+      "enabled": false,
+      "description": "跳转到彩虹易支付完成在线充值",
+      "payTypes": ["alipay", "wxpay"]
+    },
+    {
+      "channel": "customerService",
+      "name": "客服直充",
+      "enabled": true,
+      "description": "客服已收到您的直充申请，请在会话中确认付款方式和到账信息。",
+      "payTypes": []
+    }
+  ],
+  "minAmountMinor": 100,
+  "maxAmountMinor": 10000000
+}
+```
+
+创建充值订单请求：
+
+```json
+{
+  "channel": "customerService",
+  "amountMinor": 1200,
+  "payType": "alipay"
+}
+```
+
+`channel` 只能是 `rainbowEpay` 或 `customerService`。金额继续使用最小货币单位。彩虹易支付返回 `paymentUrl`，客服直充返回 `supportConversationId` 并同步创建客服会话。
+
+彩虹易支付通知接口不返回统一信封；验签和入账成功后必须返回裸文本 `success`，以便第三方支付平台确认通知已处理。用户端客服消息请求体为：
+
+```json
+{
+  "content": "我已提交客服直充，请协助确认。"
+}
+```
+
+后台确认客服直充请求体为：
+
+```json
+{
+  "providerTradeNo": "客服收款凭证"
+}
+```
+
+确认成功后订单状态变为 `paid`，并写入 `rechargeCredit` 资金流水。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 未登录调用用户端充值或客服接口 | HTTP 401 |
+| 充值金额低于 `recharge_min_amount_minor` | HTTP 400 |
+| 充值金额高于 `recharge_max_amount_minor` | HTTP 400 |
+| 彩虹易支付未开启 | HTTP 400 |
+| 彩虹易支付网关、商户号或密钥仍为占位值 | HTTP 400 |
+| `payType` 不在后台配置列表中 | HTTP 400 |
+| 客服直充未开启 | HTTP 400 |
+| 用户访问他人的客服会话 | HTTP 404 |
+| 客服消息内容为空 | HTTP 400 |
+| 支付通知签名无效或金额不匹配 | HTTP 400 |
+| 重复支付通知 | 保持幂等，不重复生成 `rechargeCredit` 流水 |
+| 后台确认非客服直充订单 | HTTP 400 |
+| 后台重复确认已入账客服直充订单 | 保持幂等，不重复生成 `rechargeCredit` 流水 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：客服直充创建订单后返回 `waitingCustomerService`，后台在线客服可看到会话，用户端可继续发消息。
+- Good：客服确认收到客服直充款项后，后台调用确认接口，订单变为 `paid`，用户余额增加。
+- Good：彩虹易支付通知验签成功后，充值订单变为 `paid`，资金流水新增 `rechargeCredit`，用户余额增加。
+- Base：彩虹易支付默认关闭，客服直充默认开启，方便未接入支付网关时先通过客服处理充值。
+- Bad：把彩虹易支付网关、商户号或密钥写入环境变量而不写入 `system_settings`；后台无法维护配置。
+- Bad：支付通知成功后只改订单状态不调用财务仓储；用户余额不会增加。
+
+### 6. 必要测试
+
+- 后端需要覆盖客服直充订单创建和会话 ID 返回。
+- 后端需要覆盖彩虹易支付签名排序和支付 URL 生成。
+- 后端需要覆盖充值入账流水幂等。
+- 后端需要覆盖用户只能查看和回复自己的客服会话。
+- 后端需要覆盖客服直充后台确认入账及重复确认幂等。
+- OpenAPI 测试需要覆盖后台充值订单、用户端充值和用户端客服路径。
+- 前端需要运行 `npm run build`，确认充值订单类型、资金流水类型和财务页面展示与后端枚举一致。
+- PostgreSQL 冒烟需要覆盖用户注册/登录、充值配置读取、客服直充下单、用户客服消息和后台充值订单查询。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+let order = mark_recharge_paid(order_id)?;
+```
+
+这个写法只改变充值状态，没有给用户余额入账。
+
+#### 正确
+
+```rust
+let order = store.mark_paid(order_id, paid_amount_minor, trade_no)?;
+finance.credit_recharge(&order.user_id, order.amount_minor, &order.id).await?;
+```
+
+充值成功必须同时更新充值订单和资金流水，财务仓储负责保持同一充值单的入账幂等。
+
+#### 错误
+
+```rust
+support.get(conversation_id).await
+```
+
+用户端直接按会话 ID 查询会泄露他人客服消息。
+
+#### 正确
+
+```rust
+support.get_for_user(conversation_id, &session.user.id).await
+```
+
+用户端客服接口必须按当前登录用户校验会话归属，归属不匹配时返回不存在。

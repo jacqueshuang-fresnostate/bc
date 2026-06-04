@@ -242,3 +242,113 @@ let store = load_access_store(&database).await?;
 ### 8. 后续增强要求
 
 所有运行时业务模块已经迁移为业务表。订单、资金流水、开奖期号、结算批次、管理员权限和高风险开奖控制后续增强时，必须继续补事务一致性、索引、审计字段、分页查询、备份恢复和从历史 `state_documents` 迁移数据的说明。
+
+---
+
+## 场景：充值订单数据库持久化
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增用户充值、彩虹易支付回调和客服直充订单，需要跨重启保存订单状态、第三方交易号、客服会话绑定和运行时序号。
+- 范围：`backend/migrations/20260605006000_create_recharge_orders.sql`、`RechargeRepository`、`FinanceRepository::credit_recharge`、`system_settings` 充值配置键。
+
+### 2. 签名
+
+- 迁移文件：`backend/migrations/20260605006000_create_recharge_orders.sql`
+- 业务表：`recharge_orders`
+- 运行时表：`recharge_runtime`
+- 资金流水类型：`ledger_entries.kind = rechargeCredit`
+- 系统设置键：
+  - `recharge_min_amount_minor`
+  - `recharge_max_amount_minor`
+  - `recharge_rainbow_epay_enabled`
+  - `recharge_rainbow_epay_gateway_url`
+  - `recharge_rainbow_epay_pid`
+  - `recharge_rainbow_epay_key`
+  - `recharge_rainbow_epay_notify_url`
+  - `recharge_rainbow_epay_return_url`
+  - `recharge_rainbow_epay_pay_types`
+  - `recharge_customer_service_enabled`
+  - `recharge_customer_service_message`
+
+### 3. 契约
+
+`recharge_orders` 字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `text primary key` | 充值订单 ID |
+| `user_id` | `text not null` | 用户 ID |
+| `username` | `text not null` | 下单时用户名快照 |
+| `channel` | `text not null` | `rainbowEpay` 或 `customerService` |
+| `amount_minor` | `bigint not null` | 充值金额（分） |
+| `status` | `text not null` | `pending`、`waitingCustomerService`、`paid` 或 `cancelled` |
+| `pay_type` | `text` | 彩虹易支付方式 |
+| `provider_trade_no` | `text` | 第三方交易号 |
+| `payment_url` | `text` | 彩虹易支付跳转地址 |
+| `support_conversation_id` | `text` | 客服直充绑定会话 ID |
+| `created_at` | `text not null` | 创建时间 |
+| `paid_at` | `text` | 入账时间 |
+
+`recharge_runtime` 使用 `key/value` 保存 `next_sequence`。支付网关配置必须在 `system_settings`，不要使用 `API_*` 或支付相关环境变量保存运行时业务配置。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `amount_minor <= 0` | 数据库约束拒绝，服务层也应先返回 HTTP 400 |
+| `channel` 非枚举值 | 数据库约束拒绝，服务层不应生成 |
+| `status` 非枚举值 | 数据库约束拒绝，服务层不应生成 |
+| 数据库中充值表为空 | 不写种子充值单，返回空订单列表 |
+| 数据库已有充值订单 | 启动时恢复订单和 `next_sequence`，不覆盖已有订单 |
+| 支付通知重复 | `FinanceRepository::credit_recharge` 按充值单 ID 幂等返回既有流水 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：配置 `DATABASE_URL` 后创建客服直充订单，服务重启后 `GET /api/admin/recharge-orders` 仍能看到该订单。
+- Good：彩虹易支付回调成功后，`recharge_orders.status=paid`，同时 `ledger_entries.kind=rechargeCredit`。
+- Base：未配置 `DATABASE_URL` 时充值仓储为空内存状态，仍可创建演示充值订单，但不跨重启保留。
+- Bad：把充值订单塞回 `state_documents`；这违反“所有业务表持久化”的要求。
+- Bad：只更新 `financial_accounts` 不写 `ledger_entries`；后台无法审计充值入账来源。
+
+### 6. 必要测试
+
+- 无数据库模式需要运行 `cargo test`，确认充值仓储可创建彩虹和客服直充订单。
+- 资金仓储需要测试同一充值单重复入账只生成一条 `rechargeCredit`。
+- PostgreSQL 冒烟需要启动服务并确认迁移执行、充值表可读写、客服会话可绑定。
+- SQL 迁移必须给新增表、字段和约束添加中文注释。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+let gateway = std::env::var("RAINBOW_EPAY_GATEWAY_URL")?;
+```
+
+支付网关配置放在环境变量里，后台无法修改，也不符合业务配置数据库化要求。
+
+#### 正确
+
+```rust
+let settings = access.settings().await?;
+let recharge_settings = recharge_settings_from_system_settings(&settings);
+```
+
+充值运行配置必须从 `system_settings` 读取，由后台维护并随数据库持久化。
+
+#### 错误
+
+```sql
+CREATE TABLE recharge_orders (...);
+```
+
+新增 SQL 没有字段注释，后续排查和数据库审计会变困难。
+
+#### 正确
+
+```sql
+COMMENT ON COLUMN recharge_orders.support_conversation_id IS '客服直充绑定的客服会话 ID';
+```
+
+新增业务表必须为表、字段和约束补中文注释。

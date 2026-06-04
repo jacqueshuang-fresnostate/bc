@@ -1,18 +1,24 @@
 //! 用户接口路由，提供注册、登录、会话、账户与提款方式能力
 
 use axum::{
-    extract::{Path, Request, State},
+    extract::{Form, Path, Query, Request, State},
     http::header::AUTHORIZATION,
     middleware::{self, Next},
     response::Response,
     routing::{get, post, put},
     Extension, Json, Router,
 };
+use std::collections::HashMap;
 
 use crate::{
     app::AppState,
     domain::advertisement::MobileAdvertisement,
     domain::finance::{FinancialAccountSummary, LedgerEntry},
+    domain::recharge::{
+        CreateRechargeOrderRequest, CreateRechargeOrderResponse, RechargeConfigResponse,
+        RechargeOrderSummary,
+    },
+    domain::support::{SupportConversation, UserSupportReplyRequest},
     domain::user::WithdrawalMethod,
     domain::user::{
         UserAuthSession, UserBalanceResponse, UserBindEmailRequest, UserChangePasswordRequest,
@@ -22,6 +28,10 @@ use crate::{
     },
     error::{ApiError, ApiResult},
     response::ApiEnvelope,
+    services::recharge::{
+        recharge_config_response, recharge_settings_from_system_settings,
+        support_ticket_for_recharge,
+    },
 };
 
 /// 组装并返回当前用户模块对应的路由树。
@@ -33,6 +43,23 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/password/change", post(change_password))
         .route("/balance", get(get_balance))
         .route("/ledger-entries", get(list_ledger_entries))
+        .route("/recharge/config", get(get_recharge_config))
+        .route(
+            "/recharge/orders",
+            get(list_recharge_orders).post(create_recharge_order),
+        )
+        .route(
+            "/support/conversations",
+            get(list_user_support_conversations),
+        )
+        .route(
+            "/support/conversations/{id}",
+            get(get_user_support_conversation),
+        )
+        .route(
+            "/support/conversations/{id}/messages",
+            post(reply_user_support_conversation),
+        )
         .route(
             "/withdrawal-methods",
             get(list_withdrawal_methods).post(create_withdrawal_method),
@@ -48,6 +75,11 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     Router::new()
         .route("/mobile/advertisements", get(list_mobile_advertisements))
+        .route(
+            "/recharge/epay/notify",
+            get(rainbow_epay_notify_query).post(rainbow_epay_notify_form),
+        )
+        .route("/recharge/epay/return", get(rainbow_epay_return_query))
         .route("/register", post(register_user))
         .route("/login", post(login_user))
         .route("/forgot-password", post(forgot_password))
@@ -196,6 +228,131 @@ async fn list_ledger_entries(
     let entries = state.finance.user_ledger_entries(&session.user.id).await?;
 
     Ok(Json(ApiEnvelope::success(entries)))
+}
+
+async fn get_recharge_config(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<RechargeConfigResponse>>> {
+    let settings = state.access.settings().await?;
+    let settings = recharge_settings_from_system_settings(&settings);
+
+    Ok(Json(ApiEnvelope::success(recharge_config_response(
+        &settings,
+    ))))
+}
+
+async fn list_recharge_orders(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<Vec<RechargeOrderSummary>>>> {
+    let orders = state.recharges.list_for_user(&session.user.id).await?;
+
+    Ok(Json(ApiEnvelope::success(orders)))
+}
+
+async fn create_recharge_order(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Json(payload): Json<CreateRechargeOrderRequest>,
+) -> ApiResult<Json<ApiEnvelope<CreateRechargeOrderResponse>>> {
+    let settings = state.access.settings().await?;
+    let settings = recharge_settings_from_system_settings(&settings);
+    let mut response = state
+        .recharges
+        .create_order(&session.user, payload, &settings)
+        .await?;
+
+    if let Some(ticket) = support_ticket_for_recharge(&response.order) {
+        let users = state.access.users().await?;
+        let conversation = state
+            .support
+            .create(
+                crate::domain::support::CreateSupportConversationRequest {
+                    id: ticket.conversation_id,
+                    user_id: session.user.id.clone(),
+                    subject: ticket.subject,
+                    priority: crate::domain::support::SupportPriority::Normal,
+                    content: ticket.content,
+                },
+                &users,
+            )
+            .await?;
+        let order = state
+            .recharges
+            .attach_support_conversation(&response.order.id, &conversation.id)
+            .await?;
+        response.support_conversation_id = Some(conversation.id);
+        response.order = order;
+    }
+
+    Ok(Json(ApiEnvelope::success(response)))
+}
+
+async fn rainbow_epay_notify_query(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> ApiResult<String> {
+    confirm_rainbow_notify(state, params).await
+}
+
+async fn rainbow_epay_notify_form(
+    State(state): State<AppState>,
+    Form(params): Form<HashMap<String, String>>,
+) -> ApiResult<String> {
+    confirm_rainbow_notify(state, params).await
+}
+
+async fn confirm_rainbow_notify(
+    state: AppState,
+    params: HashMap<String, String>,
+) -> ApiResult<String> {
+    let settings = state.access.settings().await?;
+    let settings = recharge_settings_from_system_settings(&settings);
+    state
+        .recharges
+        .confirm_rainbow_notify(params, &settings, &state.finance)
+        .await?;
+
+    Ok("success".to_string())
+}
+
+async fn rainbow_epay_return_query(
+    Query(params): Query<HashMap<String, String>>,
+) -> ApiResult<Json<ApiEnvelope<HashMap<String, String>>>> {
+    Ok(Json(ApiEnvelope::success(params)))
+}
+
+async fn list_user_support_conversations(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<Vec<SupportConversation>>>> {
+    let conversations = state.support.list_for_user(&session.user.id).await?;
+
+    Ok(Json(ApiEnvelope::success(conversations)))
+}
+
+async fn get_user_support_conversation(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+    let conversation = state.support.get_for_user(&id, &session.user.id).await?;
+
+    Ok(Json(ApiEnvelope::success(conversation)))
+}
+
+async fn reply_user_support_conversation(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Path(id): Path<String>,
+    Json(payload): Json<UserSupportReplyRequest>,
+) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+    let conversation = state
+        .support
+        .user_reply(&id, &session.user, payload)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(conversation)))
 }
 
 async fn list_withdrawal_methods(

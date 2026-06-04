@@ -78,3 +78,9 @@ pub struct SupportReplyRequest {
     pub admin_id: String,
     pub content: String,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSupportReplyRequest {
+    pub content: String,
+}

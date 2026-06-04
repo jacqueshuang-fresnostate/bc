@@ -1233,6 +1233,14 @@ function settingGroupName(key: string): string {
   if (key.startsWith('image_bed_')) {
     return '图床设置';
   }
+  if (
+    key.startsWith('recharge_rainbow_epay_') ||
+    key.startsWith('recharge_customer_service_') ||
+    key === 'recharge_min_amount_minor' ||
+    key === 'recharge_max_amount_minor'
+  ) {
+    return '充值设置';
+  }
   if (key.includes('email') || key.includes('registration')) {
     return '注册与安全';
   }
@@ -1254,6 +1262,14 @@ function settingSelectOptions(
     recharge_rebate_mode: [
       { label: '立即返利', value: 'immediate' },
       { label: '充值阶梯返利', value: 'rechargeTiered' },
+    ],
+    recharge_rainbow_epay_enabled: [
+      { label: '开启彩虹易支付', value: 'true' },
+      { label: '关闭彩虹易支付', value: 'false' },
+    ],
+    recharge_customer_service_enabled: [
+      { label: '开启客服直充', value: 'true' },
+      { label: '关闭客服直充', value: 'false' },
     ],
   };
   const options = optionsByKey[key] ?? [];
@@ -1288,7 +1304,7 @@ function settingsGroups(
     }
   }
 
-  const priority = ['图床设置', '注册与安全', '返利设置', '基础设置'];
+  const priority = ['图床设置', '充值设置', '注册与安全', '返利设置', '基础设置'];
   return priority
     .filter((name) => (groups.get(name)?.length ?? 0) > 0)
     .map((name) => [name, groups.get(name) ?? []]);

@@ -15,6 +15,7 @@ pub mod lottery;
 pub mod order;
 pub mod play_rules;
 pub mod rebate;
+pub mod recharge;
 pub mod robot;
 pub mod scheduler;
 pub mod support;

@@ -2395,6 +2395,61 @@ fn seed_settings() -> Vec<SystemSetting> {
             value: "immediate".to_string(),
             description: "代理充值返利模式".to_string(),
         },
+        SystemSetting {
+            key: "recharge_min_amount_minor".to_string(),
+            value: "100".to_string(),
+            description: "用户单笔充值最小金额（分）".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_max_amount_minor".to_string(),
+            value: "10000000".to_string(),
+            description: "用户单笔充值最大金额（分）".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_rainbow_epay_enabled".to_string(),
+            value: "false".to_string(),
+            description: "是否开启彩虹易支付在线充值".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_rainbow_epay_gateway_url".to_string(),
+            value: "https://pay.example.com".to_string(),
+            description: "彩虹易支付网关域名，不需要填写 submit.php".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_rainbow_epay_pid".to_string(),
+            value: "未配置".to_string(),
+            description: "彩虹易支付商户号".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_rainbow_epay_key".to_string(),
+            value: "未配置".to_string(),
+            description: "彩虹易支付商户密钥".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_rainbow_epay_notify_url".to_string(),
+            value: "/api/user/recharge/epay/notify".to_string(),
+            description: "彩虹易支付异步通知地址，生产环境建议填写完整外网 URL".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_rainbow_epay_return_url".to_string(),
+            value: "/api/user/recharge/epay/return".to_string(),
+            description: "彩虹易支付同步返回地址，生产环境建议填写完整外网 URL".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_rainbow_epay_pay_types".to_string(),
+            value: "alipay,wxpay".to_string(),
+            description: "彩虹易支付允许的支付方式，多个值用英文逗号分隔".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_customer_service_enabled".to_string(),
+            value: "true".to_string(),
+            description: "是否开启客服直充".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_customer_service_message".to_string(),
+            value: "客服已收到您的直充申请，请在会话中确认付款方式和到账信息。".to_string(),
+            description: "客服直充创建订单后返回给用户的提示文案".to_string(),
+        },
     ]
 }
 

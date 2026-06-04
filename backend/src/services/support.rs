@@ -14,7 +14,7 @@ use crate::{
         support::{
             CreateSupportConversationRequest, SupportConversation, SupportConversationStatus,
             SupportMessage, SupportMessageAuthor, SupportPriority, SupportReplyRequest,
-            UpdateSupportConversationRequest,
+            UpdateSupportConversationRequest, UserSupportReplyRequest,
         },
         user::{AdminSummary, UserSummary},
     },
@@ -55,12 +55,36 @@ impl SupportRepository {
             .map(|store| store.list())
     }
 
+    /// 返回指定用户自己的客服会话列表。
+    pub async fn list_for_user(&self, user_id: &str) -> ApiResult<Vec<SupportConversation>> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "support user id is required".to_string(),
+            ));
+        }
+
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?
+            .list_for_user(user_id))
+    }
+
     /// 按 ID 查询单条记录。
     pub async fn get(&self, id: &str) -> ApiResult<SupportConversation> {
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?
             .get(id)
+    }
+
+    /// 按 ID 查询指定用户自己的客服会话。
+    pub async fn get_for_user(&self, id: &str, user_id: &str) -> ApiResult<SupportConversation> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?
+            .get_for_user(id, user_id)
     }
 
     /// 校验入参并创建一条新记录。
@@ -113,6 +137,25 @@ impl SupportRepository {
                 .write()
                 .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?;
             let result = store.reply(id, request, admins)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 追加用户消息，用于用户端继续客服会话和客服直充沟通。
+    pub async fn user_reply(
+        &self,
+        id: &str,
+        user: &UserSummary,
+        request: UserSupportReplyRequest,
+    ) -> ApiResult<SupportConversation> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?;
+            let result = store.user_reply(id, user, request)?;
             (result, store.clone())
         };
         self.persist(&snapshot).await?;
@@ -315,12 +358,33 @@ impl SupportStore {
         self.conversations.values().cloned().collect()
     }
 
+    /// 返回指定用户自己的会话，避免用户端读取他人客服记录。
+    fn list_for_user(&self, user_id: &str) -> Vec<SupportConversation> {
+        self.conversations
+            .values()
+            .filter(|conversation| conversation.user_id == user_id)
+            .cloned()
+            .collect()
+    }
+
     /// 按标识查询并返回单条记录。
     fn get(&self, id: &str) -> ApiResult<SupportConversation> {
         self.conversations
             .get(id)
             .cloned()
             .ok_or_else(|| ApiError::NotFound(format!("support conversation `{id}` not found")))
+    }
+
+    /// 查询指定用户自己的单条会话，归属不匹配时按不存在处理。
+    fn get_for_user(&self, id: &str, user_id: &str) -> ApiResult<SupportConversation> {
+        let conversation = self.get(id)?;
+        if conversation.user_id != user_id.trim() {
+            return Err(ApiError::NotFound(format!(
+                "support conversation `{id}` not found"
+            )));
+        }
+
+        Ok(conversation)
     }
 
     /// 校验入参并创建新记录。
@@ -432,6 +496,47 @@ impl SupportStore {
             conversation.assigned_admin_name = Some(admin.username.clone());
         }
         conversation.unread_count = 0;
+        conversation.updated_at = now;
+
+        Ok(conversation.clone())
+    }
+
+    /// 记录用户消息并恢复待处理状态，供客服后台继续处理。
+    fn user_reply(
+        &mut self,
+        id: &str,
+        user: &UserSummary,
+        request: UserSupportReplyRequest,
+    ) -> ApiResult<SupportConversation> {
+        let conversation = self
+            .conversations
+            .get_mut(id)
+            .ok_or_else(|| ApiError::NotFound(format!("support conversation `{id}` not found")))?;
+        if conversation.user_id != user.id {
+            return Err(ApiError::NotFound(format!(
+                "support conversation `{id}` not found"
+            )));
+        }
+
+        let content = required_trimmed(request.content, "support user message content")?;
+        let next_index = conversation.messages.len() + 1;
+        let now = current_time_label();
+
+        conversation.messages.push(SupportMessage {
+            id: message_id(id, next_index),
+            author: SupportMessageAuthor::User,
+            author_id: user.id.clone(),
+            author_name: user.username.clone(),
+            content,
+            created_at: now.clone(),
+        });
+        if matches!(
+            conversation.status,
+            SupportConversationStatus::Resolved | SupportConversationStatus::Closed
+        ) {
+            conversation.status = SupportConversationStatus::Open;
+        }
+        conversation.unread_count = conversation.unread_count.saturating_add(1);
         conversation.updated_at = now;
 
         Ok(conversation.clone())
@@ -665,5 +770,63 @@ mod tests {
             .expect_err("empty reply must be rejected");
 
         assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn support_repository_allows_user_to_continue_owned_conversation() {
+        let support = SupportRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let user = access
+            .users
+            .iter()
+            .find(|user| user.id == "U10001")
+            .cloned()
+            .expect("seed user exists");
+
+        let updated = support
+            .user_reply(
+                "CS-10001",
+                &user,
+                UserSupportReplyRequest {
+                    content: "我再补充一条充值凭证。".to_string(),
+                },
+            )
+            .await
+            .expect("user can reply owned conversation");
+
+        assert_eq!(updated.messages.len(), 3);
+        assert_eq!(updated.unread_count, 2);
+        assert_eq!(support.list_for_user("U10001").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn support_repository_rejects_user_reply_to_other_conversation() {
+        let support = SupportRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let user = access
+            .users
+            .iter()
+            .find(|user| user.id == "U10001")
+            .cloned()
+            .expect("seed user exists");
+
+        let error = support
+            .user_reply(
+                "CS-10002",
+                &user,
+                UserSupportReplyRequest {
+                    content: "这不是我的会话。".to_string(),
+                },
+            )
+            .await
+            .expect_err("user cannot reply other conversation");
+
+        assert!(matches!(error, ApiError::NotFound(_)));
     }
 }

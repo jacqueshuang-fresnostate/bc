@@ -32,6 +32,7 @@ enum AuthMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RequestBodyKind {
     None,
+    Form,
     Json,
     Multipart,
 }
@@ -373,6 +374,24 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "返回后台可查看的资金流水。",
         AuthMode::Admin,
         RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/admin/recharge-orders",
+        "财务管理",
+        "充值订单列表",
+        "返回彩虹易支付和客服直充的充值订单。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/admin/recharge-orders/{id}/confirm",
+        "财务管理",
+        "确认客服直充入账",
+        "后台确认客服直充订单已收款，写入充值流水并增加用户余额。",
+        AuthMode::Admin,
+        RequestBodyKind::Json,
     ),
     doc(
         "post",
@@ -1024,6 +1043,87 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/user/recharge/config",
+        "用户端充值",
+        "读取充值配置",
+        "返回后台启用的彩虹易支付和客服直充渠道配置。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/user/recharge/orders",
+        "用户端充值",
+        "用户充值订单列表",
+        "返回当前用户自己的充值订单。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/user/recharge/orders",
+        "用户端充值",
+        "创建充值订单",
+        "创建彩虹易支付订单或客服直充申请；客服直充会同步生成客服会话。",
+        AuthMode::User,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "get",
+        "/user/recharge/epay/notify",
+        "充值回调",
+        "彩虹易支付通知",
+        "彩虹易支付 GET 异步通知入口，验签成功后充值入账，成功时返回裸 success。",
+        AuthMode::None,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/user/recharge/epay/notify",
+        "充值回调",
+        "彩虹易支付表单通知",
+        "彩虹易支付 POST 表单通知入口，验签成功后充值入账，成功时返回裸 success。",
+        AuthMode::None,
+        RequestBodyKind::Form,
+    ),
+    doc(
+        "get",
+        "/user/recharge/epay/return",
+        "充值回调",
+        "彩虹易支付同步返回",
+        "彩虹易支付同步返回入口，用于用户端读取返回参数。",
+        AuthMode::None,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/user/support/conversations",
+        "用户端客服",
+        "用户客服会话列表",
+        "返回当前用户自己的客服会话。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/user/support/conversations/{id}",
+        "用户端客服",
+        "用户客服会话详情",
+        "返回当前用户自己的单个客服会话。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/user/support/conversations/{id}/messages",
+        "用户端客服",
+        "用户发送客服消息",
+        "当前用户向自己的客服会话追加消息。",
+        AuthMode::User,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "get",
         "/user/withdrawal-methods",
         "用户端账户",
         "提现方式列表",
@@ -1170,6 +1270,18 @@ fn path_parameters(path: &str) -> Vec<Value> {
 fn request_body_schema(kind: RequestBodyKind) -> Option<Value> {
     match kind {
         RequestBodyKind::None => None,
+        RequestBodyKind::Form => Some(json!({
+            "required": true,
+            "content": {
+                "application/x-www-form-urlencoded": {
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                        "description": "第三方支付通知表单字段。"
+                    }
+                }
+            }
+        })),
         RequestBodyKind::Json => Some(json!({
             "required": true,
             "content": {
@@ -1284,7 +1396,10 @@ fn openapi_tags() -> Value {
         { "name": "玩法规则", "description": "玩法目录和注数评估。" },
         { "name": "订单与结算", "description": "投注订单、取消、计奖和派奖。" },
         { "name": "用户端内容", "description": "手机端公开内容接口。" },
-        { "name": "用户端账户", "description": "用户注册登录、余额、流水和提现方式。" }
+        { "name": "用户端账户", "description": "用户注册登录、余额、流水和提现方式。" },
+        { "name": "用户端充值", "description": "用户充值配置、充值下单和订单查询。" },
+        { "name": "充值回调", "description": "第三方支付异步通知和同步返回入口。" },
+        { "name": "用户端客服", "description": "用户自己的客服会话和消息发送接口。" }
     ])
 }
 
@@ -1364,8 +1479,12 @@ mod tests {
         assert!(document["paths"]["/health"]["get"].is_object());
         assert!(document["paths"]["/admin/users"]["get"].is_object());
         assert!(document["paths"]["/admin/advertisements"]["get"].is_object());
+        assert!(document["paths"]["/admin/recharge-orders"]["get"].is_object());
+        assert!(document["paths"]["/admin/recharge-orders/{id}/confirm"]["post"].is_object());
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
         assert!(document["paths"]["/user/mobile/advertisements"]["get"].is_object());
+        assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
+        assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());
         assert!(document["paths"]["/user/register"]["post"].is_object());
     }
 

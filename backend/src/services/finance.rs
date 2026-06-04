@@ -178,6 +178,25 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 按充值订单给用户入账；同一个充值单重复通知保持幂等。
+    pub async fn credit_recharge(
+        &self,
+        user_id: &str,
+        amount_minor: i64,
+        recharge_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.credit_recharge(user_id, amount_minor, recharge_order_id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     async fn persist(&self, store: &FinanceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_finance_store(persistence, store).await?;
@@ -390,11 +409,17 @@ impl FinanceStore {
             .filter(|entry| entry.kind == LedgerEntryKind::PayoutCredit)
             .try_fold(0_i64, |total, entry| total.checked_add(entry.amount_minor))
             .ok_or_else(|| ApiError::Internal("finance payout amount overflow".to_string()))?;
+        let today_recharge_minor = self
+            .ledger_entries
+            .iter()
+            .filter(|entry| entry.kind == LedgerEntryKind::RechargeCredit)
+            .try_fold(0_i64, |total, entry| total.checked_add(entry.amount_minor))
+            .ok_or_else(|| ApiError::Internal("finance recharge amount overflow".to_string()))?;
 
         Ok(FinanceOverview {
             total_balance_minor,
             pending_withdraw_minor: 0,
-            today_recharge_minor: 0,
+            today_recharge_minor,
             today_payout_minor,
         })
     }
@@ -570,6 +595,41 @@ impl FinanceStore {
         Ok(entries)
     }
 
+    /// 处理充值入账，避免同一个充值订单重复生成流水。
+    fn credit_recharge(
+        &mut self,
+        user_id: &str,
+        amount_minor: i64,
+        recharge_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let user_id = user_id.trim();
+        let recharge_order_id = recharge_order_id.trim();
+        if amount_minor <= 0 {
+            return Err(ApiError::BadRequest(
+                "recharge amount must be greater than zero".to_string(),
+            ));
+        }
+        if recharge_order_id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "recharge order id is required".to_string(),
+            ));
+        }
+        if let Some(entry) =
+            self.reference_entry(&LedgerEntryKind::RechargeCredit, recharge_order_id)
+        {
+            return Ok(entry);
+        }
+
+        self.account_or_create(user_id)?;
+        self.apply_available_delta(
+            user_id,
+            LedgerEntryKind::RechargeCredit,
+            amount_minor,
+            Some(recharge_order_id.to_string()),
+            format!("用户充值入账：{recharge_order_id}"),
+        )
+    }
+
     /// 处理 account 的具体内部流程。
     fn account(&self, user_id: &str) -> ApiResult<&FinancialAccountSummary> {
         let user_id = user_id.trim();
@@ -743,6 +803,25 @@ mod tests {
         assert_eq!(entry.kind, LedgerEntryKind::ManualAdjustment);
         assert_eq!(entry.amount_minor, 1_000);
         assert_eq!(account.available_balance_minor, 13_000);
+    }
+
+    #[test]
+    /// 充值入账会增加余额，并按充值单号保持幂等。
+    fn store_credits_recharge_once() {
+        let mut store = FinanceStore::seeded();
+
+        let entry = store
+            .credit_recharge("U10001", 1_500, "R000000000001")
+            .expect("recharge can be credited");
+        let repeated = store
+            .credit_recharge("U10001", 1_500, "R000000000001")
+            .expect("recharge credit is idempotent");
+        let account = store.account("U10001").expect("account exists");
+
+        assert_eq!(entry.id, repeated.id);
+        assert_eq!(entry.kind, LedgerEntryKind::RechargeCredit);
+        assert_eq!(entry.amount_minor, 1_500);
+        assert_eq!(account.available_balance_minor, 13_500);
     }
 
     #[test]

@@ -44,7 +44,9 @@ import type {
 import type {
   FinancialAccountSummary,
   LedgerEntry,
+  ConfirmRechargeOrderRequest,
   ManualBalanceAdjustmentRequest,
+  RechargeOrderSummary,
 } from '../types/finance';
 import type {
   AddGroupBuyParticipantRequest,
@@ -162,6 +164,25 @@ export function fetchFinancialAccounts(signal?: AbortSignal) {
 
 export function fetchLedgerEntries(signal?: AbortSignal) {
   return requestJson<LedgerEntry[]>('/api/admin/ledger-entries', { signal });
+}
+
+export function fetchRechargeOrders(signal?: AbortSignal) {
+  return requestJson<RechargeOrderSummary[]>('/api/admin/recharge-orders', {
+    signal,
+  });
+}
+
+export function confirmRechargeOrder(
+  id: string,
+  payload: ConfirmRechargeOrderRequest = {},
+) {
+  return requestJson<RechargeOrderSummary>(
+    `/api/admin/recharge-orders/${encodeURIComponent(id)}/confirm`,
+    {
+      body: payload,
+      method: 'POST',
+    },
+  );
 }
 
 export function createManualBalanceAdjustment(payload: ManualBalanceAdjustmentRequest) {

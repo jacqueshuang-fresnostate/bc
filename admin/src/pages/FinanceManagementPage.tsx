@@ -9,7 +9,12 @@ import {
 } from 'react';
 import { MetricCard } from '../components/MetricCard';
 import { useFinance } from '../hooks/useFinance';
-import type { LedgerEntryKind, ManualBalanceAdjustmentRequest } from '../types/finance';
+import type {
+  LedgerEntryKind,
+  ManualBalanceAdjustmentRequest,
+  RechargeChannel,
+  RechargeOrderStatus,
+} from '../types/finance';
 import { formatMoney, formatSignedMoney } from '../utils/format';
 
 interface FinanceManagementPageProps {
@@ -26,9 +31,11 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
   const {
     accounts,
     adjustBalance,
+    confirmRecharge,
     error,
     ledgerEntries,
     loading,
+    rechargeOrders,
     refresh,
     saving,
   } = useFinance();
@@ -54,6 +61,11 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
       userId: form.userId.trim(),
     };
     await adjustBalance(payload);
+    onDashboardRefresh();
+  };
+
+  const confirmCustomerServiceRecharge = async (id: string) => {
+    await confirmRecharge(id);
     onDashboardRefresh();
   };
 
@@ -90,9 +102,9 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
           value={formatMoney(totals.payoutMinor)}
         />
         <MetricCard
-          label="流水笔数"
-          trend="最新流水在前"
-          value={`${ledgerEntries.length}`}
+          label="充值订单"
+          trend={`${paidRechargeCount(rechargeOrders)} 笔已入账`}
+          value={`${rechargeOrders.length}`}
         />
       </section>
 
@@ -213,6 +225,97 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
 
       <Card className="rounded-md border border-line">
         <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-ink">充值订单</h2>
+          <Tag color="green">{rechargeOrders.length} 笔</Tag>
+        </div>
+
+        {loading ? (
+          <div className="grid min-h-[240px] place-items-center">
+            <Spin tip="正在加载充值订单" />
+          </div>
+        ) : rechargeOrders.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1160px] text-left text-sm">
+              <thead className="border-b border-line text-xs text-slate-500">
+                <tr>
+                  <th className="py-2 pr-4 font-medium">订单</th>
+                  <th className="py-2 pr-4 font-medium">用户</th>
+                  <th className="py-2 pr-4 font-medium">渠道</th>
+                  <th className="py-2 pr-4 font-medium">金额</th>
+                  <th className="py-2 pr-4 font-medium">状态</th>
+                  <th className="py-2 pr-4 font-medium">支付方式</th>
+                  <th className="py-2 pr-4 font-medium">外部交易号</th>
+                  <th className="py-2 pr-4 font-medium">客服会话</th>
+                  <th className="py-2 pr-4 font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rechargeOrders.map((order) => (
+                  <tr key={order.id} className="border-b border-slate-100">
+                    <td className="py-3 pr-4">
+                      <div className="font-semibold text-ink">{order.id}</div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        {order.createdAt}
+                        {order.paidAt ? ` · ${order.paidAt}` : ''}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-slate-700">{order.username}</div>
+                      <div className="mt-1 text-xs text-slate-400">{order.userId}</div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <Tag color={order.channel === 'rainbowEpay' ? 'blue' : 'teal'}>
+                        {rechargeChannelText(order.channel)}
+                      </Tag>
+                    </td>
+                    <td className="py-3 pr-4 font-semibold text-emerald-700">
+                      {formatMoney(order.amountMinor)}
+                    </td>
+                    <td className="py-3 pr-4">
+                      <Tag color={rechargeStatusColor(order.status)}>
+                        {rechargeStatusText(order.status)}
+                      </Tag>
+                    </td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      {order.payType ?? '-'}
+                    </td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      {order.providerTradeNo ?? '-'}
+                    </td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      {order.supportConversationId ?? '-'}
+                    </td>
+                    <td className="py-3 pr-4">
+                      {order.channel === 'customerService' &&
+                      order.status === 'waitingCustomerService' ? (
+                        <Button
+                          disabled={saving}
+                          size="small"
+                          theme="solid"
+                          onClick={() =>
+                            void confirmCustomerServiceRecharge(order.id)
+                          }
+                        >
+                          确认入账
+                        </Button>
+                      ) : (
+                        <span className="text-slate-400">-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+            暂无充值订单。用户发起彩虹易支付或客服直充后会显示在这里。
+          </div>
+        )}
+      </Card>
+
+      <Card className="rounded-md border border-line">
+        <div className="mb-3 flex items-center justify-between">
           <h2 className="text-base font-semibold text-ink">资金流水</h2>
           <Tag color="blue">{ledgerEntries.length} 笔</Tag>
         </div>
@@ -329,6 +432,7 @@ function ledgerKindText(kind: LedgerEntryKind) {
     orderDebit: '投注扣款',
     orderRefund: '取消退款',
     payoutCredit: '派奖入账',
+    rechargeCredit: '充值入账',
   };
   return labels[kind];
 }
@@ -339,6 +443,43 @@ function ledgerKindColor(kind: LedgerEntryKind) {
     orderDebit: 'red',
     orderRefund: 'blue',
     payoutCredit: 'green',
+    rechargeCredit: 'green',
   };
   return colors[kind];
+}
+
+function paidRechargeCount(
+  rechargeOrders: Array<{ status: RechargeOrderStatus }>,
+) {
+  return rechargeOrders.filter((order) => order.status === 'paid').length;
+}
+
+function rechargeChannelText(channel: RechargeChannel) {
+  const labels: Record<RechargeChannel, string> = {
+    customerService: '客服直充',
+    rainbowEpay: '彩虹易支付',
+  };
+  return labels[channel];
+}
+
+function rechargeStatusText(status: RechargeOrderStatus) {
+  const labels: Record<RechargeOrderStatus, string> = {
+    cancelled: '已取消',
+    paid: '已入账',
+    pending: '待支付',
+    waitingCustomerService: '等待客服',
+  };
+  return labels[status];
+}
+
+function rechargeStatusColor(
+  status: RechargeOrderStatus,
+): 'blue' | 'green' | 'orange' | 'red' {
+  const colors: Record<RechargeOrderStatus, 'blue' | 'green' | 'orange' | 'red'> = {
+    cancelled: 'red',
+    paid: 'green',
+    pending: 'blue',
+    waitingCustomerService: 'orange',
+  };
+  return colors[status];
 }

@@ -36,6 +36,7 @@ use crate::{
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
         rebate::{InvitePolicySummary, InvitePolicyUpdateRequest},
+        recharge::{ConfirmRechargeOrderRequest, RechargeOrderSummary},
         robot::{RobotConfigSummary, RobotStatusRequest},
         settlement::SettlementRun,
         support::{
@@ -80,6 +81,11 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/dashboard", get(get_dashboard_summary))
         .route("/financial-accounts", get(list_financial_accounts))
         .route("/ledger-entries", get(list_ledger_entries))
+        .route("/recharge-orders", get(list_recharge_orders))
+        .route(
+            "/recharge-orders/{id}/confirm",
+            post(confirm_recharge_order),
+        )
         .route("/financial-adjustments", post(manual_balance_adjustment))
         .route(
             "/group-buy/plans",
@@ -288,6 +294,7 @@ fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
     }
     if path.starts_with("financial-")
         || path.starts_with("ledger-entries")
+        || path.starts_with("recharge-orders")
         || path.starts_with("finance")
     {
         return Some(PermissionScope::Finance);
@@ -1249,6 +1256,27 @@ async fn list_ledger_entries(
     let entries = state.finance.ledger_entries().await?;
 
     Ok(Json(ApiEnvelope::success(entries)))
+}
+
+async fn list_recharge_orders(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<RechargeOrderSummary>>>> {
+    let orders = state.recharges.list().await?;
+
+    Ok(Json(ApiEnvelope::success(orders)))
+}
+
+async fn confirm_recharge_order(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<ConfirmRechargeOrderRequest>,
+) -> ApiResult<Json<ApiEnvelope<RechargeOrderSummary>>> {
+    let order = state
+        .recharges
+        .confirm_customer_service_order(&id, payload, &state.finance)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(order)))
 }
 
 async fn manual_balance_adjustment(
