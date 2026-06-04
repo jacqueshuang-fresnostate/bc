@@ -1,4 +1,4 @@
-import { Input, Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, Spin, Tabs, Tag } from '@douyinfe/semi-ui';
 import { CheckCircle2, Plus, RefreshCcw, WalletCards, XCircle } from 'lucide-react';
 import {
   useState,
@@ -33,6 +33,7 @@ interface AdjustmentFormState {
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementPageProps) {
+  const [activeFinanceTab, setActiveFinanceTab] = useState('accounts');
   const [accountPage, setAccountPage] = useState(1);
   const [accountPageSize, setAccountPageSize] = useState(10);
   const [rechargePage, setRechargePage] = useState(1);
@@ -145,8 +146,22 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
         />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
-        <Card className="rounded-md border border-line">
+      <Tabs
+        activeKey={activeFinanceTab}
+        collapsible
+        onChange={(key) => setActiveFinanceTab(String(key))}
+      >
+        <Tabs.TabPane
+          itemKey="accounts"
+          tab={
+            <span className="inline-flex items-center gap-2">
+              <span>账户与调账</span>
+              <Tag color="cyan">{accounts.totalCount}</Tag>
+            </span>
+          }
+        >
+          <section className="grid gap-4 pt-3 xl:grid-cols-[1fr_420px]">
+            <Card className="rounded-md border border-line">
           <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-semibold text-ink">资金账户</h2>
@@ -217,9 +232,9 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
               暂无资金账户。
             </div>
           )}
-        </Card>
+            </Card>
 
-        <Card className="rounded-md border border-line">
+            <Card className="rounded-md border border-line">
           <div className="mb-4 flex items-start gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-md bg-teal-50 text-teal-700">
               <WalletCards size={18} />
@@ -272,10 +287,20 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
               {saving ? '提交中' : '提交调账'}
             </Button>
           </form>
-        </Card>
-      </section>
+            </Card>
+          </section>
+        </Tabs.TabPane>
 
-      <Card className="rounded-md border border-line">
+        <Tabs.TabPane
+          itemKey="recharge"
+          tab={
+            <span className="inline-flex items-center gap-2">
+              <span>充值订单</span>
+              <Tag color="green">{rechargeOrders.totalCount}</Tag>
+            </span>
+          }
+        >
+          <Card className="mt-3 rounded-md border border-line">
         <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-base font-semibold text-ink">充值订单</h2>
@@ -376,9 +401,19 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
             暂无充值订单。用户发起彩虹易支付或客服直充后会显示在这里。
           </div>
         )}
-      </Card>
+          </Card>
+        </Tabs.TabPane>
 
-      <Card className="rounded-md border border-line">
+        <Tabs.TabPane
+          itemKey="withdrawals"
+          tab={
+            <span className="inline-flex items-center gap-2">
+              <span>提现管理</span>
+              <Tag color="red">{withdrawalOrders.totalCount}</Tag>
+            </span>
+          }
+        >
+          <Card className="mt-3 rounded-md border border-line">
         <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-base font-semibold text-ink">提现管理</h2>
@@ -485,9 +520,19 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
             暂无提现申请。用户提交提现后会显示在这里。
           </div>
         )}
-      </Card>
+          </Card>
+        </Tabs.TabPane>
 
-      <Card className="rounded-md border border-line">
+        <Tabs.TabPane
+          itemKey="ledger"
+          tab={
+            <span className="inline-flex items-center gap-2">
+              <span>资金流水</span>
+              <Tag color="blue">{ledgerEntries.totalCount}</Tag>
+            </span>
+          }
+        >
+          <Card className="mt-3 rounded-md border border-line">
         <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-base font-semibold text-ink">资金流水</h2>
@@ -562,7 +607,9 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
             暂无资金流水。创建订单、取消订单、执行派奖或手动调账后会生成记录。
           </div>
         )}
-      </Card>
+          </Card>
+        </Tabs.TabPane>
+      </Tabs>
     </div>
   );
 }
