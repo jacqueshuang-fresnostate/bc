@@ -2610,7 +2610,7 @@ setStatus(nextStatus);
 
 ```json
 {
-  "token": "adm-A10001-...",
+  "token": "bcst_8f4f0f6d4c0b8d6a0b1f0c8a5e4d3c2b1a0f9e8d7c6b5a4938271605f4e3d2c1",
   "admin": {
     "id": "A10001",
     "username": "admin",
@@ -2647,6 +2647,8 @@ setStatus(nextStatus);
 
 前端 API client 必须把 token 放入 `localStorage` 的 `bc.admin.authToken`，并在所有管理接口请求中附加 `Authorization` 头。登录页不应提前请求 dashboard。
 
+登录 token 必须是不可预测的 opaque Bearer token，不能包含管理员 ID、用户名、时间戳或计数器。后端只在登录响应中返回原始 token；内存会话索引和数据库 `admin_sessions.token` 必须保存 `sha256:` 摘要，不能保存原始 token。上线迁移清理旧明文会话后，历史登录态需要重新登录。
+
 ### 4. 校验与错误矩阵
 
 | 条件 | 预期行为 |
@@ -2663,13 +2665,16 @@ setStatus(nextStatus);
 ### 5. Good / Base / Bad Cases
 
 - Good：未登录打开前端只显示登录页；登录后请求 dashboard 带 token，菜单按 scopes 过滤。
+- Good：管理员登录返回 `bcst_` 前缀随机 token，数据库只保存 `sha256:` 摘要。
 - Base：无数据库阶段使用内存 token；服务重启后 token 失效，前端清理本地 token 并回到登录页。
 - Bad：前端在未登录时先请求 `/api/admin/dashboard`，造成无意义 401 和页面闪烁。
 - Bad：后端只隐藏菜单但不拦截 API，低权限管理员仍可直接请求无权限接口。
+- Bad：后端把 token 做成 `adm-A10001-时间戳-序号`，或把原始 Bearer token 直接保存进数据库。
 
 ### 6. 必要测试
 
 - 后端测试需要覆盖活跃管理员登录、锁定管理员拒绝、登出后 token 失效和路径权限映射。
+- 后端测试需要覆盖管理员登录 token 不包含账号 ID，且仓储或数据库只保存摘要。
 - API 冒烟需要确认无 token 为 401、有效 token 可访问、低权限 token 访问高权限接口为 403。
 - 前端需要运行 `npm run build`。
 - 浏览器验证需要覆盖未登录登录页、登录成功进入后台、刷新保持登录态、登出回到登录页。
@@ -2708,6 +2713,78 @@ if !session.scopes.contains(&required_scope) {
 ```
 
 后端按 token 的角色权限做最终拦截。
+
+---
+
+## 场景：用户端登录鉴权接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改用户注册、用户登录、当前用户、登出、绑定邮箱、修改密码、余额、资金流水、充值、提现方式和提现申请接口。
+- 范围：后端用户 auth DTO、统一 API 信封、手机端 API client token 处理、HTTP 401 错误契约、用户会话表持久化。
+
+### 2. 签名
+
+- `POST /api/user/register`
+- `POST /api/user/login`
+- `GET /api/user/me`
+- `POST /api/user/logout`
+- 用户登录后接口认证头：`Authorization: Bearer <token>`
+
+### 3. 契约
+
+用户登录请求：
+
+```json
+{
+  "loginKey": "demo_user",
+  "password": "12345678"
+}
+```
+
+用户登录响应 `data`：
+
+```json
+{
+  "token": "bcst_8f4f0f6d4c0b8d6a0b1f0c8a5e4d3c2b1a0f9e8d7c6b5a4938271605f4e3d2c1",
+  "user": {
+    "id": "U10001",
+    "username": "demo_user",
+    "email": "demo@example.com",
+    "kind": "regular",
+    "status": "active",
+    "balanceMinor": 0,
+    "agentId": null,
+    "inviteCode": "A1B2C3"
+  }
+}
+```
+
+用户登录 token 必须和管理员登录 token 使用同一安全策略：返回给客户端的是 `bcst_` 前缀 opaque Bearer token，不能包含用户 ID、用户名、邮箱、时间戳或计数器；内存会话索引和数据库 `user_sessions.token` 只能保存 `sha256:` 摘要。上线迁移清理旧明文会话后，用户端历史登录态需要重新登录。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `loginKey` 或 `password` 为空 | HTTP 400，统一错误信封 |
+| 用户名/邮箱或密码错误 | HTTP 401，`用户名/密码错误` |
+| 用户状态不是 `active` | HTTP 403，`用户状态不可登录` |
+| 用户登录后接口缺少 Authorization | HTTP 401，`authorization token is required` |
+| Authorization 不是 Bearer 格式 | HTTP 401，`authorization bearer token is required` |
+| token 无效或已登出 | HTTP 401，`invalid user session` |
+| 登出成功 | HTTP 200，`loggedOut=true`，后续同 token 请求返回 401 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：用户登录返回 `bcst_` 前缀随机 token，数据库只保存 `sha256:` 摘要，手机端带 Bearer token 可访问余额和提现接口。
+- Base：无数据库阶段使用内存摘要索引；服务重启后 token 失效，手机端清理本地 token 并回到登录页。
+- Bad：后端把 token 做成 `user-U10001-时间戳-序号`，或把原始 Bearer token 直接保存进 `user_sessions`。
+
+### 6. 必要测试
+
+- 后端测试需要覆盖用户登录 token 不包含用户 ID，且仓储或数据库只保存摘要。
+- 后端测试需要覆盖用户登出后同 token 失效。
+- API 冒烟需要确认无 token 为 401、有效 token 可访问用户资料、余额、资金流水、充值和提现接口。
 
 ---
 

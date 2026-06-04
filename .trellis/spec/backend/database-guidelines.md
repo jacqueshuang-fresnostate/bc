@@ -38,6 +38,13 @@ YYYYMMDDHHMMSS_describe_change.sql
 
 如果使用 SQLx 标准模式，每个迁移只需要前向 SQL。若后续选择其他迁移工具，需要先更新本规范。
 
+## 安全字段存储
+
+- `admin_sessions.token` 和 `user_sessions.token` 只能保存登录 Bearer token 的 `sha256:` 摘要，不能保存原始 token。
+- 登录接口返回给客户端的原始 token 必须是 opaque token，不能包含用户 ID、管理员 ID、用户名、时间戳或计数器。
+- 认证、登出和会话清理都必须先对请求中的原始 token 计算同样的摘要，再访问会话表或会话索引。
+- 如果历史迁移发现会话表已经保存过原始 token，应优先清空旧会话并要求重新登录，不能继续让旧明文登录态长期存在。
+
 ---
 
 ## 命名约定

@@ -14,6 +14,7 @@ use chrono::Local;
 use chrono::TimeZone;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::Row;
 
 use crate::{
@@ -46,6 +47,9 @@ const MIN_USER_PASSWORD_LEN: usize = 8;
 const USER_RESET_TOKEN_BYTES: usize = 24;
 const USER_RESET_TOKEN_TTL_SECONDS: i64 = 15 * 60;
 const WITHDRAWAL_METHOD_ID_BYTES: usize = 6;
+const SESSION_TOKEN_RANDOM_BYTES: usize = 32;
+const SESSION_TOKEN_PREFIX: &str = "bcst_";
+const SESSION_TOKEN_HASH_PREFIX: &str = "sha256:";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct PasswordResetTokenRecord {
@@ -1381,8 +1385,9 @@ impl AccessStore {
             return Err(ApiError::Unauthorized("用户名/密码错误".to_string()));
         }
 
-        let token = self.next_user_session_token(&user.id)?;
-        self.user_sessions.insert(token.clone(), user.id.clone());
+        let token = self.next_user_session_token()?;
+        self.user_sessions
+            .insert(session_token_hash(&token), user.id.clone());
         self.session_from_user_token(&token)
     }
 
@@ -1395,9 +1400,10 @@ impl AccessStore {
             ));
         }
 
+        let token_hash = session_token_hash(token);
         let user_id = self
             .user_sessions
-            .get(token)
+            .get(&token_hash)
             .ok_or_else(|| ApiError::Unauthorized("invalid user session".to_string()))?;
         let user = self.get_user(user_id)?;
         if user.status != UserStatus::Active {
@@ -1414,7 +1420,7 @@ impl AccessStore {
 
     /// 注销用户会话。
     fn logout_user(&mut self, token: &str) {
-        self.user_sessions.remove(token.trim());
+        self.user_sessions.remove(&session_token_hash(token.trim()));
     }
 
     /// 绑定邮箱并保持原有用户标识。
@@ -1921,8 +1927,9 @@ impl AccessStore {
             ));
         }
 
-        let token = self.next_session_token(&admin.id)?;
-        self.sessions.insert(token.clone(), admin.id.clone());
+        let token = self.next_session_token()?;
+        self.sessions
+            .insert(session_token_hash(&token), admin.id.clone());
         self.session_from_token(&token)
     }
 
@@ -1935,9 +1942,10 @@ impl AccessStore {
             ));
         }
 
+        let token_hash = session_token_hash(token);
         let admin_id = self
             .sessions
-            .get(token)
+            .get(&token_hash)
             .ok_or_else(|| ApiError::Unauthorized("invalid admin session".to_string()))?;
         let admin = self.get_admin(admin_id)?;
         if admin.status != UserStatus::Active {
@@ -1957,7 +1965,7 @@ impl AccessStore {
 
     /// 处理 logout 的具体内部流程。
     fn logout(&mut self, token: &str) -> ApiResult<()> {
-        self.sessions.remove(token.trim());
+        self.sessions.remove(&session_token_hash(token.trim()));
         Ok(())
     }
 
@@ -1973,32 +1981,14 @@ impl AccessStore {
         }
     }
 
-    /// 处理 next_session_token 的具体内部流程。
-    fn next_session_token(&mut self, admin_id: &str) -> ApiResult<String> {
-        self.session_counter = self.session_counter.saturating_add(1);
-        let unix_millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| ApiError::Internal("system time is before unix epoch".to_string()))?
-            .as_millis();
-
-        Ok(format!(
-            "adm-{admin_id}-{unix_millis}-{}",
-            self.session_counter
-        ))
+    /// 生成管理员会话原始 token，并确保摘要不与现有会话冲突。
+    fn next_session_token(&self) -> ApiResult<String> {
+        random_unique_session_token(&self.sessions)
     }
 
-    /// 处理 next_user_session_token 的具体内部流程。
-    fn next_user_session_token(&mut self, user_id: &str) -> ApiResult<String> {
-        self.user_session_counter = self.user_session_counter.saturating_add(1);
-        let unix_millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| ApiError::Internal("系统时间先于 unix 时间戳基准".to_string()))?
-            .as_millis();
-
-        Ok(format!(
-            "user-{user_id}-{unix_millis}-{}",
-            self.user_session_counter
-        ))
+    /// 生成用户会话原始 token，并确保摘要不与现有会话冲突。
+    fn next_user_session_token(&self) -> ApiResult<String> {
+        random_unique_session_token(&self.user_sessions)
     }
 }
 
@@ -2174,6 +2164,42 @@ fn random_alnum_string(length: usize) -> String {
             ALPHABET[index] as char
         })
         .collect()
+}
+
+/// 生成不包含账号信息的强随机会话 token。
+fn random_session_token() -> String {
+    let mut bytes = vec![0u8; SESSION_TOKEN_RANDOM_BYTES];
+    OsRng.fill_bytes(&mut bytes);
+    format!("{SESSION_TOKEN_PREFIX}{}", hex_encode(&bytes))
+}
+
+/// 生成不与现有会话摘要冲突的强随机会话 token。
+fn random_unique_session_token(sessions: &BTreeMap<String, String>) -> ApiResult<String> {
+    for _ in 0..256 {
+        let token = random_session_token();
+        if !sessions.contains_key(&session_token_hash(&token)) {
+            return Ok(token);
+        }
+    }
+
+    Err(ApiError::Internal("会话 token 生成失败".to_string()))
+}
+
+/// 计算会话 token 摘要，数据库和内存会话索引只保存该摘要。
+fn session_token_hash(token: &str) -> String {
+    let digest = Sha256::digest(token.trim().as_bytes());
+    format!("{SESSION_TOKEN_HASH_PREFIX}{}", hex_encode(&digest))
+}
+
+/// 把二进制数据编码为小写十六进制字符串。
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[usize::from(byte >> 4)] as char);
+        output.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    output
 }
 
 /// 生成不重复的提现方式 ID。
@@ -2496,6 +2522,17 @@ mod tests {
         assert!(code.chars().any(|ch| ch.is_ascii_digit()));
     }
 
+    fn assert_session_token_is_opaque(token: &str) {
+        assert_eq!(
+            token.len(),
+            SESSION_TOKEN_PREFIX.len() + SESSION_TOKEN_RANDOM_BYTES * 2
+        );
+        assert!(token.starts_with(SESSION_TOKEN_PREFIX));
+        assert!(token[SESSION_TOKEN_PREFIX.len()..]
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
+    }
+
     #[test]
     fn seed_invite_codes_use_alnum_format() {
         assert_invite_code_format(DEMO_USER_INVITE_CODE);
@@ -2697,6 +2734,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn access_repository_hashes_admin_session_token_at_rest() {
+        let access = AccessRepository::memory_seeded();
+        let session = access
+            .login(AdminLoginRequest {
+                username: "admin".to_string(),
+                password: "admin123".to_string(),
+            })
+            .await
+            .expect("active admin can login");
+
+        assert_session_token_is_opaque(&session.token);
+        assert!(!session.token.contains("A10001"));
+        assert!(!session.token.starts_with("adm-"));
+
+        let store = access.inner.read().expect("access store can be read");
+        assert!(!store.sessions.contains_key(&session.token));
+        assert!(store
+            .sessions
+            .contains_key(&session_token_hash(&session.token)));
+        assert!(store
+            .sessions
+            .keys()
+            .all(|token| token.starts_with(SESSION_TOKEN_HASH_PREFIX)));
+    }
+
+    #[tokio::test]
     async fn access_repository_rejects_locked_admin_login() {
         let access = AccessRepository::memory_seeded();
         let error = access
@@ -2807,6 +2870,38 @@ mod tests {
         assert_invite_code_format(&email_user.invite_code);
 
         assert_ne!(username_user.username, email_user.username);
+    }
+
+    #[tokio::test]
+    async fn access_repository_hashes_user_session_token_at_rest() {
+        let access = AccessRepository::memory_seeded();
+        let session = access
+            .login_user(UserLoginRequest {
+                login_key: "demo_user".to_string(),
+                password: "12345678".to_string(),
+            })
+            .await
+            .expect("active user can login");
+
+        assert_session_token_is_opaque(&session.token);
+        assert!(!session.token.contains("U10001"));
+        assert!(!session.token.starts_with("user-"));
+
+        let current = access
+            .session_from_user_token(&session.token)
+            .await
+            .expect("user session can be resolved");
+        assert_eq!(current.user.username, "demo_user");
+
+        let store = access.inner.read().expect("access store can be read");
+        assert!(!store.user_sessions.contains_key(&session.token));
+        assert!(store
+            .user_sessions
+            .contains_key(&session_token_hash(&session.token)));
+        assert!(store
+            .user_sessions
+            .keys()
+            .all(|token| token.starts_with(SESSION_TOKEN_HASH_PREFIX)));
     }
 
     #[tokio::test]

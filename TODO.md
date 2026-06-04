@@ -1,5 +1,23 @@
 # TODO
 
+## 2026-06-05 02:30 HKT 登录会话 Token 随机化与摘要落库
+
+- 完成任务：修复用户和管理员登录 token 暴露账号信息、时间戳和计数器的问题。
+- 解决问题：
+  - 用户登录 token 原先类似 `user-U10001-时间戳-序号`，管理员 token 原先类似 `adm-A10001-时间戳-序号`，可读且可预测。
+  - 数据库会话表保存原始 Bearer token，一旦数据库被查看就能直接拿到可用登录态。
+- 具体实现：
+  - 新增 `sha2` 直接依赖，使用 `Sha256` 计算会话 token 摘要。
+  - 登录签发 `bcst_` 前缀的 32 字节强随机 token，不再拼接用户 ID、管理员 ID、时间戳或计数器。
+  - `admin_sessions.token` 和 `user_sessions.token` 只保存 `sha256:` 摘要；认证和登出时对请求 token 先计算摘要再处理。
+  - 新增迁移 `20260605009000_hash_login_session_tokens.sql`，删除历史明文会话并更新 SQL 字段中文注释。
+  - 新增管理员和用户会话 token 回归测试，验证返回 token 不含账号 ID，仓储不保存原始 token。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml access_repository_hashes -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml` 通过，186 个后端测试全部通过；日志中仍有既有 `LotteryCategory` 未使用导入警告。
+
 ## 2026-06-05 00:47 HKT 手机端彩种分组与开奖历史接口补齐
 
 - 完成任务：补齐手机端彩种分组、最新开奖和开奖历史接口，并接入相关手机端页面。
