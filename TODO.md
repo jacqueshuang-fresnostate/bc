@@ -1,5 +1,27 @@
 # TODO
 
+## 2026-06-04 14:25 HKT 广告管理与手机端轮播接口
+
+- 完成任务：新增后台“广告管理”模块，并补齐手机端轮播广告公开接口。
+- 解决问题：此前后台没有地方维护手机端首页轮播广告，手机端也没有可读取当前广告配置的接口。
+- 具体实现：
+  - 后端新增广告领域模型和 `AdvertisementRepository`，支持内存模式与 PostgreSQL 持久化模式。
+  - 新增数据库迁移 `backend/migrations/20260605004000_create_advertisements.sql`，创建 `advertisements` 表，并为表、字段和约束补齐中文注释。
+  - 后台新增 `GET/POST /api/admin/advertisements`、`GET/PUT/DELETE /api/admin/advertisements/{id}`，使用 `systemSettings` 权限控制。
+  - 用户端新增公开接口 `GET /api/user/mobile/advertisements`，只返回启用、未过期且已到开始时间的手机端轮播广告。
+  - 管理后台新增 `广告管理` 页面，支持列表、新增、编辑、删除、启停、排序、展示时间和公共图床上传轮播图。
+  - OpenAPI 新增“广告管理”和“用户端内容”标签，并补充后台广告 CRUD 与用户端轮播读取接口。
+- 验证记录：
+  - `cd backend && cargo fmt && cargo fmt --check` 通过。
+  - `cd backend && cargo check` 通过。
+  - `cd backend && cargo test advertisement -- --nocapture` 通过，覆盖广告创建、更新、删除、启用筛选和时间窗口校验。
+  - `cd backend && cargo test openapi -- --nocapture` 通过，OpenAPI 已包含后台广告和用户端轮播接口。
+  - `cd backend && cargo test -- --nocapture` 通过，158 个测试全部通过；仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - `cd admin && npm run build` 通过；Vite 仍提示既有 chunk 体积超过 500kB。
+  - 使用 `DATABASE_URL=postgres://root:123456@192.168.2.3:15432/postgres PORT=18157 cargo run` 启动后端，确认 `_sqlx_migrations` 已执行 `20260605004000 create advertisements`。
+  - API 冒烟：登录后台后创建测试广告 `AD000001`，`GET /api/user/mobile/advertisements` 能返回该广告；删除后用户端接口不再返回该广告。
+  - 数据库检查：`advertisements` 表已创建，表注释存在，11 个字段均有中文注释；测试广告已删除，当前广告表为空。
+
 ## 2026-06-04 14:11 HKT 移除停用 API68 北京快乐8
 
 - 完成任务：删除 API68 北京快乐8（`bjkl8`）的默认彩种、默认开奖源和后台开奖源预设。

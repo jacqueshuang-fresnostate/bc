@@ -295,6 +295,51 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/admin/advertisements",
+        "广告管理",
+        "广告列表",
+        "返回后台维护的手机端轮播广告配置。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/admin/advertisements",
+        "广告管理",
+        "新增广告",
+        "创建手机端轮播广告，广告 ID 留空时由后端自动生成。",
+        AuthMode::Admin,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "get",
+        "/admin/advertisements/{id}",
+        "广告管理",
+        "广告详情",
+        "按广告 ID 返回单条广告配置。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "put",
+        "/admin/advertisements/{id}",
+        "广告管理",
+        "更新广告",
+        "更新广告图片、跳转链接、排序、状态和展示时间。",
+        AuthMode::Admin,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "delete",
+        "/admin/advertisements/{id}",
+        "广告管理",
+        "删除广告",
+        "删除指定广告配置。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
         "/admin/registration",
         "用户管理",
         "读取注册配置",
@@ -879,6 +924,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::None,
     ),
     doc(
+        "get",
+        "/user/mobile/advertisements",
+        "用户端内容",
+        "手机端轮播广告",
+        "返回当前启用且在展示时间内的手机端轮播广告。",
+        AuthMode::None,
+        RequestBodyKind::None,
+    ),
+    doc(
         "post",
         "/user/register",
         "用户端账户",
@@ -1218,6 +1272,7 @@ fn openapi_tags() -> Value {
         { "name": "角色权限", "description": "角色和权限范围维护。" },
         { "name": "系统设置", "description": "系统级配置维护。" },
         { "name": "图床配置", "description": "图床上传代理和图片链接提取。" },
+        { "name": "广告管理", "description": "手机端轮播广告配置。" },
         { "name": "财务管理", "description": "资金账户、流水和手工调整。" },
         { "name": "合买管理", "description": "合买计划和参与人管理。" },
         { "name": "邀请返利", "description": "代理邀请关系和返利策略。" },
@@ -1228,6 +1283,7 @@ fn openapi_tags() -> Value {
         { "name": "开奖源与调度", "description": "开奖源、控制号码和自动调度。" },
         { "name": "玩法规则", "description": "玩法目录和注数评估。" },
         { "name": "订单与结算", "description": "投注订单、取消、计奖和派奖。" },
+        { "name": "用户端内容", "description": "手机端公开内容接口。" },
         { "name": "用户端账户", "description": "用户注册登录、余额、流水和提现方式。" }
     ])
 }
@@ -1307,7 +1363,9 @@ mod tests {
         assert_eq!(document["openapi"].as_str(), Some("3.1.0"));
         assert!(document["paths"]["/health"]["get"].is_object());
         assert!(document["paths"]["/admin/users"]["get"].is_object());
+        assert!(document["paths"]["/admin/advertisements"]["get"].is_object());
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
+        assert!(document["paths"]["/user/mobile/advertisements"]["get"].is_object());
         assert!(document["paths"]["/user/register"]["post"].is_object());
     }
 

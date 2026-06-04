@@ -11,6 +11,7 @@ use axum::{
 
 use crate::{
     app::AppState,
+    domain::advertisement::MobileAdvertisement,
     domain::finance::{FinancialAccountSummary, LedgerEntry},
     domain::user::WithdrawalMethod,
     domain::user::{
@@ -46,6 +47,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         ));
 
     Router::new()
+        .route("/mobile/advertisements", get(list_mobile_advertisements))
         .route("/register", post(register_user))
         .route("/login", post(login_user))
         .route("/forgot-password", post(forgot_password))
@@ -80,6 +82,14 @@ fn bearer_token(request: &Request) -> ApiResult<&str> {
     };
 
     Ok(token)
+}
+
+async fn list_mobile_advertisements(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<MobileAdvertisement>>>> {
+    let advertisements = state.advertisements.list_mobile_carousel().await?;
+
+    Ok(Json(ApiEnvelope::success(advertisements)))
 }
 
 async fn register_user(

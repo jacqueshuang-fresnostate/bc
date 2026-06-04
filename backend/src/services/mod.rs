@@ -1,6 +1,7 @@
 //! 后端服务层聚合声明，集中导出不同业务服务模块。
 
 pub mod access;
+pub mod advertisement;
 pub mod automation;
 pub mod business_database;
 pub mod dashboard;

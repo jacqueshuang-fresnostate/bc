@@ -9,6 +9,7 @@ use crate::{
     routes,
     services::{
         access::AccessRepository,
+        advertisement::AdvertisementRepository,
         business_database::BusinessDatabase,
         draw::DrawRepository,
         draw_api::ApiDrawSourceRepository,
@@ -27,6 +28,7 @@ use crate::{
 #[derive(Clone)]
 pub struct AppState {
     pub access: AccessRepository,
+    pub advertisements: AdvertisementRepository,
     pub draws: DrawRepository,
     pub finance: FinanceRepository,
     pub group_buys: GroupBuyRepository,
@@ -44,6 +46,7 @@ impl AppState {
     fn new_with_scheduler(scheduler: DrawSchedulerRepository) -> Self {
         Self {
             access: AccessRepository::memory_seeded(),
+            advertisements: AdvertisementRepository::memory(),
             draws: default_draw_repository(),
             finance: FinanceRepository::memory_seeded(),
             group_buys: GroupBuyRepository::memory_seeded(),
@@ -77,6 +80,7 @@ impl AppState {
         tracing::info!("已配置 DATABASE_URL，使用 PostgreSQL 持久化所有后台业务仓储");
         Ok(Self {
             access: AccessRepository::persistent(business_database.clone()).await?,
+            advertisements: AdvertisementRepository::persistent(business_database.clone()).await?,
             draws: DrawRepository::persistent_with_api_sources(
                 api_sources,
                 business_database.clone(),

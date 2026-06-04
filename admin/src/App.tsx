@@ -3,6 +3,7 @@ import { AppShell, type NavigationItem } from './components/AppShell';
 import { useAuth } from './hooks/useAuth';
 import { useDashboard } from './hooks/useDashboard';
 import { AccessManagementPage } from './pages/AccessManagementPage';
+import { AdvertisementManagementPage } from './pages/AdvertisementManagementPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DrawManagementPage } from './pages/DrawManagementPage';
 import { FinanceManagementPage } from './pages/FinanceManagementPage';
@@ -132,6 +133,11 @@ export function App() {
         />
       ) : activeKey === 'rebate' ? (
         <RebateManagementPage onDashboardRefresh={refresh} />
+      ) : activeKey === 'advertisements' ? (
+        <AdvertisementManagementPage
+          settings={filteredData?.settings ?? []}
+          onDashboardRefresh={refresh}
+        />
       ) : filteredData ? (
         <PlaceholderPage moduleKey={activeKey} summary={filteredData} />
       ) : (
@@ -178,6 +184,7 @@ function scopeForModule(moduleKey: string): PermissionScope | null {
     rebate: 'rebates',
     registration: 'users',
     roles: 'roles',
+    advertisements: 'systemSettings',
     settings: 'systemSettings',
     support: 'customerService',
     users: 'users',

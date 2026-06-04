@@ -15,6 +15,7 @@ use serde_json::Value;
 use crate::{
     app::AppState,
     domain::{
+        advertisement::{AdvertisementSummary, SaveAdvertisementRequest},
         auth::{AdminAuthSession, AdminLoginRequest, AdminLogoutResponse, CurrentAdminProfile},
         draw::{
             CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest, DrawIssue,
@@ -127,6 +128,16 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/system-settings", get(list_system_settings))
         .route("/system-settings/{key}", patch(update_system_setting))
         .route("/image-bed/upload", post(upload_image_bed_file))
+        .route(
+            "/advertisements",
+            get(list_advertisements).post(create_advertisement),
+        )
+        .route(
+            "/advertisements/{id}",
+            get(get_advertisement)
+                .put(update_advertisement)
+                .delete(delete_advertisement),
+        )
         .route(
             "/registration",
             get(get_registration_config).put(update_registration_config),
@@ -267,6 +278,9 @@ fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
         return Some(PermissionScope::SystemSettings);
     }
     if path.starts_with("image-bed") {
+        return Some(PermissionScope::SystemSettings);
+    }
+    if path.starts_with("advertisements") {
         return Some(PermissionScope::SystemSettings);
     }
     if path.starts_with("orders") || path.starts_with("settlements") {
@@ -1049,6 +1063,51 @@ async fn upload_image_bed_file(
     };
 
     Ok(Json(ApiEnvelope::success(output)))
+}
+
+async fn list_advertisements(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<AdvertisementSummary>>>> {
+    let advertisements = state.advertisements.list().await?;
+
+    Ok(Json(ApiEnvelope::success(advertisements)))
+}
+
+async fn get_advertisement(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<AdvertisementSummary>>> {
+    let advertisement = state.advertisements.get(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(advertisement)))
+}
+
+async fn create_advertisement(
+    State(state): State<AppState>,
+    Json(payload): Json<SaveAdvertisementRequest>,
+) -> ApiResult<Json<ApiEnvelope<AdvertisementSummary>>> {
+    let advertisement = state.advertisements.create(payload).await?;
+
+    Ok(Json(ApiEnvelope::success(advertisement)))
+}
+
+async fn update_advertisement(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<SaveAdvertisementRequest>,
+) -> ApiResult<Json<ApiEnvelope<AdvertisementSummary>>> {
+    let advertisement = state.advertisements.update(&id, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(advertisement)))
+}
+
+async fn delete_advertisement(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<AdvertisementSummary>>> {
+    let advertisement = state.advertisements.delete(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(advertisement)))
 }
 
 fn extract_image_bed_result_field(response: &Value, field_path: &str) -> ApiResult<Value> {

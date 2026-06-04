@@ -1,5 +1,6 @@
 //! 后端领域模型聚合声明，统一导出 domain 层结构定义。
 
+pub mod advertisement;
 pub mod auth;
 pub mod draw;
 pub mod finance;

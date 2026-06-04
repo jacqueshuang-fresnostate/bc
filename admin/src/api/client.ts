@@ -7,6 +7,10 @@ import type {
 } from '../types/dashboard';
 import type { DrawSource } from '../types/dashboard';
 import type {
+  AdvertisementSummary,
+  SaveAdvertisementRequest,
+} from '../types/advertisements';
+import type {
   AdminPasswordResetRequest,
   AdminRole,
   AdminSaveRequest,
@@ -369,6 +373,41 @@ export function updateSystemSetting(
     {
       body: payload,
       method: 'PATCH',
+    },
+  );
+}
+
+export function fetchAdvertisements(signal?: AbortSignal) {
+  return requestJson<AdvertisementSummary[]>('/api/admin/advertisements', {
+    signal,
+  });
+}
+
+export function createAdvertisement(payload: SaveAdvertisementRequest) {
+  return requestJson<AdvertisementSummary>('/api/admin/advertisements', {
+    body: payload,
+    method: 'POST',
+  });
+}
+
+export function updateAdvertisement(
+  id: string,
+  payload: SaveAdvertisementRequest,
+) {
+  return requestJson<AdvertisementSummary>(
+    `/api/admin/advertisements/${encodeURIComponent(id)}`,
+    {
+      body: payload,
+      method: 'PUT',
+    },
+  );
+}
+
+export function deleteAdvertisement(id: string) {
+  return requestJson<AdvertisementSummary>(
+    `/api/admin/advertisements/${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
     },
   );
 }

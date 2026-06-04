@@ -211,7 +211,7 @@ fn module_scope(key: &str) -> Option<PermissionScope> {
         "support" => Some(PermissionScope::CustomerService),
         "admins" => Some(PermissionScope::Admins),
         "roles" => Some(PermissionScope::Roles),
-        "settings" => Some(PermissionScope::SystemSettings),
+        "settings" | "advertisements" => Some(PermissionScope::SystemSettings),
         "lottery-console" | "lotteries" | "draw-modes" | "schedules" | "group-buy"
         | "play-rules" => Some(PermissionScope::Lotteries),
         "group-buy-robot" | "purchase-robot" => Some(PermissionScope::Robots),
@@ -322,12 +322,20 @@ fn module_groups() -> Vec<ModuleGroup> {
             key: "settings".to_string(),
             title: "系统设置".to_string(),
             description: "平台配置、注册策略和基础参数管理入口".to_string(),
-            modules: vec![module(
-                "settings",
-                "系统设置",
-                "注册、彩种、风控等配置入口",
-                ModuleStatus::Scaffolded,
-            )],
+            modules: vec![
+                module(
+                    "settings",
+                    "系统设置",
+                    "注册、彩种、风控等配置入口",
+                    ModuleStatus::Scaffolded,
+                ),
+                module(
+                    "advertisements",
+                    "广告管理",
+                    "配置手机端轮播广告和跳转入口",
+                    ModuleStatus::Scaffolded,
+                ),
+            ],
         },
         ModuleGroup {
             key: "lottery".to_string(),
