@@ -7,8 +7,11 @@ import {
   errorMessage,
   fetchCurrentUserProfile,
   fetchWithdrawalMethods,
+  fetchWithdrawalOrders,
   type WithdrawalMethod,
   type WithdrawalMethodType,
+  type WithdrawalOrder,
+  type WithdrawalOrderStatus,
 } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 
@@ -17,6 +20,7 @@ type MethodType = WithdrawalMethodType
 const router = useRouter()
 const profile = ref<any>(null)
 const methods = ref<WithdrawalMethod[]>([])
+const orders = ref<WithdrawalOrder[]>([])
 const amount = ref('')
 const selectedMethodId = ref<string | null>(null)
 const loading = ref(false)
@@ -25,6 +29,14 @@ const submitting = ref(false)
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
 const enabledMethods = computed(() => methods.value)
 const selectedMethod = computed(() => enabledMethods.value.find(item => item.id === selectedMethodId.value) || enabledMethods.value[0] || null)
+const latestOrders = computed(() => orders.value.slice(0, 6))
+
+const statusTextMap: Record<WithdrawalOrderStatus, string> = {
+  pending: '待审核',
+  approved: '已通过',
+  rejected: '已驳回',
+  cancelled: '已取消',
+}
 
 function methodIcon(type?: MethodType) {
   if (type === 'bankCard') return 'account_balance'
@@ -43,6 +55,40 @@ function methodDescription(item?: WithdrawalMethod | null) {
   if (!item) return '请先添加收款账户'
   if (item.methodType === 'bankCard') return maskAccount(item.accountNumber)
   return maskEmail(item.accountNumber)
+}
+
+function orderMethodTitle(item: WithdrawalOrder) {
+  if (item.methodType === 'alipay') return '支付宝'
+  if (item.methodType === 'wechat') return '微信'
+  return item.bankName ? `银行卡 · ${item.bankName}` : '银行卡'
+}
+
+function orderAccountDescription(item: WithdrawalOrder) {
+  const account = item.methodType === 'bankCard'
+    ? maskAccount(item.accountNumber)
+    : maskEmail(item.accountNumber)
+  return `${item.accountHolder} · ${account}`
+}
+
+function orderStatusText(status: WithdrawalOrderStatus) {
+  return statusTextMap[status] || status || '-'
+}
+
+function formatOrderAmount(value: number) {
+  return (Number(value || 0) / 100).toFixed(2)
+}
+
+function formatOrderTime(value?: string | null) {
+  if (!value) return '-'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function maskAccount(value?: string | null) {
@@ -65,12 +111,14 @@ function useMaxAmount() {
 async function loadWithdrawData() {
   loading.value = true
   try {
-    const [currentProfile, methodRes] = await Promise.all([
+    const [currentProfile, methodRes, orderRes] = await Promise.all([
       fetchCurrentUserProfile(),
       fetchWithdrawalMethods(),
+      fetchWithdrawalOrders(),
     ])
     profile.value = currentProfile
     methods.value = methodRes
+    orders.value = orderRes
     selectedMethodId.value = methods.value.find(item => item.isDefault)?.id || enabledMethods.value[0]?.id || null
   } catch (e: unknown) {
     showToast(errorMessage(e, '加载失败'))
@@ -177,6 +225,47 @@ onMounted(loadWithdrawData)
               <div class="h-2.5 w-2.5 rounded-full" :class="selectedMethod?.id === item.id ? 'bg-primary' : 'bg-transparent'"></div>
             </div>
           </label>
+        </div>
+      </section>
+
+      <section class="rounded-xl bg-surface-container-lowest p-6 shadow-[0_4px_40px_0_rgba(140,10,21,0.04)]">
+        <div class="mb-4 flex items-center justify-between">
+          <h2 class="text-sm text-on-surface-variant font-label">提现申请记录</h2>
+          <button class="text-xs font-semibold text-primary transition-opacity active:opacity-80" type="button" @click="loadWithdrawData">
+            刷新
+          </button>
+        </div>
+        <van-loading v-if="loading" class="mx-auto block" />
+        <van-empty v-else-if="latestOrders.length === 0" description="暂无提现申请" />
+        <div v-else class="flex flex-col gap-3">
+          <article v-for="item in latestOrders" :key="item.id" class="rounded-lg bg-surface p-4">
+            <div class="mb-3 flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="truncate text-sm font-semibold text-on-surface">{{ orderMethodTitle(item) }}</p>
+                <p class="mt-1 truncate text-xs text-on-surface-variant font-label">{{ orderAccountDescription(item) }}</p>
+              </div>
+              <span
+                class="shrink-0 rounded-full px-2.5 py-1 text-xs font-bold"
+                :class="{
+                  'bg-amber-100 text-amber-700': item.status === 'pending',
+                  'bg-emerald-100 text-emerald-700': item.status === 'approved',
+                  'bg-rose-100 text-rose-700': item.status === 'rejected' || item.status === 'cancelled',
+                }"
+              >
+                {{ orderStatusText(item.status) }}
+              </span>
+            </div>
+            <div class="flex items-end justify-between gap-3">
+              <div>
+                <p class="font-headline text-2xl font-bold text-primary">¥ {{ formatOrderAmount(item.amountMinor) }}</p>
+                <p class="mt-1 text-[11px] text-on-surface-variant font-label">{{ formatOrderTime(item.createdAt) }}</p>
+              </div>
+              <p class="max-w-[45%] truncate text-right text-[11px] text-on-surface-variant font-label">{{ item.id }}</p>
+            </div>
+            <p v-if="item.reviewedAt" class="mt-3 border-t border-stone-100 pt-3 text-[11px] text-on-surface-variant font-label">
+              审核时间：{{ formatOrderTime(item.reviewedAt) }}
+            </p>
+          </article>
         </div>
       </section>
     </main>
