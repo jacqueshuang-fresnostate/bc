@@ -19,18 +19,23 @@
 ### 3. Contracts
 
 - `BACKEND_PORT`：可选，容器内后端监听端口，默认 `8080`，必须是纯数字。
+- `BACKEND_STARTUP_TIMEOUT_SECONDS`：可选，入口脚本等待后端健康检查通过的最长秒数，默认 `60`，必须是纯数字。
 - `APP_PORT`：可选，Compose 模式下宿主机暴露端口，默认 `8080`。
 - `RUST_LOG`：可选，后端日志级别，默认 `info`。
 - `DATABASE_URL`：可选，配置后后端使用 PostgreSQL；未配置时使用内存演示仓储。
 - `docker-compose.yml` 必须启动独立 PostgreSQL 服务并把应用 `DATABASE_URL` 指向 Compose 网络内的数据库。
 - Nginx 对外监听 `80`，前端静态资源位于 `/usr/share/nginx/html`。
 - Nginx 必须把 `/api/` 反向代理到 `127.0.0.1:${BACKEND_PORT}`。
+- 入口脚本必须先启动后端并等待 `http://127.0.0.1:${BACKEND_PORT}/api/health` 通过，再启动 Nginx；后端启动失败时容器必须失败退出，不能只留下 Nginx 返回 502。
+- 入口脚本启动 Nginx 后必须持续监控后端进程；后端退出时需要关闭 Nginx 并让容器退出。
 - 非 `/api/` 路径必须使用 SPA fallback 到 `/index.html`。
 
 ### 4. Validation & Error Matrix
 
 - `BACKEND_PORT` 为空或包含非数字字符 -> 入口脚本输出中文错误并退出。
+- `BACKEND_STARTUP_TIMEOUT_SECONDS` 为空或包含非数字字符 -> 入口脚本输出中文错误并退出。
 - 后端未能启动 -> `/api/health` 失败，Docker healthcheck 变为 unhealthy。
+- 后端启动失败或运行后退出 -> 容器失败退出，不能继续由 Nginx 对外返回 502。
 - Nginx 未按 `BACKEND_PORT` 渲染代理端口 -> 首页可能正常但 `/api/health` 失败。
 - `DATABASE_URL` 未配置 -> 后端输出中文日志，使用内存演示仓储。
 - Compose 中 PostgreSQL 未健康 -> 应用容器不得抢先启动，避免连接失败后误判部署成功。

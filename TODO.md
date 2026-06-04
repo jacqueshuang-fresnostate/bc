@@ -1,5 +1,22 @@
 # TODO
 
+## 2026-06-04 19:08 HKT Docker 镜像后端 502 修复
+
+- 完成任务：修复单镜像部署时后端失败但 Nginx 继续运行导致接口 502 的问题。
+- 解决问题：此前入口脚本启动后端后立即启动 Nginx，不等待后端健康，也不监控后端进程；当数据库连接、迁移或后端初始化失败时，容器仍然对外服务前端静态页，接口请求会表现为 502。
+- 具体实现：
+  - `docker/entrypoint.sh` 新增后端健康检查等待逻辑，通过 `http://127.0.0.1:${BACKEND_PORT}/api/health` 后才启动 Nginx。
+  - 新增 `BACKEND_STARTUP_TIMEOUT_SECONDS`，默认 60 秒，且启动时校验必须为数字。
+  - Nginx 启动后持续监控后端和 Nginx 两个进程；后端退出会关闭 Nginx 并让容器失败退出。
+  - `Dockerfile` 新增 `BACKEND_STARTUP_TIMEOUT_SECONDS=60`，并把 Docker healthcheck `start-period` 调整为 60 秒。
+  - `.trellis/spec/backend/deployment-guidelines.md` 和 `架构设计.md` 已同步容器启动契约。
+- 验证记录：
+  - `sh -n docker/entrypoint.sh` 通过。
+  - `docker build -t bc-platform:latest .` 通过。
+  - 使用新镜像启动临时容器 `bc-502-smoke`，`curl http://127.0.0.1:18082/api/health` 返回 `success=true`。
+  - 临时容器首页 `curl -I http://127.0.0.1:18082/` 返回 200，容器状态为 `running healthy`。
+  - 使用错误 `DATABASE_URL` 启动临时容器 `bc-502-fail`，容器按预期退出，日志显示“后端服务启动失败，退出码：1”，不再留下 Nginx 返回 502。
+
 ## 2026-06-04 18:02 HKT 手机端平台名称配置
 
 - 完成任务：补齐手机端设置中的平台名称配置。

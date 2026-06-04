@@ -31,11 +31,12 @@ COPY --from=admin-build /workspace/admin/dist /usr/share/nginx/html
 COPY --from=backend-build /workspace/backend/target/release/bc-backend /usr/local/bin/bc-backend
 
 ENV BACKEND_PORT=8080
+ENV BACKEND_STARTUP_TIMEOUT_SECONDS=60
 ENV RUST_LOG=info
 
 EXPOSE 80
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -fsS http://127.0.0.1/api/health >/dev/null || exit 1
 
 ENTRYPOINT ["/usr/local/bin/bc-entrypoint.sh"]
