@@ -1,5 +1,24 @@
 # TODO
 
+## 2026-06-04 18:02 HKT 手机端平台名称配置
+
+- 完成任务：补齐手机端设置中的平台名称配置。
+- 解决问题：此前手机端配置只有 Logo 和介绍，缺少手机端页面展示所需的平台名称。
+- 具体实现：
+  - 后端 `seed_settings()` 新增 `mobile_platform_name` 默认配置，已有数据库启动时会自动补齐。
+  - 手机端公开接口 `GET /api/user/mobile/site-config` 新增 `platformName` 字段。
+  - 管理后台“手机端设置”Tab 新增“平台名称”输入与保存按钮。
+  - OpenAPI 文档的手机端站点配置说明补充平台名称。
+  - `架构设计.md` 同步更新手机端配置字段清单和验收标准。
+- 验证记录：
+  - `cd backend && cargo fmt` 已执行。
+  - `cd backend && cargo check` 通过。
+  - `cd backend && cargo fmt --check` 通过。
+  - `cd backend && cargo test mobile_site_config -- --nocapture` 通过；仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - `cd backend && cargo test openapi -- --nocapture` 通过；OpenAPI 路径测试仍通过。
+  - `cd admin && npm run build` 通过；Vite 仍提示既有 chunk 体积超过 500kB。
+  - `git diff --check` 通过。
+
 ## 2026-06-04 17:28 HKT 手机端 Logo 与介绍配置
 
 - 完成任务：在系统设置中新增手机端 Logo 图片和站点介绍配置。

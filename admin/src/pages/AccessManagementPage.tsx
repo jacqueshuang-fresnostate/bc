@@ -93,10 +93,12 @@ const ACCESS_SECTIONS: Array<{ key: AccessSection; label: string }> = [
   { key: 'roles', label: '角色权限' },
 ];
 
+const MOBILE_PLATFORM_NAME_SETTING_KEY = 'mobile_platform_name';
 const MOBILE_LOGO_SETTING_KEY = 'mobile_logo_image_url';
 const MOBILE_INTRO_SETTING_KEY = 'mobile_site_intro';
 const UNCONFIGURED_SETTING_VALUE = '未配置';
 const MOBILE_CUSTOM_SETTING_KEYS = new Set([
+  MOBILE_PLATFORM_NAME_SETTING_KEY,
   MOBILE_LOGO_SETTING_KEY,
   MOBILE_INTRO_SETTING_KEY,
 ]);
@@ -1240,6 +1242,11 @@ function MobileSettingsPanel({
   saving: boolean;
   settings: SystemSettingItem[];
 }) {
+  const platformNameValue = draftSettingValue(
+    settings,
+    drafts,
+    MOBILE_PLATFORM_NAME_SETTING_KEY,
+  );
   const logoValue = draftSettingValue(settings, drafts, MOBILE_LOGO_SETTING_KEY);
   const introValue = draftSettingValue(settings, drafts, MOBILE_INTRO_SETTING_KEY);
   const logoImageUrl =
@@ -1269,6 +1276,31 @@ function MobileSettingsPanel({
         />
 
         <div className="grid content-start gap-3">
+          <div className="rounded border border-slate-200 bg-white p-3">
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-ink">
+              <Smartphone size={16} />
+              平台名称
+            </div>
+            <Input
+              className="form-input"
+              placeholder="填写手机端显示的平台名称"
+              value={platformNameValue}
+              onChange={(value) =>
+                onDraftChange(MOBILE_PLATFORM_NAME_SETTING_KEY, value)
+              }
+            />
+            <div className="mt-2 flex justify-end">
+              <Button
+                disabled={saving}
+                icon={<Save size={16} />}
+                size="small"
+                onClick={() => onSaveSetting(MOBILE_PLATFORM_NAME_SETTING_KEY)}
+              >
+                保存名称
+              </Button>
+            </div>
+          </div>
+
           <div className="rounded border border-slate-200 bg-white p-3">
             <div className="mb-2 flex items-center gap-2 text-sm font-medium text-ink">
               <ImageIcon size={16} />

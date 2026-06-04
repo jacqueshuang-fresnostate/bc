@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MobileSiteConfig {
+    pub platform_name: String,
     pub logo_image_url: Option<String>,
     pub intro: String,
 }

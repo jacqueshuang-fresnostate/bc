@@ -2391,6 +2391,11 @@ fn seed_settings() -> Vec<SystemSetting> {
             description: "图床返回中的图片链接字段（支持点号路径）".to_string(),
         },
         SystemSetting {
+            key: "mobile_platform_name".to_string(),
+            value: "彩票管理系统".to_string(),
+            description: "手机端展示的平台名称".to_string(),
+        },
+        SystemSetting {
             key: "mobile_logo_image_url".to_string(),
             value: "未配置".to_string(),
             description: "手机端站点 Logo 图片链接".to_string(),

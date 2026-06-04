@@ -139,6 +139,8 @@ async fn get_mobile_site_config(
 /// 从系统设置中提取手机端公开展示配置，隐藏未配置占位值。
 fn mobile_site_config_from_settings(settings: &[SystemSetting]) -> MobileSiteConfig {
     MobileSiteConfig {
+        platform_name: optional_config_value(settings, "mobile_platform_name")
+            .unwrap_or_else(|| "彩票管理系统".to_string()),
         logo_image_url: optional_config_value(settings, "mobile_logo_image_url"),
         intro: config_value(settings, "mobile_site_intro")
             .unwrap_or_else(|| "欢迎使用彩票管理系统，祝您理性购彩、好运常伴。".to_string()),
@@ -451,6 +453,11 @@ mod tests {
     fn mobile_site_config_hides_unconfigured_logo() {
         let settings = vec![
             SystemSetting {
+                key: "mobile_platform_name".to_string(),
+                value: "测试平台".to_string(),
+                description: "手机端展示的平台名称".to_string(),
+            },
+            SystemSetting {
                 key: "mobile_logo_image_url".to_string(),
                 value: "未配置".to_string(),
                 description: "手机端站点 Logo 图片链接".to_string(),
@@ -464,6 +471,7 @@ mod tests {
 
         let config = mobile_site_config_from_settings(&settings);
 
+        assert_eq!(config.platform_name, "测试平台");
         assert_eq!(config.logo_image_url, None);
         assert_eq!(config.intro, "欢迎语");
     }
@@ -479,6 +487,7 @@ mod tests {
 
         let config = mobile_site_config_from_settings(&settings);
 
+        assert_eq!(config.platform_name, "彩票管理系统");
         assert_eq!(
             config.logo_image_url,
             Some("https://example.com/logo.png".to_string())

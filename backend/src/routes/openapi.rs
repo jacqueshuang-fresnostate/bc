@@ -956,7 +956,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/user/mobile/site-config",
         "用户端内容",
         "手机端站点配置",
-        "返回手机端 Logo 图片链接和站点介绍。",
+        "返回手机端平台名称、Logo 图片链接和站点介绍。",
         AuthMode::None,
         RequestBodyKind::None,
     ),
