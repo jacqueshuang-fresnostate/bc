@@ -5,10 +5,8 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useBrandingStore } from '../stores/branding'
 import { showDialog, showToast } from 'vant'
-import http from '../api/http'
 import { fetchCurrentUserProfile } from '../api/user'
 import WalletBentoCard from '../components/mobile/WalletBentoCard.vue'
-import QuickActionGrid from '../components/mobile/QuickActionGrid.vue'
 import SettingsListGroup from '../components/mobile/SettingsListGroup.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 
@@ -17,7 +15,6 @@ const auth = useAuthStore()
 const brandingStore = useBrandingStore()
 const { branding } = storeToRefs(brandingStore)
 const profile = ref<any>(null)
-const profileRechargeShortcuts = ref({ fiat: true, usdt: true })
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
 const username = computed(() => profile.value?.username || '会员')
 const memberLabel = computed(() => statusText(profile.value?.status || 'active'))
@@ -28,11 +25,6 @@ const inviterText = computed(() => {
   if (!inviter) return '无'
   return `${inviter.username}（${profile.value?.used_invitation_code || inviter.invitation_code}）`
 })
-
-const quickActions = computed(() => [
-  { key: 'usdt', title: 'USDT 极速充值', subtitle: '支持 TRC20 / ERC20', icon: 'currency_bitcoin', tone: 'secondary' as const, enabled: profileRechargeShortcuts.value.usdt },
-  { key: 'fiat', title: 'RMB支付', subtitle: '网银直充 · 秒到账', icon: 'bolt', tone: 'primary' as const, enabled: profileRechargeShortcuts.value.fiat },
-].filter(item => item.enabled))
 
 const accountItems = computed(() => [
   { key: 'security', label: '安全中心与密码', icon: 'shield_lock', value: profile.value?.email ? '已绑定' : '未绑定', hint: profile.value?.email || '' },
@@ -55,26 +47,14 @@ const statusTextMap: Record<string, string> = {
   locked: '已锁定',
 }
 
-async function loadPaymentMethods() {
-  try {
-    const res = await http.get('/payment/methods')
-    profileRechargeShortcuts.value = { ...profileRechargeShortcuts.value, ...(res.data?.profile_recharge_shortcuts || {}) }
-  } catch {}
-}
-
 onMounted(async () => {
   try {
     profile.value = await fetchCurrentUserProfile()
   } catch {}
-  await loadPaymentMethods()
 })
 
 function statusText(status: string) {
   return statusTextMap[status] || status || '-'
-}
-
-function onQuickAction() {
-  router.push('/deposit')
 }
 
 function onAccountItem(item: { key: string }) {
@@ -134,11 +114,6 @@ async function logout() {
           @deposit="router.push('/deposit')"
           @withdraw="router.push('/withdraw')"
         />
-      </section>
-
-      <section v-if="quickActions.length" class="mb-5">
-        <h3 class="mb-3 px-1 text-xs font-bold text-on-surface-variant">快捷充值渠道</h3>
-        <QuickActionGrid :items="quickActions" @select="onQuickAction" />
       </section>
 
       <section class="space-y-3">
