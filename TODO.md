@@ -1,5 +1,18 @@
 # TODO
 
+## 2026-06-04 13:05 HKT 修复新增彩种数据库号码类型约束
+
+- 完成任务：新增数据库迁移更新 `lotteries_number_type_check`，允许 `pk10`、`elevenFive`、`fastThree`、`luckTwenty` 写入 `lotteries.number_type`。
+- 解决问题：服务连接 PostgreSQL 启动时，新增 API68 彩种种子插入会被旧约束拦截，日志表现为“彩种数据库操作失败”，服务直接启动失败。
+- 具体实现：
+  - 新增迁移 `backend/migrations/20260605001000_update_lottery_number_type_check.sql`，先删除旧约束，再写入包含 6 个号码类型的新约束。
+  - 为新约束补充 SQL 注释，说明该约束限制系统支持的号码类型枚举。
+  - 后端补充号码类型落库名称测试，避免新增号码类型后忘记同步数据库约束。
+- 验证记录：
+  - `cd backend && cargo check` 通过。
+  - 使用 `DATABASE_URL=postgres://root:123456@192.168.2.3:15432/postgres PORT=18141 cargo run` 本地启动成功，不再出现“彩种数据库操作失败”。
+  - 已确认远程 PostgreSQL `_sqlx_migrations` 记录 `20260605001000 update lottery number type check` 成功，`lotteries` 已补齐 32 个彩种。
+
 ## 2026-06-04 12:47 HKT API68 批量彩种接入
 
 - 完成任务：按用户提供的 API68 接口批量新增北京PK10、天津时时彩、新疆时时彩、广东11选5、江苏快3、澳洲幸运10、澳洲幸运20、北京快乐8、各省 11 选 5、各省快3等彩种，并为这些彩种补齐默认开奖源配置。

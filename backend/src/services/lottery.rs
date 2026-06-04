@@ -1578,6 +1578,27 @@ mod tests {
     }
 
     #[test]
+    /// 新增外部彩种号码类型需要继续使用前端契约名称落库。
+    fn lottery_number_type_database_values_include_external_lottery_types() {
+        assert_eq!(enum_value(&LotteryNumberType::Pk10).unwrap(), "pk10");
+        assert_eq!(
+            enum_value(&LotteryNumberType::ElevenFive).unwrap(),
+            "elevenFive"
+        );
+        assert_eq!(
+            enum_value(&LotteryNumberType::FastThree).unwrap(),
+            "fastThree"
+        );
+        assert_eq!(
+            enum_value(&LotteryNumberType::LuckTwenty).unwrap(),
+            "luckTwenty"
+        );
+
+        let number_type: LotteryNumberType = enum_from_string("luckTwenty".to_string()).unwrap();
+        assert_eq!(number_type, LotteryNumberType::LuckTwenty);
+    }
+
+    #[test]
     /// 处理 lottery_database_values_round_trip_to_domain_types 的具体内部流程。
     fn lottery_database_values_round_trip_to_domain_types() {
         let draw_mode: DrawMode = enum_from_string("manual".to_string()).unwrap();
