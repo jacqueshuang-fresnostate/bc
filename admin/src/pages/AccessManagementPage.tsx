@@ -6,6 +6,7 @@ import {
   Select,
   SideSheet,
   Spin,
+  Tabs,
   Tag,
 } from '@douyinfe/semi-ui';
 import {
@@ -88,7 +89,6 @@ const ACCESS_SECTIONS: Array<{ key: AccessSection; label: string }> = [
   { key: 'users', label: '用户管理' },
   { key: 'admins', label: '管理员管理' },
   { key: 'roles', label: '角色权限' },
-  { key: 'settings', label: '系统设置' },
 ];
 
 const PERMISSION_SCOPE_OPTIONS: Array<{ label: string; value: PermissionScope }> = [
@@ -182,6 +182,7 @@ export function AccessManagementPage({
     refresh();
     onDashboardRefresh();
   };
+  const isSettingsPage = section === 'settings';
 
   const submitUser = async () => {
     const saved = await saveUser(userPayload(userForm), editingUserId ?? undefined);
@@ -239,9 +240,13 @@ export function AccessManagementPage({
     <div className="space-y-5">
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-ink">用户权限管理</h1>
+          <h1 className="text-xl font-semibold text-ink">
+            {isSettingsPage ? '系统设置' : '用户权限管理'}
+          </h1>
           <p className="mt-1 text-sm text-slate-500">
-            维护用户、后台账号、角色范围和注册配置。
+            {isSettingsPage
+              ? '按功能分类维护后台运行配置、充值参数、图床和注册安全。'
+              : '维护用户、后台账号和角色权限范围。'}
           </p>
         </div>
         <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
@@ -251,40 +256,44 @@ export function AccessManagementPage({
 
       {error ? <Banner type="danger" title="用户权限接口错误" description={error} /> : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          label="用户总数"
-          trend={`${totals.agentCount} 个代理`}
-          value={`${users.length}`}
-        />
-        <MetricCard
-          label="活跃用户"
-          trend="可参与投注"
-          value={`${totals.activeUserCount}`}
-        />
-        <MetricCard
-          label="后台账号"
-          trend={`${totals.lockedAdminCount} 个锁定`}
-          value={`${admins.length}`}
-        />
-        <MetricCard
-          label="角色数量"
-          trend="权限范围绑定"
-          value={`${roles.length}`}
-        />
-      </section>
+      {!isSettingsPage ? (
+        <>
+          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard
+              label="用户总数"
+              trend={`${totals.agentCount} 个代理`}
+              value={`${users.length}`}
+            />
+            <MetricCard
+              label="活跃用户"
+              trend="可参与投注"
+              value={`${totals.activeUserCount}`}
+            />
+            <MetricCard
+              label="后台账号"
+              trend={`${totals.lockedAdminCount} 个锁定`}
+              value={`${admins.length}`}
+            />
+            <MetricCard
+              label="角色数量"
+              trend="权限范围绑定"
+              value={`${roles.length}`}
+            />
+          </section>
 
-      <section className="flex flex-wrap gap-2">
-        {ACCESS_SECTIONS.map((item) => (
-          <Button
-            key={item.key}
-            theme={section === item.key ? 'solid' : 'light'}
-            onClick={() => setSection(item.key)}
-          >
-            {item.label}
-          </Button>
-        ))}
-      </section>
+          <section className="flex flex-wrap gap-2">
+            {ACCESS_SECTIONS.map((item) => (
+              <Button
+                key={item.key}
+                theme={section === item.key ? 'solid' : 'light'}
+                onClick={() => setSection(item.key)}
+              >
+                {item.label}
+              </Button>
+            ))}
+          </section>
+        </>
+      ) : null}
 
       {loading ? (
         <Card className="rounded-md border border-line">
@@ -1003,7 +1012,7 @@ function SettingsSection({
     imageBedUploadField.trim() ? null : '上传字段名',
   ].filter(Boolean) as string[];
 
-  const filteredSettings = settings.filter((setting) => {
+  const filteredSettings = useMemo(() => settings.filter((setting) => {
     const keyword = settingKeyword.trim().toLowerCase();
     if (!keyword) {
       return true;
@@ -1012,13 +1021,26 @@ function SettingsSection({
       setting.key.toLowerCase().includes(keyword) ||
       setting.description.toLowerCase().includes(keyword)
     );
-  });
-  const groupedSettings = settingsGroups(filteredSettings);
+  }), [settingKeyword, settings]);
+  const groupedSettings = useMemo(
+    () => settingsGroups(filteredSettings),
+    [filteredSettings],
+  );
+  const [activeSettingGroup, setActiveSettingGroup] = useState('图床设置');
+
+  useEffect(() => {
+    if (groupedSettings.length === 0) {
+      return;
+    }
+    if (!groupedSettings.some(([groupName]) => groupName === activeSettingGroup)) {
+      setActiveSettingGroup(groupedSettings[0][0]);
+    }
+  }, [activeSettingGroup, groupedSettings]);
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
+    <section className="space-y-4">
       <Card className="rounded-md border border-line">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-ink">系统设置</h2>
           <Tag color="cyan">{settings.length} 项</Tag>
         </div>
@@ -1030,181 +1052,60 @@ function SettingsSection({
             onChange={(value) => setSettingKeyword(value)}
           />
         </div>
-        <div className="space-y-3">
-          {groupedSettings.length === 0 ? (
-            <div className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-              未找到匹配的系统配置项，可清空关键字后重试。
-            </div>
-          ) : (
-            groupedSettings.map(([groupName, items]) => (
-              <div
-                key={groupName}
-                className="rounded-lg border border-slate-200 bg-white p-3"
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-slate-700">
-                    {groupName}
-                  </h3>
-                  <Tag color="grey">{items.length} 项</Tag>
-                </div>
-                <div className="space-y-3">
-                  {items.map((setting) => {
-                    const draftValue = drafts[setting.key] ?? setting.value;
-                    const selectOptions = settingSelectOptions(
-                      setting.key,
-                      draftValue,
-                    );
-
-                    return (
-                      <div
-                        key={setting.key}
-                        className="grid gap-2 rounded border border-slate-100 p-2"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-ink">
-                              {setting.key}
-                            </p>
-                            <p className="mt-1 text-xs text-slate-500">
-                              {setting.description}
-                            </p>
-                          </div>
-                          <div>
-                            <Button
-                              disabled={saving}
-                              size="small"
-                              onClick={() => onSaveSetting(setting.key)}
-                            >
-                              保存
-                            </Button>
-                          </div>
-                        </div>
-                        {selectOptions.length > 0 ? (
-                          <Select
-                            className="form-input"
-                            value={draftValue}
-                            onChange={(value) =>
-                              onDraftChange(setting.key, String(value ?? ''))
-                            }
-                          >
-                            {selectOptions.map((option) => (
-                              <Select.Option
-                                key={option.value}
-                                value={option.value}
-                              >
-                                {option.label}
-                              </Select.Option>
-                            ))}
-                          </Select>
-                        ) : (
-                          <Input
-                            className="form-input"
-                            value={draftValue}
-                            onChange={(value) =>
-                              onDraftChange(setting.key, value)
-                            }
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </Card>
-
-      <div className="space-y-4">
-        <Card className="rounded-md border border-line">
-          <PanelTitle icon={<Settings size={18} />} title="注册配置" />
-          {registration ? (
-            <div className="space-y-4">
-              <ToggleRow
-                checked={registration.usernameEnabled}
-                label="用户名注册"
-                onChange={(checked) =>
-                  onRegistrationChange((current) =>
-                    current ? { ...current, usernameEnabled: checked } : current,
-                  )
-                }
-              />
-              <ToggleRow
-                checked={registration.emailEnabled}
-                label="邮箱注册"
-                onChange={(checked) =>
-                  onRegistrationChange((current) =>
-                    current ? { ...current, emailEnabled: checked } : current,
-                  )
-                }
-              />
-              <ToggleRow
-                checked={registration.agentInviteRequired}
-                label="代理邀请必填"
-                onChange={(checked) =>
-                  onRegistrationChange((current) =>
-                    current ? { ...current, agentInviteRequired: checked } : current,
-                  )
-                }
-              />
-              <Button
-                disabled={
-                  saving || (!registration.usernameEnabled && !registration.emailEnabled)
-                }
-                icon={<Save size={16} />}
-                theme="solid"
-                onClick={onSaveRegistration}
-              >
-                保存注册配置
-              </Button>
-            </div>
-          ) : (
-            <div className="rounded-md border border-line p-3 text-sm text-slate-500">
-              暂无注册配置。
-            </div>
-          )}
-        </Card>
-        <Card className="rounded-md border border-line">
-          <PanelTitle icon={<UploadIcon size={18} />} title="图床上传测试" />
-          <div className="space-y-4">
-            <div className="grid gap-2 text-sm text-slate-600">
-              <div className="flex items-center justify-between gap-3 rounded border border-slate-200 bg-slate-50 px-3 py-2">
-                <span>上传地址</span>
-                <span className="min-w-0 truncate font-mono text-xs text-slate-700">
-                  {imageBedUploadUrl || '未配置'}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2">
-                  <p className="text-xs text-slate-500">上传字段名</p>
-                  <p className="mt-1 truncate font-mono text-sm text-slate-700">
-                    {imageBedUploadField || 'file'}
-                  </p>
-                </div>
-                <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2">
-                  <p className="text-xs text-slate-500">返回链接字段</p>
-                  <p className="mt-1 truncate font-mono text-sm text-slate-700">
-                    {imageBedResultUrlField}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <ImageUploadAvatar
-              description="上传成功后会自动展示图片链接和预览。"
-              disabled={saving}
-              errorTitle="图床上传失败"
-              failureMessage="上传失败"
-              missingConfigLabels={imageBedMissingConfigs}
-              successMessage="图片上传成功"
-              title="点击图片区域选择并测试上传"
-              uploadFieldName={imageBedUploadField || 'file'}
-              uploadingText="正在请求图床服务..."
-              warningTitle="图床配置不完整"
-            />
+        {groupedSettings.length === 0 ? (
+          <div className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            未找到匹配的系统配置项，可清空关键字后重试。
           </div>
-        </Card>
-      </div>
+        ) : (
+          <Tabs
+            activeKey={activeSettingGroup}
+            collapsible
+            onChange={(key) => setActiveSettingGroup(String(key))}
+          >
+            {groupedSettings.map(([groupName, items]) => (
+              <Tabs.TabPane
+                key={groupName}
+                itemKey={groupName}
+                tab={
+                  <span className="inline-flex items-center gap-2">
+                    <span>{groupName}</span>
+                    <Tag color="grey">{items.length}</Tag>
+                  </span>
+                }
+              >
+                <div className="space-y-4 pt-3">
+                  <SettingFields
+                    drafts={drafts}
+                    items={items}
+                    saving={saving}
+                    onDraftChange={onDraftChange}
+                    onSaveSetting={onSaveSetting}
+                  />
+
+                  {groupName === '注册与安全' ? (
+                    <RegistrationSettingsPanel
+                      registration={registration}
+                      saving={saving}
+                      onRegistrationChange={onRegistrationChange}
+                      onSaveRegistration={onSaveRegistration}
+                    />
+                  ) : null}
+
+                  {groupName === '图床设置' ? (
+                    <ImageBedTestPanel
+                      imageBedMissingConfigs={imageBedMissingConfigs}
+                      imageBedResultUrlField={imageBedResultUrlField}
+                      imageBedUploadField={imageBedUploadField}
+                      imageBedUploadUrl={imageBedUploadUrl}
+                      saving={saving}
+                    />
+                  ) : null}
+                </div>
+              </Tabs.TabPane>
+            ))}
+          </Tabs>
+        )}
+      </Card>
     </section>
   );
 }
@@ -1216,6 +1117,195 @@ function PanelTitle({ icon, title }: { icon: ReactNode; title: string }) {
         {icon}
       </div>
       <h2 className="text-base font-semibold text-ink">{title}</h2>
+    </div>
+  );
+}
+
+function SettingFields({
+  drafts,
+  items,
+  onDraftChange,
+  onSaveSetting,
+  saving,
+}: {
+  drafts: Record<string, string>;
+  items: SystemSettingItem[];
+  onDraftChange: (key: string, value: string) => void;
+  onSaveSetting: (key: string) => void;
+  saving: boolean;
+}) {
+  return (
+    <div className="grid gap-3 xl:grid-cols-2">
+      {items.map((setting) => {
+        const draftValue = drafts[setting.key] ?? setting.value;
+        const selectOptions = settingSelectOptions(setting.key, draftValue);
+
+        return (
+          <div
+            key={setting.key}
+            className="grid min-h-[112px] gap-2 rounded border border-slate-100 bg-white p-3"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="break-all text-sm font-medium text-ink">
+                  {setting.key}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {setting.description}
+                </p>
+              </div>
+              <Button
+                disabled={saving}
+                size="small"
+                onClick={() => onSaveSetting(setting.key)}
+              >
+                保存
+              </Button>
+            </div>
+            {selectOptions.length > 0 ? (
+              <Select
+                className="form-input"
+                value={draftValue}
+                onChange={(value) =>
+                  onDraftChange(setting.key, String(value ?? ''))
+                }
+              >
+                {selectOptions.map((option) => (
+                  <Select.Option key={option.value} value={option.value}>
+                    {option.label}
+                  </Select.Option>
+                ))}
+              </Select>
+            ) : (
+              <Input
+                className="form-input"
+                value={draftValue}
+                onChange={(value) => onDraftChange(setting.key, value)}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RegistrationSettingsPanel({
+  onRegistrationChange,
+  onSaveRegistration,
+  registration,
+  saving,
+}: {
+  onRegistrationChange: Dispatch<SetStateAction<RegistrationConfig | null>>;
+  onSaveRegistration: () => void;
+  registration: RegistrationConfig | null;
+  saving: boolean;
+}) {
+  return (
+    <div className="rounded border border-slate-200 bg-slate-50 p-3">
+      <PanelTitle icon={<Settings size={18} />} title="注册配置" />
+      {registration ? (
+        <div className="grid gap-3 lg:grid-cols-3">
+          <ToggleRow
+            checked={registration.usernameEnabled}
+            label="用户名注册"
+            onChange={(checked) =>
+              onRegistrationChange((current) =>
+                current ? { ...current, usernameEnabled: checked } : current,
+              )
+            }
+          />
+          <ToggleRow
+            checked={registration.emailEnabled}
+            label="邮箱注册"
+            onChange={(checked) =>
+              onRegistrationChange((current) =>
+                current ? { ...current, emailEnabled: checked } : current,
+              )
+            }
+          />
+          <ToggleRow
+            checked={registration.agentInviteRequired}
+            label="代理邀请必填"
+            onChange={(checked) =>
+              onRegistrationChange((current) =>
+                current ? { ...current, agentInviteRequired: checked } : current,
+              )
+            }
+          />
+          <Button
+            disabled={
+              saving || (!registration.usernameEnabled && !registration.emailEnabled)
+            }
+            icon={<Save size={16} />}
+            theme="solid"
+            onClick={onSaveRegistration}
+          >
+            保存注册配置
+          </Button>
+        </div>
+      ) : (
+        <div className="rounded-md border border-line p-3 text-sm text-slate-500">
+          暂无注册配置。
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImageBedTestPanel({
+  imageBedMissingConfigs,
+  imageBedResultUrlField,
+  imageBedUploadField,
+  imageBedUploadUrl,
+  saving,
+}: {
+  imageBedMissingConfigs: string[];
+  imageBedResultUrlField: string;
+  imageBedUploadField: string;
+  imageBedUploadUrl: string;
+  saving: boolean;
+}) {
+  return (
+    <div className="rounded border border-slate-200 bg-slate-50 p-3">
+      <PanelTitle icon={<UploadIcon size={18} />} title="图床上传测试" />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+        <div className="grid content-start gap-2 text-sm text-slate-600">
+          <div className="flex items-center justify-between gap-3 rounded border border-slate-200 bg-white px-3 py-2">
+            <span>上传地址</span>
+            <span className="min-w-0 truncate font-mono text-xs text-slate-700">
+              {imageBedUploadUrl || '未配置'}
+            </span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded border border-slate-200 bg-white px-3 py-2">
+              <p className="text-xs text-slate-500">上传字段名</p>
+              <p className="mt-1 truncate font-mono text-sm text-slate-700">
+                {imageBedUploadField || 'file'}
+              </p>
+            </div>
+            <div className="rounded border border-slate-200 bg-white px-3 py-2">
+              <p className="text-xs text-slate-500">返回链接字段</p>
+              <p className="mt-1 truncate font-mono text-sm text-slate-700">
+                {imageBedResultUrlField}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <ImageUploadAvatar
+          description="上传成功后会自动展示图片链接和预览。"
+          disabled={saving}
+          errorTitle="图床上传失败"
+          failureMessage="上传失败"
+          missingConfigLabels={imageBedMissingConfigs}
+          successMessage="图片上传成功"
+          title="点击图片区域选择并测试上传"
+          uploadFieldName={imageBedUploadField || 'file'}
+          uploadingText="正在请求图床服务..."
+          warningTitle="图床配置不完整"
+        />
+      </div>
     </div>
   );
 }
