@@ -42,8 +42,6 @@ const DEFAULT_API68_CQSHICAI_SINGLE_ENDPOINT: &str =
 const DEFAULT_API68_PKS_ENDPOINT: &str = "https://api.api68.com/pks/getLotteryPksInfo.do";
 const DEFAULT_API68_ELEVEN_FIVE_ENDPOINT: &str =
     "https://api.api68.com/ElevenFive/getElevenFiveInfo.do";
-const DEFAULT_API68_FAST_THREE_ENDPOINT: &str =
-    "https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do";
 const DEFAULT_API68_LUCK_TWENTY_ENDPOINT: &str =
     "https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do";
 const DEFAULT_KJ_ENDPOINT: &str = "https://kjapi.net/hall/hallajax/getLotteryInfo";
@@ -826,12 +824,6 @@ fn extra_api68_draw_sources() -> Vec<ApiDrawSourceConfig> {
             DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
         ),
         ApiDrawSourceConfig::api68_source(
-            "jsk3",
-            "江苏快3",
-            "10007",
-            DEFAULT_API68_FAST_THREE_ENDPOINT,
-        ),
-        ApiDrawSourceConfig::api68_source(
             "au10",
             "澳洲幸运10",
             "10012",
@@ -908,54 +900,6 @@ fn extra_api68_draw_sources() -> Vec<ApiDrawSourceConfig> {
             "浙江11选5",
             "10025",
             DEFAULT_API68_ELEVEN_FIVE_ENDPOINT,
-        ),
-        ApiDrawSourceConfig::api68_source(
-            "gxk3",
-            "广西快3",
-            "10026",
-            DEFAULT_API68_FAST_THREE_ENDPOINT,
-        ),
-        ApiDrawSourceConfig::api68_source(
-            "jlk3",
-            "吉林快3",
-            "10027",
-            DEFAULT_API68_FAST_THREE_ENDPOINT,
-        ),
-        ApiDrawSourceConfig::api68_source(
-            "hebk3",
-            "河北快3",
-            "10028",
-            DEFAULT_API68_FAST_THREE_ENDPOINT,
-        ),
-        ApiDrawSourceConfig::api68_source(
-            "nmgk3",
-            "内蒙古快3",
-            "10029",
-            DEFAULT_API68_FAST_THREE_ENDPOINT,
-        ),
-        ApiDrawSourceConfig::api68_source(
-            "ahk3",
-            "安徽快3",
-            "10030",
-            DEFAULT_API68_FAST_THREE_ENDPOINT,
-        ),
-        ApiDrawSourceConfig::api68_source(
-            "fjk3",
-            "福建快3",
-            "10031",
-            DEFAULT_API68_FAST_THREE_ENDPOINT,
-        ),
-        ApiDrawSourceConfig::api68_source(
-            "hubk3",
-            "湖北快3",
-            "10032",
-            DEFAULT_API68_FAST_THREE_ENDPOINT,
-        ),
-        ApiDrawSourceConfig::api68_source(
-            "bjk3",
-            "北京快3",
-            "10033",
-            DEFAULT_API68_FAST_THREE_ENDPOINT,
         ),
     ]
 }
@@ -1474,22 +1418,10 @@ mod tests {
                 "https://api.api68.com/ElevenFive/getElevenFiveInfo.do",
             ),
             (
-                "api68-jsk3",
-                "jsk3",
-                "10007",
-                "https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do",
-            ),
-            (
                 "api68-au20",
                 "au20",
                 "10013",
                 "https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do",
-            ),
-            (
-                "api68-bjk3",
-                "bjk3",
-                "10033",
-                "https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do",
             ),
         ] {
             let source = sources
@@ -1502,6 +1434,23 @@ mod tests {
             assert_eq!(
                 source.reusable_for_lottery_ids,
                 vec![lottery_id.to_string()]
+            );
+        }
+
+        for removed_source_id in [
+            "api68-jsk3",
+            "api68-gxk3",
+            "api68-jlk3",
+            "api68-hebk3",
+            "api68-nmgk3",
+            "api68-ahk3",
+            "api68-fjk3",
+            "api68-hubk3",
+            "api68-bjk3",
+        ] {
+            assert!(
+                !sources.iter().any(|source| source.id == removed_source_id),
+                "已停用的快3开奖源不应继续出现在默认来源中"
             );
         }
     }

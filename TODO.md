@@ -1,5 +1,22 @@
 # TODO
 
+## 2026-06-04 13:59 HKT 移除停用 API68 快3彩种
+
+- 完成任务：删除 API68 安徽快3、北京快3、福建快3、广西快3、河北快3、湖北快3、吉林快3、江苏快3、内蒙古快3的默认彩种、默认开奖源和后台开奖源预设。
+- 解决问题：上述快3 API 已不可用，如果继续保留会导致后台误配置失效采集源，调度器也可能继续尝试无效彩种。
+- 具体实现：
+  - 后端 `seed_lotteries()` 移除 9 个快3彩种，默认种子彩种数量从 32 调整为 23。
+  - 后端 `extra_api68_draw_sources()` 移除对应 `api68-*k3` 开奖源，并删除不再使用的 API68 快3 endpoint 常量。
+  - 管理后台“开奖源预设”删除对应快3采集入口。
+  - 新增迁移 `backend/migrations/20260605002000_remove_deprecated_fast_three_lotteries.sql`，清理已落库的彩种、开奖源、开奖期号、控制号码、机器人绑定和合买计划；历史订单、结算和资金流水不删除。
+- 验证记录：
+  - `cd backend && cargo fmt && cargo fmt --check` 通过。
+  - `cd backend && cargo check` 通过。
+  - `cd backend && cargo test seeded -- --nocapture` 通过，覆盖默认彩种数量、默认开奖源和共用开奖源测试。
+  - `cd backend && cargo test -- --nocapture` 通过，155 个测试全部通过；仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - `cd admin && npm run build` 通过；Vite 仍提示既有 chunk 体积超过 500kB。
+  - 使用 `DATABASE_URL=postgres://root:123456@192.168.2.3:15432/postgres PORT=18155 cargo run` 启动后端，确认 `_sqlx_migrations` 已执行 `20260605002000 remove deprecated fast three lotteries`；数据库中 9 个快3彩种和 9 个 `api68-*k3` 开奖源查询结果均为空，当前彩种数量为 23。
+
 ## 2026-06-04 13:18 HKT 错误日志保留原始英文详情
 
 - 完成任务：调整后端错误日志规则，保留错误详情原文，不再因为包含英文就输出“错误详情已按中文日志规则隐藏”。

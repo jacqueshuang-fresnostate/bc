@@ -909,13 +909,6 @@ fn extra_api68_lotteries() -> Vec<LotteryKind> {
             600,
         ),
         api_lottery(
-            "jsk3",
-            "江苏快3",
-            "regional",
-            LotteryNumberType::FastThree,
-            600,
-        ),
-        api_lottery(
             "au10",
             "澳洲幸运10",
             "overseas",
@@ -1004,62 +997,6 @@ fn extra_api68_lotteries() -> Vec<LotteryKind> {
             "浙江11选5",
             "regional",
             LotteryNumberType::ElevenFive,
-            600,
-        ),
-        api_lottery(
-            "gxk3",
-            "广西快3",
-            "regional",
-            LotteryNumberType::FastThree,
-            600,
-        ),
-        api_lottery(
-            "jlk3",
-            "吉林快3",
-            "regional",
-            LotteryNumberType::FastThree,
-            600,
-        ),
-        api_lottery(
-            "hebk3",
-            "河北快3",
-            "regional",
-            LotteryNumberType::FastThree,
-            600,
-        ),
-        api_lottery(
-            "nmgk3",
-            "内蒙古快3",
-            "regional",
-            LotteryNumberType::FastThree,
-            600,
-        ),
-        api_lottery(
-            "ahk3",
-            "安徽快3",
-            "regional",
-            LotteryNumberType::FastThree,
-            600,
-        ),
-        api_lottery(
-            "fjk3",
-            "福建快3",
-            "regional",
-            LotteryNumberType::FastThree,
-            600,
-        ),
-        api_lottery(
-            "hubk3",
-            "湖北快3",
-            "regional",
-            LotteryNumberType::FastThree,
-            600,
-        ),
-        api_lottery(
-            "bjk3",
-            "北京快3",
-            "regional",
-            LotteryNumberType::FastThree,
             600,
         ),
     ]
@@ -1482,12 +1419,10 @@ mod tests {
             ("bjpk10", LotteryNumberType::Pk10, false),
             ("tjssc", LotteryNumberType::FiveDigit, true),
             ("gd11x5", LotteryNumberType::ElevenFive, false),
-            ("jsk3", LotteryNumberType::FastThree, false),
             ("au10", LotteryNumberType::Pk10, false),
             ("au20", LotteryNumberType::LuckTwenty, false),
             ("bjkl8", LotteryNumberType::LuckTwenty, false),
             ("zj11x5", LotteryNumberType::ElevenFive, false),
-            ("bjk3", LotteryNumberType::FastThree, false),
         ] {
             let lottery = lotteries
                 .iter()
@@ -1497,6 +1432,15 @@ mod tests {
             assert_eq!(lottery.number_type, number_type);
             assert_eq!(lottery.draw_mode, DrawMode::Api);
             assert_eq!(lottery.play_configs.is_empty(), !has_play_rules);
+        }
+
+        for removed_id in [
+            "jsk3", "gxk3", "jlk3", "hebk3", "nmgk3", "ahk3", "fjk3", "hubk3", "bjk3",
+        ] {
+            assert!(
+                !lotteries.iter().any(|item| item.id == removed_id),
+                "已停用的快3彩种不应继续出现在默认种子中"
+            );
         }
     }
 
@@ -1623,7 +1567,7 @@ mod tests {
 
         let lotteries = repository.list().await.expect("lotteries can be listed");
 
-        assert_eq!(lotteries.len(), 32);
+        assert_eq!(lotteries.len(), 23);
     }
 
     #[tokio::test]

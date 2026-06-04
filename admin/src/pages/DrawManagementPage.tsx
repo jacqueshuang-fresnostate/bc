@@ -121,7 +121,6 @@ const DRAW_SOURCE_PRESETS: Array<{ label: string; form: DrawSourceFormState }> =
     ['tjssc', '天津时时彩', '10003', 'https://api.api68.com/CQShiCai/getBaseCQShiCai.do'],
     ['xjssc', '新疆时时彩', '10004', 'https://api.api68.com/CQShiCai/getBaseCQShiCai.do'],
     ['gd11x5', '广东11选5', '10006', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
-    ['jsk3', '江苏快3', '10007', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
     ['au10', '澳洲幸运10', '10012', 'https://api.api68.com/pks/getLotteryPksInfo.do'],
     ['au20', '澳洲幸运20', '10013', 'https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do'],
     ['bjkl8', '北京快乐8', '10014', 'https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do'],
@@ -135,14 +134,6 @@ const DRAW_SOURCE_PRESETS: Array<{ label: string; form: DrawSourceFormState }> =
     ['jl11x5', '吉林11选5', '10023', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
     ['nmg11x5', '内蒙古11选5', '10024', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
     ['zj11x5', '浙江11选5', '10025', 'https://api.api68.com/ElevenFive/getElevenFiveInfo.do'],
-    ['gxk3', '广西快3', '10026', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
-    ['jlk3', '吉林快3', '10027', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
-    ['hebk3', '河北快3', '10028', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
-    ['nmgk3', '内蒙古快3', '10029', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
-    ['ahk3', '安徽快3', '10030', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
-    ['fjk3', '福建快3', '10031', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
-    ['hubk3', '湖北快3', '10032', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
-    ['bjk3', '北京快3', '10033', 'https://api.api68.com/lotteryJSFastThree/getBaseJSFastThree.do'],
   ].map(([lotteryId, lotteryName, lotCode, endpoint]) => ({
     label: `${lotteryName}采集`,
     form: {
