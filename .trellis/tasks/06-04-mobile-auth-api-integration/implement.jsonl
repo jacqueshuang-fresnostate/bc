@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/api-contracts.md", "reason": "确认后端统一响应信封、camelCase 字段和前后端接口契约要求。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "确认新增公开接口和错误响应继续通过 ApiError 与统一信封输出。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "确认手机端登录态以最小全局状态保存，不复制无关服务端数据。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "确认移动端类型与后端响应字段保持一致，减少 any 和宽泛断言。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨越后端路由、API 响应、移动端请求封装、Pinia 状态和页面表单。"}

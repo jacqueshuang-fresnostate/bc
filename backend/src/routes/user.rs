@@ -23,10 +23,10 @@ use crate::{
     domain::support::{SupportConversation, UserSupportReplyRequest},
     domain::user::WithdrawalMethod,
     domain::user::{
-        UserAuthSession, UserBalanceResponse, UserBindEmailRequest, UserChangePasswordRequest,
-        UserForgotPasswordRequest, UserForgotPasswordResponse, UserLoginRequest,
-        UserLogoutResponse, UserProfileResponse, UserRegisterRequest, UserResetPasswordRequest,
-        UserResetPasswordResponse, UserSummary, WithdrawalMethodRequest,
+        RegistrationConfig, UserAuthSession, UserBalanceResponse, UserBindEmailRequest,
+        UserChangePasswordRequest, UserForgotPasswordRequest, UserForgotPasswordResponse,
+        UserLoginRequest, UserLogoutResponse, UserProfileResponse, UserRegisterRequest,
+        UserResetPasswordRequest, UserResetPasswordResponse, UserSummary, WithdrawalMethodRequest,
     },
     error::{ApiError, ApiResult},
     response::ApiEnvelope,
@@ -78,6 +78,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/mobile/advertisements", get(list_mobile_advertisements))
         .route("/mobile/site-config", get(get_mobile_site_config))
+        .route("/register-options", get(get_registration_options))
         .route(
             "/recharge/epay/notify",
             get(rainbow_epay_notify_query).post(rainbow_epay_notify_form),
@@ -134,6 +135,15 @@ async fn get_mobile_site_config(
     let config = mobile_site_config_from_settings(&settings);
 
     Ok(Json(ApiEnvelope::success(config)))
+}
+
+/// 返回手机端注册入口需要的公开注册策略。
+async fn get_registration_options(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<RegistrationConfig>>> {
+    let registration = state.access.registration().await?;
+
+    Ok(Json(ApiEnvelope::success(registration)))
 }
 
 /// 从系统设置中提取手机端公开展示配置，隐藏未配置占位值。

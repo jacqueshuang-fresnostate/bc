@@ -1,0 +1,305 @@
+:root {
+  --van-primary-color: #8c0a15;
+  --van-success-color: #8c0a15;
+  --van-danger-color: #ba1a1a;
+  --van-warning-color: #735c00;
+  --van-text-color: #1a1c1c;
+  --van-text-color-2: #5f6363;
+  --van-text-color-3: #8e706d;
+  --van-active-color: #f3f3f3;
+  --van-background: #f9f9f9;
+  --van-background-2: #ffffff;
+  --van-border-color: rgba(226, 190, 186, 0.32);
+  --van-padding-md: 16px;
+  --van-radius-sm: 8px;
+  --van-radius-md: 12px;
+  --van-radius-lg: 18px;
+  --van-button-radius: 12px;
+  --van-button-primary-background: #8c0a15;
+  --van-button-primary-border-color: transparent;
+  --van-button-primary-color: #ffffff;
+  --van-field-label-color: #5a403e;
+  --van-cell-background: #ffffff;
+  --van-popup-background: #ffffff;
+  --van-dialog-background: #ffffff;
+  --van-toast-background: #ffffff;
+  --van-toast-text-color: #1a1c1c;
+}
+
+.van-hairline::after,
+.van-hairline--top::after,
+.van-hairline--left::after,
+.van-hairline--right::after,
+.van-hairline--bottom::after,
+.van-hairline--top-bottom::after,
+.van-cell::after,
+.van-cell-group::after,
+.van-nav-bar::after,
+.van-tabs__nav::after,
+.van-dropdown-menu__bar::after {
+  display: none;
+}
+
+button:not(.van-button) {
+  color: #1a1c1c;
+  font: inherit;
+}
+
+input:not(.van-field__control),
+textarea:not(.van-field__control) {
+  color: #1a1c1c;
+  font: inherit;
+}
+
+.van-button {
+  border-radius: 12px;
+  font-family: var(--font-body, Inter, ui-sans-serif, system-ui, sans-serif);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.van-button--primary {
+  border: 0;
+  background: linear-gradient(135deg, #8c0a15 0%, #af2829 100%);
+  color: #ffffff !important;
+  box-shadow: 0 10px 40px rgba(140, 10, 21, 0.15);
+}
+
+.van-button--primary.van-button--disabled {
+  background: #dadada;
+  color: rgba(26, 28, 28, 0.48) !important;
+  box-shadow: none;
+  opacity: 1;
+}
+
+.van-button--primary.van-button--plain,
+.van-button--primary.van-button--plain:active {
+  background: #ffffff;
+  color: #8c0a15 !important;
+  box-shadow: none;
+}
+
+.van-button--default,
+.van-button--plain {
+  border-color: rgba(226, 190, 186, 0.32);
+  background: #ffffff;
+  color: #8c0a15;
+}
+
+.van-cell-group,
+.van-cell-group--inset {
+  overflow: hidden;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 4px 40px rgba(140, 10, 21, 0.04);
+}
+
+.van-cell,
+.van-field {
+  background: #ffffff;
+  color: #1a1c1c;
+  font-family: var(--font-body, Inter, ui-sans-serif, system-ui, sans-serif);
+}
+
+.van-field {
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.van-field:focus-within {
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(140, 10, 21, 0.2);
+}
+
+.van-field__label,
+.van-cell__label {
+  color: #5a403e;
+  font-family: var(--font-label, Inter, ui-sans-serif, system-ui, sans-serif);
+  font-weight: 500;
+}
+
+.van-field__control,
+.van-cell__value {
+  color: #1a1c1c;
+}
+
+.van-field__control::placeholder {
+  color: rgba(142, 112, 109, 0.55);
+}
+
+.van-popup {
+  background: #ffffff;
+  color: #1a1c1c;
+  box-shadow: 0 4px 40px rgba(140, 10, 21, 0.04);
+}
+
+.van-popup--bottom {
+  border-radius: 2rem 2rem 0 0;
+}
+
+.van-dialog {
+  overflow: hidden;
+  border-radius: 24px;
+  background: #ffffff;
+  color: #1a1c1c;
+  box-shadow: 0 20px 60px rgba(140, 10, 21, 0.12);
+}
+
+.van-dialog__header {
+  color: #1a1c1c;
+  font-family: var(--font-headline, "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif);
+  font-weight: 800;
+}
+
+.van-dialog__message {
+  color: #5f6363;
+}
+
+.van-dialog__confirm,
+.van-dialog__confirm:active {
+  color: #8c0a15;
+  font-weight: 800;
+}
+
+.van-toast {
+  border-radius: 18px;
+  background: #ffffff;
+  color: #1a1c1c;
+  box-shadow: 0 20px 60px rgba(140, 10, 21, 0.12);
+}
+
+.van-notify {
+  background: linear-gradient(135deg, #8c0a15 0%, #af2829 100%);
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 10px 40px rgba(140, 10, 21, 0.15);
+}
+
+.van-tabs {
+  background: transparent;
+  color: #1a1c1c;
+}
+
+.van-tabs__nav {
+  gap: 6px;
+  background: transparent;
+}
+
+.van-tab {
+  color: #5f6363;
+  font-weight: 700;
+}
+
+.van-tab--active {
+  color: #8c0a15;
+}
+
+.van-tabs__line {
+  height: 3px;
+  border-radius: 999px;
+  background: #8c0a15;
+}
+
+.van-nav-bar {
+  background: rgba(255, 255, 255, 0.8);
+  color: #8c0a15;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 4px 40px rgba(140, 10, 21, 0.04);
+}
+
+.van-nav-bar__title,
+.van-nav-bar .van-icon,
+.van-nav-bar__text {
+  color: #8c0a15;
+  font-weight: 800;
+}
+
+.van-empty__description {
+  color: #5f6363;
+}
+
+.van-loading__spinner {
+  color: #8c0a15;
+}
+
+.van-switch--on {
+  background: #8c0a15;
+}
+
+.van-slider {
+  height: 8px;
+  border-radius: 999px;
+  background: #eeeeee;
+}
+
+.van-slider__bar {
+  border-radius: 999px;
+  background: #af2829;
+}
+
+.van-slider__button {
+  width: 26px;
+  height: 26px;
+  border: 3px solid #ffffff;
+  background: #af2829;
+  box-shadow: 0 8px 20px rgba(140, 10, 21, 0.22);
+}
+
+.van-dropdown-menu__bar {
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.van-dropdown-menu__title,
+.van-dropdown-item__option {
+  color: #1a1c1c;
+}
+
+.van-dropdown-item__option--active,
+.van-dropdown-item__option--active .van-dropdown-item__icon {
+  color: #8c0a15;
+}
+
+.withdrawal-method-popup__field.van-field {
+  border-radius: 18px;
+  background: #f9f3f2;
+  padding: 14px 16px;
+}
+
+.withdrawal-method-popup__field .van-field__label {
+  margin-bottom: 8px;
+  color: #5a403e;
+}
+
+.withdrawal-method-popup__field .van-field__body {
+  min-height: 34px;
+}
+
+.withdrawal-method-popup__dropdown .van-dropdown-menu__bar {
+  height: 44px;
+  border-radius: 16px;
+  background: #fffefe;
+}
+
+.van-tag--primary,
+.van-tag--success {
+  background: #ffdad7;
+  color: #8f0d17;
+}
+
+.van-tag--warning {
+  background: #ffe088;
+  color: #574500;
+}
+
+.van-tag--danger {
+  background: #ffdad6;
+  color: #93000a;
+}
+
+.van-notice-bar {
+  border-radius: 16px;
+  background: #ffe088;
+  color: #574500;
+}

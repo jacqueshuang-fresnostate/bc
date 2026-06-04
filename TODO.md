@@ -1,5 +1,43 @@
 # TODO
 
+## 2026-06-04 21:41 HKT 手机端轮播接口对接
+
+- 完成任务：把手机端首页轮播接入后端公开广告接口。
+- 解决问题：手机端首页原先只从旧的 `/api/lottery/home` 聚合数据读取 `banners`，没有使用后台“广告管理”维护的 `GET /api/user/mobile/advertisements`，导致后台配置的手机端轮播广告无法在手机端首页展示。
+- 具体实现：
+  - `mobile/src/api/user.ts` 新增 `MobileAdvertisement` 类型和 `fetchMobileAdvertisements()`，统一通过 `ApiEnvelope` 解析 `GET /api/user/mobile/advertisements`。
+  - `mobile/src/views/HomeView.vue` 新增 `mobileAdvertisements` 状态，首页加载时并发请求首页数据和手机端轮播广告。
+  - 将后端广告字段 `imageUrl`、`linkUrl`、`sortOrder` 映射为首页现有轮播 UI 使用的 `image_url`、`link_url` 数据形状。
+  - 首页轮播展示条件改为“存在有效手机端广告即展示”，不再依赖旧首页聚合数据中的 `banners_enabled`。
+  - `HomepageBanner.id` 类型扩展为 `string | number`，兼容后端广告 ID。
+- 验证记录：
+  - `cd mobile && npm run build` 通过。
+
+## 2026-06-04 20:19 HKT 手机端登录注册接口对接
+
+- 完成任务：把新加入的 `mobile` 手机端工程接入当前后端用户登录、注册和基础会话接口。
+- 解决问题：手机端原先调用旧的 `/api/auth/*` 接口，并按 `access_token/refresh_token` 读取登录结果；当前后端真实接口位于 `/api/user/*`，登录返回 `token/user`，导致手机端无法完成注册、登录和登录后当前用户读取。
+- 具体实现：
+  - 后端新增公开接口 `GET /api/user/register-options`，返回 `usernameEnabled`、`emailEnabled` 和 `agentInviteRequired`，供手机端注册页按后台配置展示入口。
+  - OpenAPI 文档同步新增“注册配置”接口，并补充公开接口不需要 Bearer Token 的测试断言。
+  - 移动端新增 `mobile/src/api/user.ts`，集中封装统一响应信封解析、注册配置、登录、注册、当前用户、绑邮箱、改密、找回密码和手机端站点配置读取。
+  - 移动端鉴权 store 改为单 token 会话保存，持久化 `access_token` 和当前用户摘要；401 时清理本地会话并回到登录页。
+  - 登录页改为调用 `/api/user/login` 和 `/api/user/register`，字段使用 `loginKey`、`inviteCode` 等后端 `camelCase` 契约；邮箱注册不再调用旧验证码接口。
+  - 登录页品牌信息改为读取 `/api/user/mobile/site-config`，使用后台配置的平台名称、Logo 和介绍。
+  - 首页、彩种列表、投注页、历史页、个人中心、提现页、安全中心和合买创建余额读取统一改用 `/api/user/me` 的适配结果。
+  - 安全中心的绑邮箱和修改密码改为对接 `/api/user/bind-email`、`/api/user/password/change`；找回密码页改为按后端当前重置令牌流程调用 `/api/user/forgot-password` 和 `/api/user/reset-password`。
+- 验证记录：
+  - `cd mobile && npm run build` 通过。
+  - `cargo fmt --manifest-path backend/Cargo.toml` 已执行。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml openapi_document -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 通过，171 条测试全部成功；仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - 使用本地后端 `PORT=18130` 和用户提供的 PostgreSQL 连接验证：`/api/health`、`/api/user/register-options`、`/api/user/mobile/site-config` 和 OpenAPI 注册配置路径均返回成功。
+  - 使用唯一测试账号 `mobiletest_75509722` 完成用户名注册、登录和 `/api/user/me` 查询，登录用户 ID 一致，返回随机邀请码 `5CXLVLXC`。
+  - 启动移动端 dev server `http://127.0.0.1:5210/`，`/login` 返回 HTTP 200；当前环境未暴露 in-app Browser 工具，因此未做截图级验证。
+- 发现的残留问题：
+  - 本地后端连接外部 PostgreSQL 启动时，开奖调度器持续输出“开奖调度器历史记录写入失败 error=内部错误：开奖调度历史数据保存失败”。本次未修改调度持久化，需要后续单独排查数据库调度历史写入失败原因。
+
 ## 2026-06-04 19:48 HKT Docker 数据库连接串错误提示优化
 
 - 完成任务：把 Docker 后端启动时 `DATABASE_URL` 格式错误导致的 `RelativeUrlWithoutBase` 改成明确中文配置错误。

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "HongFu",
+  "version": "0.1.0",
+  "identifier": "com.hongfu.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "HongFu",
+        "width": 414,
+        "height": 896
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"]
+  },
+  "plugins": {
+    "store": {},
+    "clipboard-manager": {}
+  }
+}

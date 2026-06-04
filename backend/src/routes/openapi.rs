@@ -961,6 +961,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::None,
     ),
     doc(
+        "get",
+        "/user/register-options",
+        "用户端账户",
+        "注册配置",
+        "返回手机端注册页需要展示的用户名注册、邮箱注册和邀请码策略。",
+        AuthMode::None,
+        RequestBodyKind::None,
+    ),
+    doc(
         "post",
         "/user/register",
         "用户端账户",
@@ -1493,6 +1502,7 @@ mod tests {
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
         assert!(document["paths"]["/user/mobile/advertisements"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/site-config"]["get"].is_object());
+        assert!(document["paths"]["/user/register-options"]["get"].is_object());
         assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
         assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());
         assert!(document["paths"]["/user/register"]["post"].is_object());
@@ -1505,6 +1515,7 @@ mod tests {
 
         assert!(document["paths"]["/admin/users"]["get"]["security"].is_array());
         assert!(document["paths"]["/user/me"]["get"]["security"].is_array());
+        assert!(document["paths"]["/user/register-options"]["get"]["security"].is_null());
         assert!(document["paths"]["/user/register"]["post"]["security"].is_null());
         assert!(document["components"]["securitySchemes"]["bearerAuth"].is_object());
     }

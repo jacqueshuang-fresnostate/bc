@@ -1,0 +1,548 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { showNotify, showToast } from 'vant'
+import { fetchCurrentUserProfile } from '../../../api/user'
+import { parseChinaDateTime } from '../../../utils/lotteryFormat'
+import { createGroupBuyPlan } from '../../group-buy/api'
+import { calculateFixedShareCount, calculateRequiredSelfShares } from '../../group-buy/presentation'
+import { useBetBatchSubmit } from '../composables/useBetBatchSubmit'
+import { useBetPageConfig } from '../dynamic/useBetPageConfig'
+import { useDynamicBetEngine } from '../dynamic/useDynamicBetEngine'
+import type { BetCartItem, DynamicBetPlay } from '../dynamic/types'
+import BetCartSheet from './BetCartSheet.vue'
+import BetRoundInfoCard from './BetRoundInfoCard.vue'
+import DynamicInputRenderer from './DynamicInputRenderer.vue'
+import DynamicPlayTabs from './DynamicPlayTabs.vue'
+import MobilePageShell from './MobilePageShell.vue'
+import MobileTopBar from './MobileTopBar.vue'
+import UnifiedBetBottomBar from './UnifiedBetBottomBar.vue'
+
+const props = defineProps<{ wsMessage?: any }>()
+const OPENING_REFRESH_INTERVAL_MS = 3000
+
+const route = useRoute()
+const router = useRouter()
+const { config, loading, loadBetPageConfig } = useBetPageConfig()
+const { submitBatch } = useBetBatchSubmit()
+
+// 动态投注页状态边界：路由决定彩种，配置决定玩法，引擎只接管草稿和篮子。
+const selectedPlayCode = ref('')
+const balance = ref('0.00')
+const currentTime = ref(Date.now())
+const showCartSheet = ref(false)
+const showPlayPopup = ref(false)
+const groupBuyMode = ref(false)
+const groupBuyShareCount = ref(10)
+const groupBuySelfShares = ref(1)
+const submittingGroupBuy = ref(false)
+let timer: number | undefined
+let openingRefreshTimer: number | undefined
+let openingRefreshInFlight = false
+let drawRefreshSeq = 0
+
+const lotteryCode = computed(() => String(route.params.code || ''))
+const selectedPlay = computed(() => config.value?.plays.find(play => play.code === selectedPlayCode.value) || config.value?.plays[0] || null)
+// 批量提交需要知道每个玩法输入模式，用于判断篮子号码是否要按位置组合展开。
+const playInputModes = computed(() => Object.fromEntries((config.value?.plays || []).map(play => [play.code, play.input_mode])))
+const latestNumbers = computed(() => config.value?.latest_draw?.result_numbers || [])
+const latestIssue = computed(() => config.value?.latest_draw?.issue || '')
+function formatBetCutoffCountdown(diff: number) {
+  if (diff <= 0) return '开奖中'
+  const hours = Math.floor(diff / 3600000)
+  const minutes = Math.floor((diff % 3600000) / 60000)
+  const seconds = Math.floor((diff % 60000) / 1000)
+  const minuteSecond = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  return hours > 0 ? `${String(hours).padStart(2, '0')}:${minuteSecond}` : minuteSecond
+}
+
+const countdownText = computed(() => {
+  const saleStopAt = config.value?.round.sale_stop_at
+  const targetText = saleStopAt || config.value?.round.scheduled_draw_at
+  if (!targetText) return '00:00'
+  const target = parseChinaDateTime(targetText)
+  if (!Number.isFinite(target)) return '00:00'
+  return formatBetCutoffCountdown(target - currentTime.value)
+})
+
+const engine = useDynamicBetEngine(() => config.value, () => selectedPlay.value)
+const multipleSliderMax = computed(() => engine.maxMultiple.value || Math.max(100, engine.minMultiple.value))
+const groupBuyMinShareAmount = computed(() => Number(config.value?.group_buy_settings.min_share_amount || 0.01))
+const groupBuyInitiatorMinBuyRatio = computed(() => config.value?.group_buy_settings.initiator_min_buy_ratio || '0.00')
+const groupBuyAvailable = computed(() => Boolean(config.value?.lottery.group_buy_enabled))
+const groupBuyTotalAmount = computed(() => engine.cartTotalAmount.value + engine.draftAmount.value)
+const groupBuyTotalAmountText = computed(() => groupBuyTotalAmount.value.toFixed(2))
+const groupBuyFixedShareAmount = computed(() => config.value?.group_buy_settings.share_amount || '1.00')
+const groupBuyDerivedShareCount = computed(() => calculateFixedShareCount(groupBuyTotalAmountText.value, groupBuyFixedShareAmount.value))
+const groupBuySafeShareCount = computed(() => groupBuyDerivedShareCount.value > 0 ? groupBuyDerivedShareCount.value : Math.max(1, Math.floor(Number(groupBuyShareCount.value || 1))))
+const groupBuySafeSelfShares = computed(() => Math.min(groupBuySafeShareCount.value, Math.max(0, Math.floor(Number(groupBuySelfShares.value || 0)))))
+const groupBuyShareAmount = groupBuyFixedShareAmount
+const groupBuyRequiredSelfShares = computed(() => calculateRequiredSelfShares(
+  groupBuyTotalAmountText.value,
+  groupBuyFixedShareAmount.value,
+  groupBuyInitiatorMinBuyRatio.value,
+))
+const groupBuyPaymentAmount = computed(() => (Number(groupBuyShareAmount.value) * groupBuySafeSelfShares.value).toFixed(2))
+const roundOpening = computed(() => config.value?.round.status === 'opening')
+const roundSelling = computed(() => config.value?.round.status === 'selling' && Boolean(config.value.round.issue))
+const canAddCurrentDraft = computed(() => roundSelling.value && engine.draftBetCount.value > 0)
+const canSubmitCurrentOrder = computed(() => roundSelling.value && (engine.draftBetCount.value > 0 || engine.cartTotalCount.value > 0))
+const addButtonText = computed(() => {
+  if (selectedPlay.value?.option_groups.length) return '加入选项'
+  if (selectedPlay.value?.input_mode === 'fixed-option') return '加入选项'
+  if (selectedPlay.value?.input_mode === 'position-grid') return '加入组合'
+  return '加入篮子'
+})
+const submitButtonText = computed(() => {
+  if (groupBuyMode.value) return '发起合买'
+  if (engine.cartTotalCount.value > 0) return '提交篮子'
+  if (selectedPlay.value?.option_groups.length) return '立即投注选项'
+  if (selectedPlay.value?.input_mode === 'fixed-option') return '立即投注选项'
+  return '立即投注'
+})
+
+async function loadBalance() {
+  try {
+    const profile = await fetchCurrentUserProfile()
+    balance.value = profile.balance
+  } catch {
+    // 余额失败不阻断投注页配置渲染，页面以 0.00 作为兜底展示。
+    balance.value = '0.00'
+  }
+}
+
+async function loadPage() {
+  if (!lotteryCode.value) return
+  // 页面进入、期开奖和投注后都复用同一加载流程，保持配置、期号和余额同步。
+  await Promise.all([loadBetPageConfig(lotteryCode.value), loadBalance()])
+}
+
+function stopOpeningRefresh() {
+  if (openingRefreshTimer === undefined) return
+  window.clearInterval(openingRefreshTimer)
+  openingRefreshTimer = undefined
+}
+
+async function refreshOpeningRoundConfig() {
+  if (openingRefreshInFlight || config.value?.round.status !== 'opening' || !lotteryCode.value) return
+  openingRefreshInFlight = true
+  try {
+    await loadBetPageConfig(lotteryCode.value, { silent: true })
+    if (config.value?.round.status !== 'opening') await loadBalance()
+  } catch {
+    // 开盘轮询允许短暂失败，下一轮继续探测期号状态。
+  } finally {
+    openingRefreshInFlight = false
+    syncOpeningRefresh()
+  }
+}
+
+function syncOpeningRefresh() {
+  if (!roundOpening.value || !lotteryCode.value) {
+    stopOpeningRefresh()
+    return
+  }
+  if (openingRefreshTimer !== undefined) return
+  openingRefreshTimer = window.setInterval(() => {
+    void refreshOpeningRoundConfig()
+  }, OPENING_REFRESH_INTERVAL_MS)
+}
+
+function waitForDrawRefresh(delay: number) {
+  return new Promise(resolve => window.setTimeout(resolve, delay))
+}
+
+function roundHasFutureDrawTime(issue: string) {
+  const round = config.value?.round
+  if (!round?.issue || round.issue === issue) return false
+  const scheduledDrawAt = round.scheduled_draw_at ? parseChinaDateTime(round.scheduled_draw_at) : NaN
+  return Number.isFinite(scheduledDrawAt) && scheduledDrawAt > Date.now()
+}
+
+async function refreshAfterDrawResult(msg: any) {
+  const sequence = ++drawRefreshSeq
+  for (const delay of [0, 600, 1200]) {
+    if (delay) await waitForDrawRefresh(delay)
+    if (sequence !== drawRefreshSeq) return
+    await loadPage()
+    if (roundHasFutureDrawTime(String(msg?.issue || ''))) return
+  }
+}
+
+function selectPlay(play: DynamicBetPlay) {
+  selectedPlayCode.value = play.code
+  showPlayPopup.value = false
+}
+
+function limitPositionValues(play: DynamicBetPlay, values: string[]) {
+  if (!play.max_select_per_position) return values
+  return values.slice(0, play.max_select_per_position)
+}
+
+function selectAllPosition(positionKey: string) {
+  const play = selectedPlay.value
+  if (!play) return
+  // 胆拖玩法不能让胆码/拖码互相重叠，全选时也要按当前位置排除对侧号码。
+  if (play.position_grid_kind === 'group3_dantuo' || play.position_grid_kind === 'group6_dantuo') {
+    const index = play.positions.findIndex(position => position.key === positionKey)
+    const oppositeKey = play.positions[index === 0 ? 1 : 0]?.key
+    const oppositeValues = new Set(oppositeKey ? engine.selections.value[oppositeKey] || [] : [])
+    const availableDigits = play.digits.filter(digit => !oppositeValues.has(digit))
+    const dantuoValues = index === 0 ? availableDigits.slice(0, play.position_grid_kind === 'group6_dantuo' ? 2 : 1) : availableDigits
+    engine.setPositionNumbers(positionKey, limitPositionValues(play, dantuoValues))
+    return
+  }
+  // 位置玩法的全选来源于当前玩法 digits，避免跨玩法复用旧号码池。
+  engine.setPositionNumbers(positionKey, limitPositionValues(play, play.digits))
+}
+
+function selectPresetPosition(positionKey: string, values: string[]) {
+  const play = selectedPlay.value
+  if (!play) return
+  const validValues = values.filter(value => play.digits.includes(value))
+  if (play.position_grid_kind === 'group3_dantuo' || play.position_grid_kind === 'group6_dantuo') {
+    const index = play.positions.findIndex(position => position.key === positionKey)
+    const oppositeKey = play.positions[index === 0 ? 1 : 0]?.key
+    const oppositeValues = new Set(oppositeKey ? engine.selections.value[oppositeKey] || [] : [])
+    const availableDigits = validValues.filter(digit => !oppositeValues.has(digit))
+    const dantuoValues = index === 0 ? availableDigits.slice(0, play.position_grid_kind === 'group6_dantuo' ? 2 : 1) : availableDigits
+    engine.setPositionNumbers(positionKey, limitPositionValues(play, dantuoValues))
+    return
+  }
+  engine.setPositionNumbers(positionKey, limitPositionValues(play, validValues))
+}
+
+function clearPosition(positionKey: string) {
+  engine.setPositionNumbers(positionKey, [])
+}
+
+function normalizeMultipleInput() {
+  engine.multiple.value = engine.clampMultiple(engine.multiple.value, selectedPlay.value)
+}
+
+function normalizeGroupBuyShares() {
+  if (groupBuyDerivedShareCount.value > 0) groupBuyShareCount.value = groupBuyDerivedShareCount.value
+  groupBuySelfShares.value = groupBuySafeSelfShares.value
+}
+
+function clampGroupBuySelfShares() {
+  groupBuySelfShares.value = groupBuySafeSelfShares.value
+}
+
+async function submitGroupBuyCart() {
+  if (!config.value?.round.issue) {
+    showToast('当前期号未就绪')
+    return
+  }
+  if (engine.draftBetCount.value > 0 && !engine.addDraftToCart()) return
+  if (engine.cart.value.length !== 1) {
+    showToast('合买一次只能发起一张单据')
+    return
+  }
+  normalizeGroupBuyShares()
+  const item = engine.cart.value[0]
+  const totalAmount = item.unit_amount * item.bet_count * item.multiple
+  if (groupBuyShareCount.value <= 0 || calculateFixedShareCount(totalAmount.toFixed(2), groupBuyFixedShareAmount.value) <= 0) {
+    showToast('总金额必须能按每份金额整除')
+    return
+  }
+  if (Number(groupBuyFixedShareAmount.value) < groupBuyMinShareAmount.value) {
+    showToast(`每份金额不能低于 ${config.value.group_buy_settings.min_share_amount}`)
+    return
+  }
+  if (groupBuyRequiredSelfShares.value > 0 && groupBuySelfShares.value < groupBuyRequiredSelfShares.value) {
+    showToast(`发起人最低自购 ${groupBuyRequiredSelfShares.value} 份`)
+    return
+  }
+  try {
+    submittingGroupBuy.value = true
+    await createGroupBuyPlan({
+      lottery_code: lotteryCode.value,
+      issue: config.value.round.issue,
+      play_code: item.play_code,
+      title: `${config.value.lottery.name}合买`,
+      numbers: item.numbers,
+      total_amount: totalAmount.toFixed(2),
+      share_count: groupBuyShareCount.value,
+      share_amount: groupBuyFixedShareAmount.value,
+      reserved_shares: 0,
+      self_shares: groupBuySelfShares.value,
+    })
+    showToast('合买发起成功')
+    engine.clearCart()
+    groupBuyMode.value = false
+    await loadPage()
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || '发起合买失败')
+    await loadPage()
+  } finally {
+    submittingGroupBuy.value = false
+  }
+}
+
+async function submitCart() {
+  if (groupBuyMode.value) {
+    await submitGroupBuyCart()
+    return
+  }
+  if (engine.draftBetCount.value > 0) {
+    // 用户直接点提交时，先把当前有效草稿补入篮子，再统一走批量提交。
+    const added = engine.addDraftToCart()
+    if (!added) return
+  }
+  try {
+    const payload = await submitBatch(lotteryCode.value, config.value?.round.issue || '', engine.cart.value, playInputModes.value)
+    if (!payload) return
+    // 提交成功后清空本地篮子并刷新页面数据，确保余额和当前期号立刻回到服务端状态。
+    engine.clearCart()
+    await loadPage()
+  } catch (e: any) {
+    // 提交失败也刷新一次，避免前端继续停留在已封盘或余额变化前的状态。
+    showToast(e.response?.data?.detail || '投注失败')
+    await loadPage()
+  }
+}
+
+function confirmCart(items: BetCartItem[]) {
+  // 弹层只编辑副本；确认时才覆盖引擎篮子，取消关闭不会影响原始单据。
+  engine.replaceCart(items)
+}
+
+watch(lotteryCode, async () => {
+  // 路由切换彩种时必须清空玩法选择、草稿和篮子，防止旧彩种单据混入新彩种。
+  stopOpeningRefresh()
+  selectedPlayCode.value = ''
+  groupBuyMode.value = false
+  engine.clearCart()
+  engine.resetDraft(null)
+  try {
+    await loadPage()
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || '加载投注页失败')
+  }
+}, { immediate: true })
+
+watch(() => config.value?.plays, (plays) => {
+  if (!groupBuyAvailable.value) groupBuyMode.value = false
+  if (!plays?.length) {
+    selectedPlayCode.value = ''
+    return
+  }
+  // 配置刷新后若原玩法仍存在则保留，否则自动落到服务端返回的第一个玩法。
+  if (!plays.some(play => play.code === selectedPlayCode.value)) selectedPlayCode.value = plays[0].code
+}, { immediate: true })
+
+// 当前玩法变化即重置草稿，使输入模式、位置键和固定选项值与新玩法一致。
+watch(selectedPlay, (play) => engine.resetDraft(play), { immediate: true })
+
+watch(() => config.value?.round.status, syncOpeningRefresh, { immediate: true })
+
+watch(() => props.wsMessage, async (msg) => {
+  if (msg?.event === 'draw_result' && msg.lottery_code === lotteryCode.value) {
+    // 广播可能早于下一期完全可读，短暂重试避免页面停在已封盘的 00:00。
+    showNotify({ type: 'success', message: `开奖结果：${msg.result}` })
+    await refreshAfterDrawResult(msg)
+  }
+})
+
+// 用本地定时器只驱动倒计时文本，不参与服务端封盘判断。
+timer = window.setInterval(() => {
+  currentTime.value = Date.now()
+}, 1000)
+
+onBeforeUnmount(() => {
+  if (timer !== undefined) window.clearInterval(timer)
+  stopOpeningRefresh()
+})
+</script>
+
+<template>
+  <MobilePageShell>
+    <MobileTopBar :title="config?.lottery.name || lotteryCode" :balance="balance" @back="router.back()" />
+
+    <main class="mx-auto max-w-md space-y-3 px-4 pb-[calc(9rem+env(safe-area-inset-bottom))] pt-4">
+      <BetRoundInfoCard :issue="config?.round.issue || ''" :status="config?.round.status || ''" :countdown-text="countdownText" :latest-issue="latestIssue" :latest-numbers="latestNumbers" />
+
+      <button
+        class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#f1dedb] bg-[#fffdfc] px-4 py-3 text-left shadow-sm shadow-red-900/5 transition active:scale-[0.99] active:bg-[#fff7f5]"
+        type="button"
+        @click="showPlayPopup = true"
+      >
+        <span class="min-w-0 flex-1">
+          <span class="block text-[11px] font-bold tracking-wider text-[#8e706d]">选择玩法</span>
+          <strong class="mt-0.5 flex min-w-0 items-center gap-2 font-headline text-lg font-extrabold text-[#1a1c1c]">
+            <span class="truncate">{{ selectedPlay ? (selectedPlay.full_name || selectedPlay.name) : '请选择玩法' }}</span>
+            <span v-if="selectedPlay?.odds" class="shrink-0 rounded-full bg-[#fff4dc] px-2 py-0.5 text-[11px] font-bold text-[#735c00]">赔率 {{ selectedPlay.odds }}</span>
+            <span v-if="selectedPlay" class="shrink-0 rounded-full bg-[#fff4dc] px-2 py-0.5 text-[11px] font-bold text-[#735c00]">单注 ¥{{ Number(engine.effectiveUnitAmount.value || 0).toFixed(2) }}</span>
+          </strong>
+          <small v-if="selectedPlay?.simple_description" class="mt-0.5 block truncate text-xs font-bold text-[#8c0a15]">{{ selectedPlay.simple_description }}</small>
+        </span>
+        <span class="flex shrink-0 items-center gap-1.5">
+          <span class="rounded-full bg-[#ffdad7] px-2.5 py-1 text-xs font-bold text-[#8c0a15]">切换</span>
+        </span>
+      </button>
+
+      <DynamicInputRenderer
+        :play="selectedPlay"
+        :numbers="engine.textNumbers.value"
+        :selections="engine.selections.value"
+        @update:numbers="engine.textNumbers.value = $event"
+        @toggle-position="engine.togglePositionNumber"
+        @select-all-position="selectAllPosition"
+        @select-preset-position="selectPresetPosition"
+        @clear-position="clearPosition"
+        @toggle-option="engine.toggleOptionValue"
+      />
+
+      <section class="rounded-[28px] bg-white p-5 shadow-sm shadow-red-900/5">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-xs font-bold tracking-wider text-[#5a403e]">投注倍数</div>
+          </div>
+          <label class="flex items-center gap-1 rounded-2xl bg-[#f8f1ef] px-3 py-2">
+            <input v-model.number="engine.multiple.value" class="w-16 bg-transparent text-right font-headline text-3xl font-extrabold text-[#1a1c1c] outline-none" type="number" inputmode="numeric" :min="engine.minMultiple.value" :max="multipleSliderMax" step="1" @blur="normalizeMultipleInput" @change="normalizeMultipleInput" @keyup.enter="normalizeMultipleInput" />
+            <span class="font-headline text-2xl font-extrabold text-[#1a1c1c]">x</span>
+          </label>
+        </div>
+        <div class="mt-1 text-xs font-bold text-[#8e706d]">允许 {{ engine.minMultiple.value }}-{{ multipleSliderMax }} 倍</div>
+        <van-slider v-model="engine.multiple.value" class="mt-5" :min="engine.minMultiple.value" :max="multipleSliderMax" :step="1" active-color="#af2829" inactive-color="#eeeeee" />
+      </section>
+
+      <section
+        v-if="groupBuyAvailable"
+        class="group-buy-bet-mode overflow-hidden rounded-[30px] border bg-white p-5 shadow-sm transition-all duration-300"
+        :class="groupBuyMode ? 'group-buy-bet-mode--active border-[#f6c9a6] shadow-[0_18px_42px_rgba(140,10,21,0.13)]' : 'border-[#f1dedb] shadow-red-900/5'"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <div class="text-xs font-bold tracking-wider text-[#8e706d]">投注模式</div>
+            <strong class="mt-1 block font-headline text-xl font-extrabold text-[#1a1c1c]">合买</strong>
+            <p class="mt-1 text-xs font-bold text-[#8e706d]">开启后按份公开合买，不需要设置保底。</p>
+          </div>
+          <van-switch v-model="groupBuyMode" active-color="#8c0a15" inactive-color="#d8d1cf" />
+        </div>
+        <div v-if="groupBuyMode" class="mt-5 space-y-4">
+          <div class="rounded-[26px] bg-[#8c0a15] p-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.22)]">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <p class="text-xs font-bold text-white/70">合买模式已开启</p>
+              </div>
+              <span class="shrink-0 rounded-full bg-white/15 px-3 py-1 text-xs font-extrabold text-white">固定每份 ¥{{ groupBuyFixedShareAmount }}</span>
+            </div>
+            <div class="mt-4 grid grid-cols-3 gap-2">
+              <div class="rounded-2xl bg-white/12 p-3">
+                <span class="block text-[11px] font-bold text-white/65">方案总额</span>
+                <strong class="mt-1 block font-headline text-lg font-extrabold">¥{{ groupBuyTotalAmountText }}</strong>
+              </div>
+              <div class="rounded-2xl bg-white/12 p-3">
+                <span class="block text-[11px] font-bold text-white/65">可分份数</span>
+                <strong class="mt-1 block font-headline text-lg font-extrabold">{{ groupBuyDerivedShareCount || 0 }}份</strong>
+              </div>
+              <div class="rounded-2xl bg-white/12 p-3">
+                <span class="block text-[11px] font-bold text-white/65">预计支付</span>
+                <strong class="mt-1 block font-headline text-lg font-extrabold">¥{{ groupBuyPaymentAmount }}</strong>
+              </div>
+            </div>
+          </div>
+          <label class="flex items-center justify-between gap-4 rounded-2xl border border-[#f1dedb] bg-[#fffdfc] px-4 py-3">
+            <span>
+              <span class="block text-sm font-extrabold text-[#1a1c1c]">自购份数</span>
+              <span class="mt-0.5 block text-xs font-bold text-[#8e706d]">发起人最低自购 {{ groupBuyRequiredSelfShares }} 份（{{ groupBuyInitiatorMinBuyRatio }}%，0% 表示不限制）</span>
+            </span>
+            <span class="flex shrink-0 items-center rounded-2xl bg-[#f8f1ef] px-3 py-2">
+              <input v-model.number="groupBuySelfShares" class="w-16 bg-transparent text-right font-headline text-2xl font-extrabold text-[#1a1c1c] outline-none" type="number" inputmode="numeric" min="0" :max="groupBuySafeShareCount" @blur="clampGroupBuySelfShares" />
+              <span class="ml-1 text-sm font-extrabold text-[#5a403e]">份</span>
+            </span>
+          </label>
+          <div class="rounded-2xl bg-[#fff4dc] px-4 py-3 text-sm font-bold text-[#735c00]">
+            <div class="flex items-center justify-between">
+              <span>最低每份 ¥{{ config?.group_buy_settings.min_share_amount || '0.01' }}</span>
+              <span>固定每份 ¥{{ groupBuyFixedShareAmount }}</span>
+            </div>
+            <div v-if="groupBuyDerivedShareCount <= 0" class="mt-1 text-xs text-[#8c0a15]">总金额必须能按每份金额整除</div>
+          </div>
+        </div>
+      </section>
+
+      <div v-if="loading" class="text-center text-sm text-[#5a403e]">加载中...</div>
+    </main>
+
+    <UnifiedBetBottomBar
+      :selected-count="engine.cartTotalCount.value + engine.draftBetCount.value"
+      :cart-count="engine.cartTotalCount.value"
+      :total-amount="engine.cartTotalAmount.value + engine.draftAmount.value"
+      :can-add="canAddCurrentDraft"
+      :can-submit="canSubmitCurrentOrder && !submittingGroupBuy"
+      :add-text="addButtonText"
+      :submit-text="submittingGroupBuy ? '发布中...' : submitButtonText"
+      @add="engine.addDraftToCart"
+      @submit="submitCart"
+      @edit="showCartSheet = true"
+    />
+    <van-popup v-model:show="showPlayPopup" position="bottom" round class="play-select-popup">
+      <section class="play-select-sheet">
+        <header class="play-select-sheet__header">
+          <div>
+            <p>当前彩种</p>
+            <h2>{{ config?.lottery.name || lotteryCode }}</h2>
+          </div>
+          <button type="button" aria-label="关闭玩法选择" @click="showPlayPopup = false">×</button>
+        </header>
+        <DynamicPlayTabs :plays="config?.plays || []" :selected-code="selectedPlayCode" @select="selectPlay" />
+      </section>
+    </van-popup>
+
+    <BetCartSheet v-model:show="showCartSheet" :items="engine.cart.value" @confirm="confirmCart" />
+  </MobilePageShell>
+</template>
+
+<style scoped>
+.play-select-popup {
+  overflow: hidden;
+  background: transparent;
+}
+
+.play-select-sheet {
+  max-height: min(72dvh, 560px);
+  overflow-y: auto;
+  border-radius: 28px 28px 0 0;
+  padding: 22px 18px max(24px, env(safe-area-inset-bottom));
+  background: #f9f9f9;
+}
+
+.play-select-sheet__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.play-select-sheet__header p {
+  margin: 0 0 4px;
+  color: #5a403e;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.play-select-sheet__header h2 {
+  margin: 0;
+  color: #1a1c1c;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.play-select-sheet__header button {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  color: #5a403e;
+  background: #eeeeee;
+  font-size: 22px;
+  line-height: 1;
+}
+</style>

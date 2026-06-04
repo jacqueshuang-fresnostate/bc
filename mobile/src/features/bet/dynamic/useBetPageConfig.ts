@@ -1,0 +1,166 @@
+import { ref } from 'vue'
+import http from '../../../api/http'
+import type { BetPageConfig, DynamicBetOptionGroup, DynamicBetPlay, PositionGridKind } from './types'
+
+const POSITION_GRID_KINDS: PositionGridKind[] = ['direct', 'group3_compound', 'group6_compound', 'group3_dantuo', 'group6_dantuo']
+
+type LoadBetPageConfigOptions = {
+  silent?: boolean
+}
+
+function normalizePositionGridKind(value: any): PositionGridKind {
+  return POSITION_GRID_KINDS.includes(value) ? value : 'direct'
+}
+
+function normalizeOptionGroups(value: any): DynamicBetOptionGroup[] {
+  if (!Array.isArray(value)) return []
+  return value.map((group: any) => {
+    const options = Array.isArray(group?.options)
+      ? group.options.map((option: any) => ({
+        value: String(option?.value || '').trim(),
+        label: String(option?.label || '').trim(),
+        description: String(option?.description || '').trim(),
+        odds: option?.odds == null || String(option.odds).trim() === '' ? null : String(option.odds),
+        disabled: Boolean(option?.disabled),
+      })).filter((option: any) => option.value && option.label)
+      : []
+    return {
+      key: String(group?.key || '').trim(),
+      label: String(group?.label || '').trim(),
+      min_select_count: Math.max(0, Number(group?.min_select_count ?? 1)),
+      max_select_count: Math.max(0, Number(group?.max_select_count ?? 1)),
+      options,
+    }
+  }).filter((group: DynamicBetOptionGroup) => group.key && group.label && group.options.length && group.max_select_count >= group.min_select_count)
+}
+
+function normalizeBackendUnitAmount(item: any) {
+  const rawAmount = item?.unit_amount ?? item?.extra_config?.unit_amount ?? item?.extra_config?.fixed_unit_amount
+  const amount = Number(rawAmount)
+  return Number.isFinite(amount) && amount > 0 ? String(rawAmount) : null
+}
+
+function normalizeBackendMultiple(item: any) {
+  const rawMultiple = item?.multiple ?? item?.extra_config?.multiple ?? item?.extra_config?.fixed_multiple
+  const multiple = Number(rawMultiple)
+  return Number.isSafeInteger(multiple) && multiple > 0 ? multiple : null
+}
+
+function normalizeMinMultiple(item: any) {
+  const value = Number(item?.min_multiple ?? item?.extra_config?.min_multiple ?? 1)
+  return Number.isSafeInteger(value) && value > 0 ? value : 1
+}
+
+function normalizeMaxMultiple(item: any, minMultiple: number) {
+  const rawValue = item?.max_multiple ?? item?.extra_config?.max_multiple
+  if (rawValue == null || rawValue === '') return null
+  const value = Number(rawValue)
+  return Number.isSafeInteger(value) && value >= minMultiple ? value : null
+}
+
+function normalizeMaxSelectPerPosition(item: any) {
+  const rawValue = item?.max_select_per_position ?? item?.extra_config?.max_select_per_position
+  const value = Number(rawValue)
+  return Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
+// 投注页配置边界：后端返回的松散 JSON 在这里被规整成动态投注页面可直接消费的类型。
+function normalizePlay(item: any): DynamicBetPlay {
+  // 输入模式只接受动态渲染器支持的枚举，未知模式统一降级为手动文本输入。
+  const inputMode = item?.input_mode === 'position-grid'
+    || item?.input_mode === 'number-grid'
+    || item?.input_mode === 'fixed-option'
+    ? item.input_mode
+    : 'text'
+  const backendUnitAmount = normalizeBackendUnitAmount(item)
+  const backendMultiple = normalizeBackendMultiple(item)
+  const minMultiple = normalizeMinMultiple(item)
+  return {
+    code: String(item?.code || ''),
+    name: String(item?.name || item?.code || ''),
+    full_name: String(item?.full_name || item?.name || item?.code || ''),
+    rule_code: String(item?.rule_code || item?.code || ''),
+    input_mode: inputMode,
+    positions: Array.isArray(item?.positions)
+      ? item.positions
+        .map((position: any) => ({ key: String(position.key || ''), label: String(position.label || '') }))
+        .filter((position: any) => position.key && position.label)
+      : [],
+    digits: Array.isArray(item?.digits) ? item.digits.map(String) : Array.from({ length: 10 }, (_, index) => String(index)),
+    number_grid_values: Array.isArray(item?.number_grid_values)
+      ? item.number_grid_values.map(String)
+      : Array.from({ length: 49 }, (_, index) => String(index + 1).padStart(2, '0')),
+    option_value: item?.option_value == null ? null : String(item.option_value),
+    min_select_count: Math.max(1, Number(item?.min_select_count || 1)),
+    bet_number_count: Math.max(1, Number(item?.bet_number_count || 1)),
+    odds: String(item?.odds || ''),
+    unit_amount_fixed: true,
+    unit_amount: backendUnitAmount,
+    multiple_fixed: false,
+    multiple: backendMultiple,
+    min_multiple: minMultiple,
+    max_multiple: normalizeMaxMultiple(item, minMultiple),
+    simple_description: String(item?.simple_description || ''),
+    detail_description: String(item?.detail_description || ''),
+    example_description: String(item?.example_description || ''),
+    position_grid_kind: normalizePositionGridKind(item?.position_grid_kind || item?.extra_config?.position_grid_kind),
+    max_select_per_position: normalizeMaxSelectPerPosition(item),
+    option_groups: normalizeOptionGroups(item?.option_groups || item?.extra_config?.option_groups),
+    option_groups_error: item?.option_groups_error == null ? null : String(item.option_groups_error),
+  }
+}
+
+export function normalizeBetPageConfig(data: any): BetPageConfig {
+  // 页面配置拆成彩种、当前期、最新开奖和玩法清单，缺失字段都用安全默认值兜底。
+  return {
+    lottery: {
+      code: String(data?.lottery?.code || ''),
+      name: String(data?.lottery?.name || data?.lottery?.code || ''),
+      category: String(data?.lottery?.category || ''),
+      draw_interval: Number(data?.lottery?.draw_interval || 0),
+      group_buy_enabled: Boolean(data?.lottery?.group_buy_enabled),
+    },
+    group_buy_settings: {
+      min_share_amount: String(data?.group_buy_settings?.min_share_amount || data?.settings?.min_share_amount || data?.min_share_amount || '0.01'),
+      initiator_min_buy_ratio: String(data?.group_buy_settings?.initiator_min_buy_ratio || data?.settings?.initiator_min_buy_ratio || data?.initiator_min_buy_ratio || '0.00'),
+      share_amount: String(data?.group_buy_settings?.share_amount || data?.settings?.share_amount || data?.share_amount || '1.00'),
+    },
+    round: {
+      issue: String(data?.round?.issue || ''),
+      status: String(data?.round?.status || ''),
+      scheduled_draw_at: data?.round?.scheduled_draw_at == null ? null : String(data.round.scheduled_draw_at),
+      sale_stop_at: data?.round?.sale_stop_at == null ? null : String(data.round.sale_stop_at),
+    },
+    latest_draw: data?.latest_draw ? {
+      issue: String(data.latest_draw.issue || ''),
+      result_numbers: Array.isArray(data.latest_draw.result_numbers) ? data.latest_draw.result_numbers.map(String) : [],
+      opened_at: data.latest_draw.opened_at == null ? null : String(data.latest_draw.opened_at),
+    } : null,
+    plays: Array.isArray(data?.plays) ? data.plays.map(normalizePlay).filter((play: DynamicBetPlay) => play.code) : [],
+  }
+}
+
+export function useBetPageConfig() {
+  const config = ref<BetPageConfig | null>(null)
+  const loading = ref(false)
+
+  async function loadBetPageConfig(lotteryCode: string, options: LoadBetPageConfigOptions = {}) {
+    // 路由未带彩种时主动清空配置，避免投注页继续展示上一个彩种的玩法。
+    if (!lotteryCode) {
+      config.value = null
+      return null
+    }
+    const showLoading = !options.silent
+    if (showLoading) loading.value = true
+    try {
+      // 每次加载都重新规范化服务端配置，让动态玩法编辑后前端立即使用最新输入规则。
+      const res = await http.get(`/bet/page-config/${lotteryCode}`)
+      config.value = normalizeBetPageConfig(res.data)
+      return config.value
+    } finally {
+      if (showLoading) loading.value = false
+    }
+  }
+
+  return { config, loading, loadBetPageConfig }
+}
