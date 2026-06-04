@@ -5,7 +5,8 @@ export type LedgerEntryKind =
   | 'orderDebit'
   | 'orderRefund'
   | 'payoutCredit'
-  | 'rechargeCredit';
+  | 'rechargeCredit'
+  | 'withdrawalFreeze';
 
 export type RechargeChannel = 'rainbowEpay' | 'customerService';
 

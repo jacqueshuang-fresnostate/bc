@@ -197,6 +197,25 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 提交提现申请时冻结用户可用余额，并按提现单号保持幂等。
+    pub async fn freeze_withdrawal(
+        &self,
+        user_id: &str,
+        amount_minor: i64,
+        withdrawal_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.freeze_withdrawal(user_id, amount_minor, withdrawal_order_id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     async fn persist(&self, store: &FinanceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_finance_store(persistence, store).await?;
@@ -446,9 +465,17 @@ impl FinanceStore {
             .try_fold(0_i64, |total, entry| total.checked_add(entry.amount_minor))
             .ok_or_else(|| ApiError::Internal("finance recharge amount overflow".to_string()))?;
 
+        let pending_withdraw_minor = self
+            .accounts
+            .values()
+            .try_fold(0_i64, |total, account| {
+                total.checked_add(account.frozen_balance_minor)
+            })
+            .ok_or_else(|| ApiError::Internal("finance frozen amount overflow".to_string()))?;
+
         Ok(FinanceOverview {
             total_balance_minor,
-            pending_withdraw_minor: 0,
+            pending_withdraw_minor,
             today_recharge_minor,
             today_payout_minor,
         })
@@ -666,6 +693,67 @@ impl FinanceStore {
             Some(recharge_order_id.to_string()),
             format!("用户充值入账：{recharge_order_id}"),
         )
+    }
+
+    /// 提交提现申请时把可用余额转入冻结余额，并生成提现冻结流水。
+    fn freeze_withdrawal(
+        &mut self,
+        user_id: &str,
+        amount_minor: i64,
+        withdrawal_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let user_id = user_id.trim();
+        let withdrawal_order_id = withdrawal_order_id.trim();
+        if amount_minor <= 0 {
+            return Err(ApiError::BadRequest(
+                "withdrawal amount must be greater than zero".to_string(),
+            ));
+        }
+        if withdrawal_order_id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "withdrawal order id is required".to_string(),
+            ));
+        }
+        if let Some(entry) =
+            self.reference_entry(&LedgerEntryKind::WithdrawalFreeze, withdrawal_order_id)
+        {
+            return Ok(entry);
+        }
+        self.ensure_available(user_id, amount_minor)?;
+
+        let account = self
+            .accounts
+            .get_mut(user_id)
+            .ok_or_else(|| ApiError::BadRequest("insufficient available balance".to_string()))?;
+        account.available_balance_minor = account
+            .available_balance_minor
+            .checked_sub(amount_minor)
+            .ok_or_else(|| ApiError::BadRequest("balance amount is too large".to_string()))?;
+        account.frozen_balance_minor = account
+            .frozen_balance_minor
+            .checked_add(amount_minor)
+            .ok_or_else(|| ApiError::BadRequest("balance amount is too large".to_string()))?;
+        let balance_after_minor = account
+            .available_balance_minor
+            .checked_add(account.frozen_balance_minor)
+            .ok_or_else(|| ApiError::BadRequest("balance amount is too large".to_string()))?;
+
+        self.next_sequence += 1;
+        let entry = LedgerEntry {
+            id: format!("L{:012}", self.next_sequence),
+            user_id: user_id.to_string(),
+            kind: LedgerEntryKind::WithdrawalFreeze,
+            amount_minor: amount_minor.checked_neg().ok_or_else(|| {
+                ApiError::BadRequest("withdrawal amount is too large".to_string())
+            })?,
+            balance_after_minor,
+            reference_id: Some(withdrawal_order_id.to_string()),
+            description: format!("提现申请冻结：{withdrawal_order_id}"),
+            created_at: current_timestamp_label(),
+        };
+        self.ledger_entries.push(entry.clone());
+
+        Ok(entry)
     }
 
     /// 处理 account 的具体内部流程。
@@ -888,6 +976,28 @@ mod tests {
         assert_eq!(entry.kind, LedgerEntryKind::RechargeCredit);
         assert_eq!(entry.amount_minor, 1_500);
         assert_eq!(account.available_balance_minor, 13_500);
+    }
+
+    #[test]
+    /// 提现申请会冻结可用余额并记录一条提现冻结流水，重复冻结同一提现单保持幂等。
+    fn store_freezes_withdrawal_once() {
+        let mut store = FinanceStore::seeded();
+
+        let entry = store
+            .freeze_withdrawal("U10001", 1_500, "W000000000001")
+            .expect("withdrawal can freeze available balance");
+        let repeated = store
+            .freeze_withdrawal("U10001", 1_500, "W000000000001")
+            .expect("withdrawal freeze is idempotent");
+        let account = store.account("U10001").expect("account exists");
+        let overview = store.overview().expect("overview can be calculated");
+
+        assert_eq!(entry.id, repeated.id);
+        assert_eq!(entry.kind, LedgerEntryKind::WithdrawalFreeze);
+        assert_eq!(entry.amount_minor, -1_500);
+        assert_eq!(account.available_balance_minor, 10_500);
+        assert_eq!(account.frozen_balance_minor, 3_500);
+        assert_eq!(overview.pending_withdraw_minor, 3_500);
     }
 
     #[test]

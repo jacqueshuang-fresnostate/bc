@@ -1176,6 +1176,24 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         AuthMode::User,
         RequestBodyKind::None,
     ),
+    doc(
+        "get",
+        "/user/withdrawals",
+        "用户端账户",
+        "提现申请列表",
+        "返回当前用户自己的提现申请记录。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/user/withdrawals",
+        "用户端账户",
+        "提交提现申请",
+        "用户选择已绑定提现方式提交提现申请，后端冻结对应可用余额。",
+        AuthMode::User,
+        RequestBodyKind::Json,
+    ),
 ];
 
 const fn doc(
@@ -1505,6 +1523,7 @@ mod tests {
         assert!(document["paths"]["/user/register-options"]["get"].is_object());
         assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
         assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());
+        assert!(document["paths"]["/user/withdrawals"]["post"].is_object());
         assert!(document["paths"]["/user/register"]["post"].is_object());
     }
 

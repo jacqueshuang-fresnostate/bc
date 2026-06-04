@@ -11,6 +11,7 @@ use axum::{
 use chrono::Local;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 use crate::{
     app::AppState,
@@ -802,7 +803,7 @@ async fn reply_support_conversation(
 async fn list_users(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<UserSummary>>>> {
-    let users = state.access.users().await?;
+    let users = users_with_financial_balances(&state).await?;
 
     Ok(Json(ApiEnvelope::success(users)))
 }
@@ -811,7 +812,7 @@ async fn get_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
-    let user = state.access.get_user(&id).await?;
+    let user = user_with_financial_balance(&state, &id).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -821,7 +822,8 @@ async fn create_user(
     Json(payload): Json<UserSummary>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
     let user = state.access.create_user(payload).await?;
-    state.finance.account_or_create(&user.id).await?;
+    let account = state.finance.account_or_create(&user.id).await?;
+    let user = user_with_account_balance(user, Some(&account));
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -832,6 +834,7 @@ async fn update_user(
     Json(payload): Json<UserSummary>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
     let user = state.access.update_user(&id, payload).await?;
+    let user = user_with_financial_balance_from_summary(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -842,8 +845,53 @@ async fn set_user_status(
     Json(payload): Json<UserStatusRequest>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
     let user = state.access.set_user_status(&id, payload.status).await?;
+    let user = user_with_financial_balance_from_summary(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
+}
+
+/// 返回用户列表时用财务账户可用余额覆盖用户基础资料中的历史余额字段。
+async fn users_with_financial_balances(state: &AppState) -> ApiResult<Vec<UserSummary>> {
+    let mut users = state.access.users().await?;
+    let accounts = state.finance.accounts().await?;
+    let accounts = accounts
+        .iter()
+        .map(|account| (account.user_id.as_str(), account))
+        .collect::<BTreeMap<_, _>>();
+    for user in &mut users {
+        user.balance_minor = accounts
+            .get(user.id.as_str())
+            .map(|account| account.available_balance_minor)
+            .unwrap_or(user.balance_minor);
+    }
+    Ok(users)
+}
+
+/// 返回单个用户时同步财务账户可用余额。
+async fn user_with_financial_balance(state: &AppState, id: &str) -> ApiResult<UserSummary> {
+    let user = state.access.get_user(id).await?;
+    user_with_financial_balance_from_summary(state, user).await
+}
+
+/// 将已有用户摘要与财务账户合并，避免用户维护接口成为余额编辑入口。
+async fn user_with_financial_balance_from_summary(
+    state: &AppState,
+    user: UserSummary,
+) -> ApiResult<UserSummary> {
+    let accounts = state.finance.accounts().await?;
+    let account = accounts.iter().find(|account| account.user_id == user.id);
+    Ok(user_with_account_balance(user, account))
+}
+
+/// 处理单个用户和资金账户的余额合并。
+fn user_with_account_balance(
+    mut user: UserSummary,
+    account: Option<&FinancialAccountSummary>,
+) -> UserSummary {
+    if let Some(account) = account {
+        user.balance_minor = account.available_balance_minor;
+    }
+    user
 }
 
 async fn list_admins(

@@ -23,6 +23,7 @@ use crate::{
         robot::RobotRepository,
         scheduler::{spawn_draw_scheduler, DrawSchedulerConfig, DrawSchedulerRepository},
         support::SupportRepository,
+        withdrawal::WithdrawalRepository,
     },
 };
 
@@ -41,6 +42,7 @@ pub struct AppState {
     pub robots: RobotRepository,
     pub scheduler: DrawSchedulerRepository,
     pub support: SupportRepository,
+    pub withdrawals: WithdrawalRepository,
 }
 
 impl AppState {
@@ -60,6 +62,7 @@ impl AppState {
             robots: RobotRepository::memory_seeded(),
             scheduler,
             support: SupportRepository::memory_seeded(),
+            withdrawals: WithdrawalRepository::memory(),
         }
     }
 
@@ -98,7 +101,8 @@ impl AppState {
             recharges: RechargeRepository::persistent(business_database.clone()).await?,
             robots: RobotRepository::persistent(business_database.clone()).await?,
             scheduler,
-            support: SupportRepository::persistent(business_database).await?,
+            support: SupportRepository::persistent(business_database.clone()).await?,
+            withdrawals: WithdrawalRepository::persistent(business_database).await?,
         })
     }
 }

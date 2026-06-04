@@ -2,8 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
-import http from '../api/http'
 import {
+  createWithdrawalOrder,
   errorMessage,
   fetchCurrentUserProfile,
   fetchWithdrawalMethods,
@@ -80,7 +80,8 @@ async function loadWithdrawData() {
 }
 
 async function submitWithdraw() {
-  if (!amount.value || Number(amount.value) <= 0) {
+  const amountMinor = amountToMinor(amount.value)
+  if (amountMinor <= 0) {
     showToast('请输入提现金额')
     return
   }
@@ -91,9 +92,9 @@ async function submitWithdraw() {
   }
   submitting.value = true
   try {
-    await http.post('/user/withdrawals', {
-      method_id: selectedMethod.value.id,
-      amount: amount.value,
+    await createWithdrawalOrder({
+      methodId: selectedMethod.value.id,
+      amountMinor,
     })
     showToast('提现申请已提交')
     amount.value = ''
@@ -103,6 +104,12 @@ async function submitWithdraw() {
   } finally {
     submitting.value = false
   }
+}
+
+function amountToMinor(value: string) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return 0
+  return Math.round(amount * 100)
 }
 
 onMounted(loadWithdrawData)

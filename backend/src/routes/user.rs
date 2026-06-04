@@ -28,6 +28,7 @@ use crate::{
         UserLoginRequest, UserLogoutResponse, UserProfileResponse, UserRegisterRequest,
         UserResetPasswordRequest, UserResetPasswordResponse, UserSummary, WithdrawalMethodRequest,
     },
+    domain::withdrawal::{CreateWithdrawalOrderRequest, WithdrawalOrderSummary},
     error::{ApiError, ApiResult},
     response::ApiEnvelope,
     services::recharge::{
@@ -69,6 +70,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/withdrawal-methods/{method_id}",
             put(update_withdrawal_method).delete(delete_withdrawal_method),
+        )
+        .route(
+            "/withdrawals",
+            get(list_withdrawal_orders).post(create_withdrawal_order),
         )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -176,7 +181,8 @@ async fn register_user(
     Json(payload): Json<UserRegisterRequest>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
     let user = state.access.register_user(payload).await?;
-    state.finance.account_or_create(&user.id).await?;
+    let account = state.finance.account_or_create(&user.id).await?;
+    let user = user_with_account_balance(user, Some(&account));
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -185,7 +191,8 @@ async fn login_user(
     State(state): State<AppState>,
     Json(payload): Json<UserLoginRequest>,
 ) -> ApiResult<Json<ApiEnvelope<UserAuthSession>>> {
-    let session = state.access.login_user(payload).await?;
+    let mut session = state.access.login_user(payload).await?;
+    session.user = user_with_financial_balance(&state, session.user).await?;
 
     Ok(Json(ApiEnvelope::success(session)))
 }
@@ -209,11 +216,11 @@ async fn reset_password(
 }
 
 async fn get_current_user(
+    State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
 ) -> ApiResult<Json<ApiEnvelope<UserProfileResponse>>> {
-    Ok(Json(ApiEnvelope::success(UserProfileResponse {
-        user: session.user,
-    })))
+    let user = user_with_financial_balance(&state, session.user).await?;
+    Ok(Json(ApiEnvelope::success(UserProfileResponse { user })))
 }
 
 async fn logout_user(
@@ -233,6 +240,7 @@ async fn bind_email(
     Json(payload): Json<UserBindEmailRequest>,
 ) -> ApiResult<Json<ApiEnvelope<UserAuthSession>>> {
     let user = state.access.bind_email(&session.user.id, payload).await?;
+    let user = user_with_financial_balance(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(UserAuthSession {
         token: session.token,
@@ -249,6 +257,7 @@ async fn change_password(
         .access
         .change_password(&session.user.id, payload)
         .await?;
+    let user = user_with_financial_balance(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(UserAuthSession {
         token: session.token,
@@ -262,11 +271,32 @@ async fn get_balance(
 ) -> ApiResult<Json<ApiEnvelope<UserBalanceResponse>>> {
     let account: FinancialAccountSummary =
         state.finance.account_or_create(&session.user.id).await?;
+    let user = user_with_account_balance(session.user, Some(&account));
 
     Ok(Json(ApiEnvelope::success(UserBalanceResponse {
-        user: session.user,
+        user,
         account,
     })))
+}
+
+/// 用户端返回用户摘要时优先展示财务账户可用余额。
+async fn user_with_financial_balance(
+    state: &AppState,
+    user: UserSummary,
+) -> ApiResult<UserSummary> {
+    let account = state.finance.account_or_create(&user.id).await?;
+    Ok(user_with_account_balance(user, Some(&account)))
+}
+
+/// 合并用户基础资料和资金账户，避免资料表余额与财务账户余额不一致。
+fn user_with_account_balance(
+    mut user: UserSummary,
+    account: Option<&FinancialAccountSummary>,
+) -> UserSummary {
+    if let Some(account) = account {
+        user.balance_minor = account.available_balance_minor;
+    }
+    user
 }
 
 async fn list_ledger_entries(
@@ -453,6 +483,36 @@ async fn delete_withdrawal_method(
         .await?;
 
     Ok(Json(ApiEnvelope::success(())))
+}
+
+async fn list_withdrawal_orders(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<Vec<WithdrawalOrderSummary>>>> {
+    let orders = state.withdrawals.list_for_user(&session.user.id).await?;
+
+    Ok(Json(ApiEnvelope::success(orders)))
+}
+
+async fn create_withdrawal_order(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Json(payload): Json<CreateWithdrawalOrderRequest>,
+) -> ApiResult<Json<ApiEnvelope<WithdrawalOrderSummary>>> {
+    let method_id = payload.method_id.trim().to_string();
+    let method = state
+        .access
+        .list_withdrawal_methods(&session.user.id)
+        .await?
+        .into_iter()
+        .find(|method| method.id == method_id)
+        .ok_or_else(|| ApiError::NotFound("提现方式不存在".to_string()))?;
+    let order = state
+        .withdrawals
+        .create_order(&session.user, &method, payload, &state.finance)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(order)))
 }
 
 #[cfg(test)]

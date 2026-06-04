@@ -27,6 +27,7 @@ pub enum LedgerEntryKind {
     OrderRefund,
     PayoutCredit,
     RechargeCredit,
+    WithdrawalFreeze,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

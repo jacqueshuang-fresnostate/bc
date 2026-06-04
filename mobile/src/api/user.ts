@@ -74,6 +74,28 @@ export type WithdrawalMethodPayload = {
   isDefault: boolean
 }
 
+export type WithdrawalOrderStatus = 'pending' | 'approved' | 'rejected' | 'cancelled'
+
+export type WithdrawalOrder = {
+  id: string
+  userId: string
+  username: string
+  methodId: string
+  methodType: WithdrawalMethodType
+  accountHolder: string
+  accountNumber: string
+  bankName?: string | null
+  amountMinor: number
+  status: WithdrawalOrderStatus
+  createdAt: string
+  reviewedAt?: string | null
+}
+
+export type CreateWithdrawalOrderPayload = {
+  methodId: string
+  amountMinor: number
+}
+
 type LoginPayload = {
   loginKey: string
   password: string
@@ -190,4 +212,12 @@ export async function updateWithdrawalMethod(id: string, payload: WithdrawalMeth
 
 export async function deleteWithdrawalMethod(id: string) {
   await http.delete(`/user/withdrawal-methods/${id}`)
+}
+
+export async function fetchWithdrawalOrders() {
+  return unwrapApiData<WithdrawalOrder[]>(await http.get('/user/withdrawals'))
+}
+
+export async function createWithdrawalOrder(payload: CreateWithdrawalOrderPayload) {
+  return unwrapApiData<WithdrawalOrder>(await http.post('/user/withdrawals', payload))
 }

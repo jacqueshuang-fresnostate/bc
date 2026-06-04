@@ -17,3 +17,4 @@ pub mod robot;
 pub mod settlement;
 pub mod support;
 pub mod user;
+pub mod withdrawal;

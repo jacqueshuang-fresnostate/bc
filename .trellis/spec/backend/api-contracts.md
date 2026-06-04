@@ -3266,3 +3266,127 @@ support.get_for_user(conversation_id, &session.user.id).await
 ```
 
 用户端客服接口必须按当前登录用户校验会话归属，归属不匹配时返回不存在。
+
+---
+
+## 场景：用户提现申请接口与用户维护余额边界
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增用户端提现申请接口，并收紧后台用户维护中余额、用户 ID、邀请码的编辑权限。
+- 范围：`/api/user/withdrawals`、`/api/user/withdrawal-methods`、`FinanceRepository::freeze_withdrawal`、后台 `/api/admin/users` 返回余额展示。
+
+### 2. 签名
+
+- `GET /api/user/withdrawals`
+- `POST /api/user/withdrawals`
+- `GET/POST/PUT/DELETE /api/user/withdrawal-methods`
+- 后台用户列表：`GET /api/admin/users`
+- 资金流水类型：`ledger_entries.kind = withdrawalFreeze`
+
+### 3. 契约
+
+提现申请请求：
+
+```json
+{
+  "methodId": "WM000001",
+  "amountMinor": 10000
+}
+```
+
+提现申请响应：
+
+```json
+{
+  "id": "W000000000001",
+  "userId": "U10001",
+  "username": "demo_user",
+  "methodId": "WM000001",
+  "methodType": "bankCard",
+  "accountHolder": "张三",
+  "accountNumber": "6222000000000000",
+  "bankName": "招商银行",
+  "amountMinor": 10000,
+  "status": "pending",
+  "createdAt": "2026-06-04 22:28:00",
+  "reviewedAt": null
+}
+```
+
+提交提现申请必须同步执行财务冻结：
+
+- `financial_accounts.available_balance_minor -= amountMinor`
+- `financial_accounts.frozen_balance_minor += amountMinor`
+- 新增 `ledger_entries.kind=withdrawalFreeze`
+- 流水 `referenceId` 必须是提现申请 ID
+
+后台用户维护接口不得作为余额或邀请码编辑入口：
+
+- `PUT /api/admin/users/{id}` 必须保留原 `balanceMinor` 和 `inviteCode`。
+- `GET /api/admin/users` 返回的 `balanceMinor` 应以 `financial_accounts.available_balance_minor` 为准。
+- 用户 ID 仍作为资源 ID 使用，更新时路径 ID 必须与请求体 ID 一致。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `methodId` 为空 | HTTP 400 |
+| 提现方式不存在 | HTTP 404 |
+| 提现方式不属于当前用户 | HTTP 400 |
+| `amountMinor <= 0` | HTTP 400 |
+| 可用余额不足 | HTTP 400，返回余额不足业务错误 |
+| 重复冻结同一个提现申请 ID | 保持幂等，返回既有 `withdrawalFreeze` 流水 |
+| 用户维护请求修改 `inviteCode` | 后端忽略，保留原邀请码 |
+| 用户维护请求修改 `balanceMinor` | 后端忽略，余额仅由财务账户决定 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：用户先绑定银行卡提现方式，再提交 `POST /api/user/withdrawals`，返回 `pending` 提现申请，资金账户可用余额减少、冻结余额增加。
+- Good：后台用户维护列表中余额来自财务账户；财务手动调账后刷新用户维护页能看到新余额。
+- Base：提现审核、打款、驳回和解冻流程后续再接入；当前接口只负责申请和冻结。
+- Bad：手机端提交 `method_id` 或 `amount` 字段；后端当前契约只接受 `methodId` 和 `amountMinor`。
+- Bad：通过用户维护直接改 `balanceMinor`；这会绕过财务流水，破坏审计链路。
+
+### 6. 必要测试
+
+- 后端需要覆盖用户更新时保留余额和邀请码。
+- 后端需要覆盖提现冻结会减少可用余额、增加冻结余额，并生成 `withdrawalFreeze` 流水。
+- 后端需要覆盖提现方式归属校验。
+- OpenAPI 测试需要覆盖 `/user/withdrawals` 路径。
+- 管理后台需要运行 `npm run build`，确认新增流水枚举能展示。
+- 手机端需要运行 `npm run build`，确认提现提交字段与后端契约一致。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+user.balance_minor = payload.balance_minor;
+```
+
+用户维护直接写余额会绕过资金流水。
+
+#### 正确
+
+```rust
+user.balance_minor = existing.balance_minor;
+```
+
+用户维护只改基础资料；余额通过 `FinanceRepository` 和资金流水变化。
+
+#### 错误
+
+```ts
+await http.post('/user/withdrawals', { method_id, amount });
+```
+
+这个请求字段不符合后端 `camelCase` 契约，也没有使用分作为金额单位。
+
+#### 正确
+
+```ts
+await createWithdrawalOrder({ methodId, amountMinor });
+```
+
+用户端提现申请统一使用 `methodId` 和 `amountMinor`。

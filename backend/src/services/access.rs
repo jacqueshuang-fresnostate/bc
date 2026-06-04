@@ -1232,7 +1232,7 @@ impl AccessStore {
         Ok(user)
     }
 
-    /// 更新内存用户：空邀请码会沿用数据库已有值，不会被改成空值。
+    /// 更新内存用户：余额和邀请码归属财务/邀请链路，用户维护只允许改基础资料和状态。
     fn update_user(&mut self, id: &str, user: UserSummary) -> ApiResult<UserSummary> {
         let mut user = normalize_user(user)?;
         if id != user.id {
@@ -1240,17 +1240,13 @@ impl AccessStore {
                 "path id must match user id".to_string(),
             ));
         }
-        if !self.users.contains_key(id) {
-            return Err(ApiError::NotFound(format!("user `{id}` not found")));
-        }
-        if user.invite_code.is_empty() {
-            user.invite_code = self
-                .users
-                .get(id)
-                .map(|existing| existing.invite_code.clone())
-                .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))?;
-        }
-        self.ensure_unique_invite_code(id, &user.invite_code)?;
+        let existing = self
+            .users
+            .get(id)
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))?;
+        user.balance_minor = existing.balance_minor;
+        user.invite_code = existing.invite_code;
 
         self.users.insert(id.to_string(), user.clone());
         Ok(user)
@@ -2567,6 +2563,33 @@ mod tests {
         assert_invite_code_format(&first.invite_code);
         assert_invite_code_format(&second.invite_code);
         assert_ne!(first.invite_code, second.invite_code);
+    }
+
+    #[tokio::test]
+    async fn access_repository_update_preserves_balance_and_invite_code() {
+        let access = AccessRepository::memory_seeded();
+        let original = access.get_user("U10001").await.expect("seed user exists");
+
+        let updated = access
+            .update_user(
+                "U10001",
+                UserSummary {
+                    id: "U10001".to_string(),
+                    username: "renamed_demo".to_string(),
+                    email: original.email.clone(),
+                    kind: original.kind.clone(),
+                    status: original.status.clone(),
+                    balance_minor: 999_999,
+                    agent_id: original.agent_id.clone(),
+                    invite_code: "ZZZZ9999".to_string(),
+                },
+            )
+            .await
+            .expect("user can be updated");
+
+        assert_eq!(updated.username, "renamed_demo");
+        assert_eq!(updated.balance_minor, original.balance_minor);
+        assert_eq!(updated.invite_code, original.invite_code);
     }
 
     #[tokio::test]

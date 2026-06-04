@@ -93,7 +93,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
         />
         <MetricCard
           label="冻结余额"
-          trend="提现冻结后续接入"
+          trend="来自提现申请冻结"
           value={formatMoney(totals.frozenBalanceMinor)}
         />
         <MetricCard
@@ -433,6 +433,7 @@ function ledgerKindText(kind: LedgerEntryKind) {
     orderRefund: '取消退款',
     payoutCredit: '派奖入账',
     rechargeCredit: '充值入账',
+    withdrawalFreeze: '提现冻结',
   };
   return labels[kind];
 }
@@ -444,6 +445,7 @@ function ledgerKindColor(kind: LedgerEntryKind) {
     orderRefund: 'blue',
     payoutCredit: 'green',
     rechargeCredit: 'green',
+    withdrawalFreeze: 'red',
   };
   return colors[kind];
 }

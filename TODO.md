@@ -1,5 +1,35 @@
 # TODO
 
+## 2026-06-04 22:28 HKT 后台用户维护字段收紧与用户提现申请接口
+
+- 完成任务：移除后台用户维护中用户 ID、账户余额、邀请码的编辑能力，并新增用户端提现申请接口。
+- 解决问题：
+  - 用户维护页可以直接编辑余额，绕过财务管理和资金流水审计。
+  - 用户维护页可以编辑用户 ID 和邀请码，不符合用户 ID/邀请码不可变的业务要求。
+  - 手机端申请提现调用 `/user/withdrawals`，但后端没有对应接口。
+- 具体实现：
+  - `AccessManagementPage.tsx` 中用户 ID、账户余额、邀请码改为只读展示；余额提示必须通过财务管理手动调账。
+  - 后端 `AccessStore::update_user()` 强制保留原 `balanceMinor` 和 `inviteCode`，防止绕过前端直接修改。
+  - 后台用户列表和用户详情返回时，用财务账户 `availableBalanceMinor` 覆盖用户摘要余额，确保用户维护展示的是财务账户余额。
+  - 新增 `WithdrawalOrderSummary`、`CreateWithdrawalOrderRequest` 和 `WithdrawalRepository`，支持用户提现申请列表和创建。
+  - 新增 `GET /api/user/withdrawals` 和 `POST /api/user/withdrawals`；创建申请时校验提现方式归属，并冻结用户可用余额。
+  - 财务流水新增 `withdrawalFreeze`，提现申请成功后可用余额减少、冻结余额增加，资金流水写入提现申请 ID。
+  - 新增迁移 `20260605007000_create_withdrawal_orders.sql`，创建 `withdrawal_orders`、`withdrawal_runtime` 并补全中文注释。
+  - 手机端提现提交改为调用 `createWithdrawalOrder({ methodId, amountMinor })`。
+  - OpenAPI 文档新增用户提现申请列表与提交接口。
+  - Trellis 后端 API 契约和数据库规范已同步新增提现申请场景。
+- 当前边界：
+  - 本阶段只完成用户提交提现申请并冻结余额；后台提现审核、驳回解冻、确认打款和提现记录筛选后续继续完善。
+- 验证记录：
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml access_repository_update_preserves_balance_and_invite_code -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml store_freezes_withdrawal_once -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml withdrawal_store -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 通过，177 条测试全部成功；仍有 4 个既有 `LotteryCategory` 未使用导入 warning。
+  - `cd admin && npm run build` 通过；Vite 仍提示既有 chunk 体积超过 500kB。
+  - `cd mobile && npm run build` 通过。
+
 ## 2026-06-04 21:57 HKT 手机端提现方式管理接口对接
 
 - 完成任务：把手机端“提现管理”的提现方式列表、新增、编辑、删除和设默认接入后端真实接口。

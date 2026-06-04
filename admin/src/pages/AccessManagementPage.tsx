@@ -550,9 +550,10 @@ function UserSection({
           <Field label="用户 ID">
             <Input
               className="form-input"
+              disabled
               value={form.id}
-              onChange={(value) => setFormValue(onSetForm, 'id', value)}
             />
+            <p className="text-xs text-slate-400">用户 ID 由系统生成，创建后不可编辑。</p>
           </Field>
           <Field label="用户名">
             <Input
@@ -599,15 +600,13 @@ function UserSection({
             </Select>
           </Field>
           </div>
-          <Field label="余额（分）">
+          <Field label="账户余额">
             <Input
               className="form-input"
-              type="number"
-              value={form.balanceMinor}
-              onChange={(value) =>
-                setFormValue(onSetForm, 'balanceMinor', value)
-              }
+              disabled
+              value={formatMoney(numberField(form.balanceMinor))}
             />
+            <p className="text-xs text-slate-400">余额只能通过财务管理的手动调账入口调整。</p>
           </Field>
           <Field label="上级代理 ID">
             <Input
@@ -621,12 +620,11 @@ function UserSection({
           <Field label="邀请码">
             <Input
               className="form-input"
-              placeholder="留空时后端自动生成"
-              value={form.inviteCode}
-              onChange={(value) =>
-                setFormValue(onSetForm, 'inviteCode', value)
-              }
+              disabled
+              placeholder="创建用户后由后端自动生成"
+              value={form.inviteCode || '创建后自动生成'}
             />
+            <p className="text-xs text-slate-400">邀请码用于邀请关系识别，不允许在用户维护中修改。</p>
           </Field>
           <div className="flex flex-wrap gap-2">
             <Button

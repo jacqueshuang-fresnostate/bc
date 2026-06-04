@@ -431,3 +431,101 @@ COMMENT ON COLUMN recharge_orders.support_conversation_id IS '客服直充绑定
 ```
 
 新增业务表必须为表、字段和约束补中文注释。
+
+---
+
+## 场景：提现申请数据库持久化
+
+### 1. 范围 / 触发条件
+
+- 触发条件：用户端新增提现申请接口，提交申请后需要跨重启保存申请状态和收款方式快照。
+- 范围：`backend/migrations/20260605007000_create_withdrawal_orders.sql`、`WithdrawalRepository`、`FinanceRepository::freeze_withdrawal`。
+
+### 2. 签名
+
+- 迁移文件：`backend/migrations/20260605007000_create_withdrawal_orders.sql`
+- 业务表：`withdrawal_orders`
+- 运行时表：`withdrawal_runtime`
+- 资金流水类型：`ledger_entries.kind = withdrawalFreeze`
+
+### 3. 契约
+
+`withdrawal_orders` 字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `text primary key` | 提现申请 ID |
+| `user_id` | `text not null` | 用户 ID |
+| `username` | `text not null` | 用户名快照 |
+| `method_id` | `text not null` | 用户提现方式 ID |
+| `method_type` | `text not null` | `alipay`、`wechat` 或 `bankCard` |
+| `account_holder` | `text not null` | 收款账户名快照 |
+| `account_number` | `text not null` | 收款账号或银行卡号快照 |
+| `bank_name` | `text` | 银行卡所属银行名称 |
+| `amount_minor` | `bigint not null` | 提现金额（分） |
+| `status` | `text not null` | `pending`、`approved`、`rejected` 或 `cancelled` |
+| `created_at` | `text not null` | 创建时间 |
+| `reviewed_at` | `text` | 审核时间 |
+
+`withdrawal_runtime` 使用 `key/value` 保存 `next_sequence`。提现申请提交时必须同时冻结财务账户可用余额并写 `withdrawalFreeze` 流水，流水 `reference_id` 使用提现申请 ID。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `amount_minor <= 0` | 数据库约束拒绝，服务层也应先返回 HTTP 400 |
+| `method_type` 非枚举值 | 数据库约束拒绝 |
+| `status` 非枚举值 | 数据库约束拒绝 |
+| 数据库中提现表为空 | 不写种子提现单，返回空列表 |
+| 数据库已有提现申请 | 启动时恢复申请和 `next_sequence`，不覆盖已有申请 |
+| 可用余额不足 | 不创建提现申请，不写冻结流水 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：配置 `DATABASE_URL` 后提交提现申请，重启服务后 `GET /api/user/withdrawals` 仍能看到该申请。
+- Good：提现申请保存收款方式快照，后续用户修改提现方式不会改变历史申请的账号信息。
+- Base：未配置 `DATABASE_URL` 时使用内存提现仓储，支持本地功能验证但不跨重启保留。
+- Bad：提现申请只写 `withdrawal_orders`，不冻结 `financial_accounts`；用户仍能继续使用同一笔余额投注或再次提现。
+- Bad：把提现申请塞回 `state_documents`；这违反所有运行时业务表持久化要求。
+
+### 6. 必要测试
+
+- 无数据库模式需要覆盖提现仓储生成 `pending` 申请。
+- 财务仓储需要覆盖 `withdrawalFreeze` 减少可用余额、增加冻结余额。
+- PostgreSQL 冒烟需要确认迁移执行、提现表可读写、冻结余额跨重启恢复。
+- SQL 迁移必须给新增表、字段和约束添加中文注释。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```sql
+CREATE TABLE withdrawal_orders (...);
+```
+
+新增表没有字段注释，后续排查和审计困难。
+
+#### 正确
+
+```sql
+COMMENT ON COLUMN withdrawal_orders.amount_minor IS '提现金额（分），必须大于 0';
+```
+
+新增业务表必须为每个字段和约束补中文注释。
+
+#### 错误
+
+```rust
+store.insert_order(order)?;
+```
+
+只保存提现申请，不冻结余额，会造成重复使用资金。
+
+#### 正确
+
+```rust
+finance.freeze_withdrawal(&order.user_id, order.amount_minor, &order.id).await?;
+store.insert_order(order)?;
+```
+
+提现申请必须与财务冻结配套执行，后续审核流程再负责打款、驳回或解冻。
