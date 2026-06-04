@@ -1393,9 +1393,9 @@ fn enum_value<T: Serialize>(value: &T) -> ApiResult<String> {
 
 /// 处理 enum_from_string 的具体内部流程。
 fn enum_from_string<T: DeserializeOwned>(value: String) -> ApiResult<T> {
-    serde_json::from_value(Value::String(value)).map_err(|_| {
+    serde_json::from_value(Value::String(value)).map_err(|error| {
         tracing::error!(
-            error = "错误详情已按中文日志规则隐藏",
+            error = %error,
             "数据库中的彩种枚举无效"
         );
         ApiError::Internal("数据库中的彩种枚举无效".to_string())
@@ -1409,9 +1409,9 @@ fn json_value<T: Serialize>(value: &T) -> ApiResult<Value> {
 
 /// 处理 json_from_value 的具体内部流程。
 fn json_from_value<T: DeserializeOwned>(value: Value) -> ApiResult<T> {
-    serde_json::from_value(value).map_err(|_| {
+    serde_json::from_value(value).map_err(|error| {
         tracing::error!(
-            error = "错误详情已按中文日志规则隐藏",
+            error = %error,
             "数据库中的彩种 JSON 无效"
         );
         ApiError::Internal("数据库中的彩种 JSON 无效".to_string())
@@ -1419,17 +1419,14 @@ fn json_from_value<T: DeserializeOwned>(value: Value) -> ApiResult<T> {
 }
 
 /// 处理 serde_error 的具体内部流程。
-fn serde_error(_: serde_json::Error) -> ApiError {
-    tracing::error!(
-        error = "错误详情已按中文日志规则隐藏",
-        "彩种 JSON 序列化失败"
-    );
+fn serde_error(error: serde_json::Error) -> ApiError {
+    tracing::error!(error = %error, "彩种 JSON 序列化失败");
     ApiError::Internal("彩种 JSON 序列化失败".to_string())
 }
 
 /// 处理 database_error 的具体内部流程。
-fn database_error(_: sqlx::Error) -> ApiError {
-    tracing::error!(error = "错误详情已按中文日志规则隐藏", "彩种数据库操作失败");
+fn database_error(error: sqlx::Error) -> ApiError {
+    tracing::error!(error = %error, "彩种数据库操作失败");
     ApiError::Internal("彩种数据库操作失败".to_string())
 }
 

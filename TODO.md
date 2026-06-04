@@ -1,5 +1,18 @@
 # TODO
 
+## 2026-06-04 13:18 HKT 错误日志保留原始英文详情
+
+- 完成任务：调整后端错误日志规则，保留错误详情原文，不再因为包含英文就输出“错误详情已按中文日志规则隐藏”。
+- 解决问题：调度器、数据库或第三方接口出错时，日志只显示“资源冲突：错误详情已按中文日志规则隐藏”，无法判断实际失败原因。
+- 具体实现：
+  - `ApiError::log_message()` 改为输出中文错误前缀加原始详情。
+  - 彩种数据库、枚举和 JSON 转换日志的结构化 `error` 字段改为记录真实 `sqlx` / `serde_json` 错误。
+  - `.trellis/spec/backend/logging-guidelines.md` 明确日志 message 必须中文，但错误字段可保留英文原始详情用于排障。
+- 验证记录：
+  - `cd backend && cargo fmt && cargo fmt --check` 通过。
+  - `cd backend && cargo check` 通过。
+  - `cd backend && cargo test api_error_log_message -- --nocapture` 通过；测试编译仍提示 4 个既有 `LotteryCategory` 未使用导入 warning。
+
 ## 2026-06-04 13:05 HKT 修复新增彩种数据库号码类型约束
 
 - 完成任务：新增数据库迁移更新 `lotteries_number_type_check`，允许 `pk10`、`elevenFive`、`fastThree`、`luckTwenty` 写入 `lotteries.number_type`。

@@ -40,12 +40,12 @@ impl ApiError {
     /// 返回当前错误对象的中文日志消息文本，用于日志展示和错误提示。
     pub fn log_message(&self) -> String {
         match self {
-            Self::BadRequest(message) => format!("请求错误：{}", log_detail(message)),
-            Self::Unauthorized(message) => format!("未授权：{}", log_detail(message)),
-            Self::Forbidden(message) => format!("权限不足：{}", log_detail(message)),
-            Self::NotFound(message) => format!("资源不存在：{}", log_detail(message)),
-            Self::Conflict(message) => format!("资源冲突：{}", log_detail(message)),
-            Self::Internal(message) => format!("内部错误：{}", log_detail(message)),
+            Self::BadRequest(message) => format!("请求错误：{message}"),
+            Self::Unauthorized(message) => format!("未授权：{message}"),
+            Self::Forbidden(message) => format!("权限不足：{message}"),
+            Self::NotFound(message) => format!("资源不存在：{message}"),
+            Self::Conflict(message) => format!("资源冲突：{message}"),
+            Self::Internal(message) => format!("内部错误：{message}"),
         }
     }
 }
@@ -65,18 +65,6 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// 处理 log_detail 的具体内部流程。
-fn log_detail(message: &str) -> &str {
-    if message
-        .chars()
-        .any(|character| character.is_ascii_alphabetic())
-    {
-        "错误详情已按中文日志规则隐藏"
-    } else {
-        message
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::ApiError;
@@ -90,12 +78,11 @@ mod tests {
     }
 
     #[test]
-    /// 处理 api_error_log_message_hides_english_internal_details 的具体内部流程。
-    fn api_error_log_message_hides_english_internal_details() {
+    /// 错误日志保留原始错误详情，便于定位第三方接口、数据库和运行时问题。
+    fn api_error_log_message_keeps_original_error_detail() {
         let message =
             ApiError::Internal("api draw source request failed".to_string()).log_message();
 
-        assert_eq!(message, "内部错误：错误详情已按中文日志规则隐藏");
-        assert!(!message.contains("api draw source request failed"));
+        assert_eq!(message, "内部错误：api draw source request failed");
     }
 }
