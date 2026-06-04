@@ -3,17 +3,18 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { showNotify } from 'vant'
-import http from '../api/http'
+import { fetchLotteryHomepage } from '../api/lottery'
+import type { HomepageBanner, HomepageResponse, LotteryCard } from '../api/lottery'
 import { fetchCurrentUserProfile, fetchMobileAdvertisements } from '../api/user'
 import type { MobileAdvertisement } from '../api/user'
 import HomeDrawCard from '../components/lottery/HomeDrawCard.vue'
 import WinningTicker from '../components/lottery/WinningTicker.vue'
 import { useHomepageDrawUpdates } from '../composables/useHomepageDrawUpdates'
-import type { HomepageBanner, HomepageResponse, LotteryCard } from '../composables/useHomepageDrawUpdates'
+import type { LotteryDrawMessage } from '../composables/useHomepageDrawUpdates'
 import { useBrandingStore } from '../stores/branding'
 import { parseChinaDateTime } from '../utils/lotteryFormat'
 
-const props = defineProps<{ wsMessage?: any }>()
+const props = defineProps<{ wsMessage?: LotteryDrawMessage | null }>()
 const router = useRouter()
 const brandingStore = useBrandingStore()
 const { branding } = storeToRefs(brandingStore)
@@ -29,31 +30,28 @@ const heroBannerImageFailed = ref<Record<string, true>>({})
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
 const lotteriesSetting = computed(() => homepage.value?.settings || {
-  banners_enabled: false,
-  ticker_enabled: false,
-  featured_enabled: false,
-  groups_enabled: false,
-  stats_enabled: false,
+  bannersEnabled: false,
+  tickerEnabled: false,
+  featuredEnabled: false,
+  groupsEnabled: false,
+  statsEnabled: false,
 })
 const heroBanners = computed<HomepageBanner[]>(() => mobileAdvertisements.value.map(advertisement => ({
   id: advertisement.id,
   title: advertisement.title,
-  image_url: advertisement.imageUrl,
-  link_url: advertisement.linkUrl || '',
+  imageUrl: advertisement.imageUrl,
+  linkUrl: advertisement.linkUrl || '',
 })))
 const showBanner = computed(() => heroBanners.value.length > 0)
-const showTicker = computed(() => lotteriesSetting.value.ticker_enabled)
-const showGroups = computed(() => lotteriesSetting.value.groups_enabled)
-const showStats = computed(() => lotteriesSetting.value.stats_enabled)
-const featuredLotteries = computed(() => homepage.value?.featured_section?.lotteries || [])
-const featuredTitle = computed(() => homepage.value?.featured_section?.title || '高频极速')
+const showTicker = computed(() => lotteriesSetting.value.tickerEnabled)
+const showGroups = computed(() => lotteriesSetting.value.groupsEnabled)
+const showStats = computed(() => lotteriesSetting.value.statsEnabled)
+const featuredLotteries = computed(() => homepage.value?.featuredSection?.lotteries || [])
+const featuredTitle = computed(() => homepage.value?.featuredSection?.title || '高频极速')
 const featuredLottery = computed(() => featuredLotteries.value[0])
 const secondaryHighFrequencyLotteries = computed(() => featuredLotteries.value.slice(1, 3))
-const classicGroup = computed(() => homepage.value?.groups?.[0])
-const regionalGroup = computed(() => homepage.value?.groups?.[1])
-const classicLotteries = computed(() => showGroups.value ? classicGroup.value?.lotteries?.slice(0, 4) || [] : [])
-const regionalLotteries = computed(() => showGroups.value ? regionalGroup.value?.lotteries?.slice(0, 2) || [] : [])
-const hasHomepageLotteries = computed(() => Boolean(featuredLotteries.value.length || classicLotteries.value.length || regionalLotteries.value.length))
+const visibleGroups = computed(() => showGroups.value ? homepage.value?.groups?.filter(group => group.lotteries?.length) || [] : [])
+const hasHomepageLotteries = computed(() => Boolean(featuredLotteries.value.length || visibleGroups.value.length))
 const heroBannerSlides = computed<HomepageBanner[]>(() => heroBanners.value)
 const heroBanner = computed(() => heroBannerSlides.value[activeHeroBannerIndex.value] || heroBannerSlides.value[0])
 const heroBannerIndicators = computed(() => heroBanners.value.length > 1 ? heroBanners.value : [])
@@ -63,8 +61,8 @@ const tickerItems = computed(() => {
   if (items.length) return items.map(item => item.text || '').filter(Boolean)
   return showTicker.value ? ['暂无中奖公告'] : []
 })
-const todayWinnerCount = computed(() => (homepage.value?.stats?.today_winner_count ?? 0).toLocaleString())
-const totalPayoutDisplay = computed(() => homepage.value?.stats?.total_payout_display || '¥0')
+const todayWinnerCount = computed(() => (homepage.value?.stats?.todayWinnerCount ?? 0).toLocaleString())
+const totalPayoutDisplay = computed(() => homepage.value?.stats?.totalPayoutDisplay || '¥0')
 
 // 开奖更新组合函数只负责把 homepage 中的轮次字段转换为卡片状态、开奖号和倒计时文本。
 const { statusText, roundDigits, countdownText, applyDrawResult } = useHomepageDrawUpdates(homepage, nowMs)
@@ -73,8 +71,7 @@ function lotteryName(code?: string) {
   // 通知文案从当前已渲染彩种中反查名称，找不到时保留后端推送的 code。
   const allLotteries = [
     ...featuredLotteries.value,
-    ...classicLotteries.value,
-    ...regionalLotteries.value,
+    ...visibleGroups.value.flatMap(group => group.lotteries || []),
   ]
   return allLotteries.find(item => item.code === code)?.name || code || '-'
 }
@@ -90,17 +87,17 @@ function openAllLotteries() {
 
 function openGroupBuy(lottery?: LotteryCard) {
   // 团购入口只对后端标记可团购且有 code 的彩种开放。
-  if (!lottery?.group_buy_enabled || !lottery.code) return
+  if (!lottery?.groupBuyEnabled || !lottery.code) return
   router.push({ path: '/group-buy', query: { lottery_code: lottery.code } })
 }
 
 function openBanner(banner?: HomepageBanner) {
   // Banner 仅处理站内路径，外部链接不在当前移动端路由中跳转。
-  if (banner?.link_url?.startsWith('/')) router.push(banner.link_url)
+  if (banner?.linkUrl?.startsWith('/')) router.push(banner.linkUrl)
 }
 
 function heroBannerImageUrl(banner?: HomepageBanner) {
-  return String(banner?.image_url || '').trim()
+  return String(banner?.imageUrl || '').trim()
 }
 
 function heroBannerHasImageFor(banner?: HomepageBanner) {
@@ -136,9 +133,9 @@ async function loadHomepage() {
   loadingHomepage.value = true
   try {
     // 首页接口一次返回 banner、跑马灯、推荐区、分组和统计数据。
-    const res = await http.get('/lottery/home')
-    homepage.value = res.data || null
-    const serverTime = parseChinaDateTime(res.data?.server_time)
+    const data = await fetchLotteryHomepage()
+    homepage.value = data || null
+    const serverTime = parseChinaDateTime(data?.serverTime)
     nowMs.value = Number.isFinite(serverTime) ? serverTime : Date.now()
   } catch {
     // 加载失败时置空首页数据，由模板进入“暂无彩种”兜底分支。
@@ -176,7 +173,7 @@ watch(() => props.wsMessage, (msg) => {
   if (msg?.event === 'draw_result') {
     // WebSocket 开奖推送先局部更新首页轮次展示，再弹出当前彩种开奖结果提示。
     applyDrawResult(msg)
-    showNotify({ type: 'success', message: `${lotteryName(msg.lottery_code)} 第${msg.issue}期：${msg.result}` })
+    showNotify({ type: 'success', message: `${lotteryName(msg.lotteryCode || msg.lottery_code)} 第${msg.issue}期：${msg.result}` })
   }
 })
 
@@ -215,7 +212,7 @@ watch(heroBanners, (banners) => {
         >
           <button
             v-for="(banner, index) in heroBannerSlides"
-            :key="banner.id || banner.image_url || index"
+            :key="banner.id || banner.imageUrl || index"
             type="button"
             class="hero-banner-slide relative h-full w-full shrink-0 text-left"
             @click="openBanner(banner)"
@@ -267,8 +264,8 @@ watch(heroBanners, (banners) => {
       <van-empty v-else-if="!hasHomepageLotteries" description="暂无彩种" />
 
       <template v-else>
-        <!-- 推荐区受后端 settings.featured_enabled 控制，关闭时不展示高频卡片组。 -->
-        <section class="space-y-4" v-if="lotteriesSetting.featured_enabled">
+        <!-- 推荐区受后端 settings.featuredEnabled 控制，关闭时不展示高频卡片组。 -->
+        <section class="space-y-4" v-if="lotteriesSetting.featuredEnabled">
           <div class="flex items-end justify-between px-1">
             <h3 class="border-l-4 border-primary pl-3 font-headline text-lg font-extrabold tracking-tight">{{ featuredTitle }}</h3>
             <button class="flex items-center gap-0.5 p-0 text-xs font-bold text-primary" @click="openAllLotteries">全部 ›</button>
@@ -298,37 +295,23 @@ watch(heroBanners, (banners) => {
           </div>
         </section>
 
-        <!-- 分组区受 settings.groups_enabled 控制，关闭时不展示经典数字和地方特色。 -->
-        <section v-if="showGroups && classicLotteries.length" class="space-y-4">
+        <!-- 分组区受 settings.groupsEnabled 控制，后端会返回全部销售中彩种的分类分组。 -->
+        <section v-for="(group, groupIndex) in visibleGroups" :key="group.code || group.name || groupIndex" class="space-y-4">
           <div class="flex items-end justify-between px-1">
-            <h3 class="border-l-4 border-secondary pl-3 font-headline text-lg font-extrabold tracking-tight">{{ classicGroup?.name || '经典数字' }}</h3>
+            <h3
+              class="border-l-4 pl-3 font-headline text-lg font-extrabold tracking-tight"
+              :class="groupIndex % 2 === 0 ? 'border-secondary' : 'border-tertiary'"
+            >
+              {{ group.name || '彩种分组' }}
+            </h3>
             <button class="flex items-center gap-0.5 p-0 text-xs font-bold text-primary" @click="openAllLotteries">全部 ›</button>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <HomeDrawCard
-              v-for="lottery in classicLotteries"
+              v-for="lottery in group.lotteries"
               :key="lottery.code"
               :lottery="lottery"
-              variant="classic"
-              :countdown-text="countdownText"
-              :round-digits="roundDigits"
-              @open="openLottery"
-              @group-buy="openGroupBuy"
-            />
-          </div>
-        </section>
-
-        <section v-if="showGroups && regionalLotteries.length" class="space-y-4">
-          <div class="flex items-end justify-between px-1">
-            <h3 class="border-l-4 border-tertiary pl-3 font-headline text-lg font-extrabold tracking-tight">{{ regionalGroup?.name || '地方特色' }}</h3>
-            <button class="flex items-center gap-0.5 p-0 text-xs font-bold text-primary" @click="openAllLotteries">全部 ›</button>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <HomeDrawCard
-              v-for="lottery in regionalLotteries"
-              :key="lottery.code"
-              :lottery="lottery"
-              variant="regional"
+              :variant="groupIndex % 2 === 0 ? 'classic' : 'regional'"
               :countdown-text="countdownText"
               :round-digits="roundDigits"
               @open="openLottery"
@@ -338,7 +321,7 @@ watch(heroBanners, (banners) => {
         </section>
       </template>
 
-      <!-- 统计卡片受 settings.stats_enabled 控制，关闭时不展示任何兜底数值。 -->
+      <!-- 统计卡片受 settings.statsEnabled 控制，关闭时不展示任何兜底数值。 -->
       <section v-if="showStats" class="grid grid-cols-2 gap-3 pb-8">
         <div class="rounded-xl bg-surface-container-high/50 p-4">
           <p class="mb-1 text-[10px] font-medium uppercase tracking-widest text-on-surface-variant">今日中奖人数</p>

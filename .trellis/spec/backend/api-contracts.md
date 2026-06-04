@@ -3393,6 +3393,107 @@ await createWithdrawalOrder({ methodId, amountMinor });
 
 ---
 
+## 场景：手机端首页销售中彩种接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：手机端首页需要展示彩种入口、分类分组、当前期号倒计时或最近开奖号码。
+- 范围：`/api/lottery/home`、`LotteryRepository`、`DrawRepository`、`mobile/src/api/lottery.ts`、`HomeView.vue`、首页开奖更新组合函数。
+
+### 2. 签名
+
+- `GET /api/lottery/home`
+
+### 3. 契约
+
+接口返回统一 API 信封，`data` 字段为首页聚合数据。所有字段必须使用 `camelCase`：
+
+```json
+{
+  "serverTime": "2026-06-05 00:33:00",
+  "settings": {
+    "bannersEnabled": true,
+    "tickerEnabled": true,
+    "featuredEnabled": true,
+    "groupsEnabled": true,
+    "statsEnabled": true
+  },
+  "ticker": {
+    "enabled": true,
+    "items": [{ "id": "fc3d-20260605001", "text": "福彩 3D 第20260605001期 开奖号码 1,2,3" }]
+  },
+  "featuredSection": {
+    "enabled": true,
+    "title": "高频极速",
+    "lotteries": []
+  },
+  "groups": [
+    {
+      "code": "welfare",
+      "name": "福利彩种",
+      "lotteries": [
+        {
+          "code": "fc3d",
+          "name": "福彩 3D",
+          "category": "welfare",
+          "logoUrl": null,
+          "issue": "20260605002",
+          "status": "selling",
+          "nextDrawTime": "2026-06-05 21:00:15",
+          "saleStopTime": "2026-06-05 20:59:45",
+          "drawInterval": null,
+          "drawTimeText": "每日 21:00:15",
+          "scheduleText": "每日 21:00:15",
+          "latestResult": ["1", "2", "3"],
+          "resultStyle": "balls",
+          "resultCount": 3,
+          "groupBuyEnabled": false,
+          "latestDraw": {
+            "issue": "20260605001",
+            "resultNumbers": ["1", "2", "3"],
+            "openedAt": "2026-06-05 21:00:15"
+          }
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "todayWinnerCount": 0,
+    "totalPayoutDisplay": "¥0"
+  }
+}
+```
+
+`groups` 必须只包含 `saleEnabled=true` 的彩种；停售彩种不能出现在首页推荐区、分组区或跑马灯中。分组顺序跟随后台彩种分类配置；分类下没有销售中彩种时不返回空组。若彩种引用了不存在的分类，必须进入以分类代码命名的兜底组。
+
+每个彩种卡片必须优先返回当前可售或封盘待开奖期号作为 `issue/nextDrawTime/saleStopTime/status`，并单独返回最近已开奖期号的 `latestResult/latestDraw`。首页倒计时由前端基于 `saleStopTime` 或 `nextDrawTime` 本地计算，不要后端返回剩余秒数。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 没有销售中彩种 | `groups=[]`、`featuredSection.lotteries=[]`，接口仍返回成功 |
+| 销售中彩种没有期号 | 彩种仍返回，`status=waiting`、`latestResult=[]` |
+| 销售中彩种没有开奖历史 | 彩种仍返回，`latestDraw=null`、`latestResult=[]` |
+| 彩种已停售 | 不出现在任何首页彩种集合中 |
+| 开奖号以英文逗号保存 | 前端收到 `latestResult` 数组，展示时不再二次猜分隔符 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：首页接口一次返回所有销售中彩种分组，手机端按 `groups` 动态渲染全部分类。
+- Good：首页推荐区可以复用销售中高频彩种，但完整彩种入口仍以 `groups` 为准。
+- Bad：前端只渲染 `groups[0]` 和 `groups[1]`；分类增多后会漏掉彩种。
+- Bad：接口返回 `snake_case` 字段，例如 `latest_result`；这会和当前用户端 API 类型冲突。
+- Bad：停售彩种仍出现在首页，只依赖投注页再拦截；这会误导用户进入不可售彩种。
+
+### 6. 必要测试
+
+- 后端需要覆盖只返回销售中彩种、按分类分组、带最近开奖号码。
+- OpenAPI 测试需要覆盖 `/lottery/home` 路径。
+- 手机端需要运行 `npm run build`，确认 `camelCase` 首页字段和组件消费一致。
+
+---
+
 ## 场景：后台财务分页与提现审核接口
 
 ### 1. 范围 / 触发条件

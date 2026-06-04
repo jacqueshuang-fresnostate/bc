@@ -980,6 +980,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/lottery/home",
+        "用户端内容",
+        "手机端首页彩种",
+        "返回所有销售中的彩种，按后台彩种分类分组，并附带当前期号和最近开奖号码。",
+        AuthMode::None,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
         "/user/mobile/advertisements",
         "用户端内容",
         "手机端轮播广告",
@@ -1558,6 +1567,7 @@ mod tests {
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/approve"]["post"].is_object());
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/reject"]["post"].is_object());
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
+        assert!(document["paths"]["/lottery/home"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/advertisements"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/site-config"]["get"].is_object());
         assert!(document["paths"]["/user/register-options"]["get"].is_object());

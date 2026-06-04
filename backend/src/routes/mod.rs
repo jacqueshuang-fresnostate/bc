@@ -2,6 +2,7 @@
 
 mod admin;
 mod health;
+mod lottery;
 mod openapi;
 mod user;
 
@@ -15,5 +16,6 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(health::router())
         .merge(openapi::router())
         .nest("/admin", admin::router(state.clone()))
+        .nest("/lottery", lottery::router())
         .nest("/user", user::router(state))
 }

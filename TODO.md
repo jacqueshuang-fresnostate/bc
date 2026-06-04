@@ -1,5 +1,27 @@
 # TODO
 
+## 2026-06-05 00:33 HKT 手机端首页销售中彩种分组接口
+
+- 完成任务：接好手机端首页彩种接口，返回所有销售中的彩种、分类分组和最近开奖号码。
+- 解决问题：
+  - 手机端首页原先请求 `/api/lottery/home`，但本项目后端没有实际挂载该接口。
+  - 首页分组展示只取固定前两个分组，无法展示所有销售中的彩种分类。
+  - 首页卡片缺少从本地后端聚合出的最近开奖号码，仍依赖旧接口字段假设。
+- 具体实现：
+  - 后端新增 `routes/lottery.rs`，挂载 `GET /api/lottery/home`。
+  - 后端新增 `services/mobile_home.rs`，统一组合彩种、分类、当前期号和最近已开奖期号。
+  - `domain/mobile.rs` 新增手机端首页响应结构，字段统一通过 `camelCase` 输出。
+  - OpenAPI 文档新增 `/lottery/home`，核心路径测试同步覆盖。
+  - 手机端新增 `mobile/src/api/lottery.ts`，首页使用类型化 `fetchLotteryHomepage()`。
+  - `HomeView.vue` 改为动态渲染接口返回的全部分类分组。
+  - `HomeDrawCard.vue` 和 `useHomepageDrawUpdates.ts` 切换为 `camelCase` 首页字段。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml mobile_home -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture` 通过。
+  - `cd mobile && npm run build` 通过。
+
 ## 2026-06-04 23:36 HKT 手机端提现申请记录接口对接
 
 - 完成任务：把手机端提现页接入用户提现申请记录接口。
