@@ -54,6 +54,14 @@ impl WithdrawalRepository {
             .list_for_user(&user_id))
     }
 
+    /// 返回全部提现申请列表，供后台财务管理审核。
+    pub async fn list(&self) -> ApiResult<Vec<WithdrawalOrderSummary>> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))
+            .map(|store| store.list())
+    }
+
     /// 创建提现申请，并在创建成功前冻结对应用户可用余额。
     pub async fn create_order(
         &self,
@@ -86,6 +94,66 @@ impl WithdrawalRepository {
         Ok(result)
     }
 
+    /// 审核通过提现申请，扣减冻结余额并把申请标记为已通过。
+    pub async fn approve_order(
+        &self,
+        id: &str,
+        finance: &FinanceRepository,
+    ) -> ApiResult<WithdrawalOrderSummary> {
+        let order = {
+            let store = self
+                .inner
+                .read()
+                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
+            store.reviewable_order(id, WithdrawalOrderStatus::Approved)?
+        };
+
+        finance
+            .approve_withdrawal(&order.user_id, order.amount_minor, &order.id)
+            .await?;
+
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
+            let result = store.mark_reviewed(id, WithdrawalOrderStatus::Approved)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 审核驳回提现申请，解冻余额并把申请标记为已驳回。
+    pub async fn reject_order(
+        &self,
+        id: &str,
+        finance: &FinanceRepository,
+    ) -> ApiResult<WithdrawalOrderSummary> {
+        let order = {
+            let store = self
+                .inner
+                .read()
+                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
+            store.reviewable_order(id, WithdrawalOrderStatus::Rejected)?
+        };
+
+        finance
+            .reject_withdrawal(&order.user_id, order.amount_minor, &order.id)
+            .await?;
+
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
+            let result = store.mark_reviewed(id, WithdrawalOrderStatus::Rejected)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     async fn persist(&self, store: &WithdrawalStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_withdrawal_store(persistence, store).await?;
@@ -101,6 +169,11 @@ struct WithdrawalStore {
 }
 
 impl WithdrawalStore {
+    /// 返回全部提现申请列表，最新申请排在最前面。
+    fn list(&self) -> Vec<WithdrawalOrderSummary> {
+        self.orders.values().cloned().rev().collect()
+    }
+
     /// 返回某个用户自己的提现申请列表。
     fn list_for_user(&self, user_id: &str) -> Vec<WithdrawalOrderSummary> {
         self.orders
@@ -154,6 +227,58 @@ impl WithdrawalStore {
         }
         self.orders.insert(order.id.clone(), order.clone());
         Ok(order)
+    }
+
+    /// 返回可审核的提现申请；重复点击同一审核结果视为幂等。
+    fn reviewable_order(
+        &self,
+        id: &str,
+        target_status: WithdrawalOrderStatus,
+    ) -> ApiResult<WithdrawalOrderSummary> {
+        let id = required_trimmed(id, "withdrawal order id")?;
+        let order = self
+            .orders
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound(format!("withdrawal order `{id}` not found")))?;
+        match (&order.status, &target_status) {
+            (WithdrawalOrderStatus::Pending, _)
+            | (WithdrawalOrderStatus::Approved, WithdrawalOrderStatus::Approved)
+            | (WithdrawalOrderStatus::Rejected, WithdrawalOrderStatus::Rejected) => Ok(order),
+            (WithdrawalOrderStatus::Approved, WithdrawalOrderStatus::Rejected) => {
+                Err(ApiError::BadRequest("已通过的提现申请不能驳回".to_string()))
+            }
+            (WithdrawalOrderStatus::Rejected, WithdrawalOrderStatus::Approved) => {
+                Err(ApiError::BadRequest("已驳回的提现申请不能通过".to_string()))
+            }
+            (WithdrawalOrderStatus::Cancelled, _) => {
+                Err(ApiError::BadRequest("已取消的提现申请不能审核".to_string()))
+            }
+            (_, _) => Err(ApiError::BadRequest("提现审核状态不支持".to_string())),
+        }
+    }
+
+    /// 把提现申请标记为目标审核状态，并记录审核时间。
+    fn mark_reviewed(
+        &mut self,
+        id: &str,
+        target_status: WithdrawalOrderStatus,
+    ) -> ApiResult<WithdrawalOrderSummary> {
+        let id = required_trimmed(id, "withdrawal order id")?;
+        let order = self
+            .orders
+            .get_mut(&id)
+            .ok_or_else(|| ApiError::NotFound(format!("withdrawal order `{id}` not found")))?;
+        if order.status != target_status {
+            if order.status != WithdrawalOrderStatus::Pending {
+                return Err(ApiError::BadRequest("提现申请当前状态不能审核".to_string()));
+            }
+            order.status = target_status;
+        }
+        if order.reviewed_at.is_none() {
+            order.reviewed_at = Some(current_time_label());
+        }
+        Ok(order.clone())
     }
 }
 
@@ -353,6 +478,42 @@ mod tests {
             .expect_err("foreign withdrawal method must be rejected");
 
         assert!(error.to_string().contains("提现方式不属于当前用户"));
+    }
+
+    #[test]
+    /// 后台审核提现申请会更新状态和审核时间，并拒绝反向审核。
+    fn withdrawal_store_marks_reviewed_status() {
+        let mut store = WithdrawalStore::default();
+        let user = sample_user();
+        let method = sample_method(&user.id);
+        let order = store
+            .draft_order(
+                &user,
+                &method,
+                CreateWithdrawalOrderRequest {
+                    method_id: method.id.clone(),
+                    amount_minor: 2_000,
+                },
+            )
+            .expect("withdrawal order can be drafted");
+        let inserted = store
+            .insert_order(order)
+            .expect("withdrawal order can be inserted");
+
+        let reviewable = store
+            .reviewable_order(&inserted.id, WithdrawalOrderStatus::Approved)
+            .expect("pending order can be approved");
+        let approved = store
+            .mark_reviewed(&reviewable.id, WithdrawalOrderStatus::Approved)
+            .expect("order can be marked approved");
+
+        assert_eq!(approved.status, WithdrawalOrderStatus::Approved);
+        assert!(approved.reviewed_at.is_some());
+        assert!(store
+            .reviewable_order(&approved.id, WithdrawalOrderStatus::Rejected)
+            .expect_err("approved order cannot be rejected")
+            .to_string()
+            .contains("不能驳回"));
     }
 
     fn sample_user() -> UserSummary {

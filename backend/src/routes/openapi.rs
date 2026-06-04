@@ -359,10 +359,19 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/admin/finance-overview",
+        "财务管理",
+        "财务总览",
+        "返回平台总余额、冻结提现金额、今日充值和今日派奖指标。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
         "/admin/financial-accounts",
         "财务管理",
         "资金账户列表",
-        "返回所有用户资金账户摘要。",
+        "分页返回用户资金账户摘要，并包含用户 ID 与用户名。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -371,7 +380,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/ledger-entries",
         "财务管理",
         "资金流水列表",
-        "返回后台可查看的资金流水。",
+        "分页返回后台可查看的资金流水。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -380,7 +389,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/recharge-orders",
         "财务管理",
         "充值订单列表",
-        "返回彩虹易支付和客服直充的充值订单。",
+        "分页返回彩虹易支付和客服直充的充值订单。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -392,6 +401,33 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "后台确认客服直充订单已收款，写入充值流水并增加用户余额。",
         AuthMode::Admin,
         RequestBodyKind::Json,
+    ),
+    doc(
+        "get",
+        "/admin/withdrawal-orders",
+        "财务管理",
+        "提现申请列表",
+        "分页返回用户提现申请，供后台财务审核。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/admin/withdrawal-orders/{id}/approve",
+        "财务管理",
+        "通过提现申请",
+        "后台通过提现申请，扣减冻结余额并写入提现打款流水。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/admin/withdrawal-orders/{id}/reject",
+        "财务管理",
+        "驳回提现申请",
+        "后台驳回提现申请，解冻余额并写入提现驳回解冻流水。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
     ),
     doc(
         "post",
@@ -1515,8 +1551,12 @@ mod tests {
         assert!(document["paths"]["/health"]["get"].is_object());
         assert!(document["paths"]["/admin/users"]["get"].is_object());
         assert!(document["paths"]["/admin/advertisements"]["get"].is_object());
+        assert!(document["paths"]["/admin/finance-overview"]["get"].is_object());
         assert!(document["paths"]["/admin/recharge-orders"]["get"].is_object());
         assert!(document["paths"]["/admin/recharge-orders/{id}/confirm"]["post"].is_object());
+        assert!(document["paths"]["/admin/withdrawal-orders"]["get"].is_object());
+        assert!(document["paths"]["/admin/withdrawal-orders/{id}/approve"]["post"].is_object());
+        assert!(document["paths"]["/admin/withdrawal-orders/{id}/reject"]["post"].is_object());
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
         assert!(document["paths"]["/user/mobile/advertisements"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/site-config"]["get"].is_object());

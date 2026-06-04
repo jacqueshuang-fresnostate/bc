@@ -1,5 +1,27 @@
 # TODO
 
+## 2026-06-04 23:09 HKT 财务管理分页与提现管理
+
+- 完成任务：完善后台财务管理，给资金账户、充值订单、资金流水增加分页，并新增提现管理和提现审核能力。
+- 解决问题：
+  - 资金账户只显示用户 ID，没有用户名，财务人员不方便识别用户。
+  - 资金账户、充值订单、资金流水一次性展示全量数据，数据增多后页面扫描和加载都会变差。
+  - 用户端已经能提交提现申请，但后台没有提现管理入口处理申请。
+- 具体实现：
+  - 后端新增 `FinancePage<T>` 分页响应和 `AdminFinancialAccountSummary`，资金账户分页接口返回用户名。
+  - 新增 `GET /api/admin/finance-overview`，财务页顶部指标从后端总览读取，避免被当前页数据影响。
+  - `GET /api/admin/financial-accounts`、`GET /api/admin/recharge-orders`、`GET /api/admin/ledger-entries`、`GET /api/admin/withdrawal-orders` 支持 `page/pageSize`。
+  - 新增提现审核接口 `POST /api/admin/withdrawal-orders/{id}/approve` 和 `POST /api/admin/withdrawal-orders/{id}/reject`。
+  - 提现通过写入 `withdrawalPayout` 流水并扣减冻结余额；提现驳回写入 `withdrawalReject` 流水并把冻结余额退回可用余额。
+  - 管理后台财务页新增分页控件和“提现管理”表格，待审核提现可直接通过或驳回。
+  - OpenAPI、Trellis API 契约和数据库规范已同步新增财务分页与提现审核场景。
+- 验证记录：
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml finance::tests -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml withdrawal::tests -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture` 通过。
+  - `cd admin && npm run build` 通过；Vite 仍提示既有 chunk 体积超过 500kB。
+
 ## 2026-06-04 22:34 HKT 手机端安全中心 Tabs 分类
 
 - 完成任务：把手机端“安全中心”的绑定邮箱和修改密码拆分为两个标签页。

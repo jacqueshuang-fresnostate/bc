@@ -216,6 +216,44 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 审核通过提现申请时扣减冻结余额，并按提现单号保持幂等。
+    pub async fn approve_withdrawal(
+        &self,
+        user_id: &str,
+        amount_minor: i64,
+        withdrawal_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.approve_withdrawal(user_id, amount_minor, withdrawal_order_id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 驳回提现申请时把冻结余额退回可用余额，并按提现单号保持幂等。
+    pub async fn reject_withdrawal(
+        &self,
+        user_id: &str,
+        amount_minor: i64,
+        withdrawal_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.reject_withdrawal(user_id, amount_minor, withdrawal_order_id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     async fn persist(&self, store: &FinanceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_finance_store(persistence, store).await?;
@@ -756,6 +794,44 @@ impl FinanceStore {
         Ok(entry)
     }
 
+    /// 提现审核通过时扣减冻结余额，表示平台已经完成打款。
+    fn approve_withdrawal(
+        &mut self,
+        user_id: &str,
+        amount_minor: i64,
+        withdrawal_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        self.apply_frozen_delta(
+            user_id,
+            amount_minor,
+            withdrawal_order_id,
+            LedgerEntryKind::WithdrawalPayout,
+            amount_minor.checked_neg().ok_or_else(|| {
+                ApiError::BadRequest("withdrawal amount is too large".to_string())
+            })?,
+            format!("提现打款完成：{withdrawal_order_id}"),
+            false,
+        )
+    }
+
+    /// 提现审核驳回时解冻余额，恢复到用户可用余额。
+    fn reject_withdrawal(
+        &mut self,
+        user_id: &str,
+        amount_minor: i64,
+        withdrawal_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        self.apply_frozen_delta(
+            user_id,
+            amount_minor,
+            withdrawal_order_id,
+            LedgerEntryKind::WithdrawalReject,
+            amount_minor,
+            format!("提现驳回解冻：{withdrawal_order_id}"),
+            true,
+        )
+    }
+
     /// 处理 account 的具体内部流程。
     #[cfg(test)]
     fn account(&self, user_id: &str) -> ApiResult<&FinancialAccountSummary> {
@@ -823,6 +899,73 @@ impl FinanceStore {
                 &entry.kind == kind && entry.reference_id.as_deref() == Some(reference_id)
             })
             .cloned()
+    }
+
+    /// 按提现审核结果调整冻结余额，驳回时同步退回用户可用余额。
+    fn apply_frozen_delta(
+        &mut self,
+        user_id: &str,
+        amount_minor: i64,
+        withdrawal_order_id: &str,
+        kind: LedgerEntryKind,
+        ledger_amount_minor: i64,
+        description: String,
+        restore_available: bool,
+    ) -> ApiResult<LedgerEntry> {
+        let user_id = user_id.trim();
+        let withdrawal_order_id = withdrawal_order_id.trim();
+        if amount_minor <= 0 {
+            return Err(ApiError::BadRequest(
+                "withdrawal amount must be greater than zero".to_string(),
+            ));
+        }
+        if withdrawal_order_id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "withdrawal order id is required".to_string(),
+            ));
+        }
+        if let Some(entry) = self.reference_entry(&kind, withdrawal_order_id) {
+            return Ok(entry);
+        }
+
+        let account = self.accounts.get_mut(user_id).ok_or_else(|| {
+            ApiError::NotFound(format!("financial account `{user_id}` not found"))
+        })?;
+        if account.frozen_balance_minor < amount_minor {
+            return Err(ApiError::BadRequest(
+                "frozen balance is insufficient".to_string(),
+            ));
+        }
+
+        account.frozen_balance_minor = account
+            .frozen_balance_minor
+            .checked_sub(amount_minor)
+            .ok_or_else(|| ApiError::BadRequest("balance amount is too large".to_string()))?;
+        if restore_available {
+            account.available_balance_minor = account
+                .available_balance_minor
+                .checked_add(amount_minor)
+                .ok_or_else(|| ApiError::BadRequest("balance amount is too large".to_string()))?;
+        }
+        let balance_after_minor = account
+            .available_balance_minor
+            .checked_add(account.frozen_balance_minor)
+            .ok_or_else(|| ApiError::BadRequest("balance amount is too large".to_string()))?;
+
+        self.next_sequence += 1;
+        let entry = LedgerEntry {
+            id: format!("L{:012}", self.next_sequence),
+            user_id: user_id.to_string(),
+            kind,
+            amount_minor: ledger_amount_minor,
+            balance_after_minor,
+            reference_id: Some(withdrawal_order_id.to_string()),
+            description,
+            created_at: current_timestamp_label(),
+        };
+        self.ledger_entries.push(entry.clone());
+
+        Ok(entry)
     }
 }
 
@@ -998,6 +1141,52 @@ mod tests {
         assert_eq!(account.available_balance_minor, 10_500);
         assert_eq!(account.frozen_balance_minor, 3_500);
         assert_eq!(overview.pending_withdraw_minor, 3_500);
+    }
+
+    #[test]
+    /// 提现审核通过会扣减冻结余额，并生成提现打款流水。
+    fn store_approves_withdrawal_from_frozen_balance_once() {
+        let mut store = FinanceStore::seeded();
+        store
+            .freeze_withdrawal("U10001", 1_500, "W000000000001")
+            .expect("withdrawal can freeze available balance");
+
+        let entry = store
+            .approve_withdrawal("U10001", 1_500, "W000000000001")
+            .expect("withdrawal can be approved");
+        let repeated = store
+            .approve_withdrawal("U10001", 1_500, "W000000000001")
+            .expect("withdrawal approval is idempotent");
+        let account = store.account("U10001").expect("account exists");
+
+        assert_eq!(entry.id, repeated.id);
+        assert_eq!(entry.kind, LedgerEntryKind::WithdrawalPayout);
+        assert_eq!(entry.amount_minor, -1_500);
+        assert_eq!(account.available_balance_minor, 10_500);
+        assert_eq!(account.frozen_balance_minor, 2_000);
+    }
+
+    #[test]
+    /// 提现审核驳回会把冻结余额退回可用余额，并生成解冻流水。
+    fn store_rejects_withdrawal_and_restores_available_balance_once() {
+        let mut store = FinanceStore::seeded();
+        store
+            .freeze_withdrawal("U10001", 1_500, "W000000000001")
+            .expect("withdrawal can freeze available balance");
+
+        let entry = store
+            .reject_withdrawal("U10001", 1_500, "W000000000001")
+            .expect("withdrawal can be rejected");
+        let repeated = store
+            .reject_withdrawal("U10001", 1_500, "W000000000001")
+            .expect("withdrawal rejection is idempotent");
+        let account = store.account("U10001").expect("account exists");
+
+        assert_eq!(entry.id, repeated.id);
+        assert_eq!(entry.kind, LedgerEntryKind::WithdrawalReject);
+        assert_eq!(entry.amount_minor, 1_500);
+        assert_eq!(account.available_balance_minor, 12_000);
+        assert_eq!(account.frozen_balance_minor, 2_000);
     }
 
     #[test]

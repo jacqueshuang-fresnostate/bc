@@ -1,0 +1,1 @@
+COMMENT ON COLUMN ledger_entries.kind IS '流水类型：manualAdjustment 手动调账，orderDebit 投注扣款，orderRefund 取消退款，payoutCredit 派奖入账，rechargeCredit 充值入账，withdrawalFreeze 提现冻结，withdrawalPayout 提现打款，withdrawalReject 提现驳回解冻';

@@ -21,6 +21,25 @@ pub struct FinancialAccountSummary {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AdminFinancialAccountSummary {
+    pub user_id: String,
+    pub username: Option<String>,
+    pub available_balance_minor: i64,
+    pub frozen_balance_minor: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FinancePage<T> {
+    pub items: Vec<T>,
+    pub total_count: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub total_pages: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum LedgerEntryKind {
     ManualAdjustment,
     OrderDebit,
@@ -28,6 +47,8 @@ pub enum LedgerEntryKind {
     PayoutCredit,
     RechargeCredit,
     WithdrawalFreeze,
+    WithdrawalPayout,
+    WithdrawalReject,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

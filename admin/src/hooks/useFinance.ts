@@ -1,22 +1,48 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  approveWithdrawalOrder,
   confirmRechargeOrder,
   createManualBalanceAdjustment,
+  fetchFinanceOverview,
   fetchFinancialAccounts,
   fetchLedgerEntries,
   fetchRechargeOrders,
+  fetchWithdrawalOrders,
+  rejectWithdrawalOrder,
 } from '../api/client';
 import type {
-  FinancialAccountSummary,
+  AdminFinancialAccountSummary,
+  FinanceOverview,
+  FinancePage,
+  FinancePageQuery,
   LedgerEntry,
   ManualBalanceAdjustmentRequest,
   RechargeOrderSummary,
+  WithdrawalOrderSummary,
 } from '../types/finance';
 
-export function useFinance() {
-  const [accounts, setAccounts] = useState<FinancialAccountSummary[]>([]);
-  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
-  const [rechargeOrders, setRechargeOrders] = useState<RechargeOrderSummary[]>([]);
+interface UseFinanceOptions {
+  accountQuery: FinancePageQuery;
+  ledgerQuery: FinancePageQuery;
+  rechargeQuery: FinancePageQuery;
+  withdrawalQuery: FinancePageQuery;
+}
+
+export function useFinance({
+  accountQuery,
+  ledgerQuery,
+  rechargeQuery,
+  withdrawalQuery,
+}: UseFinanceOptions) {
+  const [overview, setOverview] = useState<FinanceOverview | null>(null);
+  const [accounts, setAccounts] = useState<FinancePage<AdminFinancialAccountSummary>>(
+    emptyPage,
+  );
+  const [ledgerEntries, setLedgerEntries] = useState<FinancePage<LedgerEntry>>(emptyPage);
+  const [rechargeOrders, setRechargeOrders] =
+    useState<FinancePage<RechargeOrderSummary>>(emptyPage);
+  const [withdrawalOrders, setWithdrawalOrders] =
+    useState<FinancePage<WithdrawalOrderSummary>>(emptyPage);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,15 +59,27 @@ export function useFinance() {
     setError(null);
 
     Promise.all([
-      fetchFinancialAccounts(controller.signal),
-      fetchLedgerEntries(controller.signal),
-      fetchRechargeOrders(controller.signal),
+      fetchFinanceOverview(controller.signal),
+      fetchFinancialAccounts(controller.signal, accountQuery),
+      fetchLedgerEntries(controller.signal, ledgerQuery),
+      fetchRechargeOrders(controller.signal, rechargeQuery),
+      fetchWithdrawalOrders(controller.signal, withdrawalQuery),
     ])
-      .then(([nextAccounts, nextEntries, nextRechargeOrders]) => {
-        setAccounts(nextAccounts);
-        setLedgerEntries(nextEntries);
-        setRechargeOrders(nextRechargeOrders);
-      })
+      .then(
+        ([
+          nextOverview,
+          nextAccounts,
+          nextEntries,
+          nextRechargeOrders,
+          nextWithdrawalOrders,
+        ]) => {
+          setOverview(nextOverview);
+          setAccounts(nextAccounts);
+          setLedgerEntries(nextEntries);
+          setRechargeOrders(nextRechargeOrders);
+          setWithdrawalOrders(nextWithdrawalOrders);
+        },
+      )
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) {
           setError(errorMessage(requestError));
@@ -56,63 +94,114 @@ export function useFinance() {
     return () => {
       controller.abort();
     };
-  }, [refreshToken]);
+  }, [
+    accountQuery.page,
+    accountQuery.pageSize,
+    ledgerQuery.page,
+    ledgerQuery.pageSize,
+    rechargeQuery.page,
+    rechargeQuery.pageSize,
+    refreshToken,
+    withdrawalQuery.page,
+    withdrawalQuery.pageSize,
+  ]);
 
-  const adjustBalance = useCallback(async (payload: ManualBalanceAdjustmentRequest) => {
-    setSaving(true);
-    setError(null);
-    try {
-      const entry = await createManualBalanceAdjustment(payload);
-      setLedgerEntries((current) => [entry, ...current]);
-      const [nextAccounts, nextRechargeOrders] = await Promise.all([
-        fetchFinancialAccounts(),
-        fetchRechargeOrders(),
-      ]);
-      setAccounts(nextAccounts);
-      setRechargeOrders(nextRechargeOrders);
-      return entry;
-    } catch (requestError) {
-      setError(errorMessage(requestError));
-      throw requestError;
-    } finally {
-      setSaving(false);
-    }
-  }, []);
+  const adjustBalance = useCallback(
+    async (payload: ManualBalanceAdjustmentRequest) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const entry = await createManualBalanceAdjustment(payload);
+        refresh();
+        return entry;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refresh],
+  );
 
-  const confirmRecharge = useCallback(async (id: string) => {
-    setSaving(true);
-    setError(null);
-    try {
-      const order = await confirmRechargeOrder(id);
-      const [nextAccounts, nextEntries, nextRechargeOrders] = await Promise.all([
-        fetchFinancialAccounts(),
-        fetchLedgerEntries(),
-        fetchRechargeOrders(),
-      ]);
-      setAccounts(nextAccounts);
-      setLedgerEntries(nextEntries);
-      setRechargeOrders(nextRechargeOrders);
-      return order;
-    } catch (requestError) {
-      setError(errorMessage(requestError));
-      throw requestError;
-    } finally {
-      setSaving(false);
-    }
-  }, []);
+  const confirmRecharge = useCallback(
+    async (id: string) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const order = await confirmRechargeOrder(id);
+        refresh();
+        return order;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refresh],
+  );
+
+  const approveWithdrawal = useCallback(
+    async (id: string) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const order = await approveWithdrawalOrder(id);
+        refresh();
+        return order;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refresh],
+  );
+
+  const rejectWithdrawal = useCallback(
+    async (id: string) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const order = await rejectWithdrawalOrder(id);
+        refresh();
+        return order;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refresh],
+  );
 
   return {
     accounts,
     adjustBalance,
+    approveWithdrawal,
     confirmRecharge,
     error,
     ledgerEntries,
     loading,
+    overview,
     rechargeOrders,
     refresh,
+    rejectWithdrawal,
     saving,
+    withdrawalOrders,
   };
 }
+
+const emptyPage = {
+  items: [],
+  page: 1,
+  pageSize: 20,
+  totalCount: 0,
+  totalPages: 0,
+};
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : '接口请求失败';

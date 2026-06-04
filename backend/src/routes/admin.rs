@@ -24,7 +24,10 @@ use crate::{
             GenerateDrawIssueRequest, GenerateDrawIssuesRequest, LotteryDrawControl,
             SaveLotteryDrawControlRequest,
         },
-        finance::{FinancialAccountSummary, LedgerEntry, ManualBalanceAdjustmentRequest},
+        finance::{
+            AdminFinancialAccountSummary, FinanceOverview, FinancePage, FinancialAccountSummary,
+            LedgerEntry, ManualBalanceAdjustmentRequest,
+        },
         group_buy::{
             AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyPlan,
             GroupBuyPlanSummary, UpdateGroupBuyPlanRequest,
@@ -48,6 +51,7 @@ use crate::{
             AdminPasswordResetRequest, AdminSaveRequest, AdminStatusRequest, AdminSummary,
             RegistrationConfig, UserStatusRequest, UserSummary,
         },
+        withdrawal::WithdrawalOrderSummary,
     },
     error::{ApiError, ApiResult},
     response::ApiEnvelope,
@@ -80,12 +84,22 @@ const IMAGE_BED_RESULT_URL_FIELD_DEFAULT: &str = "links.download";
 pub fn router(state: AppState) -> Router<AppState> {
     let protected_routes = Router::new()
         .route("/dashboard", get(get_dashboard_summary))
+        .route("/finance-overview", get(get_finance_overview))
         .route("/financial-accounts", get(list_financial_accounts))
         .route("/ledger-entries", get(list_ledger_entries))
         .route("/recharge-orders", get(list_recharge_orders))
         .route(
             "/recharge-orders/{id}/confirm",
             post(confirm_recharge_order),
+        )
+        .route("/withdrawal-orders", get(list_withdrawal_orders))
+        .route(
+            "/withdrawal-orders/{id}/approve",
+            post(approve_withdrawal_order),
+        )
+        .route(
+            "/withdrawal-orders/{id}/reject",
+            post(reject_withdrawal_order),
         )
         .route("/financial-adjustments", post(manual_balance_adjustment))
         .route(
@@ -296,6 +310,7 @@ fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
     if path.starts_with("financial-")
         || path.starts_with("ledger-entries")
         || path.starts_with("recharge-orders")
+        || path.starts_with("withdrawal-orders")
         || path.starts_with("finance")
     {
         return Some(PermissionScope::Finance);
@@ -508,6 +523,44 @@ struct DrawIssueListQuery {
     lottery_id: Option<String>,
     page: Option<usize>,
     page_size: Option<usize>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FinancePageQuery {
+    page: Option<usize>,
+    page_size: Option<usize>,
+}
+
+fn page_items<T>(items: Vec<T>, query: FinancePageQuery) -> FinancePage<T> {
+    let total_count = items.len();
+    let (page, page_size, start, end) = if query.page.is_none() && query.page_size.is_none() {
+        (1usize, total_count.max(1), 0usize, total_count)
+    } else {
+        let page_size = query.page_size.unwrap_or(20).max(1);
+        let max_page = if total_count == 0 {
+            1
+        } else {
+            total_count.div_ceil(page_size)
+        };
+        let page = query.page.unwrap_or(1).max(1).min(max_page);
+        let start = (page - 1).saturating_mul(page_size);
+        let end = (start + page_size).min(total_count);
+        (page, page_size, start, end)
+    };
+    let total_pages = if total_count == 0 {
+        0
+    } else {
+        total_count.div_ceil(page_size)
+    };
+
+    FinancePage {
+        items: items.into_iter().skip(start).take(end - start).collect(),
+        page,
+        page_size,
+        total_count,
+        total_pages,
+    }
 }
 
 async fn get_draw_issue(
@@ -1291,28 +1344,62 @@ async fn set_robot_status(
     Ok(Json(ApiEnvelope::success(robot)))
 }
 
+async fn get_finance_overview(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<FinanceOverview>>> {
+    let overview = state.finance.overview().await?;
+
+    Ok(Json(ApiEnvelope::success(overview)))
+}
+
 async fn list_financial_accounts(
     State(state): State<AppState>,
-) -> ApiResult<Json<ApiEnvelope<Vec<FinancialAccountSummary>>>> {
+    Query(query): Query<FinancePageQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminFinancialAccountSummary>>>> {
     let accounts = state.finance.accounts().await?;
+    let users = state.access.users().await?;
+    let usernames: BTreeMap<String, String> = users
+        .into_iter()
+        .map(|user| (user.id, user.username))
+        .collect();
+    let accounts = accounts
+        .into_iter()
+        .map(|account| AdminFinancialAccountSummary {
+            username: usernames.get(&account.user_id).cloned(),
+            user_id: account.user_id,
+            available_balance_minor: account.available_balance_minor,
+            frozen_balance_minor: account.frozen_balance_minor,
+        })
+        .collect::<Vec<_>>();
 
-    Ok(Json(ApiEnvelope::success(accounts)))
+    Ok(Json(ApiEnvelope::success(page_items(accounts, query))))
 }
 
 async fn list_ledger_entries(
     State(state): State<AppState>,
-) -> ApiResult<Json<ApiEnvelope<Vec<LedgerEntry>>>> {
+    Query(query): Query<FinancePageQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<LedgerEntry>>>> {
     let entries = state.finance.ledger_entries().await?;
 
-    Ok(Json(ApiEnvelope::success(entries)))
+    Ok(Json(ApiEnvelope::success(page_items(entries, query))))
 }
 
 async fn list_recharge_orders(
     State(state): State<AppState>,
-) -> ApiResult<Json<ApiEnvelope<Vec<RechargeOrderSummary>>>> {
+    Query(query): Query<FinancePageQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<RechargeOrderSummary>>>> {
     let orders = state.recharges.list().await?;
 
-    Ok(Json(ApiEnvelope::success(orders)))
+    Ok(Json(ApiEnvelope::success(page_items(orders, query))))
+}
+
+async fn list_withdrawal_orders(
+    State(state): State<AppState>,
+    Query(query): Query<FinancePageQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<WithdrawalOrderSummary>>>> {
+    let orders = state.withdrawals.list().await?;
+
+    Ok(Json(ApiEnvelope::success(page_items(orders, query))))
 }
 
 async fn confirm_recharge_order(
@@ -1324,6 +1411,24 @@ async fn confirm_recharge_order(
         .recharges
         .confirm_customer_service_order(&id, payload, &state.finance)
         .await?;
+
+    Ok(Json(ApiEnvelope::success(order)))
+}
+
+async fn approve_withdrawal_order(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<WithdrawalOrderSummary>>> {
+    let order = state.withdrawals.approve_order(&id, &state.finance).await?;
+
+    Ok(Json(ApiEnvelope::success(order)))
+}
+
+async fn reject_withdrawal_order(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<WithdrawalOrderSummary>>> {
+    let order = state.withdrawals.reject_order(&id, &state.finance).await?;
 
     Ok(Json(ApiEnvelope::success(order)))
 }

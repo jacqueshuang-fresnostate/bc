@@ -42,11 +42,15 @@ import type {
   SaveLotteryDrawControlRequest,
 } from '../types/draws';
 import type {
-  FinancialAccountSummary,
+  AdminFinancialAccountSummary,
   LedgerEntry,
   ConfirmRechargeOrderRequest,
+  FinanceOverview,
+  FinancePage,
+  FinancePageQuery,
   ManualBalanceAdjustmentRequest,
   RechargeOrderSummary,
+  WithdrawalOrderSummary,
 } from '../types/finance';
 import type {
   AddGroupBuyParticipantRequest,
@@ -156,20 +160,32 @@ export function fetchDashboard(signal?: AbortSignal) {
   return requestJson<DashboardSummary>('/api/admin/dashboard', { signal });
 }
 
-export function fetchFinancialAccounts(signal?: AbortSignal) {
-  return requestJson<FinancialAccountSummary[]>('/api/admin/financial-accounts', {
-    signal,
-  });
+export function fetchFinanceOverview(signal?: AbortSignal) {
+  return requestJson<FinanceOverview>('/api/admin/finance-overview', { signal });
 }
 
-export function fetchLedgerEntries(signal?: AbortSignal) {
-  return requestJson<LedgerEntry[]>('/api/admin/ledger-entries', { signal });
+export function fetchFinancialAccounts(
+  signal?: AbortSignal,
+  query?: FinancePageQuery,
+) {
+  return requestJson<FinancePage<AdminFinancialAccountSummary>>(
+    financialPagePath('/api/admin/financial-accounts', query),
+    { signal },
+  );
 }
 
-export function fetchRechargeOrders(signal?: AbortSignal) {
-  return requestJson<RechargeOrderSummary[]>('/api/admin/recharge-orders', {
-    signal,
-  });
+export function fetchLedgerEntries(signal?: AbortSignal, query?: FinancePageQuery) {
+  return requestJson<FinancePage<LedgerEntry>>(
+    financialPagePath('/api/admin/ledger-entries', query),
+    { signal },
+  );
+}
+
+export function fetchRechargeOrders(signal?: AbortSignal, query?: FinancePageQuery) {
+  return requestJson<FinancePage<RechargeOrderSummary>>(
+    financialPagePath('/api/admin/recharge-orders', query),
+    { signal },
+  );
 }
 
 export function confirmRechargeOrder(
@@ -185,11 +201,48 @@ export function confirmRechargeOrder(
   );
 }
 
+export function fetchWithdrawalOrders(signal?: AbortSignal, query?: FinancePageQuery) {
+  return requestJson<FinancePage<WithdrawalOrderSummary>>(
+    financialPagePath('/api/admin/withdrawal-orders', query),
+    { signal },
+  );
+}
+
+export function approveWithdrawalOrder(id: string) {
+  return requestJson<WithdrawalOrderSummary>(
+    `/api/admin/withdrawal-orders/${encodeURIComponent(id)}/approve`,
+    {
+      method: 'POST',
+    },
+  );
+}
+
+export function rejectWithdrawalOrder(id: string) {
+  return requestJson<WithdrawalOrderSummary>(
+    `/api/admin/withdrawal-orders/${encodeURIComponent(id)}/reject`,
+    {
+      method: 'POST',
+    },
+  );
+}
+
 export function createManualBalanceAdjustment(payload: ManualBalanceAdjustmentRequest) {
   return requestJson<LedgerEntry>('/api/admin/financial-adjustments', {
     body: payload,
     method: 'POST',
   });
+}
+
+function financialPagePath(path: string, query?: FinancePageQuery) {
+  const params = new URLSearchParams();
+  if (query?.page && query.page > 0) {
+    params.set('page', String(query.page));
+  }
+  if (query?.pageSize && query.pageSize > 0) {
+    params.set('pageSize', String(query.pageSize));
+  }
+  const queryString = params.toString();
+  return queryString ? `${path}?${queryString}` : path;
 }
 
 export function fetchGroupBuyPlans(signal?: AbortSignal) {

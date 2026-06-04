@@ -439,14 +439,16 @@ COMMENT ON COLUMN recharge_orders.support_conversation_id IS '客服直充绑定
 ### 1. 范围 / 触发条件
 
 - 触发条件：用户端新增提现申请接口，提交申请后需要跨重启保存申请状态和收款方式快照。
-- 范围：`backend/migrations/20260605007000_create_withdrawal_orders.sql`、`WithdrawalRepository`、`FinanceRepository::freeze_withdrawal`。
+- 范围：`backend/migrations/20260605007000_create_withdrawal_orders.sql`、`WithdrawalRepository`、`FinanceRepository::freeze_withdrawal`、`FinanceRepository::approve_withdrawal`、`FinanceRepository::reject_withdrawal`。
 
 ### 2. 签名
 
 - 迁移文件：`backend/migrations/20260605007000_create_withdrawal_orders.sql`
 - 业务表：`withdrawal_orders`
 - 运行时表：`withdrawal_runtime`
-- 资金流水类型：`ledger_entries.kind = withdrawalFreeze`
+- 提现冻结流水类型：`ledger_entries.kind = withdrawalFreeze`
+- 提现打款流水类型：`ledger_entries.kind = withdrawalPayout`
+- 提现驳回解冻流水类型：`ledger_entries.kind = withdrawalReject`
 
 ### 3. 契约
 
@@ -469,6 +471,12 @@ COMMENT ON COLUMN recharge_orders.support_conversation_id IS '客服直充绑定
 
 `withdrawal_runtime` 使用 `key/value` 保存 `next_sequence`。提现申请提交时必须同时冻结财务账户可用余额并写 `withdrawalFreeze` 流水，流水 `reference_id` 使用提现申请 ID。
 
+后台审核提现时必须继续围绕同一个提现申请 ID 保持流水幂等：
+
+- 通过申请：`financial_accounts.frozen_balance_minor -= amountMinor`，写入 `withdrawalPayout` 流水，提现申请状态变为 `approved`，`reviewed_at` 写入审核时间。
+- 驳回申请：`financial_accounts.frozen_balance_minor -= amountMinor`，`financial_accounts.available_balance_minor += amountMinor`，写入 `withdrawalReject` 流水，提现申请状态变为 `rejected`，`reviewed_at` 写入审核时间。
+- 重复点击同一个审核结果必须返回既有流水或既有状态，不重复扣减或解冻。
+
 ### 4. 校验与错误矩阵
 
 | 条件 | 预期行为 |
@@ -479,19 +487,27 @@ COMMENT ON COLUMN recharge_orders.support_conversation_id IS '客服直充绑定
 | 数据库中提现表为空 | 不写种子提现单，返回空列表 |
 | 数据库已有提现申请 | 启动时恢复申请和 `next_sequence`，不覆盖已有申请 |
 | 可用余额不足 | 不创建提现申请，不写冻结流水 |
+| 冻结余额不足 | 不允许通过或驳回提现申请 |
+| 已通过提现申请再次驳回 | HTTP 400，不改变状态和余额 |
+| 已驳回提现申请再次通过 | HTTP 400，不改变状态和余额 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：配置 `DATABASE_URL` 后提交提现申请，重启服务后 `GET /api/user/withdrawals` 仍能看到该申请。
 - Good：提现申请保存收款方式快照，后续用户修改提现方式不会改变历史申请的账号信息。
+- Good：后台通过提现申请后冻结余额扣减，资金流水生成 `withdrawalPayout`，申请状态为 `approved`。
+- Good：后台驳回提现申请后冻结余额退回可用余额，资金流水生成 `withdrawalReject`，申请状态为 `rejected`。
 - Base：未配置 `DATABASE_URL` 时使用内存提现仓储，支持本地功能验证但不跨重启保留。
 - Bad：提现申请只写 `withdrawal_orders`，不冻结 `financial_accounts`；用户仍能继续使用同一笔余额投注或再次提现。
+- Bad：审核提现时只更新申请状态，不处理冻结余额；这会让财务账户和提现状态不一致。
 - Bad：把提现申请塞回 `state_documents`；这违反所有运行时业务表持久化要求。
 
 ### 6. 必要测试
 
 - 无数据库模式需要覆盖提现仓储生成 `pending` 申请。
 - 财务仓储需要覆盖 `withdrawalFreeze` 减少可用余额、增加冻结余额。
+- 财务仓储需要覆盖 `withdrawalPayout` 扣减冻结余额，以及 `withdrawalReject` 解冻回可用余额。
+- 提现仓储需要覆盖审核状态流转和反向审核拒绝。
 - PostgreSQL 冒烟需要确认迁移执行、提现表可读写、冻结余额跨重启恢复。
 - SQL 迁移必须给新增表、字段和约束添加中文注释。
 

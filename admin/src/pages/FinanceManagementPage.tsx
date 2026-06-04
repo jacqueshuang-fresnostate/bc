@@ -1,7 +1,6 @@
-import { Input, Banner, Button, Card, Spin, Tag } from '@douyinfe/semi-ui';
-import { Plus, RefreshCcw, WalletCards } from 'lucide-react';
+import { Input, Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
+import { CheckCircle2, Plus, RefreshCcw, WalletCards, XCircle } from 'lucide-react';
 import {
-  useMemo,
   useState,
   type Dispatch,
   type ReactNode,
@@ -10,10 +9,14 @@ import {
 import { MetricCard } from '../components/MetricCard';
 import { useFinance } from '../hooks/useFinance';
 import type {
+  FinancePage,
+  LedgerEntry,
   LedgerEntryKind,
   ManualBalanceAdjustmentRequest,
   RechargeChannel,
   RechargeOrderStatus,
+  WithdrawalMethodType,
+  WithdrawalOrderStatus,
 } from '../types/finance';
 import { formatMoney, formatSignedMoney } from '../utils/format';
 
@@ -27,27 +30,46 @@ interface AdjustmentFormState {
   userId: string;
 }
 
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+
 export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementPageProps) {
+  const [accountPage, setAccountPage] = useState(1);
+  const [accountPageSize, setAccountPageSize] = useState(10);
+  const [rechargePage, setRechargePage] = useState(1);
+  const [rechargePageSize, setRechargePageSize] = useState(10);
+  const [withdrawalPage, setWithdrawalPage] = useState(1);
+  const [withdrawalPageSize, setWithdrawalPageSize] = useState(10);
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const [ledgerPageSize, setLedgerPageSize] = useState(20);
   const {
     accounts,
     adjustBalance,
+    approveWithdrawal,
     confirmRecharge,
     error,
     ledgerEntries,
     loading,
+    overview,
     rechargeOrders,
     refresh,
+    rejectWithdrawal,
     saving,
-  } = useFinance();
+    withdrawalOrders,
+  } = useFinance({
+    accountQuery: { page: accountPage, pageSize: accountPageSize },
+    ledgerQuery: { page: ledgerPage, pageSize: ledgerPageSize },
+    rechargeQuery: { page: rechargePage, pageSize: rechargePageSize },
+    withdrawalQuery: { page: withdrawalPage, pageSize: withdrawalPageSize },
+  });
   const [form, setForm] = useState<AdjustmentFormState>({
     amountMinor: '1000',
     description: '后台手动补款',
     userId: 'U10001',
   });
-  const totals = useMemo(() => financeTotals(accounts, ledgerEntries), [
-    accounts,
-    ledgerEntries,
-  ]);
+
+  const availableBalanceMinor = overview
+    ? overview.totalBalanceMinor - overview.pendingWithdrawMinor
+    : 0;
 
   const refreshAll = () => {
     refresh();
@@ -69,13 +91,23 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
     onDashboardRefresh();
   };
 
+  const approvePendingWithdrawal = async (id: string) => {
+    await approveWithdrawal(id);
+    onDashboardRefresh();
+  };
+
+  const rejectPendingWithdrawal = async (id: string) => {
+    await rejectWithdrawal(id);
+    onDashboardRefresh();
+  };
+
   return (
     <div className="space-y-5">
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-ink">财务管理</h1>
           <p className="mt-1 text-sm text-slate-500">
-            查看用户资金账户和资金流水，执行后台手动调账。
+            查看资金账户、充值订单、提现申请和资金流水，执行后台手动调账。
           </p>
         </div>
         <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
@@ -85,43 +117,62 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
 
       {error ? <Banner type="danger" title="财务接口错误" description={error} /> : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <MetricCard
           label="可用余额"
-          trend={`${accounts.length} 个账户`}
-          value={formatMoney(totals.availableBalanceMinor)}
+          trend={`${accounts.totalCount} 个账户`}
+          value={formatMoney(availableBalanceMinor)}
         />
         <MetricCard
           label="冻结余额"
-          trend="来自提现申请冻结"
-          value={formatMoney(totals.frozenBalanceMinor)}
+          trend="提现申请冻结"
+          value={formatMoney(overview?.pendingWithdrawMinor ?? 0)}
+        />
+        <MetricCard
+          label="今日充值"
+          trend="充值入账流水"
+          value={formatMoney(overview?.todayRechargeMinor ?? 0)}
         />
         <MetricCard
           label="今日派奖"
-          trend="来自派奖流水"
-          value={formatMoney(totals.payoutMinor)}
+          trend="派奖入账流水"
+          value={formatMoney(overview?.todayPayoutMinor ?? 0)}
         />
         <MetricCard
-          label="充值订单"
-          trend={`${paidRechargeCount(rechargeOrders)} 笔已入账`}
-          value={`${rechargeOrders.length}`}
+          label="提现申请"
+          trend={`当前页 ${pendingWithdrawalCount(withdrawalOrders)} 笔待审核`}
+          value={`${withdrawalOrders.totalCount}`}
         />
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
         <Card className="rounded-md border border-line">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">资金账户</h2>
-            <Tag color="cyan">{accounts.length} 个账户</Tag>
+          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-ink">资金账户</h2>
+              <Tag color="cyan">{accounts.totalCount} 个账户</Tag>
+            </div>
+            <PageControls
+              loading={loading}
+              page={accounts.page}
+              pageSize={accountPageSize}
+              totalCount={accounts.totalCount}
+              totalPages={accounts.totalPages}
+              onPageChange={setAccountPage}
+              onPageSizeChange={(nextPageSize) => {
+                setAccountPage(1);
+                setAccountPageSize(nextPageSize);
+              }}
+            />
           </div>
 
           {loading ? (
             <div className="grid min-h-[260px] place-items-center">
               <Spin tip="正在加载资金账户" />
             </div>
-          ) : accounts.length > 0 ? (
+          ) : accounts.items.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[680px] text-left text-sm">
+              <table className="w-full min-w-[760px] text-left text-sm">
                 <thead className="border-b border-line text-xs text-slate-500">
                   <tr>
                     <th className="py-2 pr-4 font-medium">用户</th>
@@ -132,9 +183,14 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                   </tr>
                 </thead>
                 <tbody>
-                  {accounts.map((account) => (
+                  {accounts.items.map((account) => (
                     <tr key={account.userId} className="border-b border-slate-100">
-                      <td className="py-3 pr-4 font-semibold text-ink">{account.userId}</td>
+                      <td className="py-3 pr-4">
+                        <div className="font-semibold text-ink">
+                          {account.username ?? '未知用户'}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-400">{account.userId}</div>
+                      </td>
                       <td className="py-3 pr-4 text-slate-600">
                         {formatMoney(account.availableBalanceMinor)}
                       </td>
@@ -195,9 +251,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                 className="form-input"
                 type="number"
                 value={form.amountMinor}
-                onChange={(value) =>
-                  setFormValue(setForm, 'amountMinor', value)
-                }
+                onChange={(value) => setFormValue(setForm, 'amountMinor', value)}
               />
             </Field>
 
@@ -205,9 +259,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
               <Input
                 className="form-input"
                 value={form.description}
-                onChange={(value) =>
-                  setFormValue(setForm, 'description', value)
-                }
+                onChange={(value) => setFormValue(setForm, 'description', value)}
               />
             </Field>
 
@@ -224,16 +276,30 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
       </section>
 
       <Card className="rounded-md border border-line">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-ink">充值订单</h2>
-          <Tag color="green">{rechargeOrders.length} 笔</Tag>
+        <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold text-ink">充值订单</h2>
+            <Tag color="green">{rechargeOrders.totalCount} 笔</Tag>
+          </div>
+          <PageControls
+            loading={loading}
+            page={rechargeOrders.page}
+            pageSize={rechargePageSize}
+            totalCount={rechargeOrders.totalCount}
+            totalPages={rechargeOrders.totalPages}
+            onPageChange={setRechargePage}
+            onPageSizeChange={(nextPageSize) => {
+              setRechargePage(1);
+              setRechargePageSize(nextPageSize);
+            }}
+          />
         </div>
 
         {loading ? (
           <div className="grid min-h-[240px] place-items-center">
             <Spin tip="正在加载充值订单" />
           </div>
-        ) : rechargeOrders.length > 0 ? (
+        ) : rechargeOrders.items.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1160px] text-left text-sm">
               <thead className="border-b border-line text-xs text-slate-500">
@@ -250,7 +316,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                 </tr>
               </thead>
               <tbody>
-                {rechargeOrders.map((order) => (
+                {rechargeOrders.items.map((order) => (
                   <tr key={order.id} className="border-b border-slate-100">
                     <td className="py-3 pr-4">
                       <div className="font-semibold text-ink">{order.id}</div>
@@ -292,9 +358,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                           disabled={saving}
                           size="small"
                           theme="solid"
-                          onClick={() =>
-                            void confirmCustomerServiceRecharge(order.id)
-                          }
+                          onClick={() => void confirmCustomerServiceRecharge(order.id)}
                         >
                           确认入账
                         </Button>
@@ -315,16 +379,139 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
       </Card>
 
       <Card className="rounded-md border border-line">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-ink">资金流水</h2>
-          <Tag color="blue">{ledgerEntries.length} 笔</Tag>
+        <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold text-ink">提现管理</h2>
+            <Tag color="red">{withdrawalOrders.totalCount} 笔</Tag>
+          </div>
+          <PageControls
+            loading={loading}
+            page={withdrawalOrders.page}
+            pageSize={withdrawalPageSize}
+            totalCount={withdrawalOrders.totalCount}
+            totalPages={withdrawalOrders.totalPages}
+            onPageChange={setWithdrawalPage}
+            onPageSizeChange={(nextPageSize) => {
+              setWithdrawalPage(1);
+              setWithdrawalPageSize(nextPageSize);
+            }}
+          />
+        </div>
+
+        {loading ? (
+          <div className="grid min-h-[240px] place-items-center">
+            <Spin tip="正在加载提现申请" />
+          </div>
+        ) : withdrawalOrders.items.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1180px] text-left text-sm">
+              <thead className="border-b border-line text-xs text-slate-500">
+                <tr>
+                  <th className="py-2 pr-4 font-medium">申请</th>
+                  <th className="py-2 pr-4 font-medium">用户</th>
+                  <th className="py-2 pr-4 font-medium">金额</th>
+                  <th className="py-2 pr-4 font-medium">状态</th>
+                  <th className="py-2 pr-4 font-medium">提现方式</th>
+                  <th className="py-2 pr-4 font-medium">收款账户</th>
+                  <th className="py-2 pr-4 font-medium">审核时间</th>
+                  <th className="py-2 pr-4 font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {withdrawalOrders.items.map((order) => (
+                  <tr key={order.id} className="border-b border-slate-100">
+                    <td className="py-3 pr-4">
+                      <div className="font-semibold text-ink">{order.id}</div>
+                      <div className="mt-1 text-xs text-slate-400">{order.createdAt}</div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-slate-700">{order.username}</div>
+                      <div className="mt-1 text-xs text-slate-400">{order.userId}</div>
+                    </td>
+                    <td className="py-3 pr-4 font-semibold text-rose-700">
+                      {formatMoney(order.amountMinor)}
+                    </td>
+                    <td className="py-3 pr-4">
+                      <Tag color={withdrawalStatusColor(order.status)}>
+                        {withdrawalStatusText(order.status)}
+                      </Tag>
+                    </td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      {withdrawalMethodText(order.methodType)}
+                    </td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      <div>{order.accountHolder}</div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        {order.bankName ? `${order.bankName} · ` : ''}
+                        {order.accountNumber}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      {order.reviewedAt ?? '-'}
+                    </td>
+                    <td className="py-3 pr-4">
+                      {order.status === 'pending' ? (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            disabled={saving}
+                            icon={<CheckCircle2 size={14} />}
+                            size="small"
+                            theme="solid"
+                            onClick={() => void approvePendingWithdrawal(order.id)}
+                          >
+                            通过
+                          </Button>
+                          <Button
+                            disabled={saving}
+                            icon={<XCircle size={14} />}
+                            size="small"
+                            type="danger"
+                            onClick={() => void rejectPendingWithdrawal(order.id)}
+                          >
+                            驳回
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400">-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+            暂无提现申请。用户提交提现后会显示在这里。
+          </div>
+        )}
+      </Card>
+
+      <Card className="rounded-md border border-line">
+        <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold text-ink">资金流水</h2>
+            <Tag color="blue">{ledgerEntries.totalCount} 笔</Tag>
+          </div>
+          <PageControls
+            loading={loading}
+            page={ledgerEntries.page}
+            pageSize={ledgerPageSize}
+            totalCount={ledgerEntries.totalCount}
+            totalPages={ledgerEntries.totalPages}
+            onPageChange={setLedgerPage}
+            onPageSizeChange={(nextPageSize) => {
+              setLedgerPage(1);
+              setLedgerPageSize(nextPageSize);
+            }}
+          />
         </div>
 
         {loading ? (
           <div className="grid min-h-[300px] place-items-center">
             <Spin tip="正在加载资金流水" />
           </div>
-        ) : ledgerEntries.length > 0 ? (
+        ) : ledgerEntries.items.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[920px] text-left text-sm">
               <thead className="border-b border-line text-xs text-slate-500">
@@ -339,7 +526,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                 </tr>
               </thead>
               <tbody>
-                {ledgerEntries.map((entry) => (
+                {ledgerEntries.items.map((entry) => (
                   <tr key={entry.id} className="border-b border-slate-100">
                     <td className="py-3 pr-4">
                       <div className="font-semibold text-ink">{entry.id}</div>
@@ -394,23 +581,62 @@ function Field({ children, label }: FieldProps) {
   );
 }
 
-function financeTotals(
-  accounts: Array<{ availableBalanceMinor: number; frozenBalanceMinor: number }>,
-  ledgerEntries: Array<{ amountMinor: number; kind: LedgerEntryKind }>,
-) {
-  return {
-    availableBalanceMinor: accounts.reduce(
-      (total, account) => total + account.availableBalanceMinor,
-      0,
-    ),
-    frozenBalanceMinor: accounts.reduce(
-      (total, account) => total + account.frozenBalanceMinor,
-      0,
-    ),
-    payoutMinor: ledgerEntries
-      .filter((entry) => entry.kind === 'payoutCredit')
-      .reduce((total, entry) => total + entry.amountMinor, 0),
-  };
+interface PageControlsProps {
+  loading: boolean;
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+}
+
+function PageControls({
+  loading,
+  page,
+  pageSize,
+  totalCount,
+  totalPages,
+  onPageChange,
+  onPageSizeChange,
+}: PageControlsProps) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+      <span>共 {totalCount} 条</span>
+      <label className="flex items-center gap-1">
+        每页
+        <Select
+          className="form-input min-w-[86px]"
+          value={pageSize}
+          onChange={(value) => onPageSizeChange(Number(value ?? 10))}
+        >
+          {PAGE_SIZE_OPTIONS.map((size) => (
+            <Select.Option key={size} value={size}>
+              {size}
+            </Select.Option>
+          ))}
+        </Select>
+        条
+      </label>
+      <Button
+        disabled={loading || page <= 1 || totalPages === 0}
+        size="small"
+        onClick={() => onPageChange(page - 1)}
+      >
+        上一页
+      </Button>
+      <span>
+        第 {totalPages === 0 ? 0 : page} / {totalPages} 页
+      </span>
+      <Button
+        disabled={loading || page >= totalPages || totalPages === 0}
+        size="small"
+        onClick={() => onPageChange(page + 1)}
+      >
+        下一页
+      </Button>
+    </div>
+  );
 }
 
 function setFormValue<K extends keyof AdjustmentFormState>(
@@ -434,6 +660,8 @@ function ledgerKindText(kind: LedgerEntryKind) {
     payoutCredit: '派奖入账',
     rechargeCredit: '充值入账',
     withdrawalFreeze: '提现冻结',
+    withdrawalPayout: '提现打款',
+    withdrawalReject: '提现驳回解冻',
   };
   return labels[kind];
 }
@@ -446,14 +674,10 @@ function ledgerKindColor(kind: LedgerEntryKind) {
     payoutCredit: 'green',
     rechargeCredit: 'green',
     withdrawalFreeze: 'red',
+    withdrawalPayout: 'red',
+    withdrawalReject: 'blue',
   };
   return colors[kind];
-}
-
-function paidRechargeCount(
-  rechargeOrders: Array<{ status: RechargeOrderStatus }>,
-) {
-  return rechargeOrders.filter((order) => order.status === 'paid').length;
 }
 
 function rechargeChannelText(channel: RechargeChannel) {
@@ -484,4 +708,39 @@ function rechargeStatusColor(
     waitingCustomerService: 'orange',
   };
   return colors[status];
+}
+
+function withdrawalStatusText(status: WithdrawalOrderStatus) {
+  const labels: Record<WithdrawalOrderStatus, string> = {
+    approved: '已通过',
+    cancelled: '已取消',
+    pending: '待审核',
+    rejected: '已驳回',
+  };
+  return labels[status];
+}
+
+function withdrawalStatusColor(
+  status: WithdrawalOrderStatus,
+): 'blue' | 'green' | 'orange' | 'red' {
+  const colors: Record<WithdrawalOrderStatus, 'blue' | 'green' | 'orange' | 'red'> = {
+    approved: 'green',
+    cancelled: 'red',
+    pending: 'orange',
+    rejected: 'red',
+  };
+  return colors[status];
+}
+
+function withdrawalMethodText(methodType: WithdrawalMethodType) {
+  const labels: Record<WithdrawalMethodType, string> = {
+    alipay: '支付宝',
+    bankCard: '银行卡',
+    wechat: '微信',
+  };
+  return labels[methodType];
+}
+
+function pendingWithdrawalCount(page: FinancePage<{ status: WithdrawalOrderStatus }>) {
+  return page.items.filter((order) => order.status === 'pending').length;
 }

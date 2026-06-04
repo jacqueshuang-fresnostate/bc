@@ -3390,3 +3390,79 @@ await createWithdrawalOrder({ methodId, amountMinor });
 ```
 
 用户端提现申请统一使用 `methodId` 和 `amountMinor`。
+
+---
+
+## 场景：后台财务分页与提现审核接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：财务管理页展示资金账户、充值订单、资金流水或提现申请，或者后台审核提现申请。
+- 范围：`/api/admin/finance-overview`、`/api/admin/financial-accounts`、`/api/admin/recharge-orders`、`/api/admin/ledger-entries`、`/api/admin/withdrawal-orders`、`FinanceRepository`、`WithdrawalRepository`、管理后台财务页面。
+
+### 2. 签名
+
+- `GET /api/admin/finance-overview`
+- `GET /api/admin/financial-accounts?page=1&pageSize=20`
+- `GET /api/admin/recharge-orders?page=1&pageSize=20`
+- `GET /api/admin/ledger-entries?page=1&pageSize=20`
+- `GET /api/admin/withdrawal-orders?page=1&pageSize=20`
+- `POST /api/admin/withdrawal-orders/{id}/approve`
+- `POST /api/admin/withdrawal-orders/{id}/reject`
+
+### 3. 契约
+
+分页列表响应统一返回：
+
+```json
+{
+  "items": [],
+  "totalCount": 0,
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 0
+}
+```
+
+不传 `page/pageSize` 时允许返回全量列表，用于兼容内部调试；管理后台页面必须显式传入分页参数。
+
+资金账户列表项必须包含用户名：
+
+```json
+{
+  "userId": "U10001",
+  "username": "demo_user",
+  "availableBalanceMinor": 12000,
+  "frozenBalanceMinor": 2000
+}
+```
+
+提现审核接口不需要请求体。通过提现申请时，后端必须扣减冻结余额、写入 `withdrawalPayout` 流水，并把申请状态改为 `approved`。驳回提现申请时，后端必须把冻结余额退回可用余额、写入 `withdrawalReject` 流水，并把申请状态改为 `rejected`。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| `page <= 0` 或缺失 | 使用第 1 页 |
+| `pageSize <= 0` 或缺失 | 使用默认每页 20 条 |
+| 请求页码超过最大页 | 返回最后一页 |
+| 资金账户没有匹配用户 | `username=null`，不阻塞账户展示 |
+| 提现申请不存在 | HTTP 404 |
+| 提现申请已通过再驳回 | HTTP 400 |
+| 提现申请已驳回再通过 | HTTP 400 |
+| 冻结余额不足 | HTTP 400，不改变提现状态 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：财务管理页按分页请求资金账户，表格同时展示用户名和用户 ID。
+- Good：充值订单、资金流水、提现申请都有分页控件，翻页不会一次性拉取所有历史记录。
+- Good：待审核提现点击“通过”后状态变为已通过，冻结余额减少，资金流水出现提现打款。
+- Good：待审核提现点击“驳回”后状态变为已驳回，冻结余额退回可用余额，资金流水出现提现驳回解冻。
+- Bad：前端拿全量数组后自行分页；数据量增大后会拖慢财务页面。
+- Bad：后台只改提现申请状态，不写资金流水；这会破坏财务审计链路。
+
+### 6. 必要测试
+
+- 后端需要覆盖提现通过、提现驳回和反向审核拒绝。
+- OpenAPI 测试需要覆盖财务总览、提现申请列表和提现审核路径。
+- 管理后台需要运行 `npm run build`，确认分页响应、用户名字段和提现状态枚举类型一致。
