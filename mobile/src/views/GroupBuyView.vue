@@ -14,7 +14,6 @@ import {
   formatPlayName,
   hallLotteryIcon,
   initiatorDisplay,
-  planStatusBadge,
   progressPercent,
   progressRemainingText,
   progressTrackWidth,
@@ -143,12 +142,12 @@ onMounted(async () => {
 
     <van-tabs v-model:active="activeTab" sticky class="group-buy-tabs hidden-tab-header">
       <van-tab title="大厅" name="hall">
-        <section class="group-buy-hall group-buy-hall-scroll space-y-5 px-4 pb-4 pt-16">
-          <div class="hallCategoryChips filterChips flex min-h-[3.5rem] gap-2 overflow-x-auto pb-2">
+        <section class="group-buy-hall group-buy-hall-scroll space-y-2 px-3 pb-4 pt-16">
+          <div class="hallCategoryChips filterChips flex min-h-11 gap-2 overflow-x-auto pb-1">
             <button
               v-for="chip in hallCategoryChips"
               :key="chip.value"
-              class="flex min-h-12 shrink-0 items-center justify-center rounded-xl px-6 py-3 text-sm font-bold leading-none transition"
+              class="flex min-h-10 shrink-0 items-center justify-center rounded-xl px-4 py-2 text-xs font-bold leading-none transition"
               :class="activeFilter === chip.value ? 'bg-red-900 !text-white shadow-md shadow-red-900/20' : 'bg-white text-stone-700 shadow-sm'"
               @click="activeFilter = chip.value"
             >
@@ -160,58 +159,52 @@ onMounted(async () => {
           <van-empty v-else-if="!displayedHallItems.length" description="暂无合买计划" />
           <template v-else>
             <article
-              v-for="(item, index) in displayedHallItems"
+              v-for="item in displayedHallItems"
               :key="item.id"
-              class="group-buy-plan-card rounded-2xl bg-white p-5 shadow-[0_8px_24px_rgba(15,23,42,0.04)]"
+              class="group-buy-plan-card rounded-xl bg-white px-3 py-2.5 shadow-[0_4px_14px_rgba(15,23,42,0.045)] transition active:scale-[0.99]"
               @click="openDetail(item)"
             >
-              <div class="mb-4 flex items-start justify-between gap-3">
-                <div class="flex min-w-0 items-center gap-3">
-                  <div class="hallLotteryIcon flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-red-50 text-2xl font-black text-red-800">{{ hallLotteryIcon(item) }}</div>
+              <div class="flex min-w-0 items-start justify-between gap-2">
+                <div class="flex min-w-0 items-center gap-2">
+                  <div class="hallLotteryIcon flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-50 text-base font-black text-red-800">{{ hallLotteryIcon(item) }}</div>
                   <div class="min-w-0">
-                    <h3 class="truncate font-headline text-base font-black text-stone-950">{{ item.lottery_name || item.title || formatPlanTitle(item) }}</h3>
-                    <p class="mt-1 text-[10px] text-stone-400">第 {{ item.issue }} 期</p>
+                    <h3 class="truncate font-headline text-sm font-black leading-tight text-stone-950">{{ item.lottery_name || item.title || formatPlanTitle(item) }}</h3>
+                    <p class="mt-0.5 truncate text-[10px] font-medium text-stone-500">第{{ item.issue }}期 · {{ formatPlayName(item) }}</p>
                   </div>
                 </div>
-                <span class="planStatusBadge shrink-0 rounded bg-yellow-50 px-2 py-1 text-[10px] font-black text-amber-800">{{ planStatusBadge(index) }}</span>
+                <span
+                  class="shrink-0 rounded-full px-2 py-1 text-[10px] font-black"
+                  :class="canJoinPlan(item) ? 'bg-red-900 text-white' : 'bg-stone-200 text-stone-500'"
+                  @click.stop="canJoinPlan(item) && openDetail(item)"
+                >
+                  {{ canJoinPlan(item) ? '参与' : statusText(item.status) }}
+                </span>
               </div>
 
-              <div class="mb-4 flex items-center gap-3 border-y border-stone-100 py-3">
-                <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-sm text-white">👤</div>
-                <div class="min-w-0 flex-1">
-                  <p class="truncate text-xs font-black text-stone-950">{{ initiatorDisplay(item) }}</p>
-                  <p class="text-[10px] text-stone-500">发起人 · 战绩 12连红</p>
-                </div>
-              </div>
-
-              <div class="mb-5 grid grid-cols-2 gap-4">
-                <div>
-                  <p class="mb-1 text-[10px] text-stone-500">方案总额</p>
-                  <p class="font-headline text-lg font-black text-stone-950">{{ formatMoney(item.total_amount) }}</p>
+              <div class="mt-2 grid grid-cols-[1fr_0.8fr_0.8fr] gap-2 text-[10px] leading-tight">
+                <div class="min-w-0">
+                  <span class="block text-stone-400">发起人</span>
+                  <b class="mt-0.5 block truncate text-stone-800">{{ initiatorDisplay(item) }}</b>
                 </div>
                 <div>
-                  <p class="mb-1 text-[10px] text-stone-500">单份金额</p>
-                  <p class="font-headline text-lg font-black text-stone-950">{{ formatMoney(item.share_amount) }}</p>
+                  <span class="block text-stone-400">总额</span>
+                  <b class="mt-0.5 block font-headline text-xs text-stone-950">{{ formatMoney(item.total_amount) }}</b>
+                </div>
+                <div>
+                  <span class="block text-stone-400">单份</span>
+                  <b class="mt-0.5 block font-headline text-xs text-stone-950">{{ formatMoney(item.share_amount) }}</b>
                 </div>
               </div>
 
-              <div class="mb-5">
-                <div class="mb-2 flex items-end justify-between">
-                  <span class="text-xs font-black text-red-900">已满 {{ progressPercent(item) }}%</span>
-                  <span class="text-[10px] text-stone-500">{{ progressRemainingText(item) }}</span>
+              <div class="mt-2">
+                <div class="mb-1 flex items-center justify-between text-[10px]">
+                  <span class="font-black text-red-900">已满 {{ progressPercent(item) }}%</span>
+                  <span class="text-stone-500">{{ progressRemainingText(item) }}</span>
                 </div>
-                <div class="h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
+                <div class="h-1 w-full overflow-hidden rounded-full bg-stone-100">
                   <div class="h-full rounded-full lacquer-gradient" :style="{ width: progressTrackWidth(item) }"></div>
                 </div>
               </div>
-
-              <button
-                class="w-full rounded-lg py-3 text-sm font-black shadow-md transition-transform active:scale-[0.98]"
-                :class="canJoinPlan(item) ? 'lacquer-gradient !text-white' : 'bg-stone-200 text-stone-400 shadow-none'"
-                @click.stop="canJoinPlan(item) && openDetail(item)"
-              >
-                {{ canJoinPlan(item) ? '立即参与合买' : '余票不足' }}
-              </button>
             </article>
           </template>
         </section>

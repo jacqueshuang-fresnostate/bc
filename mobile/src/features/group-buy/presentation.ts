@@ -1,7 +1,5 @@
 import type { CreateGroupBuyForm, CreateGroupBuyPayload, GroupBuyPlan, SelectOption } from './types'
 
-const planStatusBadges = ['高成功率', '保本 20%', '官方认证', '即将满员']
-
 /** 归一化合买接口返回的列表数据。 */
 export function normalizeItems(data: any): GroupBuyPlan[] {
   if (Array.isArray(data?.items)) return data.items
@@ -34,11 +32,6 @@ export function progressPercent(item: GroupBuyPlan) {
 /** 生成合买进度条宽度。 */
 export function progressTrackWidth(item: GroupBuyPlan) {
   return `${progressPercent(item)}%`
-}
-
-/** 选择合买计划状态徽标。 */
-export function planStatusBadge(index: number) {
-  return planStatusBadges[index % planStatusBadges.length]
 }
 
 /** 根据彩种名称选择大厅图标。 */
