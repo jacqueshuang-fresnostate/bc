@@ -1554,3 +1554,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 46: 充值返利真实入账修复
+
+**Date**: 2026-06-06
+**Task**: 充值返利真实入账修复
+**Branch**: `main`
+
+### Summary
+
+补齐充值成功后给上级代理发放返利的真实资金流水链路，并同步后台、手机端展示、迁移注释和中文文档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8e16f8b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
