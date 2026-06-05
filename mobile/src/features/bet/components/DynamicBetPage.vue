@@ -311,7 +311,7 @@ async function submitGroupBuyCart() {
     showToast('当前期号未就绪')
     return
   }
-  if (engine.draftBetCount.value > 0 && !engine.addDraftToCart()) return
+  if (engine.draftBetCount.value > 0 && !engine.addDraftToCart({ silent: true })) return
   if (engine.cart.value.length !== 1) {
     showToast('合买一次只能发起一张单据')
     return
@@ -363,8 +363,8 @@ async function submitCart() {
     return
   }
   if (engine.draftBetCount.value > 0) {
-    // 用户直接点提交时，先把当前有效草稿补入篮子，再统一走批量提交。
-    const added = engine.addDraftToCart()
+    // 用户直接点提交时静默把当前有效草稿补入篮子，避免出现“加入购彩篮”和“下注成功”两个提示。
+    const added = engine.addDraftToCart({ silent: true })
     if (!added) return
   }
   try {

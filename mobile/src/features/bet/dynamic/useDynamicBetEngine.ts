@@ -211,7 +211,7 @@ export function useDynamicBetEngine(config: () => BetPageConfig | null, selected
     selections.value = { ...selections.value, [groupKey]: [...current, value] }
   }
 
-  function addDraftToCart() {
+  function addDraftToCart(options: { silent?: boolean } = {}) {
     const pageConfig = config()
     const play = selectedPlay()
     // 入篮必须同时具备页面配置、当前期号和当前玩法，保证单据可追溯到期号。
@@ -255,7 +255,7 @@ export function useDynamicBetEngine(config: () => BetPageConfig | null, selected
       bet_count: draftBetCount.value,
     })
     resetDraft(play)
-    showToast('已加入购彩篮')
+    if (!options.silent) showToast('已加入购彩篮')
     return true
   }
 
