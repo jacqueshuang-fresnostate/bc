@@ -2001,8 +2001,9 @@ async fn set_lottery_sale(
     Json(payload): Json<SaleStatusRequest>,
 ) -> ApiResult<Json<ApiEnvelope<LotteryKind>>> {
     let before = state.lotteries.get(&id).await?;
-    let need_align =
-        before.draw_mode == DrawMode::Api && !before.sale_enabled && payload.sale_enabled;
+    let need_align = should_align_draw_issue_plan_after_sale_on(&before.draw_mode)
+        && !before.sale_enabled
+        && payload.sale_enabled;
 
     let lottery = state
         .lotteries
@@ -2010,16 +2011,28 @@ async fn set_lottery_sale(
         .await?;
 
     if need_align {
-        if let Err(error) = align_api_draw_issue_plan_after_sale_on(&state, &lottery).await {
-            tracing::warn!(
-                lottery_id = %lottery.id,
-                error = %error.log_message(),
-                "开售后补齐期号失败，已保留销售状态切换结果"
-            );
+        match align_draw_issue_plan_after_sale_on(&state, &lottery).await {
+            Ok(issues) => {
+                for issue in &issues {
+                    state.realtime.publish_public(issue_opened_event(issue));
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    lottery_id = %lottery.id,
+                    error = %error.log_message(),
+                    "开售后补齐期号失败，已保留销售状态切换结果"
+                );
+            }
         }
     }
 
     Ok(Json(ApiEnvelope::success(lottery)))
+}
+
+/// 判断彩种开售后是否需要立即补齐未来期号。
+fn should_align_draw_issue_plan_after_sale_on(draw_mode: &DrawMode) -> bool {
+    matches!(draw_mode, DrawMode::Api | DrawMode::Platform)
 }
 
 async fn list_lottery_categories(
@@ -2062,10 +2075,10 @@ async fn delete_lottery_category(
     Ok(Json(ApiEnvelope::success(category)))
 }
 
-async fn align_api_draw_issue_plan_after_sale_on(
+async fn align_draw_issue_plan_after_sale_on(
     state: &AppState,
     lottery: &LotteryKind,
-) -> ApiResult<()> {
+) -> ApiResult<Vec<DrawIssue>> {
     let config = state.scheduler.config()?;
     let now = Local::now()
         .naive_local()
@@ -2080,11 +2093,11 @@ async fn align_api_draw_issue_plan_after_sale_on(
         .count() as u32;
 
     if existing_future_count >= config.future_issue_count {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let count = config.future_issue_count - existing_future_count;
-    let _ = generate_draw_issue_batch(
+    generate_draw_issue_batch(
         &state.draws,
         lottery,
         GenerateDrawIssuesRequest {
@@ -2094,9 +2107,7 @@ async fn align_api_draw_issue_plan_after_sale_on(
             sale_close_lead_seconds: Some(config.sale_close_lead_seconds),
         },
     )
-    .await?;
-
-    Ok(())
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -2107,8 +2118,31 @@ struct SaleStatusRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::required_scope_for_path;
-    use crate::domain::permission::PermissionScope;
+    use super::{
+        align_draw_issue_plan_after_sale_on, required_scope_for_path,
+        should_align_draw_issue_plan_after_sale_on,
+    };
+    use crate::{
+        app::AppState,
+        domain::{draw::DrawIssueStatus, lottery::DrawMode, permission::PermissionScope},
+        services::{
+            access::AccessRepository,
+            advertisement::AdvertisementRepository,
+            draw::DrawRepository,
+            finance::FinanceRepository,
+            group_buy::GroupBuyRepository,
+            invite::InviteRepository,
+            lottery::LotteryRepository,
+            order::OrderRepository,
+            realtime::RealtimeHub,
+            rebate::RebateRepository,
+            recharge::RechargeRepository,
+            robot::RobotRepository,
+            scheduler::{DrawSchedulerConfig, DrawSchedulerRepository},
+            support::SupportRepository,
+            withdrawal::WithdrawalRepository,
+        },
+    };
 
     #[test]
     /// 处理 required_scope_maps_admin_paths 的具体内部流程。
@@ -2154,5 +2188,62 @@ mod tests {
             required_scope_for_path("/invite-policy"),
             Some(PermissionScope::Rebates)
         );
+    }
+
+    #[test]
+    /// 开售即时补期只覆盖 API 和平台开奖彩种，手动开奖仍由运营维护期号。
+    fn sale_on_alignment_covers_api_and_platform_draw_modes() {
+        assert!(should_align_draw_issue_plan_after_sale_on(&DrawMode::Api));
+        assert!(should_align_draw_issue_plan_after_sale_on(
+            &DrawMode::Platform
+        ));
+        assert!(!should_align_draw_issue_plan_after_sale_on(
+            &DrawMode::Manual
+        ));
+    }
+
+    #[tokio::test]
+    /// 平台开奖彩种开售后会立即补齐未来期号，避免必须等待调度下一轮才开盘。
+    async fn sale_on_alignment_generates_future_issue_for_platform_lottery() {
+        let state = test_state();
+        let lottery = state
+            .lotteries
+            .set_sale_enabled("ssc60", true)
+            .await
+            .expect("platform lottery sale can be enabled");
+
+        let issues = align_draw_issue_plan_after_sale_on(&state, &lottery)
+            .await
+            .expect("platform lottery can align future draw issues");
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].lottery_id, "ssc60");
+        assert_eq!(issues[0].draw_mode, DrawMode::Platform);
+        assert_eq!(issues[0].status, DrawIssueStatus::Open);
+    }
+
+    fn test_state() -> AppState {
+        AppState {
+            access: AccessRepository::memory_seeded(),
+            advertisements: AdvertisementRepository::memory(),
+            draws: DrawRepository::memory(),
+            finance: FinanceRepository::memory_seeded(),
+            group_buys: GroupBuyRepository::memory_seeded(),
+            invites: InviteRepository::memory_seeded(),
+            lotteries: LotteryRepository::memory_seeded(),
+            orders: OrderRepository::memory(),
+            rebates: RebateRepository::memory_seeded(),
+            realtime: RealtimeHub::new(),
+            recharges: RechargeRepository::memory(),
+            robots: RobotRepository::memory_seeded(),
+            scheduler: DrawSchedulerRepository::new(DrawSchedulerConfig {
+                enabled: false,
+                interval_seconds: 5,
+                future_issue_count: 1,
+                sale_close_lead_seconds: 30,
+            }),
+            support: SupportRepository::memory_seeded(),
+            withdrawals: WithdrawalRepository::memory(),
+        }
     }
 }

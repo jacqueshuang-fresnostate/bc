@@ -1,5 +1,26 @@
 # TODO
 
+## 2026-06-05 19:40 HKT 平台开奖彩种开售补期修复
+
+- 完成任务：修复平台开奖彩种从停售切换为开售后不会立即自动补齐期号的问题。
+- 解决问题：
+  - 后台开售补期此前只判断 `DrawMode::Api`，平台开奖彩种开售后没有立刻生成未来 `open` 期号。
+  - 运营刚开售平台彩种时需要等待调度下一轮；如果调度未启用或本轮未触发，就表现为彩种不会自己更新期号。
+  - 开售补出的期号此前没有从该入口返回给实时事件发布流程，前端不容易立即感知新期开盘。
+- 具体实现：
+  - 新增 `should_align_draw_issue_plan_after_sale_on`，把开售即时补期范围扩展为 `api` 和 `platform` 开奖模式。
+  - `align_draw_issue_plan_after_sale_on` 返回本次生成的期号列表，已满足未来期号缓冲时返回空列表。
+  - 彩种开售补出的期号会发布 `lottery.issue_opened` 实时事件，让后台和手机端可立即刷新当前期号。
+  - 增加回归测试覆盖 API/平台/手动三种开奖模式判断，以及平台开奖彩种开售后生成未来期号。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml sale_on_alignment -- --nocapture` 通过。
+  - `cargo fmt --manifest-path backend/Cargo.toml --check` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 通过，211 条后端测试全部成功。
+  - `git diff --check` 通过。
+- 后续动作：手动开奖彩种仍由运营维护期号；如后续也希望手动彩种开售即自动开盘，需要先确认手动开奖的号码来源和运营流程。
+
 ## 2026-06-05 19:24 HKT 手机端首页高频极速配置与倒计时修复
 
 - 完成任务：优化手机端首页“高频极速”模块，新增后台配置开关和彩种选择，并修复开奖时间后倒计时长期停在“开奖中”的问题。

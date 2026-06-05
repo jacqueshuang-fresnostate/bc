@@ -125,6 +125,89 @@ export interface InvitePolicySummary {
 
 ---
 
+## 场景：彩种开售即时补齐期号
+
+### 1. 范围 / 触发条件
+
+- 触发条件：管理后台切换彩种销售状态，且彩种从 `saleEnabled=false` 变为 `saleEnabled=true`。
+- 范围：`PATCH /api/admin/lotteries/{id}/sale`、开奖期号生成、调度配置读取、实时开盘事件。
+- 适用开奖模式：`api` 和 `platform`。
+- 不适用开奖模式：`manual`，手动开奖彩种的期号仍由运营显式维护。
+
+### 2. 签名
+
+- 彩种销售状态接口：`PATCH /api/admin/lotteries/{id}/sale`
+- 请求体：
+
+```json
+{
+  "saleEnabled": true
+}
+```
+
+- 统一响应信封仍返回更新后的彩种对象。
+- 内部配置来源：`DrawSchedulerRepository.config()`，使用 `futureIssueCount` 和 `saleCloseLeadSeconds`。
+- 实时事件：`lottery.issue_opened`。
+
+### 3. 契约
+
+当彩种从停售切换为开售时：
+
+- 如果 `drawMode=api`，后端必须按当前绑定开奖源的最新期号和开奖时间生成缺失的未来 `open` 期号。
+- 如果 `drawMode=platform`，后端必须按本地开奖计划生成缺失的未来 `open` 期号。
+- 如果 `drawMode=manual`，后端不得自动生成期号，避免跳过运营指定开奖号码流程。
+- 未来期号缓冲只统计同彩种、`status=open` 且 `scheduledAt > now` 的期号。
+- 需要补期时，补齐数量为 `futureIssueCount - existingFutureOpenIssueCount`。
+- 生成的每个新期号都必须发布 `lottery.issue_opened`，让手机端首页、下注页和后台彩种控制台能够刷新当前期号。
+- 如果补期失败，销售状态切换结果仍然保留；后端记录中文 warning，并在日志中保留具体错误信息。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 彩种不存在 | 返回业务错误，不修改状态 |
+| `saleEnabled=false -> true` 且 `drawMode=api` | 保存开售状态并按外部开奖源补齐未来期号 |
+| `saleEnabled=false -> true` 且 `drawMode=platform` | 保存开售状态并按本地开奖计划补齐未来期号 |
+| `saleEnabled=false -> true` 且 `drawMode=manual` | 只保存开售状态，不自动补齐期号 |
+| 未来 `open` 期号数量已达到 `futureIssueCount` | 不重复生成期号 |
+| 补期成功 | 每个新期号发布 `lottery.issue_opened` |
+| 补期失败 | 保留销售状态，记录中文 warning 和具体错误 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：运营把平台开奖彩种 `ssc60` 从停售改为开售后，接口立即生成下一期 `open` 期号，手机端首页收到 `issue_opened` 后刷新倒计时。
+- Good：运营把 API 彩种 `fc3d` 从停售改为开售后，接口按 API68 最新期号生成下一期，不生成内部时间戳期号。
+- Base：彩种已经开售，再次提交 `saleEnabled=true` 只保存状态，不额外触发补期。
+- Bad：把 `closed` 期号计入未来缓冲，导致当前期封盘后没有下一期可投注。
+- Bad：手动开奖彩种开售时自动生成期号，导致运营还没有指定开奖号码就开放投注。
+
+### 6. 必要测试
+
+- 后端需要覆盖 `api` 和 `platform` 返回需要补期，`manual` 不补期。
+- 后端需要覆盖平台开奖彩种开售后生成未来 `open` 期号。
+- 后端需要运行 `cargo fmt --check`、`cargo check` 和 `cargo test`。
+- 修改实时事件发布时，需要补充或保留 `lottery.issue_opened` 的消费契约。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+matches!(draw_mode, DrawMode::Api)
+```
+
+这个写法只覆盖 API 彩种，平台开奖彩种开售后必须等待调度下一轮，调度未启用时会表现为不会自动更新期号。
+
+#### 正确
+
+```rust
+matches!(draw_mode, DrawMode::Api | DrawMode::Platform)
+```
+
+API 彩种和平台开奖彩种都能在开售时立即补齐可销售期号，手动开奖彩种仍保留人工维护流程。
+
+---
+
 ## 场景：手机端实时事件接口
 
 ### 1. 范围 / 触发条件
