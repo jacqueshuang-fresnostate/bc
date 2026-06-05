@@ -69,7 +69,7 @@ import type {
   PlayRuleEvaluation,
   PlayRuleSummary,
 } from '../types/playRules';
-import type { CreateOrderRequest, OrderDetail } from '../types/orders';
+import type { CreateOrderRequest, OrderDetail, OrderListQuery } from '../types/orders';
 import type { DrawSchedulerConfig, DrawSchedulerStatus } from '../types/scheduler';
 import type {
   GroupBuyRobotRun,
@@ -176,8 +176,11 @@ export function fetchDashboard(signal?: AbortSignal) {
   return requestJson<DashboardSummary>('/api/admin/dashboard', { signal });
 }
 
-export function fetchFinanceOverview(signal?: AbortSignal) {
-  return requestJson<FinanceOverview>('/api/admin/finance-overview', { signal });
+export function fetchFinanceOverview(signal?: AbortSignal, query?: FinancePageQuery) {
+  return requestJson<FinanceOverview>(
+    adminQueryPath('/api/admin/finance-overview', query),
+    { signal },
+  );
 }
 
 export function fetchFinancialAccounts(
@@ -185,21 +188,21 @@ export function fetchFinancialAccounts(
   query?: FinancePageQuery,
 ) {
   return requestJson<FinancePage<AdminFinancialAccountSummary>>(
-    financialPagePath('/api/admin/financial-accounts', query),
+    adminQueryPath('/api/admin/financial-accounts', query),
     { signal },
   );
 }
 
 export function fetchLedgerEntries(signal?: AbortSignal, query?: FinancePageQuery) {
   return requestJson<FinancePage<LedgerEntry>>(
-    financialPagePath('/api/admin/ledger-entries', query),
+    adminQueryPath('/api/admin/ledger-entries', query),
     { signal },
   );
 }
 
 export function fetchRechargeOrders(signal?: AbortSignal, query?: FinancePageQuery) {
   return requestJson<FinancePage<RechargeOrderSummary>>(
-    financialPagePath('/api/admin/recharge-orders', query),
+    adminQueryPath('/api/admin/recharge-orders', query),
     { signal },
   );
 }
@@ -219,7 +222,7 @@ export function confirmRechargeOrder(
 
 export function fetchWithdrawalOrders(signal?: AbortSignal, query?: FinancePageQuery) {
   return requestJson<FinancePage<WithdrawalOrderSummary>>(
-    financialPagePath('/api/admin/withdrawal-orders', query),
+    adminQueryPath('/api/admin/withdrawal-orders', query),
     { signal },
   );
 }
@@ -249,13 +252,17 @@ export function createManualBalanceAdjustment(payload: ManualBalanceAdjustmentRe
   });
 }
 
-function financialPagePath(path: string, query?: FinancePageQuery) {
+function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery) {
   const params = new URLSearchParams();
-  if (query?.page && query.page > 0) {
-    params.set('page', String(query.page));
+  const pageQuery = query as FinancePageQuery | undefined;
+  if (pageQuery?.page && pageQuery.page > 0) {
+    params.set('page', String(pageQuery.page));
   }
-  if (query?.pageSize && query.pageSize > 0) {
-    params.set('pageSize', String(query.pageSize));
+  if (pageQuery?.pageSize && pageQuery.pageSize > 0) {
+    params.set('pageSize', String(pageQuery.pageSize));
+  }
+  if (query?.includeRobotData) {
+    params.set('includeRobotData', 'true');
   }
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
@@ -817,8 +824,8 @@ export function evaluatePlayRule(payload: PlayRuleEvaluateRequest) {
   });
 }
 
-export function fetchOrders(signal?: AbortSignal) {
-  return requestJson<OrderDetail[]>('/api/admin/orders', { signal });
+export function fetchOrders(signal?: AbortSignal, query?: OrderListQuery) {
+  return requestJson<OrderDetail[]>(adminQueryPath('/api/admin/orders', query), { signal });
 }
 
 export function createOrder(payload: CreateOrderRequest) {

@@ -23,6 +23,7 @@ import type {
 
 interface UseFinanceOptions {
   accountQuery: FinancePageQuery;
+  includeRobotData: boolean;
   ledgerQuery: FinancePageQuery;
   rechargeQuery: FinancePageQuery;
   withdrawalQuery: FinancePageQuery;
@@ -30,6 +31,7 @@ interface UseFinanceOptions {
 
 export function useFinance({
   accountQuery,
+  includeRobotData,
   ledgerQuery,
   rechargeQuery,
   withdrawalQuery,
@@ -59,7 +61,7 @@ export function useFinance({
     setError(null);
 
     Promise.all([
-      fetchFinanceOverview(controller.signal),
+      fetchFinanceOverview(controller.signal, { includeRobotData }),
       fetchFinancialAccounts(controller.signal, accountQuery),
       fetchLedgerEntries(controller.signal, ledgerQuery),
       fetchRechargeOrders(controller.signal, rechargeQuery),
@@ -97,8 +99,11 @@ export function useFinance({
   }, [
     accountQuery.page,
     accountQuery.pageSize,
+    accountQuery.includeRobotData,
+    includeRobotData,
     ledgerQuery.page,
     ledgerQuery.pageSize,
+    ledgerQuery.includeRobotData,
     rechargeQuery.page,
     rechargeQuery.pageSize,
     refreshToken,

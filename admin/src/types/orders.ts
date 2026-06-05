@@ -13,6 +13,10 @@ export interface CreateOrderRequest {
   userId: string;
 }
 
+export interface OrderListQuery {
+  includeRobotData?: boolean;
+}
+
 export interface OrderDetail {
   amountMinor: number;
   createdAt: string;

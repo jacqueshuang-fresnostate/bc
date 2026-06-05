@@ -670,7 +670,7 @@ let payout = matched_count * order.unit_amount_minor * order.odds_basis_points /
 
 ### 2. 签名
 
-- `GET /api/admin/orders`
+- `GET /api/admin/orders?includeRobotData=false`
 - `GET /api/admin/orders/{id}`
 - `POST /api/admin/orders`
 - `PATCH /api/admin/orders/{id}/cancel`
@@ -679,6 +679,8 @@ let payout = matched_count * order.unit_amount_minor * order.odds_basis_points /
 ### 3. 契约
 
 所有接口继续使用统一 API 信封。订单金额字段必须使用最小货币单位整数，不使用浮点数。
+
+后台订单列表不传 `includeRobotData` 时等同于 `false`，默认排除系统机器人账户订单；管理后台打开“显示机器人数据”开关后传入 `includeRobotData=true`，才返回机器人发起或机器人账户关联的订单。
 
 创建订单前必须存在同彩种、同 `issue` 的开奖期号，并且该期号状态必须为 `open`。`closed`、`drawn`、`cancelled` 期号都不能继续创建订单。
 
@@ -754,12 +756,15 @@ let payout = matched_count * order.unit_amount_minor * order.odds_basis_points /
 | 订单金额溢出 | HTTP 400，返回 `order amount is too large` |
 | 查询或取消不存在订单 | HTTP 404，返回订单不存在 |
 | 取消非待开奖订单 | HTTP 400，返回 `only pending draw orders can be cancelled` |
+| 订单列表未传 `includeRobotData` | 默认过滤系统机器人账户订单 |
+| 订单列表传 `includeRobotData=true` | 返回真实用户订单和系统机器人账户订单 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：`fc3d` 创建 `threeDirect` 订单，选号 `247`、单注 `200` 分，后端返回 `stakeCount=1`、`amountMinor=200`、`oddsBasisPoints` 和 `expandedBets=["247"]`。
 - Good：订单创建前先创建 `fc3d` 的 open 期号 `2026155`，订单请求使用同一期号才能成功。
 - Good：创建订单后重新请求 `/api/admin/dashboard`，`recentOrders` 包含该订单，今日订单指标等于内存订单数量。
+- Good：后台订单管理默认不展示机器人账户订单，打开“显示机器人数据”后才展示。
 - Base：订单仓储当前是内存模式，服务重启后订单清空；这适合当前后台功能验证。
 - Bad：前端手工输入一个不存在的期号仍然提交订单；订单必须从 open 期号中选择，后端也必须再次校验。
 - Bad：前端传 `amountMinor` 给后端并由后端直接保存；订单金额必须由后端根据注数和单注金额计算。
@@ -771,6 +776,7 @@ let payout = matched_count * order.unit_amount_minor * order.odds_basis_points /
 - 后端需要覆盖 open 期号允许投注，closed/drawn/cancelled 期号拒绝投注。
 - 后端需要覆盖彩种未配置或停用单玩法时拒绝创建订单。
 - 后端需要覆盖取消待开奖订单，以及重复取消被拒绝。
+- 后端需要覆盖订单列表默认过滤机器人账户订单，打开开关后返回机器人账户订单。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`。
 - 跨层联调需要创建 open 期号、创建订单、关闭期号后确认同一期号拒绝新订单，并在 dashboard 最近订单确认回流。
@@ -2123,11 +2129,11 @@ await createAdmin({
    - `createdPlans`：本轮新创建的合买计划。
    - `filledPlans`：本轮补满并关联订单的合买计划。
    - `createdOrders`：本轮由满单合买生成的真实投注订单。
-   - `ledgerEntries`：本轮机器人合买认购产生的资金流水。
+   - `ledgerEntries`：本轮机器人自动授信、合买认购产生的资金流水。
    - `skippedItems`：本轮跳过项，每项包含 `robotId`、`robotName`、`lotteryId`、`issue` 和 `reason`。
 7. 合买机器人计划 ID 必须按“机器人 ID + 彩种 ID + 期号”确定性生成，同一期重复执行不能重复创建计划。
-8. 合买机器人必须使用当前合买链路：校验彩种开售、合买开启、open 期号、封盘时间、启用玩法、注数报价、余额，再创建计划，并在临近封盘补单窗口内按阶段补单；满单后成单并写入 `groupBuyDebit`。
-9. 合买机器人使用系统账户 `U90001` 出资；余额不足时本轮返回跳过原因或业务错误，不允许透支。
+8. 合买机器人必须使用当前合买链路：校验彩种开售、合买开启、open 期号、封盘时间、启用玩法和注数报价，再创建计划，并在临近封盘补单窗口内按阶段补单；满单后成单并写入 `groupBuyDebit`。
+9. 合买机器人使用系统账户 `U90001` 出资；发起计划或补单前余额不足时，后端必须先通过 `ManualAdjustment` 自动授信补余额并记录“机器人账户自动授信补余额”，随后再执行真实扣款，不允许出现未扣款计划。
 10. 合买机器人必须扫描同彩种当前期非机器人发起的 `draft/open` 未满单计划，并按临近封盘阶段目标追加机器人参与记录；`G-ROBOT-` 开头的机器人计划不得被其他机器人交叉补单。
 11. 合买机器人补单节奏固定使用封盘前 90 秒窗口：距离封盘 90-61 秒目标进度 40%，60-31 秒目标进度 60%，30-16 秒目标进度 80%，最后 15 秒才允许补到 100% 并触发满单成单。
 12. 合买机器人每次补单都必须生成新的参与记录 ID，不允许复用同一个机器人参与记录一次性覆盖剩余金额。
@@ -2150,7 +2156,7 @@ await createAdmin({
 | 手动执行时没有可销售 open 期号 | HTTP 200，进入 `skippedItems`，不创建计划 |
 | 已创建合买但未进入封盘前 90 秒补单窗口 | HTTP 200，进入 `skippedItems`，不追加机器人参与记录、不成单 |
 | 当前合买进度已达到本阶段目标 | HTTP 200，进入 `skippedItems`，等待下一阶段 |
-| 手动执行时机器人余额不足 | HTTP 200 或业务错误明细记录为跳过/错误，不允许创建未扣款计划 |
+| 手动执行时机器人余额不足 | 自动写入机器人授信流水，再继续创建计划或补单并扣款 |
 
 ### 5. Good / Base / Bad Cases
 
@@ -2161,6 +2167,7 @@ await createAdmin({
 - Good：用户或后台已经发起同彩种当前期未满单合买时，合买机器人同样按临近封盘阶段目标追加机器人参与记录，不一次性补足剩余金额。
 - Good：同一期重复执行 `POST /api/admin/robots/run` 时返回“本期机器人合买计划已处理”等跳过原因，不重复创建计划。
 - Good：用户端查看机器人发起的合买计划时，只看到普通会员式发起人和通用合买标题，不会看到机器人账号、机器人名称或机器人说明。
+- Good：机器人账户余额被扣到不足时，执行结果 `ledgerEntries` 先出现正向 `manualAdjustment` 授信流水，再出现 `groupBuyDebit` 扣款流水。
 - Base：无数据库环境下使用内存机器人仓储，服务重启后恢复种子机器人配置。
 - Bad：机器人页面直接读取 dashboard 静态 `robots`，保存后列表与首页摘要会漂移。
 - Bad：机器人配置保存时不校验彩种存在，后续真实执行会对不存在彩种下单或发起合买。
@@ -2177,6 +2184,7 @@ await createAdmin({
 - 后端需要覆盖合买机器人可以按相同节奏补满非机器人发起的当前期未满单计划。
 - 后端需要覆盖同一期重复执行不会重复创建机器人合买计划。
 - 后端需要覆盖用户端合买 DTO 对机器人计划的发起人展示和标题脱敏，并确认普通用户发起的合买不受影响。
+- 后端需要覆盖机器人账户余额不足时会自动授信补余额，并且不会创建未扣款计划。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`，确认机器人类型、状态和 API client 类型一致。
 - API 冒烟需要创建机器人、切换状态、验证不存在彩种错误，手动执行合买机器人，并确认 dashboard 同步返回。
@@ -4198,13 +4206,14 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 
 - 触发条件：财务管理页展示资金账户、充值订单、资金流水或提现申请，或者后台审核提现申请。
 - 范围：`/api/admin/finance-overview`、`/api/admin/financial-accounts`、`/api/admin/recharge-orders`、`/api/admin/ledger-entries`、`/api/admin/withdrawal-orders`、`FinanceRepository`、`WithdrawalRepository`、管理后台财务页面。
+- 机器人数据口径：财务总览、资金账户和资金流水默认隐藏系统机器人账户数据，只有页面开关传入 `includeRobotData=true` 时才展示。
 
 ### 2. 签名
 
-- `GET /api/admin/finance-overview`
-- `GET /api/admin/financial-accounts?page=1&pageSize=20`
+- `GET /api/admin/finance-overview?includeRobotData=false`
+- `GET /api/admin/financial-accounts?page=1&pageSize=20&includeRobotData=false`
 - `GET /api/admin/recharge-orders?page=1&pageSize=20`
-- `GET /api/admin/ledger-entries?page=1&pageSize=20`
+- `GET /api/admin/ledger-entries?page=1&pageSize=20&includeRobotData=false`
 - `GET /api/admin/withdrawal-orders?page=1&pageSize=20`
 - `POST /api/admin/withdrawal-orders/{id}/approve`
 - `POST /api/admin/withdrawal-orders/{id}/reject`
@@ -4224,6 +4233,8 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 ```
 
 不传 `page/pageSize` 时允许返回全量列表，用于兼容内部调试；管理后台页面必须显式传入分页参数。
+
+不传 `includeRobotData` 时等同于 `false`，财务总览、资金账户和资金流水必须排除 `U90001` 等系统机器人账户；开关打开时才纳入机器人自动授信、合买扣款和机器人订单相关流水，方便审计。
 
 资金账户列表项必须包含用户名：
 
@@ -4246,6 +4257,8 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 | `pageSize <= 0` 或缺失 | 使用默认每页 20 条 |
 | 请求页码超过最大页 | 返回最后一页 |
 | 资金账户没有匹配用户 | `username=null`，不阻塞账户展示 |
+| 未传 `includeRobotData` | 默认过滤系统机器人账户和机器人流水 |
+| `includeRobotData=true` | 返回真实用户数据和机器人账户数据 |
 | 提现申请不存在 | HTTP 404 |
 | 提现申请已通过再驳回 | HTTP 400 |
 | 提现申请已驳回再通过 | HTTP 400 |
@@ -4255,6 +4268,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 
 - Good：财务管理页按分页请求资金账户，表格同时展示用户名和用户 ID。
 - Good：充值订单、资金流水、提现申请都有分页控件，翻页不会一次性拉取所有历史记录。
+- Good：默认进入财务管理页时，财务总览、资金账户和资金流水都不包含机器人账户；打开“显示机器人数据”后再纳入机器人流水。
 - Good：待审核提现点击“通过”后状态变为已通过，冻结余额减少，资金流水出现提现打款。
 - Good：待审核提现点击“驳回”后状态变为已驳回，冻结余额退回可用余额，资金流水出现提现驳回解冻。
 - Bad：前端拿全量数组后自行分页；数据量增大后会拖慢财务页面。
@@ -4263,6 +4277,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 ### 6. 必要测试
 
 - 后端需要覆盖提现通过、提现驳回和反向审核拒绝。
+- 后端需要覆盖机器人账户默认被财务口径过滤、打开开关后纳入总览。
 - OpenAPI 测试需要覆盖财务总览、提现申请列表和提现审核路径。
 - 管理后台需要运行 `npm run build`，确认分页响应、用户名字段和提现状态枚举类型一致。
 

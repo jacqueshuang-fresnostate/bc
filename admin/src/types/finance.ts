@@ -39,6 +39,7 @@ export interface FinancePage<T> {
 export interface FinancePageQuery {
   page?: number;
   pageSize?: number;
+  includeRobotData?: boolean;
 }
 
 export interface AdminFinancialAccountSummary {

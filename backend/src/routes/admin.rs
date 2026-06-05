@@ -27,7 +27,7 @@ use crate::{
         },
         finance::{
             AdminFinancialAccountSummary, FinanceOverview, FinancePage, FinancialAccountSummary,
-            LedgerEntry, ManualBalanceAdjustmentRequest,
+            LedgerEntry, LedgerEntryKind, ManualBalanceAdjustmentRequest,
         },
         group_buy::{
             AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyPlan,
@@ -65,7 +65,7 @@ use crate::{
             generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
         },
         group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
-        group_buy_robot::run_group_buy_robots,
+        group_buy_robot::{is_group_buy_robot_user_id, run_group_buy_robots},
         order::validate_draw_issue_accepts_order,
         play_rules::{evaluate_play_rule, play_rule_summaries},
         realtime::{
@@ -621,6 +621,27 @@ struct DrawIssueListQuery {
 struct FinancePageQuery {
     page: Option<usize>,
     page_size: Option<usize>,
+    include_robot_data: Option<bool>,
+}
+
+impl FinancePageQuery {
+    /// 后台列表默认隐藏机器人账户和机器人流水，只有显式打开开关时才返回。
+    fn include_robot_data(&self) -> bool {
+        self.include_robot_data.unwrap_or(false)
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RobotDataQuery {
+    include_robot_data: Option<bool>,
+}
+
+impl RobotDataQuery {
+    /// 后台查询默认隐藏机器人数据，避免运营统计被系统机器人干扰。
+    fn include_robot_data(&self) -> bool {
+        self.include_robot_data.unwrap_or(false)
+    }
 }
 
 fn page_items<T>(items: Vec<T>, query: FinancePageQuery) -> FinancePage<T> {
@@ -1774,10 +1795,78 @@ fn current_timestamp() -> String {
         .to_string()
 }
 
+/// 根据后台机器人数据开关计算财务总览；默认剔除机器人账户，避免运营数据被自动补单干扰。
+async fn finance_overview_for_query(
+    state: &AppState,
+    include_robot_data: bool,
+) -> ApiResult<FinanceOverview> {
+    if include_robot_data {
+        return state.finance.overview().await;
+    }
+
+    let accounts = state
+        .finance
+        .accounts()
+        .await?
+        .into_iter()
+        .filter(|account| !is_group_buy_robot_user_id(&account.user_id))
+        .collect::<Vec<_>>();
+    let ledger_entries = state
+        .finance
+        .ledger_entries()
+        .await?
+        .into_iter()
+        .filter(|entry| !is_group_buy_robot_user_id(&entry.user_id))
+        .collect::<Vec<_>>();
+    finance_overview_from_items(&accounts, &ledger_entries)
+}
+
+/// 从已过滤的账户和流水重新汇总财务指标，保证总览数字与当前列表口径一致。
+fn finance_overview_from_items(
+    accounts: &[FinancialAccountSummary],
+    ledger_entries: &[LedgerEntry],
+) -> ApiResult<FinanceOverview> {
+    let mut total_balance_minor = 0_i64;
+    let mut pending_withdraw_minor = 0_i64;
+    for account in accounts {
+        total_balance_minor = total_balance_minor
+            .checked_add(account.available_balance_minor)
+            .and_then(|amount| amount.checked_add(account.frozen_balance_minor))
+            .ok_or_else(|| ApiError::Internal("财务总览金额汇总溢出".to_string()))?;
+        pending_withdraw_minor = pending_withdraw_minor
+            .checked_add(account.frozen_balance_minor)
+            .ok_or_else(|| ApiError::Internal("财务冻结金额汇总溢出".to_string()))?;
+    }
+
+    let today_recharge_minor = ledger_entries
+        .iter()
+        .filter(|entry| entry.kind == LedgerEntryKind::RechargeCredit)
+        .try_fold(0_i64, |total, entry| total.checked_add(entry.amount_minor))
+        .ok_or_else(|| ApiError::Internal("财务充值金额汇总溢出".to_string()))?;
+    let today_payout_minor = ledger_entries
+        .iter()
+        .filter(|entry| entry.kind == LedgerEntryKind::PayoutCredit)
+        .try_fold(0_i64, |total, entry| total.checked_add(entry.amount_minor))
+        .ok_or_else(|| ApiError::Internal("财务派奖金额汇总溢出".to_string()))?;
+
+    Ok(FinanceOverview {
+        total_balance_minor,
+        pending_withdraw_minor,
+        today_recharge_minor,
+        today_payout_minor,
+    })
+}
+
+/// 判断后台用户维度记录是否应返回给页面；机器人数据只有在开关打开时展示。
+fn should_include_user_scoped_record(include_robot_data: bool, user_id: &str) -> bool {
+    include_robot_data || !is_group_buy_robot_user_id(user_id)
+}
+
 async fn get_finance_overview(
     State(state): State<AppState>,
+    Query(query): Query<RobotDataQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinanceOverview>>> {
-    let overview = state.finance.overview().await?;
+    let overview = finance_overview_for_query(&state, query.include_robot_data()).await?;
 
     Ok(Json(ApiEnvelope::success(overview)))
 }
@@ -1786,7 +1875,15 @@ async fn list_financial_accounts(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminFinancialAccountSummary>>>> {
-    let accounts = state.finance.accounts().await?;
+    let accounts = state
+        .finance
+        .accounts()
+        .await?
+        .into_iter()
+        .filter(|account| {
+            should_include_user_scoped_record(query.include_robot_data(), &account.user_id)
+        })
+        .collect::<Vec<_>>();
     let users = state.access.users().await?;
     let usernames: BTreeMap<String, String> = users
         .into_iter()
@@ -1809,7 +1906,15 @@ async fn list_ledger_entries(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<LedgerEntry>>>> {
-    let entries = state.finance.ledger_entries().await?;
+    let entries = state
+        .finance
+        .ledger_entries()
+        .await?
+        .into_iter()
+        .filter(|entry| {
+            should_include_user_scoped_record(query.include_robot_data(), &entry.user_id)
+        })
+        .collect::<Vec<_>>();
 
     Ok(Json(ApiEnvelope::success(page_items(entries, query))))
 }
@@ -1889,8 +1994,17 @@ async fn manual_balance_adjustment(
 
 async fn list_orders(
     State(state): State<AppState>,
+    Query(query): Query<RobotDataQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<OrderDetail>>>> {
-    let orders = state.orders.list().await?;
+    let orders = state
+        .orders
+        .list()
+        .await?
+        .into_iter()
+        .filter(|order| {
+            should_include_user_scoped_record(query.include_robot_data(), &order.user_id)
+        })
+        .collect::<Vec<_>>();
 
     Ok(Json(ApiEnvelope::success(orders)))
 }
@@ -2119,9 +2233,10 @@ struct SaleStatusRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        align_draw_issue_plan_after_sale_on, required_scope_for_path,
-        should_align_draw_issue_plan_after_sale_on,
+        align_draw_issue_plan_after_sale_on, finance_overview_for_query, required_scope_for_path,
+        should_align_draw_issue_plan_after_sale_on, should_include_user_scoped_record,
     };
+    use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
         app::AppState,
         domain::{draw::DrawIssueStatus, lottery::DrawMode, permission::PermissionScope},
@@ -2188,6 +2303,35 @@ mod tests {
             required_scope_for_path("/invite-policy"),
             Some(PermissionScope::Rebates)
         );
+    }
+
+    #[test]
+    /// 后台订单、资金账户和资金流水默认过滤机器人账户，开关打开后才展示。
+    fn user_scoped_record_filter_hides_robot_by_default() {
+        assert!(!should_include_user_scoped_record(
+            false,
+            ROBOT_GROUP_BUY_USER_ID
+        ));
+        assert!(should_include_user_scoped_record(
+            true,
+            ROBOT_GROUP_BUY_USER_ID
+        ));
+        assert!(should_include_user_scoped_record(false, "U10001"));
+    }
+
+    #[tokio::test]
+    /// 财务总览默认剔除机器人账户余额，开关打开后才纳入机器人自动授信和扣款口径。
+    async fn finance_overview_hides_robot_account_by_default() {
+        let state = test_state();
+
+        let hidden_robot_overview = finance_overview_for_query(&state, false)
+            .await
+            .expect("overview can hide robot account");
+        let full_overview = finance_overview_for_query(&state, true)
+            .await
+            .expect("overview can include robot account");
+
+        assert!(full_overview.total_balance_minor > hidden_robot_overview.total_balance_minor);
     }
 
     #[test]

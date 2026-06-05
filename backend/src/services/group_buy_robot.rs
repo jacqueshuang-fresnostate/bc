@@ -7,6 +7,7 @@ use chrono::NaiveDateTime;
 use crate::{
     domain::{
         draw::{DrawIssue, DrawIssueStatus},
+        finance::{LedgerEntry, ManualBalanceAdjustmentRequest},
         group_buy::{
             AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyPlan,
             GroupBuyPlanStatus,
@@ -33,10 +34,11 @@ use crate::{
     },
 };
 
-const ROBOT_GROUP_BUY_USER_ID: &str = "U90001";
+pub const ROBOT_GROUP_BUY_USER_ID: &str = "U90001";
 const ROBOT_GROUP_BUY_USERNAME: &str = "agent_alpha";
 const ROBOT_FILL_PARTICIPANT_SUFFIX: &str = "P-ROBOT-FILL";
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+const ROBOT_AUTO_CREDIT_RESERVE_MINOR: i64 = 100_000;
 const ROBOT_FILL_WINDOW_SECONDS: i64 = 90;
 const ROBOT_FILL_STAGE_ONE_SECONDS: i64 = 60;
 const ROBOT_FILL_STAGE_TWO_SECONDS: i64 = 30;
@@ -46,6 +48,11 @@ const ROBOT_FILL_STAGE_TWO_TARGET_PERCENT: i64 = 60;
 const ROBOT_FILL_STAGE_THREE_TARGET_PERCENT: i64 = 80;
 const ROBOT_FILL_FINAL_TARGET_PERCENT: i64 = 100;
 const ROBOT_FILL_STAGE_COUNT: i64 = 5;
+
+/// 判断用户 ID 是否为系统合买机器人账户。
+pub fn is_group_buy_robot_user_id(user_id: &str) -> bool {
+    user_id.trim() == ROBOT_GROUP_BUY_USER_ID
+}
 
 /// 执行全部已启用的合买机器人，并返回本轮创建、满单、成单和跳过明细。
 pub async fn run_group_buy_robots(
@@ -166,6 +173,11 @@ async fn execute_lottery_robot(
         Ok(existing) => existing,
         Err(ApiError::NotFound(_)) => {
             let draft = build_robot_plan_request(robot, lottery, issue, orders, robot_user).await?;
+            if let Some(entry) =
+                ensure_robot_balance(finance, draft.total_amount_minor, "发起合买计划").await?
+            {
+                run.ledger_entries.push(entry);
+            }
             finance
                 .ensure_available(&robot_user.id, draft.total_amount_minor)
                 .await?;
@@ -310,6 +322,10 @@ async fn fill_robot_plan(
     let fill_note = decision.note.clone();
 
     let participant_id = next_robot_fill_participant_id(plan);
+    if let Some(entry) = ensure_robot_balance(finance, fill_amount_minor, "合买分阶段补单").await?
+    {
+        run.ledger_entries.push(entry);
+    }
     finance
         .ensure_available(ROBOT_GROUP_BUY_USER_ID, fill_amount_minor)
         .await?;
@@ -725,6 +741,38 @@ fn robot_user(users: &[UserSummary]) -> ApiResult<&UserSummary> {
         .ok_or_else(|| ApiError::NotFound("合买机器人资金账号不存在".to_string()))
 }
 
+/// 机器人账户余额不足时自动授信补足，并返回授信流水供后台实时事件广播。
+async fn ensure_robot_balance(
+    finance: &FinanceRepository,
+    required_amount_minor: i64,
+    reason: &str,
+) -> ApiResult<Option<LedgerEntry>> {
+    if required_amount_minor <= 0 {
+        return Err(ApiError::BadRequest("机器人授信金额必须大于 0".to_string()));
+    }
+
+    let account = finance.account_or_create(ROBOT_GROUP_BUY_USER_ID).await?;
+    if account.available_balance_minor >= required_amount_minor {
+        return Ok(None);
+    }
+
+    let target_balance_minor = required_amount_minor
+        .checked_add(ROBOT_AUTO_CREDIT_RESERVE_MINOR)
+        .ok_or_else(|| ApiError::BadRequest("机器人授信金额过大".to_string()))?;
+    let top_up_amount_minor = target_balance_minor
+        .checked_sub(account.available_balance_minor)
+        .ok_or_else(|| ApiError::BadRequest("机器人授信金额无效".to_string()))?;
+    let entry = finance
+        .manual_adjust(ManualBalanceAdjustmentRequest {
+            user_id: ROBOT_GROUP_BUY_USER_ID.to_string(),
+            amount_minor: top_up_amount_minor,
+            description: format!("机器人账户自动授信补余额：{reason}"),
+        })
+        .await?;
+
+    Ok(Some(entry))
+}
+
 /// 生成同一机器人、彩种、期号的确定性合买计划 ID。
 fn robot_plan_id(robot: &RobotConfigSummary, lottery: &LotteryKind, issue: &DrawIssue) -> String {
     format!(
@@ -972,6 +1020,7 @@ mod tests {
     use crate::{
         domain::{
             draw::CreateDrawIssueRequest,
+            finance::{LedgerEntryKind, ManualBalanceAdjustmentRequest},
             lottery::{DrawSchedule, GroupBuyConfig, LotteryNumberType, PlayCategory},
             order::OrderSource,
         },
@@ -1033,6 +1082,75 @@ mod tests {
             total >= lottery.group_buy.participant_min_amount_minor * ROBOT_FILL_STAGE_COUNT,
             "机器人发起金额需要支持多阶段补单"
         );
+    }
+
+    #[tokio::test]
+    async fn robot_run_auto_credits_robot_account_when_balance_is_low() {
+        let access = AccessRepository::memory_seeded();
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        lotteries
+            .set_sale_enabled("ssc60", true)
+            .await
+            .expect("lottery sale can be enabled");
+        let mut lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.group_buy.enabled = true;
+        lotteries
+            .update("ssc60", lottery.clone())
+            .await
+            .expect("lottery can enable group buy");
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "20260605200500".to_string(),
+                    scheduled_at: "2026-06-05 20:05:00".to_string(),
+                    sale_closed_at: "2026-06-05 20:04:30".to_string(),
+                },
+            )
+            .await
+            .expect("issue can be created");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        finance
+            .manual_adjust(ManualBalanceAdjustmentRequest {
+                user_id: ROBOT_GROUP_BUY_USER_ID.to_string(),
+                amount_minor: -520_000,
+                description: "测试扣空机器人账户".to_string(),
+            })
+            .await
+            .expect("robot balance can be reduced for test");
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+
+        let run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 20:02:00".to_string(),
+        )
+        .await
+        .expect("robot can run after auto credit");
+
+        assert_eq!(run.created_plans.len(), 1);
+        assert!(run.ledger_entries.iter().any(|entry| {
+            entry.user_id == ROBOT_GROUP_BUY_USER_ID
+                && entry.kind == LedgerEntryKind::ManualAdjustment
+                && entry.amount_minor > 0
+                && entry.description.contains("机器人账户自动授信补余额")
+        }));
+        assert!(run.ledger_entries.iter().any(|entry| {
+            entry.user_id == ROBOT_GROUP_BUY_USER_ID && entry.kind == LedgerEntryKind::GroupBuyDebit
+        }));
+        finance
+            .ensure_available(ROBOT_GROUP_BUY_USER_ID, 1)
+            .await
+            .expect("robot account keeps positive balance after auto credit");
     }
 
     #[tokio::test]

@@ -1,4 +1,14 @@
-import { Input, Banner, Button, Card, Select, Spin, Tabs, Tag } from '@douyinfe/semi-ui';
+import {
+  Input,
+  Banner,
+  Button,
+  Card,
+  Select,
+  Spin,
+  Switch,
+  Tabs,
+  Tag,
+} from '@douyinfe/semi-ui';
 import { CheckCircle2, Plus, RefreshCcw, WalletCards, XCircle } from 'lucide-react';
 import {
   useState,
@@ -42,6 +52,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
   const [withdrawalPageSize, setWithdrawalPageSize] = useState(10);
   const [ledgerPage, setLedgerPage] = useState(1);
   const [ledgerPageSize, setLedgerPageSize] = useState(20);
+  const [includeRobotData, setIncludeRobotData] = useState(false);
   const {
     accounts,
     adjustBalance,
@@ -57,8 +68,9 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
     saving,
     withdrawalOrders,
   } = useFinance({
-    accountQuery: { page: accountPage, pageSize: accountPageSize },
-    ledgerQuery: { page: ledgerPage, pageSize: ledgerPageSize },
+    accountQuery: { includeRobotData, page: accountPage, pageSize: accountPageSize },
+    includeRobotData,
+    ledgerQuery: { includeRobotData, page: ledgerPage, pageSize: ledgerPageSize },
     rechargeQuery: { page: rechargePage, pageSize: rechargePageSize },
     withdrawalQuery: { page: withdrawalPage, pageSize: withdrawalPageSize },
   });
@@ -111,9 +123,22 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
             查看资金账户、充值订单、提现申请和资金流水，执行后台手动调账。
           </p>
         </div>
-        <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
-          刷新
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="inline-flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm text-slate-600">
+            <Switch
+              checked={includeRobotData}
+              onChange={(checked) => {
+                setIncludeRobotData(checked);
+                setAccountPage(1);
+                setLedgerPage(1);
+              }}
+            />
+            <span>显示机器人数据</span>
+          </label>
+          <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
+            刷新
+          </Button>
+        </div>
       </section>
 
       {error ? <Banner type="danger" title="财务接口错误" description={error} /> : null}

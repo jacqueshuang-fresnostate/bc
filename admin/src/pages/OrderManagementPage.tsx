@@ -1,4 +1,4 @@
-import { Input, Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, Spin, Switch, Tag } from '@douyinfe/semi-ui';
 import { Ban, Plus, RefreshCcw } from 'lucide-react';
 import {
   useEffect,
@@ -58,6 +58,7 @@ const digitAttributeOptions: Array<{ label: string; value: DigitAttribute }> = [
 ];
 
 export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageProps) {
+  const [includeRobotData, setIncludeRobotData] = useState(false);
   const {
     cancel,
     create,
@@ -66,7 +67,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
     orders,
     refresh: refreshOrders,
     saving,
-  } = useOrders();
+  } = useOrders({ includeRobotData });
   const {
     error: lotteryError,
     loading: lotteriesLoading,
@@ -186,9 +187,18 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
             创建测试投注单，后端会校验期号仍处于销售中，再计算注数、金额和投注展开。
           </p>
         </div>
-        <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
-          刷新
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="inline-flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm text-slate-600">
+            <Switch
+              checked={includeRobotData}
+              onChange={(checked) => setIncludeRobotData(checked)}
+            />
+            <span>显示机器人数据</span>
+          </label>
+          <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
+            刷新
+          </Button>
+        </div>
       </section>
 
       {error ? <Banner type="danger" title="订单接口错误" description={error} /> : null}

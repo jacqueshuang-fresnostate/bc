@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { cancelOrder, createOrder, fetchOrders } from '../api/client';
-import type { CreateOrderRequest, OrderDetail } from '../types/orders';
+import type { CreateOrderRequest, OrderDetail, OrderListQuery } from '../types/orders';
 
-export function useOrders() {
+export function useOrders(query: OrderListQuery = {}) {
   const [orders, setOrders] = useState<OrderDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -19,7 +19,7 @@ export function useOrders() {
     setLoading(true);
     setError(null);
 
-    fetchOrders(controller.signal)
+    fetchOrders(controller.signal, query)
       .then(setOrders)
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) {
@@ -35,7 +35,7 @@ export function useOrders() {
     return () => {
       controller.abort();
     };
-  }, [refreshToken]);
+  }, [query.includeRobotData, refreshToken]);
 
   const create = useCallback(async (payload: CreateOrderRequest) => {
     setSaving(true);

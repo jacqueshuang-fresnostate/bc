@@ -1982,3 +1982,10 @@
 - 解决问题：此前机器人会长期使用 `1|2|3`、`1,2,3` 这类固定样例投注内容，用户容易看出机器人计划规律，也不能体现不同玩法的真实选号格式。
 - 实施内容：新增按机器人、彩种、期号、玩法和玩法顺序派生的确定性随机选号器；直选、直选组合、组选、胆拖、大小单双分别生成对应合法格式，生成后继续经过合买选号解析和订单报价校验。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过；全量后端 216 个测试成功，其中新增覆盖所有玩法机器人选号可解析可展开，以及直选投注内容会随期号变化、不再固定为 `1|2|3`。
+
+## 2026-06-05 21:33 HKT 机器人账户自动授信与后台过滤
+
+- 完成任务：为合买机器人账户新增自动授信/自动补余额，并在后台订单管理、财务管理中新增“显示机器人数据”开关。
+- 解决问题：机器人账户余额不足时会导致合买计划创建或临近封盘补单失败；同时订单列表、资金账户、资金流水和财务总览默认混入机器人数据，会影响运营查看真实用户业务。
+- 实施内容：机器人发起合买计划和分阶段补单前先检查 `U90001` 可用余额，余额不足时写入正向 `manualAdjustment` 流水“机器人账户自动授信补余额”，再继续真实扣款；后台财务总览、资金账户、资金流水和订单列表新增 `includeRobotData` 查询口径，默认过滤机器人数据，前端通过 Semi UI `Switch` 控制是否显示。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`npm run build`（admin）和 `git diff --check` 均通过；后端全量 219 条测试成功，新增覆盖机器人账户自动授信和后台机器人数据默认过滤；本地接口烟测确认资金账户和订单默认不含 `U90001`，传入 `includeRobotData=true` 后包含机器人数据，财务总览金额随过滤口径变化。
