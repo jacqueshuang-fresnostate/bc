@@ -451,9 +451,14 @@ async fn build_robot_plan_request(
     robot_user: &UserSummary,
 ) -> ApiResult<CreateGroupBuyPlanRequest> {
     let mut skipped_reasons = Vec::new();
-    for play in lottery.play_configs.iter().filter(|play| play.enabled) {
-        let numbers = default_numbers_for_rule(&play.rule_code);
-        let selection = match parse_group_buy_selection(&play.rule_code, numbers) {
+    for (play_index, play) in lottery
+        .play_configs
+        .iter()
+        .filter(|play| play.enabled)
+        .enumerate()
+    {
+        let numbers = robot_numbers_for_rule(robot, lottery, issue, &play.rule_code, play_index);
+        let selection = match parse_group_buy_selection(&play.rule_code, &numbers) {
             Ok(selection) => selection,
             Err(error) => {
                 skipped_reasons.push(error.to_string());
@@ -490,7 +495,7 @@ async fn build_robot_plan_request(
             issue: issue.issue.clone(),
             rule_code,
             title: format!("{} 第{}期合买", lottery.name, issue.issue),
-            numbers: numbers.to_string(),
+            numbers,
             initiator_user_id: robot_user.id.clone(),
             total_amount_minor,
             initiator_amount_minor,
@@ -569,27 +574,142 @@ async fn current_open_issue(
         }))
 }
 
-/// 返回指定玩法的默认一组投注文本。
-fn default_numbers_for_rule(rule_code: &PlayRuleCode) -> &'static str {
+/// 按机器人、彩种、期号和玩法派生一组可校验的随机投注文本。
+fn robot_numbers_for_rule(
+    robot: &RobotConfigSummary,
+    lottery: &LotteryKind,
+    issue: &DrawIssue,
+    rule_code: &PlayRuleCode,
+    play_index: usize,
+) -> String {
     use PlayRuleCode::*;
 
+    let mut picker = RobotNumberPicker::new(robot, lottery, issue, rule_code, play_index);
     match rule_code {
-        ThreeDirect | FiveFrontDirect | FiveMiddleDirect | FiveBackDirect => "1|2|3",
-        FiveFrontDirectCombination | FiveMiddleDirectCombination | FiveBackDirectCombination => {
-            "1,2,3"
+        ThreeDirect | FiveFrontDirect | FiveMiddleDirect | FiveBackDirect => {
+            format!("{}|{}|{}", picker.digit(), picker.digit(), picker.digit())
         }
-        ThreeGroupThree | FiveFrontGroupThree | FiveMiddleGroupThree | FiveBackGroupThree => "1,2",
+        FiveFrontDirectCombination | FiveMiddleDirectCombination | FiveBackDirectCombination => {
+            join_digits(&picker.unique_digits(3))
+        }
+        ThreeGroupThree | FiveFrontGroupThree | FiveMiddleGroupThree | FiveBackGroupThree => {
+            join_digits(&picker.unique_digits(2))
+        }
         ThreeGroupThreeBanker
         | FiveFrontGroupThreeBanker
         | FiveMiddleGroupThreeBanker
-        | FiveBackGroupThreeBanker => "1|2",
-        ThreeGroupSix | FiveFrontGroupSix | FiveMiddleGroupSix | FiveBackGroupSix => "1,2,3",
+        | FiveBackGroupThreeBanker => {
+            let digits = picker.unique_digits(2);
+            format!("{}|{}", digits[0], digits[1])
+        }
+        ThreeGroupSix | FiveFrontGroupSix | FiveMiddleGroupSix | FiveBackGroupSix => {
+            join_digits(&picker.unique_digits(3))
+        }
         ThreeGroupSixBanker
         | FiveFrontGroupSixBanker
         | FiveMiddleGroupSixBanker
-        | FiveBackGroupSixBanker => "1|2,3",
-        FiveBigSmallOddEven => "大|单",
+        | FiveBackGroupSixBanker => {
+            let digits = picker.unique_digits(3);
+            format!("{}|{},{}", digits[0], digits[1], digits[2])
+        }
+        FiveBigSmallOddEven => {
+            format!("tens:{}|ones:{}", picker.attribute(), picker.attribute())
+        }
     }
+}
+
+struct RobotNumberPicker {
+    state: u64,
+}
+
+impl RobotNumberPicker {
+    /// 用业务上下文构造确定性随机种子，让同一计划可复现、不同期号会变化。
+    fn new(
+        robot: &RobotConfigSummary,
+        lottery: &LotteryKind,
+        issue: &DrawIssue,
+        rule_code: &PlayRuleCode,
+        play_index: usize,
+    ) -> Self {
+        let mut state = 0xcbf2_9ce4_8422_2325_u64;
+        let rule_text = match enum_to_string(rule_code) {
+            Ok(value) => value,
+            Err(_) => format!("{rule_code:?}"),
+        };
+        let play_index_text = play_index.to_string();
+        for part in [
+            robot.id.as_str(),
+            lottery.id.as_str(),
+            issue.issue.as_str(),
+            rule_text.as_str(),
+            play_index_text.as_str(),
+        ] {
+            mix_seed_part(&mut state, part);
+        }
+        if state == 0 {
+            state = 0x9e37_79b9_7f4a_7c15;
+        }
+        Self { state }
+    }
+
+    /// 生成 0-9 的单个数字。
+    fn digit(&mut self) -> u8 {
+        self.next_index(10) as u8
+    }
+
+    /// 从 0-9 中抽取不重复数字，保证组选和胆拖玩法可通过校验。
+    fn unique_digits(&mut self, count: usize) -> Vec<u8> {
+        let mut digits = (0_u8..=9).collect::<Vec<_>>();
+        for index in 0..count.min(digits.len()) {
+            let swap_index = index + self.next_index(digits.len() - index);
+            digits.swap(index, swap_index);
+        }
+        digits.truncate(count.min(digits.len()));
+        digits
+    }
+
+    /// 返回大小单双属性文本，使用后端解析器支持的英文标准值。
+    fn attribute(&mut self) -> &'static str {
+        const ATTRIBUTES: [&str; 4] = ["big", "small", "odd", "even"];
+        ATTRIBUTES[self.next_index(ATTRIBUTES.len())]
+    }
+
+    /// 返回指定长度范围内的随机索引。
+    fn next_index(&mut self, len: usize) -> usize {
+        if len <= 1 {
+            return 0;
+        }
+        (self.next_u64() % len as u64) as usize
+    }
+
+    /// 使用 xorshift64* 推进确定性随机状态。
+    fn next_u64(&mut self) -> u64 {
+        let mut value = self.state;
+        value ^= value >> 12;
+        value ^= value << 25;
+        value ^= value >> 27;
+        self.state = value;
+        value.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+}
+
+/// 把种子片段混入 FNV-1a 状态。
+fn mix_seed_part(state: &mut u64, part: &str) {
+    for byte in part.as_bytes() {
+        *state ^= u64::from(*byte);
+        *state = state.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    *state ^= 0xff;
+    *state = state.wrapping_mul(0x0000_0100_0000_01b3);
+}
+
+/// 将数字列表格式化为合买解析器支持的逗号分隔文本。
+fn join_digits(digits: &[u8]) -> String {
+    digits
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// 定位机器人系统账号，避免用不存在的用户创建合买。
@@ -857,9 +977,48 @@ mod tests {
         },
         services::{
             draw::DrawRepository, finance::FinanceRepository, lottery::LotteryRepository,
-            robot::RobotRepository,
+            play_rules::expanded_bets_for_rule, robot::RobotRepository,
         },
     };
+
+    #[test]
+    fn robot_numbers_match_every_supported_play_rule() {
+        let robot = robot_test_config();
+        let lottery = robot_test_lottery();
+        let issue = robot_test_issue("20260605200000");
+
+        for (index, rule_code) in robot_supported_play_rules().into_iter().enumerate() {
+            let numbers = robot_numbers_for_rule(&robot, &lottery, &issue, &rule_code, index);
+            let selection =
+                parse_group_buy_selection(&rule_code, &numbers).expect("机器人选号必须可解析");
+            let expanded =
+                expanded_bets_for_rule(&rule_code, &selection).expect("机器人选号必须可展开");
+
+            assert!(
+                !expanded.is_empty(),
+                "玩法 {:?} 生成的投注内容应至少展开一注",
+                rule_code
+            );
+        }
+    }
+
+    #[test]
+    fn robot_direct_numbers_vary_across_issues() {
+        let robot = robot_test_config();
+        let lottery = robot_test_lottery();
+        let numbers = (0..8)
+            .map(|index| {
+                let issue = robot_test_issue(&format!("2026060520000{index}"));
+                robot_numbers_for_rule(&robot, &lottery, &issue, &PlayRuleCode::FiveFrontDirect, 0)
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert!(numbers.len() > 1, "机器人直选投注内容需要随期号随机变化");
+        assert!(
+            numbers.iter().any(|numbers| numbers != "1|2|3"),
+            "机器人直选投注内容不能总是固定的 1|2|3"
+        );
+    }
 
     #[test]
     fn robot_amounts_keep_remaining_participation_valid() {
@@ -1211,5 +1370,63 @@ mod tests {
                 odds_basis_points: 95_000,
             }],
         }
+    }
+
+    fn robot_test_config() -> RobotConfigSummary {
+        RobotConfigSummary {
+            id: "R-BUY-TEST".to_string(),
+            name: "测试合买机器人".to_string(),
+            kind: RobotKind::GroupBuy,
+            lottery_ids: vec!["robot-test".to_string()],
+            status: RobotStatus::Enabled,
+            description: "测试机器人".to_string(),
+        }
+    }
+
+    fn robot_test_issue(issue: &str) -> DrawIssue {
+        DrawIssue {
+            id: format!("I-{issue}"),
+            lottery_id: "robot-test".to_string(),
+            lottery_name: "机器人测试彩".to_string(),
+            issue: issue.to_string(),
+            number_type: LotteryNumberType::FiveDigit,
+            draw_mode: crate::domain::lottery::DrawMode::Platform,
+            scheduled_at: "2026-06-05 20:00:00".to_string(),
+            sale_closed_at: "2026-06-05 19:59:30".to_string(),
+            status: DrawIssueStatus::Open,
+            draw_number: None,
+            drawn_at: None,
+            created_at: "2026-06-05 19:00:00".to_string(),
+        }
+    }
+
+    fn robot_supported_play_rules() -> Vec<PlayRuleCode> {
+        use PlayRuleCode::*;
+        vec![
+            ThreeDirect,
+            ThreeGroupThree,
+            ThreeGroupThreeBanker,
+            ThreeGroupSix,
+            ThreeGroupSixBanker,
+            FiveFrontDirect,
+            FiveMiddleDirect,
+            FiveBackDirect,
+            FiveFrontDirectCombination,
+            FiveMiddleDirectCombination,
+            FiveBackDirectCombination,
+            FiveFrontGroupThree,
+            FiveMiddleGroupThree,
+            FiveBackGroupThree,
+            FiveFrontGroupThreeBanker,
+            FiveMiddleGroupThreeBanker,
+            FiveBackGroupThreeBanker,
+            FiveFrontGroupSix,
+            FiveMiddleGroupSix,
+            FiveBackGroupSix,
+            FiveFrontGroupSixBanker,
+            FiveMiddleGroupSixBanker,
+            FiveBackGroupSixBanker,
+            FiveBigSmallOddEven,
+        ]
     }
 }

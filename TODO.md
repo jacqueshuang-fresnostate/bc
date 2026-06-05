@@ -1975,3 +1975,10 @@
 - 解决问题：旧页面仍使用 snake_case 字段和旧接口，无法读取当前系统的代理邀请码、邀请策略、注册代理关系和资金流水；通过邀请码注册的直属用户也可能因为没有后台邀请记录而不显示。
 - 实施内容：后端邀请中心合并后台邀请记录与用户 `agentId` 代理关系，普通用户返回 `canInvite=false`，代理用户按返利策略判断是否可复制邀请码；直属充值按 `rechargeCredit` 正向资金流水汇总；手机端展示返利模式、默认返利比例、直属人数、有效下级、直属充值、已付返利和直属用户状态。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`npm run build` 和 `git diff --check` 均已通过；本地内存后端 `GET /api/user/invitations/summary` 真实请求验证通过，代理 `agent_alpha` 可邀请并返回 2 个直属用户，普通用户 `demo_user` 返回 `canInvite=false` 且直属列表为空；浏览器烟测确认 `/invitation-center` 路由可加载且无控制台错误。
+
+## 2026-06-05 21:13 HKT 合买机器人按玩法随机选号
+
+- 完成任务：修正合买机器人自动发起合买计划的投注内容生成逻辑。
+- 解决问题：此前机器人会长期使用 `1|2|3`、`1,2,3` 这类固定样例投注内容，用户容易看出机器人计划规律，也不能体现不同玩法的真实选号格式。
+- 实施内容：新增按机器人、彩种、期号、玩法和玩法顺序派生的确定性随机选号器；直选、直选组合、组选、胆拖、大小单双分别生成对应合法格式，生成后继续经过合买选号解析和订单报价校验。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过；全量后端 216 个测试成功，其中新增覆盖所有玩法机器人选号可解析可展开，以及直选投注内容会随期号变化、不再固定为 `1|2|3`。
