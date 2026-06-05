@@ -1,5 +1,16 @@
 # TODO
 
+## 2026-06-05 11:47 HKT 高频极速开奖号码正圆展示
+
+- 完成任务：把手机端首页“高频极速”模块的开奖号码改为固定正圆号码球展示。
+- 解决问题：仅依赖 Tailwind 圆角和尺寸类时，后续如果内容、内边距或样式覆盖变化，号码球可能呈现为非正圆。
+- 具体实现：
+  - `HomeDrawCard.vue` 新增 `home-result-ball` scoped 样式，强制设置固定尺寸、`aspect-ratio: 1 / 1`、`border-radius: 9999px` 和不收缩。
+  - 高频极速推荐大卡使用 `home-result-ball--featured`，小卡使用 `home-result-ball--secondary`。
+  - 前端组件规范补充高频极速开奖号码必须使用固定正圆号码球的约束。
+- 验证记录：
+  - `cd mobile && npm run build` 通过。
+
 ## 2026-06-05 11:43 HKT 手机端高频极速开奖号码位数兼容
 
 - 完成任务：修复手机端首页“高频极速”模块 5 位开奖号码只显示 3 位的问题。

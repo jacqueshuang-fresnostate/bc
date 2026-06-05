@@ -83,7 +83,7 @@ function statusClass() {
       <CountdownBadge :text="countdownText(lottery)" />
     </div>
     <div class="flex flex-wrap items-center gap-2">
-      <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-featured-${index}`" class="flex h-9 w-9 items-center justify-center rounded-full lacquer-gradient font-headline text-base font-bold !text-white shadow-sm">{{ digit }}</div>
+      <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-featured-${index}`" class="home-result-ball home-result-ball--featured lacquer-gradient font-headline text-base font-bold !text-white shadow-sm">{{ digit }}</div>
       <div class="flex min-w-8 flex-1 flex-col items-end justify-center">
         <span class="text-[10px] font-medium uppercase text-on-surface-variant">和值</span>
         <span class="font-headline font-bold text-primary">{{ digitSum }}</span>
@@ -109,7 +109,7 @@ function statusClass() {
       <span class="shrink-0 text-[10px] font-bold text-primary">{{ countdownText(lottery) }}</span>
     </div>
     <div class="flex flex-wrap justify-center gap-1.5">
-      <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-secondary-${index}`" class="flex h-6 w-6 items-center justify-center rounded-full border border-outline-variant/30 bg-surface-container-highest text-[9px] font-bold text-on-surface-variant">{{ digit }}</div>
+      <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-secondary-${index}`" class="home-result-ball home-result-ball--secondary border border-outline-variant/30 bg-surface-container-highest text-[9px] font-bold text-on-surface-variant">{{ digit }}</div>
     </div>
     <button class="w-full rounded-full border border-primary/10 bg-white py-1.5 text-xs font-bold text-primary shadow-sm" @click="emit('open', lottery)">进入</button>
     <button v-if="lottery.groupBuyEnabled" class="w-full rounded-full border border-primary/10 bg-red-50 py-1.5 text-xs font-bold text-primary" @click="emit('groupBuy', lottery)">合买</button>
@@ -134,3 +134,25 @@ function statusClass() {
     </div>
   </button>
 </template>
+
+<style scoped>
+.home-result-ball {
+  display: inline-flex;
+  flex: 0 0 var(--home-result-ball-size);
+  width: var(--home-result-ball-size);
+  height: var(--home-result-ball-size);
+  aspect-ratio: 1 / 1;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  line-height: 1;
+}
+
+.home-result-ball--featured {
+  --home-result-ball-size: 2.25rem;
+}
+
+.home-result-ball--secondary {
+  --home-result-ball-size: 1.5rem;
+}
+</style>
