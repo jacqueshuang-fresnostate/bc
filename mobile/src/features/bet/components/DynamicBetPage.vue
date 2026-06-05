@@ -5,7 +5,7 @@ import { showNotify, showToast } from 'vant'
 import { fetchCurrentUserProfile } from '../../../api/user'
 import { parseChinaDateTime } from '../../../utils/lotteryFormat'
 import { createGroupBuyPlan } from '../../group-buy/api'
-import { calculateFixedShareCount, calculateRequiredSelfShares } from '../../group-buy/presentation'
+import { calculateFixedShareCount, calculateRecommendedSelfShares, calculateRequiredSelfShares } from '../../group-buy/presentation'
 import { useBetBatchSubmit } from '../composables/useBetBatchSubmit'
 import { useBetPageConfig } from '../dynamic/useBetPageConfig'
 import { useDynamicBetEngine } from '../dynamic/useDynamicBetEngine'
@@ -35,6 +35,7 @@ const showPlayPopup = ref(false)
 const groupBuyMode = ref(false)
 const groupBuyShareCount = ref(10)
 const groupBuySelfShares = ref(1)
+const groupBuySelfSharesTouched = ref(false)
 const submittingGroupBuy = ref(false)
 let timer: number | undefined
 let openingRefreshTimer: number | undefined
@@ -95,6 +96,18 @@ const groupBuyRequiredSelfShares = computed(() => calculateRequiredSelfShares(
   groupBuyFixedShareAmount.value,
   groupBuyInitiatorMinBuyRatio.value,
 ))
+const groupBuyRecommendedSelfShares = computed(() => calculateRecommendedSelfShares(
+  groupBuyTotalAmountText.value,
+  groupBuyFixedShareAmount.value,
+  groupBuyInitiatorMinBuyRatio.value,
+))
+const groupBuySelfSharesHint = computed(() => {
+  if (groupBuyRecommendedSelfShares.value > 0) {
+    const actionText = groupBuySafeSelfShares.value === groupBuyRecommendedSelfShares.value ? '已自动匹配' : '建议'
+    return `最低自购${groupBuyInitiatorMinBuyRatioText.value}，${actionText} ${groupBuyRecommendedSelfShares.value} 份`
+  }
+  return `发起人最低自购${groupBuyInitiatorMinBuyRatioText.value}`
+})
 const groupBuyPaymentAmount = computed(() => (Number(groupBuyShareAmount.value) * groupBuySafeSelfShares.value).toFixed(2))
 const roundOpening = computed(() => config.value?.round.status === 'opening')
 const roundSelling = computed(() => config.value?.round.status === 'selling' && Boolean(config.value.round.issue))
@@ -255,11 +268,42 @@ function apiErrorMessage(error: any, fallback: string) {
 
 function normalizeGroupBuyShares() {
   if (groupBuyDerivedShareCount.value > 0) groupBuyShareCount.value = groupBuyDerivedShareCount.value
-  groupBuySelfShares.value = groupBuySafeSelfShares.value
+  applyRecommendedGroupBuySelfShares()
 }
 
 function clampGroupBuySelfShares() {
-  groupBuySelfShares.value = groupBuySafeSelfShares.value
+  groupBuySelfSharesTouched.value = true
+  const maxShares = groupBuySafeShareCount.value
+  const recommendedShares = groupBuyRecommendedSelfShares.value
+  if (maxShares <= 0 || recommendedShares <= 0) {
+    groupBuySelfShares.value = 0
+    return
+  }
+  const currentShares = Math.floor(Number(groupBuySelfShares.value || 0))
+  groupBuySelfShares.value = Math.min(maxShares, Math.max(recommendedShares, currentShares))
+}
+
+function touchGroupBuySelfShares() {
+  groupBuySelfSharesTouched.value = true
+}
+
+function applyRecommendedGroupBuySelfShares(force = false) {
+  if (!groupBuyMode.value) return
+  const maxShares = groupBuySafeShareCount.value
+  const recommendedShares = groupBuyRecommendedSelfShares.value
+  if (maxShares <= 0 || recommendedShares <= 0) {
+    groupBuySelfShares.value = 0
+    return
+  }
+
+  const currentShares = Math.floor(Number(groupBuySelfShares.value || 0))
+  if (force || !groupBuySelfSharesTouched.value || currentShares < recommendedShares) {
+    groupBuySelfShares.value = recommendedShares
+    return
+  }
+  if (currentShares > maxShares) {
+    groupBuySelfShares.value = maxShares
+  }
 }
 
 async function submitGroupBuyCart() {
@@ -373,6 +417,17 @@ watch(() => engine.multiple.value, (value) => {
 }, { immediate: true })
 
 watch(() => config.value?.round.status, syncOpeningRefresh, { immediate: true })
+
+watch(groupBuyMode, (enabled) => {
+  if (!enabled) return
+  groupBuySelfSharesTouched.value = false
+  applyRecommendedGroupBuySelfShares(true)
+})
+
+watch(
+  [groupBuyRecommendedSelfShares, groupBuySafeShareCount],
+  () => applyRecommendedGroupBuySelfShares(),
+)
 
 watch(() => props.wsMessage, async (msg) => {
   const messageLotteryCode = msg?.lotteryCode || msg?.lottery_code
@@ -506,10 +561,10 @@ onBeforeUnmount(() => {
           <label class="flex items-center justify-between gap-4 rounded-2xl border border-[#f1dedb] bg-[#fffdfc] px-4 py-3">
             <span>
               <span class="block text-sm font-extrabold text-[#1a1c1c]">自购份数</span>
-              <span class="mt-0.5 block text-xs font-bold text-[#8e706d]">发起人最低自购{{ groupBuyInitiatorMinBuyRatioText }}</span>
+              <span class="mt-0.5 block text-xs font-bold text-[#8e706d]">{{ groupBuySelfSharesHint }}</span>
             </span>
             <span class="flex shrink-0 items-center rounded-2xl bg-[#f8f1ef] px-3 py-2">
-              <input v-model.number="groupBuySelfShares" class="w-16 bg-transparent text-right font-headline text-2xl font-extrabold text-[#1a1c1c] outline-none" type="number" inputmode="numeric" min="0" :max="groupBuySafeShareCount" @blur="clampGroupBuySelfShares" />
+              <input v-model.number="groupBuySelfShares" class="w-16 bg-transparent text-right font-headline text-2xl font-extrabold text-[#1a1c1c] outline-none" type="number" inputmode="numeric" min="0" :max="groupBuySafeShareCount" @input="touchGroupBuySelfShares" @blur="clampGroupBuySelfShares" />
               <span class="ml-1 text-sm font-extrabold text-[#5a403e]">份</span>
             </span>
           </label>

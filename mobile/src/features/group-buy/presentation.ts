@@ -143,6 +143,15 @@ export function calculateRequiredSelfShares(totalAmount: string | number, shareA
   return Math.ceil(minimumCents / shareCents)
 }
 
+/** 计算发起合买时最适合自动填入的自购份数。 */
+export function calculateRecommendedSelfShares(totalAmount: string | number, shareAmount: string | number, ratio: string | number) {
+  const shareCount = calculateFixedShareCount(totalAmount, shareAmount)
+  if (shareCount <= 0) return 0
+  const requiredShares = calculateRequiredSelfShares(totalAmount, shareAmount, ratio)
+  const minimumShares = requiredShares > 0 ? requiredShares : 1
+  return Math.min(shareCount, minimumShares)
+}
+
 /** 构建移动端创建合买请求体。 */
 export function buildCreateGroupBuyPayload(form: CreateGroupBuyForm, fallbackLotteryCode: string, shareAmount: string, shareCount: number): CreateGroupBuyPayload {
   return {
