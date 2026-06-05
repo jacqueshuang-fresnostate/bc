@@ -25,9 +25,13 @@ export function useHomepageDrawUpdates(homepage: Ref<HomepageResponse | null>, n
   function roundDigits(lottery?: LotteryCard, fallbackCount = 3) {
     // 优先展示真实开奖结果；没有结果时用期号尾号补位，避免首页卡片出现空白号码格。
     const result = lottery?.latestResult || []
-    const digits = result.length ? result : (lottery?.issue || '').replace(/\D/g, '').slice(-fallbackCount).split('')
-    while (digits.length < fallbackCount) digits.push('?')
-    return digits.slice(0, fallbackCount)
+    const normalizedFallbackCount = Number.isFinite(fallbackCount) && fallbackCount > 0 ? Math.floor(fallbackCount) : 3
+    const displayCount = Math.max(result.length, normalizedFallbackCount)
+    const digits = result.length
+      ? [...result]
+      : (lottery?.issue || '').replace(/\D/g, '').slice(-displayCount).split('')
+    while (digits.length < displayCount) digits.push('?')
+    return digits.slice(0, displayCount)
   }
 
   function formatCountdown(totalSeconds: number) {

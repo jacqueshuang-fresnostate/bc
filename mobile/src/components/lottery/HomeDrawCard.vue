@@ -21,18 +21,22 @@ watch(logoUrl, () => {
   logoLoadFailed.value = false
 })
 
-function resultButtonCount() {
-  // 分组卡片的开奖号按钮数量以彩种返回值为准；没有显式数量时跟随真实开奖结果长度。
-  return props.lottery.resultCount || props.lottery.latestResult?.length || 3
-}
+const resultDigitCount = computed(() => {
+  // 首页所有卡片统一按真实开奖结果长度和后端号码类型配置决定展示位数，兼容 3 位和 5 位彩种。
+  const configuredCount = Number(props.lottery.resultCount || 0)
+  const latestResultCount = props.lottery.latestResult?.length || 0
+  const count = Math.max(configuredCount, latestResultCount, 3)
+  return Number.isFinite(count) ? count : 3
+})
 
-function digits(fallbackCount = 3) {
-  return props.roundDigits(props.lottery, fallbackCount)
-}
+const displayDigits = computed(() => props.roundDigits(props.lottery, resultDigitCount.value))
 
-function digitSum() {
-  return digits(3).filter(d => d !== '?').reduce((sum, d) => sum + Number(d), 0) || '-'
-}
+const digitSum = computed(() => {
+  const values = displayDigits.value
+    .filter(digit => /^\d+$/.test(digit))
+    .map(digit => Number(digit))
+  return values.length ? values.reduce((sum, value) => sum + value, 0) : '-'
+})
 
 function statusLabel() {
   switch (props.lottery.status) {
@@ -78,11 +82,11 @@ function statusClass() {
       </div>
       <CountdownBadge :text="countdownText(lottery)" />
     </div>
-    <div class="flex gap-2.5">
-      <div v-for="digit in digits(3)" :key="`${lottery.code}-${digit}`" class="flex h-10 w-10 items-center justify-center rounded-full lacquer-gradient font-headline text-lg font-bold !text-white shadow-sm">{{ digit }}</div>
-      <div class="flex flex-1 flex-col items-end justify-center">
+    <div class="flex flex-wrap items-center gap-2">
+      <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-featured-${index}`" class="flex h-9 w-9 items-center justify-center rounded-full lacquer-gradient font-headline text-base font-bold !text-white shadow-sm">{{ digit }}</div>
+      <div class="flex min-w-8 flex-1 flex-col items-end justify-center">
         <span class="text-[10px] font-medium uppercase text-on-surface-variant">和值</span>
-        <span class="font-headline font-bold text-primary">{{ digitSum() }}</span>
+        <span class="font-headline font-bold text-primary">{{ digitSum }}</span>
       </div>
     </div>
     <div class="grid grid-cols-1 gap-2">
@@ -104,8 +108,8 @@ function statusClass() {
       </div>
       <span class="shrink-0 text-[10px] font-bold text-primary">{{ countdownText(lottery) }}</span>
     </div>
-    <div class="flex justify-center gap-1.5">
-      <div v-for="digit in digits(3)" :key="`${lottery.code}-${digit}`" class="flex h-7 w-7 items-center justify-center rounded-full border border-outline-variant/30 bg-surface-container-highest text-[10px] font-bold text-on-surface-variant">{{ digit }}</div>
+    <div class="flex flex-wrap justify-center gap-1.5">
+      <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-secondary-${index}`" class="flex h-6 w-6 items-center justify-center rounded-full border border-outline-variant/30 bg-surface-container-highest text-[9px] font-bold text-on-surface-variant">{{ digit }}</div>
     </div>
     <button class="w-full rounded-full border border-primary/10 bg-white py-1.5 text-xs font-bold text-primary shadow-sm" @click="emit('open', lottery)">进入</button>
     <button v-if="lottery.groupBuyEnabled" class="w-full rounded-full border border-primary/10 bg-red-50 py-1.5 text-xs font-bold text-primary" @click="emit('groupBuy', lottery)">合买</button>
@@ -125,8 +129,8 @@ function statusClass() {
         </div>
       </div>
     </div>
-    <div class="flex gap-1">
-      <div v-for="digit in digits(resultButtonCount())" :key="`${lottery.code}-${digit}`" class="flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[9px] font-bold" :class="variant === 'regional' ? 'bg-tertiary/10 text-tertiary' : 'bg-primary/5 text-primary'">{{ digit }}</div>
+    <div class="flex flex-wrap gap-1">
+      <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-group-${index}`" class="flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[9px] font-bold" :class="variant === 'regional' ? 'bg-tertiary/10 text-tertiary' : 'bg-primary/5 text-primary'">{{ digit }}</div>
     </div>
   </button>
 </template>
