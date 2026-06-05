@@ -64,6 +64,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端“我的账户”资金流水必须使用当前系统的 `GET /api/user/ledger-entries` 当前用户接口，只展示登录用户自己的流水；页面不得调用后台全量资金流水接口，也不需要为旧系统字段做兼容。流水条目不展示后端 `referenceId` 关联单号，避免把内部关联编号暴露给普通用户。
 - 手机端邀请中心必须使用当前系统的 `GET /api/user/invitations/summary` 当前用户接口，不再请求旧 `/auth/invitations/summary`；页面消费 `canInvite`、`invitationCode`、`directUsers` 等 `camelCase` 字段，普通用户只展示邀请码标识和无可用邀请权限提示，不允许自行把普通用户邀请码当成有效邀请入口。
 - 手机端下注页必须使用 `/api/user/bet/page-config/{lottery_id}`、`POST /api/user/bet/orders` 和 `GET /api/user/bet/orders`，不再调用旧 `/api/bet/*`。提交时前端只负责把位置宫格、胆拖、直选组合和大小单双转换成后端 `selection`，订单金额仍由后端按玩法展开注数和单注金额计算。
+- 手机端下注页普通投注或发起合买成功后必须清空本地购彩篮，并用 `router.replace({ name: 'Home' })` 自动返回首页；接口失败时才停留在下注页并刷新余额、期号状态，方便用户继续处理。
 - 手机端实时事件必须通过 `GET /api/user/realtime` WebSocket 接口接入，不再使用旧 `/ws/lottery`；页面组件不得直接依赖后端原始事件信封，必须先通过 `mobile/src/types/realtime.ts` 归一化为 `draw_result`、`issue_opened`、`balance_changed` 等本地事件后再消费。
 - 手机端客服聊天属于用户可见前台页面，不能直接展示后台管理员账号名；客服接入状态统一显示“客服已接入”，后台消息气泡作者统一显示“客服”。
 - 手机端下注页的投注倍数输入应使用“减少按钮 + 数字输入 + 增加按钮”的步进控件，并保留滑块联动；输入框只接收数字，失焦或回车时必须夹到当前玩法允许的最小/最大倍数范围。

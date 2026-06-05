@@ -348,7 +348,7 @@ async function submitGroupBuyCart() {
     showToast('合买发起成功')
     engine.clearCart()
     groupBuyMode.value = false
-    await loadPage()
+    await router.replace({ name: 'Home' })
   } catch (e: any) {
     showToast(apiErrorMessage(e, '发起合买失败'))
     await loadPage()
@@ -370,9 +370,9 @@ async function submitCart() {
   try {
     const payload = await submitBatch(lotteryCode.value, config.value?.round.issue || '', engine.cart.value, playSubmitMeta.value)
     if (!payload) return
-    // 提交成功后清空本地篮子并刷新页面数据，确保余额和当前期号立刻回到服务端状态。
+    // 提交成功后清空本地篮子并回到首页，避免用户继续停留在已完成的下注页重复操作。
     engine.clearCart()
-    await loadPage()
+    await router.replace({ name: 'Home' })
   } catch (e: any) {
     // 提交失败也刷新一次，避免前端继续停留在已封盘或余额变化前的状态。
     showToast(apiErrorMessage(e, '投注失败'))
