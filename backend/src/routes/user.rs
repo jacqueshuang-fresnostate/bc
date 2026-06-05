@@ -65,6 +65,25 @@ use crate::{
 
 const MAX_USER_BET_BATCH_SIZE: usize = 50;
 const REALTIME_HEARTBEAT_SECONDS: u64 = 30;
+const ROBOT_GROUP_BUY_PLAN_PREFIX: &str = "G-ROBOT-";
+const ROBOT_GROUP_BUY_DISPLAY_NAMES: &[&str] = &[
+    "星河会员",
+    "晨光会员",
+    "锦鲤会员",
+    "红运会员",
+    "云端会员",
+    "启航会员",
+    "微光会员",
+    "稳胆会员",
+    "鸿运会员",
+    "青山会员",
+    "金榜会员",
+    "晴川会员",
+    "风铃会员",
+    "长胜会员",
+    "南山会员",
+    "海棠会员",
+];
 
 /// 组装并返回当前用户模块对应的路由树。
 pub fn router(state: AppState) -> Router<AppState> {
@@ -961,11 +980,7 @@ fn user_group_buy_plan(
         issue: plan.issue.clone(),
         rule_code: plan.rule_code.clone(),
         play_name,
-        title: if plan.title.trim().is_empty() {
-            format!("{} 第{}期合买", plan.lottery_name, plan.issue)
-        } else {
-            plan.title.clone()
-        },
+        title: user_group_buy_title(plan),
         numbers: plan.numbers.clone(),
         total_amount_minor: plan.total_amount_minor,
         share_count: plan.share_count,
@@ -976,11 +991,52 @@ fn user_group_buy_plan(
         progress_percent,
         status: plan.status.clone(),
         participant_count: plan.participants.len(),
-        initiator_display: plan.initiator_username.clone(),
+        initiator_display: user_group_buy_initiator_display(plan),
         my_participation,
         created_at: plan.created_at.clone(),
         updated_at: plan.updated_at.clone(),
     })
+}
+
+fn user_group_buy_title(plan: &GroupBuyPlan) -> String {
+    if is_robot_group_buy_plan(plan) || plan.title.trim().is_empty() {
+        format!("{} 第{}期合买", plan.lottery_name, plan.issue)
+    } else {
+        plan.title.clone()
+    }
+}
+
+fn user_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
+    if is_robot_group_buy_plan(plan) {
+        robot_group_buy_initiator_display(plan)
+    } else {
+        plan.initiator_username.clone()
+    }
+}
+
+fn is_robot_group_buy_plan(plan: &GroupBuyPlan) -> bool {
+    plan.id.starts_with(ROBOT_GROUP_BUY_PLAN_PREFIX)
+}
+
+fn robot_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
+    let base_hash = stable_group_buy_display_hash(&plan.id);
+    let base = ROBOT_GROUP_BUY_DISPLAY_NAMES
+        .get(base_hash as usize % ROBOT_GROUP_BUY_DISPLAY_NAMES.len())
+        .copied()
+        .unwrap_or("幸运会员");
+    let suffix_hash = stable_group_buy_display_hash(&format!("{}:{}", plan.id, plan.issue));
+    let suffix = suffix_hash % 9_000 + 1_000;
+
+    format!("{base}{suffix}")
+}
+
+fn stable_group_buy_display_hash(value: &str) -> u64 {
+    let mut hash = 14_695_981_039_346_656_037_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1_099_511_628_211);
+    }
+    hash
 }
 
 fn user_group_buy_participation(
@@ -1371,6 +1427,10 @@ fn publish_user_withdrawal_changed(state: &AppState, order: &WithdrawalOrderSumm
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{
+        group_buy::GroupBuyParticipant,
+        lottery::{DrawMode, DrawSchedule, GroupBuyConfig, LotteryNumberType, PlayCategory},
+    };
 
     #[test]
     /// 验证手机端公开配置会隐藏未配置占位，并保留站点介绍。
@@ -1417,5 +1477,113 @@ mod tests {
             Some("https://example.com/logo.png".to_string())
         );
         assert!(!config.intro.is_empty());
+    }
+
+    #[test]
+    /// 验证用户端展示机器人合买时会隐藏真实机器人账号和机器人标题。
+    fn user_group_buy_plan_masks_robot_initiator_display() {
+        let lotteries = vec![test_group_buy_lottery()];
+        let first_plan = test_group_buy_plan(
+            "G-ROBOT-R-BUY-001-SSC60-20260605200000",
+            "20260605200000",
+            "agent_alpha",
+            "合买机器人 20260605200000",
+        );
+        let second_plan = test_group_buy_plan(
+            "G-ROBOT-R-BUY-001-SSC60-20260605200100",
+            "20260605200100",
+            "agent_alpha",
+            "合买机器人 20260605200100",
+        );
+
+        let first_view =
+            user_group_buy_plan(&first_plan, &lotteries, None).expect("robot plan can map");
+        let second_view =
+            user_group_buy_plan(&second_plan, &lotteries, None).expect("robot plan can map");
+
+        assert_ne!(first_view.initiator_display, "agent_alpha");
+        assert!(!first_view.initiator_display.contains("机器人"));
+        assert!(!first_view.initiator_display.contains("agent"));
+        assert_eq!(first_view.title, "测试彩 第20260605200000期合买");
+        assert_ne!(first_view.initiator_display, second_view.initiator_display);
+        assert_eq!(second_view.title, "测试彩 第20260605200100期合买");
+    }
+
+    #[test]
+    /// 验证普通用户合买仍展示真实发起人和自定义标题。
+    fn user_group_buy_plan_keeps_normal_initiator_display() {
+        let lotteries = vec![test_group_buy_lottery()];
+        let plan = test_group_buy_plan(
+            "G-USER-001",
+            "20260605200000",
+            "regular_user",
+            "用户发起合买",
+        );
+
+        let view = user_group_buy_plan(&plan, &lotteries, None).expect("normal plan can map");
+
+        assert_eq!(view.initiator_display, "regular_user");
+        assert_eq!(view.title, "用户发起合买");
+    }
+
+    fn test_group_buy_lottery() -> LotteryKind {
+        LotteryKind {
+            id: "ssc60".to_string(),
+            name: "测试彩".to_string(),
+            category: "high-frequency".to_string(),
+            logo_url: String::new(),
+            number_type: LotteryNumberType::FiveDigit,
+            draw_mode: DrawMode::Platform,
+            schedule: DrawSchedule::Periodic {
+                interval_seconds: 60,
+            },
+            sale_enabled: true,
+            group_buy: GroupBuyConfig {
+                enabled: true,
+                min_share_amount_minor: 1_000,
+                initiator_min_percent: 10,
+                participant_min_amount_minor: 1_000,
+            },
+            play_categories: vec![PlayCategory::Direct],
+            play_configs: Vec::new(),
+        }
+    }
+
+    fn test_group_buy_plan(
+        id: &str,
+        issue: &str,
+        initiator_username: &str,
+        title: &str,
+    ) -> GroupBuyPlan {
+        GroupBuyPlan {
+            id: id.to_string(),
+            lottery_id: "ssc60".to_string(),
+            lottery_name: "测试彩".to_string(),
+            order_id: None,
+            issue: issue.to_string(),
+            rule_code: "fiveFrontDirect".to_string(),
+            title: title.to_string(),
+            numbers: "1|2|3".to_string(),
+            initiator_user_id: "U90001".to_string(),
+            initiator_username: initiator_username.to_string(),
+            total_amount_minor: 5_000,
+            filled_amount_minor: 1_000,
+            min_share_amount_minor: 1_000,
+            participant_min_amount_minor: 1_000,
+            share_count: 5,
+            status: GroupBuyPlanStatus::Open,
+            participants: vec![GroupBuyParticipant {
+                id: format!("{id}-P001"),
+                user_id: "U90001".to_string(),
+                username: initiator_username.to_string(),
+                amount_minor: 1_000,
+                share_count: 1,
+                note: "发起人认购".to_string(),
+                created_at: "2026-06-05 20:00:00".to_string(),
+            }],
+            note: String::new(),
+            created_at: "2026-06-05 20:00:00".to_string(),
+            updated_at: "2026-06-05 20:00:00".to_string(),
+        }
     }
 }

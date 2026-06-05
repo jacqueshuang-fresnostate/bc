@@ -489,7 +489,7 @@ async fn build_robot_plan_request(
             lottery_id: lottery.id.clone(),
             issue: issue.issue.clone(),
             rule_code,
-            title: format!("{} {}", robot.name, issue.issue),
+            title: format!("{} 第{}期合买", lottery.name, issue.issue),
             numbers: numbers.to_string(),
             initiator_user_id: robot_user.id.clone(),
             total_amount_minor,
@@ -922,6 +922,11 @@ mod tests {
         .expect("robot can run");
 
         assert_eq!(before_window_run.created_plans.len(), 1);
+        assert_eq!(
+            before_window_run.created_plans[0].title,
+            format!("{} 第20260605200000期合买", lottery.name)
+        );
+        assert!(!before_window_run.created_plans[0].title.contains("机器人"));
         assert_eq!(before_window_run.filled_plans.len(), 0);
         assert_eq!(before_window_run.created_orders.len(), 0);
         assert_eq!(before_window_run.ledger_entries.len(), 1);
