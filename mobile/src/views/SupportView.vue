@@ -1,206 +1,116 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { showToast } from 'vant'
-import { useRouter } from 'vue-router'
-import { API_BASE } from '../api/http'
-import { useAuthStore } from '../stores/auth'
-import http from '../api/http'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  errorMessage,
+  fetchSupportConversation,
+  fetchSupportConversations,
+  replySupportConversation,
+  type SupportConversation,
+  type SupportMessage,
+} from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import { formatDateTime } from '../utils/lotteryFormat'
 
 const router = useRouter()
-const auth = useAuthStore()
+const route = useRoute()
 const draft = ref('')
 const loading = ref(false)
 const sending = ref(false)
-const uploading = ref(false)
-const adminOnline = ref(false)
-const messages = ref<any[]>([])
-const imageObjectUrls = ref<Record<number, string>>({})
-const fileInput = ref<HTMLInputElement | null>(null)
-let ws: WebSocket | null = null
-let reconnectTimer: number | null = null
+const conversations = ref<SupportConversation[]>([])
+const activeConversationId = ref('')
+const currentConversation = ref<SupportConversation | null>(null)
 
-async function getAccessToken() {
-  if (auth.accessToken) return auth.accessToken
-  await auth.loadTokens()
-  return auth.accessToken
-}
-
-const canSend = computed(() => draft.value.trim().length > 0 && !sending.value)
-const supportStatusText = computed(() => (adminOnline.value ? '客服在线' : '客服暂时不在线，留言后会通知客服'))
+const messages = computed(() => currentConversation.value?.messages || [])
+const adminOnline = computed(() => Boolean(currentConversation.value?.assignedAdminName))
+const canSend = computed(() => Boolean(currentConversation.value) && draft.value.trim().length > 0 && !sending.value)
+const supportStatusText = computed(() => {
+  if (!currentConversation.value) return '请先从充值页发起客服直充'
+  return adminOnline.value ? `客服 ${currentConversation.value.assignedAdminName} 已接入` : '客服会在这里继续回复'
+})
 const hasMessages = computed(() => messages.value.length > 0)
+const routeConversationId = computed(() => (
+  typeof route.query.conversationId === 'string' ? route.query.conversationId : ''
+))
 
 function formatTime(value: string) {
   return formatDateTime(value)
 }
 
-function apiOrigin() {
-  return new URL(API_BASE || window.location.origin, window.location.origin).origin
+function messageAuthorText(item: SupportMessage) {
+  if (item.author === 'user') return '我'
+  if (item.author === 'admin') return item.authorName || '客服'
+  return '系统'
 }
 
-function isPublicImageUrl(path: string) {
-  return /^https?:\/\//i.test(String(path || '').trim())
-}
-
-function protectedImagePath(item: any) {
-  const path = String(item?.image_url || '').trim()
-  if (!path) return ''
-  try {
-    const url = new URL(path, API_BASE || window.location.origin)
-    const absolute = isPublicImageUrl(path)
-    if (absolute && url.origin !== apiOrigin()) return ''
-    if (url.pathname.startsWith('/api/support/files/')) {
-      return url.pathname.slice(4) + url.search
-    }
-    if (url.pathname.startsWith('/support/files/')) {
-      return url.pathname + url.search
-    }
-  } catch {
-    return ''
+function conversationStatusText(conversation: SupportConversation) {
+  const labels: Record<SupportConversation['status'], string> = {
+    open: '处理中',
+    pending: '待处理',
+    resolved: '已解决',
+    closed: '已关闭',
   }
-  return ''
+  return labels[conversation.status] || conversation.status
 }
 
-function messageImageUrl(item: any) {
-  const path = String(item?.image_url || '').trim()
-  if (!path || protectedImagePath(item)) return ''
-  if (isPublicImageUrl(path)) return path
-  return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`
+function sortedConversations(items: SupportConversation[]) {
+  return [...items].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
 }
 
-function displayImageUrl(item: any) {
-  if (imageObjectUrls.value[item.id]) return imageObjectUrls.value[item.id]
-  return protectedImagePath(item) ? '' : messageImageUrl(item)
-}
-
-function clearImageObjectUrls() {
-  for (const url of Object.values(imageObjectUrls.value)) {
-    URL.revokeObjectURL(url)
-  }
-  imageObjectUrls.value = {}
-}
-
-async function hydrateImageObjectUrls(items: any[]) {
-  const nextUrls: Record<number, string> = {}
-  try {
-    for (const item of items) {
-      if (!isImageMessage(item)) continue
-      const path = protectedImagePath(item)
-      if (!path) continue
-      const res = await http.get(path, { responseType: 'blob' })
-      nextUrls[item.id] = URL.createObjectURL(res.data)
-    }
-    clearImageObjectUrls()
-    imageObjectUrls.value = nextUrls
-  } catch (error) {
-    for (const url of Object.values(nextUrls)) {
-      URL.revokeObjectURL(url)
-    }
-    throw error
-  }
-}
-
-function isImageMessage(item: any) {
-  return item?.message_type === 'image' && !!item?.image_url
-}
-
-async function loadMessages() {
+async function loadSupportData(preferredConversationId = activeConversationId.value || routeConversationId.value) {
   loading.value = true
   try {
-    const res = await http.get('/support/messages')
-    const nextMessages = res.data.messages || []
-    messages.value = nextMessages
-    await hydrateImageObjectUrls(nextMessages)
-    adminOnline.value = !!res.data.admin_online
-  } catch (e: any) {
-    showToast(e.response?.data?.detail || '加载消息失败')
+    conversations.value = sortedConversations(await fetchSupportConversations())
+    const nextId = preferredConversationId || conversations.value[0]?.id || ''
+    activeConversationId.value = nextId
+    currentConversation.value = nextId ? await fetchSupportConversation(nextId) : null
+  } catch (error) {
+    showToast(errorMessage(error, '加载客服会话失败'))
   } finally {
     loading.value = false
   }
 }
 
 async function sendMessage() {
+  if (!currentConversation.value) {
+    showToast('请先从充值页发起客服直充')
+    return
+  }
   const content = draft.value.trim()
   if (!content) return
   sending.value = true
   try {
-    await http.post('/support/messages', { content })
+    const updatedConversation = await replySupportConversation(currentConversation.value.id, content)
+    currentConversation.value = updatedConversation
     draft.value = ''
-    await loadMessages()
-  } catch (e: any) {
-    showToast(e.response?.data?.detail || '发送失败')
+    conversations.value = conversations.value.map(conversation => (
+      conversation.id === updatedConversation.id ? updatedConversation : conversation
+    ))
+  } catch (error) {
+    showToast(errorMessage(error, '发送失败'))
   } finally {
     sending.value = false
   }
 }
 
-function triggerImagePick() {
-  if (uploading.value) return
-  fileInput.value?.click()
-}
-
-async function uploadImage(file: File) {
-  const form = new FormData()
-  form.append('file', file)
-  uploading.value = true
+async function selectConversation(id: string) {
   try {
-    await http.post('/support/messages/image', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    await loadMessages()
-  } catch (e: any) {
-    showToast(e.response?.data?.detail || '图片发送失败')
-  } finally {
-    uploading.value = false
+    activeConversationId.value = id
+    currentConversation.value = await fetchSupportConversation(id)
+  } catch (error) {
+    showToast(errorMessage(error, '加载客服会话失败'))
   }
 }
 
-async function handleFileChange(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  await uploadImage(file)
-}
-
-function previewImage(item: any) {
-  const url = displayImageUrl(item)
-  if (!url) return
-  window.open(url, '_blank')
-}
-
-async function connectWs() {
-  const token = await getAccessToken()
-  if (!token) return
-  ws?.close()
-  const wsUrl = `${API_BASE.replace(/^http/, 'ws')}/ws/support/user?token=${encodeURIComponent(token)}`
-  ws = new WebSocket(wsUrl)
-  ws.onmessage = async (event) => {
-    const payload = JSON.parse(event.data)
-    if (payload?.event === 'support_message_created') {
-      await loadMessages()
-      return
-    }
-    if (payload?.event === 'support_admin_presence') {
-      adminOnline.value = !!payload.online
-    }
+watch(routeConversationId, (conversationId) => {
+  if (conversationId && conversationId !== activeConversationId.value) {
+    void loadSupportData(conversationId)
   }
-  ws.onclose = () => {
-    if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-    reconnectTimer = window.setTimeout(() => { void connectWs() }, 3000)
-  }
-}
-
-onMounted(async () => {
-  await loadMessages()
-  await connectWs()
 })
 
-onUnmounted(() => {
-  if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-  ws?.close()
-  clearImageObjectUrls()
+onMounted(() => {
+  void loadSupportData(routeConversationId.value)
 })
 </script>
 
@@ -218,15 +128,28 @@ onUnmounted(() => {
     </header>
 
     <main class="support-chat__messages" :class="{ 'is-empty': !hasMessages && !loading }">
+      <div v-if="conversations.length > 1" class="support-chat__conversation-tabs">
+        <button
+          v-for="conversation in conversations"
+          :key="conversation.id"
+          type="button"
+          :class="{ 'is-active': activeConversationId === conversation.id }"
+          @click="selectConversation(conversation.id)"
+        >
+          <span>{{ conversation.subject }}</span>
+          <small>{{ conversationStatusText(conversation) }}</small>
+        </button>
+      </div>
+
       <div class="support-chat__date-pill">
-        {{ messages[0]?.created_at ? formatTime(messages[0].created_at) : '今天' }}
+        {{ messages[0]?.createdAt ? formatTime(messages[0].createdAt) : '今天' }}
       </div>
 
       <div v-if="loading" class="support-chat__loading">正在同步客服消息...</div>
       <div v-else-if="messages.length === 0" class="support-chat__empty">
         <div class="support-chat__empty-icon"><LucideIcon name="support_agent" /></div>
-        <h2>还没有聊天记录</h2>
-        <p>发送问题后，客服会在这里继续回复。</p>
+        <h2>{{ currentConversation ? '还没有更多消息' : '还没有客服会话' }}</h2>
+        <p>{{ currentConversation ? '发送消息后，客服会在这里继续回复。' : '请先在充值页发起客服直充。' }}</p>
       </div>
 
       <div
@@ -234,44 +157,36 @@ onUnmounted(() => {
         :key="item.id"
         :class="[
           'support-chat__row',
-          item.sender_type === 'user' ? 'support-chat__row--user' : 'support-chat__row--agent',
+          item.author === 'user' ? 'support-chat__row--user' : 'support-chat__row--agent',
         ]"
       >
-        <div v-if="item.sender_type !== 'user'" class="support-chat__avatar">
+        <div v-if="item.author !== 'user'" class="support-chat__avatar">
           <LucideIcon name="support_agent" />
         </div>
 
         <div
           :class="[
             'support-chat__bubble',
-            item.sender_type === 'user'
+            item.author === 'user'
               ? 'support-chat__bubble--user'
               : 'support-chat__bubble--agent',
           ]"
         >
           <div class="support-chat__meta">
-            <span>{{ item.sender_type === 'user' ? '我' : '客服' }}</span>
-            <time>{{ formatTime(item.created_at) }}</time>
+            <span>{{ messageAuthorText(item) }}</span>
+            <time>{{ formatTime(item.createdAt) }}</time>
           </div>
-          <template v-if="isImageMessage(item)">
-            <img :src="displayImageUrl(item)" class="support-chat__image" alt="客服会话图片" @click="previewImage(item)" />
-            <div v-if="item.image_file_name" class="support-chat__file-name">{{ item.image_file_name }}</div>
-          </template>
-          <div v-else class="support-chat__content">{{ item.content }}</div>
+          <div class="support-chat__content">{{ item.content }}</div>
         </div>
       </div>
     </main>
 
     <div class="support-input-bar">
-      <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="file-input" @change="handleFileChange" />
-      <button class="support-input-bar__attach" type="button" :disabled="uploading" aria-label="发送图片" @click="triggerImagePick">
-        <LucideIcon name="add_circle" />
-      </button>
       <input
         v-model="draft"
         class="support-input-bar__field"
         maxlength="2000"
-        placeholder="输入消息..."
+        :placeholder="currentConversation ? '输入消息...' : '请先发起客服直充'"
         type="text"
         @keyup.enter="sendMessage"
       />
@@ -421,6 +336,50 @@ onUnmounted(() => {
   box-shadow: 0 4px 14px rgba(95, 10, 18, 0.06);
   font-size: 12px;
   font-weight: 700;
+}
+
+.support-chat__conversation-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.support-chat__conversation-tabs button {
+  flex: 0 0 auto;
+  max-width: 180px;
+  border: 1px solid rgba(175, 40, 41, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 250, 247, 0.88);
+  color: #6d5b57;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.support-chat__conversation-tabs button.is-active {
+  border-color: #af2829;
+  background: #af2829;
+  color: #fff;
+}
+
+.support-chat__conversation-tabs span,
+.support-chat__conversation-tabs small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.support-chat__conversation-tabs span {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.support-chat__conversation-tabs small {
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.74;
 }
 
 .support-chat__loading,

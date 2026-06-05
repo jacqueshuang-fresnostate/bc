@@ -96,6 +96,82 @@ export type CreateWithdrawalOrderPayload = {
   amountMinor: number
 }
 
+export type RechargeChannel = 'rainbowEpay' | 'customerService'
+
+export type RechargeOrderStatus = 'pending' | 'waitingCustomerService' | 'paid' | 'cancelled'
+
+export type RechargeChannelConfig = {
+  channel: RechargeChannel
+  name: string
+  enabled: boolean
+  description: string
+  payTypes: string[]
+}
+
+export type RechargeConfig = {
+  channels: RechargeChannelConfig[]
+  minAmountMinor: number
+  maxAmountMinor: number
+}
+
+export type RechargeOrder = {
+  id: string
+  userId: string
+  username: string
+  channel: RechargeChannel
+  amountMinor: number
+  status: RechargeOrderStatus
+  payType?: string | null
+  providerTradeNo?: string | null
+  paymentUrl?: string | null
+  supportConversationId?: string | null
+  createdAt: string
+  paidAt?: string | null
+}
+
+export type CreateRechargeOrderPayload = {
+  channel: RechargeChannel
+  amountMinor: number
+  payType?: string
+}
+
+export type CreateRechargeOrderResponse = {
+  order: RechargeOrder
+  paymentUrl?: string | null
+  supportConversationId?: string | null
+  message: string
+}
+
+export type SupportMessageAuthor = 'user' | 'admin' | 'system'
+
+export type SupportConversationStatus = 'open' | 'pending' | 'resolved' | 'closed'
+
+export type SupportPriority = 'normal' | 'urgent'
+
+export type SupportMessage = {
+  id: string
+  author: SupportMessageAuthor
+  authorId: string
+  authorName: string
+  content: string
+  createdAt: string
+}
+
+export type SupportConversation = {
+  id: string
+  userId: string
+  username: string
+  subject: string
+  status: SupportConversationStatus
+  priority: SupportPriority
+  assignedAdminId?: string | null
+  assignedAdminName?: string | null
+  unreadCount: number
+  createdAt: string
+  updatedAt: string
+  messages: SupportMessage[]
+}
+
 type LoginPayload = {
   loginKey: string
   password: string
@@ -220,4 +296,34 @@ export async function fetchWithdrawalOrders() {
 
 export async function createWithdrawalOrder(payload: CreateWithdrawalOrderPayload) {
   return unwrapApiData<WithdrawalOrder>(await http.post('/user/withdrawals', payload))
+}
+
+export async function fetchRechargeConfig() {
+  return unwrapApiData<RechargeConfig>(await http.get('/user/recharge/config'))
+}
+
+export async function fetchRechargeOrders() {
+  return unwrapApiData<RechargeOrder[]>(await http.get('/user/recharge/orders'))
+}
+
+export async function createRechargeOrder(payload: CreateRechargeOrderPayload) {
+  return unwrapApiData<CreateRechargeOrderResponse>(
+    await http.post('/user/recharge/orders', payload),
+  )
+}
+
+export async function fetchSupportConversations() {
+  return unwrapApiData<SupportConversation[]>(await http.get('/user/support/conversations'))
+}
+
+export async function fetchSupportConversation(id: string) {
+  return unwrapApiData<SupportConversation>(
+    await http.get(`/user/support/conversations/${encodeURIComponent(id)}`),
+  )
+}
+
+export async function replySupportConversation(id: string, content: string) {
+  return unwrapApiData<SupportConversation>(
+    await http.post(`/user/support/conversations/${encodeURIComponent(id)}/messages`, { content }),
+  )
 }

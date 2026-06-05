@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-05 11:55 HKT 手机端充值页接入当前充值模式
+
+- 完成任务：把手机端 `deposit` 页面改为依据后台当前充值配置展示和下单。
+- 解决问题：充值页仍使用旧的 `/payment/methods`、`/payment/fiat/create-order`、`/payment/usdt/create-order` 和 `fiat/usdt` 模式，和当前后端的“彩虹易支付 / 客服直充”充值体系不一致。
+- 具体实现：
+  - `mobile/src/api/user.ts` 新增充值配置、充值订单、创建充值订单、客服会话列表、客服会话详情和用户回复接口封装。
+  - `DepositView.vue` 改为读取 `GET /api/user/recharge/config`，只展示后台开启的 `rainbowEpay` 和 `customerService` 渠道。
+  - 彩虹易支付按后台 `payTypes` 展示支付方式，创建订单后打开后端返回的 `paymentUrl`。
+  - 客服直充创建订单后跳转到 `/support?conversationId=...`，让用户直接进入对应客服会话继续沟通。
+  - `SupportView.vue` 改为接入当前 `/api/user/support/conversations` 会话接口，支持从充值页带入会话 ID 后继续发送文字消息。
+  - 前端组件规范补充手机端充值页必须以后台充值配置为准，不能继续调用旧支付接口或展示未配置的 USDT 模式。
+- 验证记录：
+  - `cd mobile && npm run build` 通过。
+
 ## 2026-06-05 11:47 HKT 高频极速开奖号码正圆展示
 
 - 完成任务：把手机端首页“高频极速”模块的开奖号码改为固定正圆号码球展示。

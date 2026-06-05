@@ -52,6 +52,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 客服会话消息流应使用 Semi UI `Chat` 组件承载，不手写消息气泡列表；当后台页面只需要展示历史消息、回复输入由业务表单承担时，需要设置 `renderInputArea={() => null}` 和 `enableUpload={false}`，避免出现重复输入区或默认上传控件警告。
 - 手机端彩票卡片展示开奖号码时，不能按卡片变体写死 3 位；必须优先使用真实 `latestResult.length`，再结合后端 `resultCount` 决定展示数量，兼容 3 位和 5 位彩种。没有开奖结果时才按该数量用期号尾号或 `?` 补位。
 - 手机端首页“高频极速”推荐区的开奖号码必须使用固定正圆号码球，样式需要同时约束 `width`、`height`、`aspect-ratio: 1 / 1` 和 `border-radius: 9999px`，不要只依赖文字内容或内边距撑开形状。
+- 手机端充值页必须以 `GET /api/user/recharge/config` 返回的后台充值配置为准，只展示已开启的 `rainbowEpay` 和 `customerService` 渠道；彩虹易支付使用后端 `payTypes`，客服直充创建订单后跳转绑定的客服会话。不要再调用旧 `/payment/*` 接口，也不要在后端未配置时展示 USDT 或快捷充值模式。
 
 错误示例：
 
