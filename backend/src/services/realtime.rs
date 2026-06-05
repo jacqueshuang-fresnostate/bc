@@ -215,6 +215,19 @@ pub fn support_message_created_event(
     )
 }
 
+/// 封装客服会话状态变更事件，用于同步分配客服、优先级和工单状态。
+pub fn support_conversation_updated_event(conversation: &SupportConversation) -> Value {
+    realtime_envelope(
+        "support.conversation_updated",
+        "support",
+        json!({
+            "conversationId": conversation.id,
+            "userId": conversation.user_id,
+            "conversation": conversation,
+        }),
+    )
+}
+
 /// 统一构造实时事件信封，保证客户端只解析一种结构。
 fn realtime_envelope(event: &str, scope: &str, data: Value) -> Value {
     json!({
@@ -364,5 +377,31 @@ mod tests {
         assert_eq!(event["data"]["conversationId"], "CS-R000000000001");
         assert_eq!(event["data"]["conversation"]["userId"], "U10001");
         assert_eq!(event["data"]["message"]["content"], "我已提交客服直充。");
+    }
+
+    #[test]
+    /// 验证客服会话更新事件会携带完整会话，供分配客服和状态变更实时刷新。
+    fn support_conversation_updated_event_contains_conversation() {
+        let conversation = SupportConversation {
+            id: "CS-R000000000001".to_string(),
+            user_id: "U10001".to_string(),
+            username: "demo_user".to_string(),
+            subject: "客服直充 R000000000001".to_string(),
+            status: crate::domain::support::SupportConversationStatus::Pending,
+            priority: crate::domain::support::SupportPriority::Urgent,
+            assigned_admin_id: Some("A10001".to_string()),
+            assigned_admin_name: Some("admin".to_string()),
+            unread_count: 0,
+            created_at: "2026-06-05 18:20:00".to_string(),
+            updated_at: "2026-06-05 18:25:00".to_string(),
+            messages: Vec::new(),
+        };
+
+        let event = support_conversation_updated_event(&conversation);
+
+        assert_eq!(event["event"], "support.conversation_updated");
+        assert_eq!(event["scope"], "support");
+        assert_eq!(event["data"]["conversationId"], "CS-R000000000001");
+        assert_eq!(event["data"]["conversation"]["assignedAdminName"], "admin");
     }
 }

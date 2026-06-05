@@ -1,5 +1,30 @@
 # TODO
 
+## 2026-06-05 18:06 HKT 客服直充实时流程审查修复
+
+- 完成任务：审查客服直充实时聊天流程，并修复会话状态、充值页刷新和用户回复状态恢复问题。
+- 解决问题：
+  - 后台只修改客服会话状态、优先级或分配客服时，此前不会通过 WebSocket 通知用户端，手机端客服页无法实时显示“客服已接入”。
+  - 用户在“等待用户”状态的会话中补充消息后，后端仍保留 `pending` 状态，客服后台容易误判为还在等待用户。
+  - 客服确认充值入账后，充值页虽然会收到用户实时事件，但页面没有监听 `recharge_changed` 和 `balance_changed`，订单状态和余额不会实时刷新。
+- 具体实现：
+  - 后端新增 `support.conversation_updated` 实时事件，后台更新会话状态、优先级或分配客服后同步推送给会话所属用户和后台客服连接。
+  - 后台实时事件归一化和客服 hook 支持 `support.conversation_updated`，收到后 upsert 会话。
+  - 手机端实时事件归一化和客服页支持 `support_conversation_updated`，收到后重新拉取会话详情。
+  - `SupportRepository::user_reply` 在会话处于 `pending/resolved/closed` 时自动恢复为 `open`，并补充回归测试。
+  - 手机端充值页接收 `wsMessage`，在 `recharge_changed` 时刷新充值订单，在 `balance_changed` 时刷新用户余额。
+  - Trellis 后端契约和架构设计同步记录本次审查发现的流程规则。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml --check` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml support_repository_reopens_pending_conversation_when_user_replies -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml support_conversation_updated_event_contains_conversation -- --nocapture` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml` 通过，207 条后端测试全部成功。
+  - `cd admin && npm run build` 通过；Vite 仍提示后台主 chunk 超过 500 kB，这是既有构建体积提示。
+  - `cd mobile && npm run build` 通过。
+  - `git diff --check` 通过。
+- 后续动作：后续可继续补消息已读回执和后台实时连接状态提示。
+
 ## 2026-06-05 17:58 HKT 客服直充 WebSocket 实时聊天
 
 - 完成任务：把客服直充会话接入 WebSocket 实时聊天，用户和后台客服发送消息后对方可以实时刷新。

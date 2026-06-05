@@ -112,7 +112,11 @@ watch(routeConversationId, (conversationId) => {
 })
 
 watch(() => props.wsMessage, (message) => {
-  if (message?.event !== 'support_message_created' || !message.conversationId) return
+  if (
+    (message?.event !== 'support_message_created'
+      && message?.event !== 'support_conversation_updated')
+    || !message.conversationId
+  ) return
   const preferredConversationId = (
     !activeConversationId.value || activeConversationId.value === message.conversationId
       ? message.conversationId

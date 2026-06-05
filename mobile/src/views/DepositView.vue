@@ -16,8 +16,10 @@ import {
   type RechargeOrderStatus,
 } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import type { MobileRealtimeEvent } from '../types/realtime'
 import { formatDateTime } from '../utils/lotteryFormat'
 
+const props = defineProps<{ wsMessage?: MobileRealtimeEvent | null }>()
 const router = useRouter()
 const amount = ref('')
 const selectedChannel = ref<RechargeChannel | ''>('')
@@ -108,6 +110,15 @@ async function loadUserProfile() {
 
 onMounted(async () => {
   await Promise.all([loadRechargeConfig(), loadRechargeOrders(), loadUserProfile()])
+})
+
+watch(() => props.wsMessage, (message) => {
+  if (message?.event === 'recharge_changed') {
+    void loadRechargeOrders()
+  }
+  if (message?.event === 'balance_changed') {
+    void loadUserProfile()
+  }
 })
 
 function selectChannel(channel: RechargeChannel) {

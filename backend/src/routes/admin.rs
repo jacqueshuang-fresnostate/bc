@@ -71,7 +71,8 @@ use crate::{
         realtime::{
             admin_audience_matches, balance_changed_event, draw_result_event, heartbeat_event,
             issue_closed_event, issue_opened_event, order_changed_event, recharge_changed_event,
-            support_message_created_event, withdrawal_changed_event,
+            support_conversation_updated_event, support_message_created_event,
+            withdrawal_changed_event,
         },
         scheduler::DrawSchedulerConfig,
         scheduler::DrawSchedulerStatus,
@@ -849,6 +850,15 @@ fn publish_support_message_created(state: &AppState, conversation: &SupportConve
     state.realtime.publish_admin(event);
 }
 
+/// 推送客服会话更新事件，保证状态和分配客服变更能实时同步。
+fn publish_support_conversation_updated(state: &AppState, conversation: &SupportConversation) {
+    let event = support_conversation_updated_event(conversation);
+    state
+        .realtime
+        .publish_user(&conversation.user_id, event.clone());
+    state.realtime.publish_admin(event);
+}
+
 /// 推送用户提现订单变化事件，供手机端提现记录按需刷新。
 fn publish_user_withdrawal_changed(state: &AppState, order: &WithdrawalOrderSummary) {
     state
@@ -1213,6 +1223,7 @@ async fn update_support_conversation(
 ) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
     let access = state.access.snapshot().await?;
     let conversation = state.support.update(&id, payload, &access.admins).await?;
+    publish_support_conversation_updated(&state, &conversation);
 
     Ok(Json(ApiEnvelope::success(conversation)))
 }

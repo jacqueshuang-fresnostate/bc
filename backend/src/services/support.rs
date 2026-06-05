@@ -532,7 +532,9 @@ impl SupportStore {
         });
         if matches!(
             conversation.status,
-            SupportConversationStatus::Resolved | SupportConversationStatus::Closed
+            SupportConversationStatus::Pending
+                | SupportConversationStatus::Resolved
+                | SupportConversationStatus::Closed
         ) {
             conversation.status = SupportConversationStatus::Open;
         }
@@ -800,6 +802,52 @@ mod tests {
         assert_eq!(updated.messages.len(), 3);
         assert_eq!(updated.unread_count, 2);
         assert_eq!(support.list_for_user("U10001").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn support_repository_reopens_pending_conversation_when_user_replies() {
+        let support = SupportRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let user = access
+            .users
+            .iter()
+            .find(|user| user.id == "U10001")
+            .cloned()
+            .expect("seed user exists");
+        let unread_before = support
+            .get("CS-10001")
+            .await
+            .expect("conversation can load")
+            .unread_count;
+        support
+            .update(
+                "CS-10001",
+                UpdateSupportConversationRequest {
+                    status: SupportConversationStatus::Pending,
+                    priority: SupportPriority::Normal,
+                    assigned_admin_id: None,
+                },
+                &access.admins,
+            )
+            .await
+            .expect("conversation can be moved to pending");
+
+        let updated = support
+            .user_reply(
+                "CS-10001",
+                &user,
+                UserSupportReplyRequest {
+                    content: "我已经补充付款凭证，请继续处理。".to_string(),
+                },
+            )
+            .await
+            .expect("user can reopen pending conversation");
+
+        assert_eq!(updated.status, SupportConversationStatus::Open);
+        assert_eq!(updated.unread_count, unread_before + 1);
     }
 
     #[tokio::test]

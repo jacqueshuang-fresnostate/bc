@@ -39,8 +39,8 @@ export type MobileUserRealtimeEvent = {
 }
 
 export type MobileSupportRealtimeEvent = {
-  event: 'support_message_created'
-  sourceEvent: 'support.message_created'
+  event: 'support_message_created' | 'support_conversation_updated'
+  sourceEvent: 'support.message_created' | 'support.conversation_updated'
   conversationId: string
   data: Record<string, unknown>
   occurredAt: string
@@ -113,9 +113,11 @@ export function normalizeRealtimeEvent(raw: unknown): MobileRealtimeEvent | null
       occurredAt,
     }
   }
-  if (event === 'support.message_created') {
+  if (event === 'support.message_created' || event === 'support.conversation_updated') {
     return {
-      event: 'support_message_created',
+      event: event === 'support.message_created'
+        ? 'support_message_created'
+        : 'support_conversation_updated',
       sourceEvent: event,
       conversationId: stringValue(data.conversationId),
       data,

@@ -169,6 +169,7 @@ WebSocket 消息统一使用当前系统事件信封：
 客服实时事件：
 
 - `support.message_created`：客服会话新增消息，`data` 包含 `conversationId`、`userId`、`conversation` 和 `message`。该事件必须同时发布给会话所属用户和后台客服连接，不允许发给匿名用户或其他普通用户。
+- `support.conversation_updated`：客服会话状态、优先级或分配客服变化，`data` 包含 `conversationId`、`userId` 和 `conversation`。该事件必须同时发布给会话所属用户和后台客服连接，手机端客服页需要据此刷新“客服已接入”和会话状态。
 - 后台连接使用 `/api/admin/realtime?token=...`，因为浏览器 WebSocket 不能设置 `Authorization` 头；后端必须用查询参数 token 校验管理员会话，并要求具备 `customerService` 权限。
 
 ### 4. 校验与错误矩阵
@@ -180,6 +181,7 @@ WebSocket 消息统一使用当前系统事件信封：
 | 携带非法用户 token | 握手返回未授权错误 |
 | 事件受众为其他用户 | 当前连接不得收到该事件 |
 | 客服消息新增 | 当前用户和后台客服连接收到 `support.message_created`，其他用户或匿名连接收不到 |
+| 客服状态或分配变更 | 当前用户和后台客服连接收到 `support.conversation_updated`，其他用户或匿名连接收不到 |
 | 后台实时连接缺少 token 或 token 无效 | 握手返回未授权错误 |
 | 后台实时连接缺少客服权限 | 握手返回权限不足 |
 | 客户端消费过慢 | 后端记录中文 warning，跳过过旧事件，不影响主业务 |
@@ -189,6 +191,8 @@ WebSocket 消息统一使用当前系统事件信封：
 - Good：自动开奖产生 `lottery.draw_result`，手机端首页和下注页同步刷新。
 - Good：用户下注扣款后只给该用户推送 `user.balance_changed` 和 `user.order_changed`。
 - Good：客服直充创建会话、用户继续发消息或后台回复后，用户客服页和后台客服页都能通过 `support.message_created` 实时刷新。
+- Good：后台分配客服或保存会话状态后，用户客服页通过 `support.conversation_updated` 实时刷新接入客服和状态。
+- Good：客服确认充值后，充值页通过 `user.recharge_changed` 刷新充值记录，通过 `user.balance_changed` 刷新余额。
 - Base：匿名用户仍可通过实时连接获取开奖和开盘状态。
 - Bad：手机端继续连接 `/ws/lottery`。
 - Bad：把 `user.balance_changed` 广播给所有在线连接。
@@ -198,6 +202,7 @@ WebSocket 消息统一使用当前系统事件信封：
 
 - 后端需要运行 `cargo check` 和 `cargo test`。
 - 后端需要覆盖客服消息事件结构和管理员实时受众过滤。
+- 后端需要覆盖客服会话更新事件结构，以及用户在 `pending` 会话中回复后会话重新变为 `open`。
 - 手机端需要运行 `npm run build`，确认 WebSocket 事件归一化类型可编译。
 - 管理后台需要运行 `npm run build`，确认后台实时事件归一化和客服页消费类型可编译。
 - 源码中不得保留 `/ws/lottery` 调用。
@@ -3664,6 +3669,9 @@ if let Some(draw_number) = active_draw_control_number(&issue.lottery_id)? {
 - 创建客服直充订单后，后端同步创建客服会话、关联 `supportConversationId`，并发布 `support.message_created`。
 - 用户调用 `POST /api/user/support/conversations/{id}/messages` 后，消息落库，再发布 `support.message_created` 给本人和后台客服。
 - 后台调用 `POST /api/admin/support/conversations/{id}/messages` 后，消息落库，再发布 `support.message_created` 给会话所属用户和后台客服。
+- 后台调用 `PUT /api/admin/support/conversations/{id}` 调整状态、优先级或分配客服后，必须发布 `support.conversation_updated` 给会话所属用户和后台客服。
+- 当会话处于 `pending`、`resolved` 或 `closed` 时，用户再次发送消息必须把会话恢复为 `open`，避免客服后台仍显示“等待用户”。
+- 充值页必须消费 `user.recharge_changed` 和 `user.balance_changed`，客服确认入账后实时刷新充值订单和余额。
 - WebSocket 只负责实时通知；断线重连后仍必须通过 HTTP 拉取会话历史和充值订单状态。
 
 ### 4. 校验与错误矩阵

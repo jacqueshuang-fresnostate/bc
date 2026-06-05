@@ -2,7 +2,8 @@ import type { SupportConversation, SupportMessage } from './support';
 
 export type AdminRealtimeEvent =
   | AdminHeartbeatEvent
-  | AdminSupportMessageCreatedEvent;
+  | AdminSupportMessageCreatedEvent
+  | AdminSupportConversationUpdatedEvent;
 
 export interface AdminHeartbeatEvent {
   event: 'system.heartbeat';
@@ -15,6 +16,13 @@ export interface AdminSupportMessageCreatedEvent {
   conversation: SupportConversation;
   conversationId: string;
   message: SupportMessage;
+}
+
+export interface AdminSupportConversationUpdatedEvent {
+  event: 'support.conversation_updated';
+  occurredAt: string;
+  conversation: SupportConversation;
+  conversationId: string;
 }
 
 interface AdminRealtimeEnvelope {
@@ -46,6 +54,19 @@ export function normalizeAdminRealtimeEvent(raw: unknown): AdminRealtimeEvent | 
       conversationId,
       event,
       message,
+      occurredAt,
+    };
+  }
+  if (event === 'support.conversation_updated' && isPlainObject(envelope.data)) {
+    const conversation = supportConversationValue(envelope.data.conversation);
+    const conversationId = String(envelope.data.conversationId || conversation?.id || '').trim();
+    if (!conversation || !conversationId) {
+      return null;
+    }
+    return {
+      conversation,
+      conversationId,
+      event,
       occurredAt,
     };
   }

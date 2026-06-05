@@ -89,7 +89,10 @@ export function useSupportConversations() {
         }
         try {
           const message = normalizeAdminRealtimeEvent(JSON.parse(event.data));
-          if (message?.event === 'support.message_created') {
+          if (
+            message?.event === 'support.message_created' ||
+            message?.event === 'support.conversation_updated'
+          ) {
             setConversations((current) => upsertById(current, message.conversation));
           }
         } catch {
