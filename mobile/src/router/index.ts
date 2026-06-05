@@ -21,6 +21,7 @@ const router = createRouter({
         { path: 'support', name: 'Support', component: () => import('../views/SupportView.vue') },
         { path: 'withdraw', name: 'Withdraw', component: () => import('../views/WithdrawView.vue') },
         { path: 'withdrawal-methods', name: 'WithdrawalMethods', component: () => import('../views/WithdrawalMethodsView.vue') },
+        { path: 'ledger', name: 'AccountLedger', component: () => import('../views/AccountLedgerView.vue') },
         { path: 'invitation-center', name: 'InvitationCenter', component: () => import('../views/InvitationCenterView.vue') },
         { path: 'security-center', name: 'SecurityCenter', component: () => import('../views/SecurityCenterView.vue') },
         { path: 'me', name: 'Profile', component: () => import('../views/ProfileView.vue') },

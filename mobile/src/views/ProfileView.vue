@@ -28,6 +28,7 @@ const inviterText = computed(() => {
 
 const accountItems = computed(() => [
   { key: 'security', label: '安全中心与密码', icon: 'shield_lock', value: profile.value?.email ? '已绑定' : '未绑定', hint: profile.value?.email || '' },
+  { key: 'ledger', label: '资金流水', icon: 'payments', hint: '查看充值、投注、提现与派奖记录' },
   { key: 'withdrawal', label: '提现管理', icon: 'account_balance', hint: '管理收款信息' },
 ])
 
@@ -63,6 +64,7 @@ function onAccountItem(item: { key: string }) {
     if (canInvite.value) router.push('/invitation-center')
     else showToast('普通用户暂无邀请权限')
   }
+  if (item.key === 'ledger') router.push('/ledger')
   if (item.key === 'withdrawal') router.push('/withdrawal-methods')
 }
 

@@ -142,6 +142,27 @@ export type CreateRechargeOrderResponse = {
   message: string
 }
 
+export type LedgerEntryKind =
+  | 'manualAdjustment'
+  | 'orderDebit'
+  | 'orderRefund'
+  | 'payoutCredit'
+  | 'rechargeCredit'
+  | 'withdrawalFreeze'
+  | 'withdrawalPayout'
+  | 'withdrawalReject'
+
+export type LedgerEntry = {
+  id: string
+  userId: string
+  kind: LedgerEntryKind
+  amountMinor: number
+  balanceAfterMinor: number
+  referenceId?: string | null
+  description: string
+  createdAt: string
+}
+
 export type SupportMessageAuthor = 'user' | 'admin' | 'system'
 
 export type SupportConversationStatus = 'open' | 'pending' | 'resolved' | 'closed'
@@ -304,6 +325,10 @@ export async function fetchRechargeConfig() {
 
 export async function fetchRechargeOrders() {
   return unwrapApiData<RechargeOrder[]>(await http.get('/user/recharge/orders'))
+}
+
+export async function fetchUserLedgerEntries() {
+  return unwrapApiData<LedgerEntry[]>(await http.get('/user/ledger-entries'))
 }
 
 export async function createRechargeOrder(payload: CreateRechargeOrderPayload) {
