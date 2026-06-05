@@ -28,6 +28,8 @@ const nowMs = ref(Date.now())
 const activeHeroBannerIndex = ref(0)
 const heroBannerImageFailed = ref<Record<string, true>>({})
 let countdownTimer: ReturnType<typeof setInterval> | null = null
+let homepageRefreshInFlight = false
+let lastSilentHomepageRefreshMs = 0
 
 const lotteriesSetting = computed(() => homepage.value?.settings || {
   bannersEnabled: false,
@@ -48,10 +50,11 @@ const showGroups = computed(() => lotteriesSetting.value.groupsEnabled)
 const showStats = computed(() => lotteriesSetting.value.statsEnabled)
 const featuredLotteries = computed(() => homepage.value?.featuredSection?.lotteries || [])
 const featuredTitle = computed(() => homepage.value?.featuredSection?.title || '高频极速')
+const showFeatured = computed(() => lotteriesSetting.value.featuredEnabled && featuredLotteries.value.length > 0)
 const featuredLottery = computed(() => featuredLotteries.value[0])
-const secondaryHighFrequencyLotteries = computed(() => featuredLotteries.value.slice(1, 3))
+const secondaryHighFrequencyLotteries = computed(() => featuredLotteries.value.slice(1))
 const visibleGroups = computed(() => showGroups.value ? homepage.value?.groups?.filter(group => group.lotteries?.length) || [] : [])
-const hasHomepageLotteries = computed(() => Boolean(featuredLotteries.value.length || visibleGroups.value.length))
+const hasHomepageLotteries = computed(() => Boolean(showFeatured.value || visibleGroups.value.length))
 const heroBannerSlides = computed<HomepageBanner[]>(() => heroBanners.value)
 const heroBanner = computed(() => heroBannerSlides.value[activeHeroBannerIndex.value] || heroBannerSlides.value[0])
 const heroBannerIndicators = computed(() => heroBanners.value.length > 1 ? heroBanners.value : [])
@@ -65,7 +68,7 @@ const todayWinnerCount = computed(() => (homepage.value?.stats?.todayWinnerCount
 const totalPayoutDisplay = computed(() => homepage.value?.stats?.totalPayoutDisplay || '¥0')
 
 // 开奖更新组合函数只负责把 homepage 中的轮次字段转换为卡片状态、开奖号和倒计时文本。
-const { statusText, roundDigits, countdownText, applyDrawResult } = useHomepageDrawUpdates(homepage, nowMs)
+const { statusText, roundDigits, countdownText, applyDrawResult, applyIssueUpdate } = useHomepageDrawUpdates(homepage, nowMs)
 
 function lotteryName(code?: string) {
   // 通知文案从当前已渲染彩种中反查名称，找不到时保留后端推送的 code。
@@ -79,12 +82,6 @@ function lotteryName(code?: string) {
 function openLottery(lottery?: LotteryCard) {
   if (!lottery?.code) return
   router.push(`/bet/${lottery.code}`)
-}
-
-function openGroupBuy(lottery?: LotteryCard) {
-  // 团购入口只对后端标记可团购且有 code 的彩种开放。
-  if (!lottery?.groupBuyEnabled || !lottery.code) return
-  router.push({ path: '/group-buy', query: { lottery_code: lottery.code } })
 }
 
 function openBanner(banner?: HomepageBanner) {
@@ -125,8 +122,38 @@ function handleHeroBannerImageError(banner = heroBanner.value) {
   heroBannerImageFailed.value = { ...heroBannerImageFailed.value, [imageUrl]: true }
 }
 
-async function loadHomepage() {
-  loadingHomepage.value = true
+function homepageLotteries() {
+  return [
+    ...featuredLotteries.value,
+    ...visibleGroups.value.flatMap(group => group.lotteries || []),
+  ]
+}
+
+function needsHomepageRefresh(lottery: LotteryCard) {
+  if (lottery.status === 'drawn' || lottery.status === 'closed') return false
+  const drawTime = parseChinaDateTime(lottery.nextDrawTime)
+  return Number.isFinite(drawTime) && drawTime + 1000 <= nowMs.value
+}
+
+async function refreshHomepageAfterDrawTime() {
+  const currentTime = Date.now()
+  if (
+    homepageRefreshInFlight
+    || currentTime - lastSilentHomepageRefreshMs < 5000
+    || !homepageLotteries().some(needsHomepageRefresh)
+  ) return
+
+  homepageRefreshInFlight = true
+  lastSilentHomepageRefreshMs = currentTime
+  try {
+    await loadHomepage({ silent: true })
+  } finally {
+    homepageRefreshInFlight = false
+  }
+}
+
+async function loadHomepage(options: { silent?: boolean } = {}) {
+  if (!options.silent) loadingHomepage.value = true
   try {
     // 首页接口一次返回 banner、跑马灯、推荐区、分组和统计数据。
     const data = await fetchLotteryHomepage()
@@ -135,9 +162,9 @@ async function loadHomepage() {
     nowMs.value = Number.isFinite(serverTime) ? serverTime : Date.now()
   } catch {
     // 加载失败时置空首页数据，由模板进入“暂无彩种”兜底分支。
-    homepage.value = null
+    if (!options.silent) homepage.value = null
   } finally {
-    loadingHomepage.value = false
+    if (!options.silent) loadingHomepage.value = false
   }
 }
 
@@ -153,6 +180,7 @@ onMounted(async () => {
   // 本地秒级计时只刷新展示倒计时，开奖结果仍以后端接口和 websocket 推送为准。
   countdownTimer = setInterval(() => {
     nowMs.value += 1000
+    void refreshHomepageAfterDrawTime()
   }, 1000)
   try {
     const profile = await fetchCurrentUserProfile()
@@ -170,6 +198,11 @@ watch(() => props.wsMessage, (msg) => {
     // WebSocket 开奖推送先局部更新首页轮次展示，再弹出当前彩种开奖结果提示。
     applyDrawResult(msg)
     showNotify({ type: 'success', message: `${lotteryName(msg.lotteryCode || msg.lottery_code)} 第${msg.issue}期：${msg.result}` })
+    void loadHomepage({ silent: true })
+    return
+  }
+  if (msg?.event === 'issue_opened' || msg?.event === 'issue_closed') {
+    applyIssueUpdate(msg)
   }
 })
 
@@ -261,9 +294,12 @@ watch(heroBanners, (banners) => {
 
       <template v-else>
         <!-- 推荐区受后端 settings.featuredEnabled 控制，关闭时不展示高频卡片组。 -->
-        <section class="space-y-4" v-if="lotteriesSetting.featuredEnabled">
+        <section class="space-y-4" v-if="showFeatured">
           <div class="flex items-end justify-between px-1">
-            <h3 class="border-l-4 border-primary pl-3 font-headline text-lg font-extrabold tracking-tight">{{ featuredTitle }}</h3>
+            <div>
+              <h3 class="border-l-4 border-primary pl-3 font-headline text-lg font-extrabold tracking-tight">{{ featuredTitle }}</h3>
+              <p class="mt-1 pl-4 text-[11px] font-medium text-on-surface-variant">精选高频彩种，开奖后自动刷新下一期倒计时</p>
+            </div>
           </div>
           <div class="grid grid-cols-2 gap-3">
             <HomeDrawCard
@@ -274,7 +310,6 @@ watch(heroBanners, (banners) => {
               :round-digits="roundDigits"
               :status-text="statusText"
               @open="openLottery"
-              @group-buy="openGroupBuy"
             />
 
             <HomeDrawCard
@@ -285,7 +320,6 @@ watch(heroBanners, (banners) => {
               :countdown-text="countdownText"
               :round-digits="roundDigits"
               @open="openLottery"
-              @group-buy="openGroupBuy"
             />
           </div>
         </section>
@@ -309,7 +343,6 @@ watch(heroBanners, (banners) => {
               :countdown-text="countdownText"
               :round-digits="roundDigits"
               @open="openLottery"
-              @group-buy="openGroupBuy"
             />
           </div>
         </section>

@@ -1,5 +1,28 @@
 # TODO
 
+## 2026-06-05 19:24 HKT 手机端首页高频极速配置与倒计时修复
+
+- 完成任务：优化手机端首页“高频极速”模块，新增后台配置开关和彩种选择，并修复开奖时间后倒计时长期停在“开奖中”的问题。
+- 解决问题：
+  - 高频极速此前按开奖周期自动展示，默认就是开启状态，后台无法控制是否展示或展示哪些彩种。
+  - 首页彩种卡片还会展示合买标签和合买入口，不符合首页只展示投注入口的要求。
+  - 手机端首页只消费 `draw_result`，没有消费 `issue_opened` / `issue_closed`，到达开奖时间后如果新期号没有被页面拉取，会长期显示“开奖中”。
+- 具体实现：
+  - 后端新增 `mobile_home_featured_enabled`、`mobile_home_featured_title`、`mobile_home_featured_lottery_codes` 三个系统设置，种子和迁移默认关闭高频极速。
+  - `/api/lottery/home` 读取系统设置后，只在开关开启且配置彩种命中销售中彩种时返回高频极速推荐区，并按后台配置顺序返回。
+  - 管理后台系统设置的手机端设置面板新增高频极速开关、标题和 Semi UI 彩种多选配置。
+  - 手机端首页高频极速按 `settings.featuredEnabled` 和后端返回彩种展示，所有首页卡片移除合买标签、合买按钮和合买大厅入口。
+  - 手机端首页新增 `issue_opened` / `issue_closed` 实时事件消费，并在开奖时间已过时每 5 秒最多静默刷新一次首页，避免倒计时卡死。
+  - Trellis 前后端规范和 OpenAPI 说明同步记录本次规则。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 通过，209 条后端测试全部成功。
+  - `cd admin && npm run build` 通过；Vite 仍提示后台主 chunk 超过 500 kB，这是既有构建体积提示。
+  - `cd mobile && npm run build` 通过。
+  - `git diff --check` 通过。
+- 后续动作：后续如需要更精细的首页运营位，可把高频极速配置从系统设置字符串扩展为独立排序表。
+
 ## 2026-06-05 19:08 HKT 手机端客服账号名展示修正
 
 - 完成任务：修正手机端在线客服页面中后台管理员账号名的用户可见展示。

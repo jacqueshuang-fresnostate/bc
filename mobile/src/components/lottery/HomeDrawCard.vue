@@ -11,7 +11,7 @@ const props = defineProps<{
   statusText?: (status?: string) => string
 }>()
 
-const emit = defineEmits<{ open: [LotteryCard]; groupBuy: [LotteryCard] }>()
+const emit = defineEmits<{ open: [LotteryCard] }>()
 const logoLoadFailed = ref(false)
 
 const logoUrl = computed(() => String(props.lottery.logoUrl || '').trim())
@@ -75,7 +75,6 @@ function statusClass() {
             <span class="text-[10px] text-on-surface-variant">第 {{ lottery.issue || '-' }} 期</span>
             <span class="lottery-status-stack inline-flex flex-col items-start gap-1">
               <span :class="['lottery-state-pill rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
-              <span v-if="lottery.groupBuyEnabled" class="lottery-group-buy-tag rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-primary">合买</span>
             </span>
           </div>
         </div>
@@ -102,7 +101,6 @@ function statusClass() {
         <span class="truncate text-sm font-bold">{{ lottery.name }}</span>
         <span class="lottery-status-stack inline-flex flex-col items-start gap-1">
           <span :class="['lottery-state-pill rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
-          <span v-if="lottery.groupBuyEnabled" class="lottery-group-buy-tag rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-primary">合买</span>
         </span>
       </div>
       <span class="shrink-0 text-[10px] font-bold text-primary">{{ countdownText(lottery) }}</span>
@@ -111,7 +109,6 @@ function statusClass() {
       <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-secondary-${index}`" class="home-result-ball home-result-ball--secondary border border-outline-variant/30 bg-surface-container-highest text-[9px] font-bold text-on-surface-variant">{{ digit }}</div>
     </div>
     <button class="w-full rounded-full border border-primary/10 bg-white py-1.5 text-xs font-bold text-primary shadow-sm" @click="emit('open', lottery)">进入</button>
-    <button v-if="lottery.groupBuyEnabled" class="w-full rounded-full border border-primary/10 bg-red-50 py-1.5 text-xs font-bold text-primary" @click="emit('groupBuy', lottery)">合买</button>
   </div>
 
   <button v-else class="flex w-full flex-col gap-2 rounded-xl bg-surface-container-lowest p-3 text-left shadow-sm" @click="emit('open', lottery)">
@@ -123,7 +120,6 @@ function statusClass() {
           <h5 class="truncate text-xs font-bold">{{ lottery.name }}</h5>
           <span class="lottery-status-stack inline-flex shrink-0 flex-col items-end gap-1">
             <span :class="['lottery-state-pill rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
-            <span v-if="lottery.groupBuyEnabled" class="lottery-group-buy-tag rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-primary" @click.stop="emit('groupBuy', lottery)">合买</span>
           </span>
         </div>
       </div>

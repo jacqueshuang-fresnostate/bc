@@ -8,6 +8,9 @@ export type LotteryDrawMessage = {
   lottery_code?: string
   issue?: string | null
   result?: unknown
+  scheduledAt?: string
+  saleClosedAt?: string
+  status?: string
 }
 
 // 首页开奖更新边界：这里集中定义 websocket 开奖后本地更新规则。
@@ -44,13 +47,23 @@ export function useHomepageDrawUpdates(homepage: Ref<HomepageResponse | null>, n
   }
 
   function countdownText(lottery?: LotteryCard) {
-    // sealed/drawn 直接显示业务状态；其它状态优先按封盘时间计算倒计时，再回退到开奖时间。
+    // 倒计时先算封盘，再算开奖；开奖时间已过时由首页触发静默刷新，避免长期停在“开奖中”。
     if (!lottery) return '--:--'
-    if (lottery.status === 'sealed') return '封盘中'
     if (lottery.status === 'drawn') return '已开奖'
-    const targetTime = parseChinaDateTime(lottery.saleStopTime || lottery.nextDrawTime)
-    if (Number.isFinite(targetTime)) {
-      return formatCountdown(Math.max(0, Math.floor((targetTime - nowMs.value) / 1000)))
+    if (lottery.status === 'closed') return '已关闭'
+
+    const saleStopTime = parseChinaDateTime(lottery.saleStopTime)
+    if (Number.isFinite(saleStopTime) && saleStopTime > nowMs.value) {
+      return formatCountdown(Math.floor((saleStopTime - nowMs.value) / 1000))
+    }
+
+    const drawTime = parseChinaDateTime(lottery.nextDrawTime)
+    if (Number.isFinite(drawTime) && drawTime > nowMs.value) {
+      return `封盘 ${formatCountdown(Math.floor((drawTime - nowMs.value) / 1000))}`
+    }
+
+    if (Number.isFinite(drawTime)) {
+      return '开奖中'
     }
     return lottery.drawTimeText || lottery.scheduleText || '--:--'
   }
@@ -89,6 +102,28 @@ export function useHomepageDrawUpdates(homepage: Ref<HomepageResponse | null>, n
     }
   }
 
+  function issueStatus(status?: string, event?: string) {
+    if (event === 'issue_closed') return 'sealed'
+    if (event === 'issue_opened') return 'selling'
+    if (status === 'closed') return 'sealed'
+    if (status === 'drawn') return 'drawn'
+    if (status === 'cancelled') return 'closed'
+    return 'selling'
+  }
+
+  function updateLotteryFromIssue(lottery: LotteryCard, msg: LotteryDrawMessage) {
+    // 开盘/封盘推送只更新当前轮次和时间字段，不覆盖最近开奖号码。
+    const lotteryCode = msg?.lotteryCode || msg?.lottery_code
+    if (lottery.code !== lotteryCode) return lottery
+    return {
+      ...lottery,
+      issue: msg.issue || lottery.issue,
+      status: issueStatus(msg.status, msg.event),
+      nextDrawTime: msg.scheduledAt || lottery.nextDrawTime,
+      saleStopTime: msg.saleClosedAt || lottery.saleStopTime,
+    }
+  }
+
   function applyDrawResult(msg: LotteryDrawMessage) {
     // WebSocket 推送同时覆盖推荐区和分组区，保持首页所有同彩种卡片展示一致。
     if (!homepage.value || !(msg?.lotteryCode || msg?.lottery_code)) return
@@ -107,6 +142,23 @@ export function useHomepageDrawUpdates(homepage: Ref<HomepageResponse | null>, n
     }
   }
 
+  function applyIssueUpdate(msg: LotteryDrawMessage) {
+    if (!homepage.value || !(msg?.lotteryCode || msg?.lottery_code)) return
+    homepage.value = {
+      ...homepage.value,
+      featuredSection: homepage.value.featuredSection
+        ? {
+            ...homepage.value.featuredSection,
+            lotteries: (homepage.value.featuredSection.lotteries || []).map(lottery => updateLotteryFromIssue(lottery, msg)),
+          }
+        : homepage.value.featuredSection,
+      groups: (homepage.value.groups || []).map(group => ({
+        ...group,
+        lotteries: (group.lotteries || []).map(lottery => updateLotteryFromIssue(lottery, msg)),
+      })),
+    }
+  }
+
   return {
     statusText,
     roundDigits,
@@ -116,5 +168,6 @@ export function useHomepageDrawUpdates(homepage: Ref<HomepageResponse | null>, n
     nextIssue,
     nextDrawTime,
     applyDrawResult,
+    applyIssueUpdate,
   }
 }

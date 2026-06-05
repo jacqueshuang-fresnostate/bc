@@ -4036,6 +4036,79 @@ await createWithdrawalOrder({ methodId, amountMinor });
 
 ---
 
+## 场景：手机端首页高频极速配置
+
+### 1. 范围 / 触发条件
+
+- 触发条件：手机端首页需要由后台控制“高频极速”模块是否展示，以及展示哪些彩种。
+- 范围：`GET /api/lottery/home`、`system_settings`、管理后台系统设置、手机端首页推荐区。
+
+### 2. 签名
+
+- 首页接口：`GET /api/lottery/home`
+- 系统设置开关：`mobile_home_featured_enabled`
+- 系统设置标题：`mobile_home_featured_title`
+- 系统设置彩种：`mobile_home_featured_lottery_codes`
+
+### 3. 契约
+
+`mobile_home_featured_enabled` 默认值必须是 `false`，手机端首页默认不展示高频极速模块。只有该值为 `true`，且 `mobile_home_featured_lottery_codes` 至少命中一个销售中彩种时，`GET /api/lottery/home` 才返回 `settings.featuredEnabled=true` 和非空 `featuredSection.lotteries`。
+
+`mobile_home_featured_lottery_codes` 使用英文逗号分隔彩种 ID，后端按配置顺序返回，只保留当前销售中的彩种，不自动按开奖周期兜底补彩种。
+
+手机端首页卡片不得展示合买标签、合买按钮或合买大厅入口；合买入口只属于合买专用页面或下注页合买模式。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 开关为 `false` | 首页 `featuredEnabled=false`，高频极速模块隐藏 |
+| 开关为 `true` 但未选彩种 | 首页 `featuredEnabled=false`，模块隐藏 |
+| 开关为 `true` 且选中销售中彩种 | 按后台配置顺序返回高频极速彩种 |
+| 配置中包含停售彩种 | 停售彩种不进入首页高频极速 |
+| 到达开奖时间 | 手机端静默刷新首页或消费新期号实时事件，不长期停在“开奖中” |
+
+### 5. Good / Base / Bad Cases
+
+- Good：后台开启高频极速并选择 `au5,txffc`，两个彩种均销售中，首页按 `au5`、`txffc` 顺序展示。
+- Base：后台保持默认关闭，首页只展示轮播、跑马灯和分类分组，不渲染高频极速模块。
+- Bad：后端因为存在 5 分钟内开奖的销售中彩种就自动返回高频极速；这会绕过后台开关。
+- Bad：手机端首页显示合买标签或合买入口；这会把首页推荐区和合买专用流程混在一起。
+
+### 6. 必要测试
+
+- 后端需要覆盖高频极速默认关闭。
+- 后端需要覆盖系统设置解析开关、标题和彩种顺序。
+- 手机端需要运行 `npm run build`，确认首页实时事件和倒计时刷新逻辑可编译。
+- 管理后台需要运行 `npm run build`，确认系统设置多选彩种配置可编译。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+let featured_lotteries = selling_cards
+    .iter()
+    .filter(|card| card.draw_interval.is_some_and(|interval| interval <= 300))
+    .take(3)
+    .cloned()
+    .collect::<Vec<_>>();
+```
+
+这个写法会让高频极速默认自动展示，后台无法控制是否显示和显示哪些彩种。
+
+#### 正确
+
+```rust
+let settings = state.access.settings().await?;
+let featured_config = mobile_featured_config_from_settings(&settings);
+let home = build_mobile_lottery_home(lotteries, categories, issues, featured_config);
+```
+
+首页接口必须先读取后台系统设置，再按配置开关和彩种 ID 列表构建高频极速模块。
+
+---
+
 ## 场景：后台财务分页与提现审核接口
 
 ### 1. 范围 / 触发条件

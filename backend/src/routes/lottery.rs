@@ -19,7 +19,7 @@ use crate::{
     },
     error::ApiResult,
     response::ApiEnvelope,
-    services::mobile_home::build_mobile_lottery_home,
+    services::mobile_home::{build_mobile_lottery_home, mobile_featured_config_from_settings},
 };
 
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -42,7 +42,9 @@ async fn get_lottery_home(
     let lotteries = state.lotteries.list().await?;
     let categories = state.lotteries.categories().await?;
     let issues = state.draws.list().await?;
-    let home = build_mobile_lottery_home(lotteries, categories, issues);
+    let settings = state.access.settings().await?;
+    let featured_config = mobile_featured_config_from_settings(&settings);
+    let home = build_mobile_lottery_home(lotteries, categories, issues, featured_config);
 
     Ok(Json(ApiEnvelope::success(home)))
 }

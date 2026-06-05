@@ -12,9 +12,28 @@ use crate::domain::{
         MobileLotteryHomeResponse, MobileLotteryHomeSettings, MobileLotteryLatestDraw,
         MobileLotteryStats, MobileLotteryTicker, MobileLotteryTickerItem,
     },
+    permission::SystemSetting,
 };
 
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+const DEFAULT_FEATURED_TITLE: &str = "高频极速";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MobileLotteryFeaturedConfig {
+    pub enabled: bool,
+    pub title: String,
+    pub lottery_codes: Vec<String>,
+}
+
+impl Default for MobileLotteryFeaturedConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            title: DEFAULT_FEATURED_TITLE.to_string(),
+            lottery_codes: Vec::new(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 struct LotteryIssueSnapshot {
@@ -22,11 +41,37 @@ struct LotteryIssueSnapshot {
     latest_drawn: Option<DrawIssue>,
 }
 
+/// 从系统设置解析手机端首页高频极速模块配置，默认关闭且不自动兜底展示彩种。
+pub fn mobile_featured_config_from_settings(
+    settings: &[SystemSetting],
+) -> MobileLotteryFeaturedConfig {
+    let mut config = MobileLotteryFeaturedConfig::default();
+    for setting in settings {
+        match setting.key.as_str() {
+            "mobile_home_featured_enabled" => {
+                config.enabled = bool_setting(&setting.value, false);
+            }
+            "mobile_home_featured_title" => {
+                let title = setting.value.trim();
+                if !title.is_empty() {
+                    config.title = title.to_string();
+                }
+            }
+            "mobile_home_featured_lottery_codes" => {
+                config.lottery_codes = csv_setting(&setting.value);
+            }
+            _ => {}
+        }
+    }
+    config
+}
+
 /// 生成手机端首页彩种聚合数据，只返回当前销售中的彩种。
 pub fn build_mobile_lottery_home(
     lotteries: Vec<LotteryKind>,
     categories: Vec<LotteryCategoryConfig>,
     issues: Vec<DrawIssue>,
+    featured_config: MobileLotteryFeaturedConfig,
 ) -> MobileLotteryHomeResponse {
     let now = Local::now().naive_local();
     let snapshots = issue_snapshots(&issues);
@@ -40,14 +85,15 @@ pub fn build_mobile_lottery_home(
         .collect::<Vec<_>>();
     let groups = group_cards_by_category(&selling_cards, categories);
     let ticker_items = ticker_items_from_cards(&selling_cards);
-    let featured_lotteries = featured_cards(&selling_cards);
+    let featured_lotteries = featured_cards(&selling_cards, &featured_config);
+    let featured_enabled = featured_config.enabled && !featured_lotteries.is_empty();
 
     MobileLotteryHomeResponse {
         server_time: now.format(TIMESTAMP_FORMAT).to_string(),
         settings: MobileLotteryHomeSettings {
             banners_enabled: true,
             ticker_enabled: !ticker_items.is_empty(),
-            featured_enabled: !featured_lotteries.is_empty(),
+            featured_enabled,
             groups_enabled: !groups.is_empty(),
             stats_enabled: false,
         },
@@ -56,8 +102,8 @@ pub fn build_mobile_lottery_home(
             items: ticker_items,
         },
         featured_section: MobileLotteryFeaturedSection {
-            enabled: !featured_lotteries.is_empty(),
-            title: "高频极速".to_string(),
+            enabled: featured_enabled,
+            title: featured_config.title,
             lotteries: featured_lotteries,
         },
         groups,
@@ -219,20 +265,48 @@ fn group_cards_by_category(
     groups
 }
 
-/// 首页推荐区优先选高频彩种；没有高频彩种时展示前 3 个销售中彩种。
-fn featured_cards(cards: &[MobileLotteryCard]) -> Vec<MobileLotteryCard> {
-    let high_frequency = cards
-        .iter()
-        .filter(|card| card.draw_interval.is_some_and(|interval| interval <= 300))
-        .take(3)
-        .cloned()
-        .collect::<Vec<_>>();
-
-    if high_frequency.is_empty() {
-        cards.iter().take(3).cloned().collect()
-    } else {
-        high_frequency
+/// 首页高频极速推荐区只展示后台显式配置的销售中彩种，默认不自动展示。
+fn featured_cards(
+    cards: &[MobileLotteryCard],
+    config: &MobileLotteryFeaturedConfig,
+) -> Vec<MobileLotteryCard> {
+    if !config.enabled {
+        return Vec::new();
     }
+
+    let mut selected = Vec::new();
+    let mut seen = BTreeSet::new();
+    for code in &config.lottery_codes {
+        if !seen.insert(code.clone()) {
+            continue;
+        }
+        if let Some(card) = cards.iter().find(|card| &card.code == code) {
+            selected.push(card.clone());
+        }
+    }
+    selected
+}
+
+/// 解析布尔系统设置，兼容常见开启值。
+fn bool_setting(value: &str, default: bool) -> bool {
+    let text = value.trim().to_ascii_lowercase();
+    if text.is_empty() {
+        return default;
+    }
+    matches!(
+        text.as_str(),
+        "true" | "1" | "yes" | "on" | "enabled" | "开启"
+    )
+}
+
+/// 解析逗号分隔系统设置，去重前保留后台配置顺序。
+fn csv_setting(value: &str) -> Vec<String> {
+    value
+        .split([',', '，', '\n', '\r', '\t', ' '])
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// 从最近期开奖中生成首页跑马灯内容。
@@ -381,9 +455,13 @@ mod tests {
             DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategoryConfig, LotteryKind,
             LotteryNumberType,
         },
+        permission::SystemSetting,
     };
 
-    use super::build_mobile_lottery_home;
+    use super::{
+        build_mobile_lottery_home, mobile_featured_config_from_settings,
+        MobileLotteryFeaturedConfig,
+    };
 
     #[test]
     /// 首页只返回销售中的彩种，并按分类带出最近开奖号码。
@@ -437,6 +515,11 @@ mod tests {
                     "2026-06-05 20:00:00",
                 ),
             ],
+            MobileLotteryFeaturedConfig {
+                enabled: true,
+                title: "高频极速".to_string(),
+                lottery_codes: vec!["au5".to_string(), "fc3d".to_string()],
+            },
         );
 
         let all_codes = response
@@ -454,6 +537,60 @@ mod tests {
             fc3d.latest_draw.as_ref().map(|draw| draw.issue.as_str()),
             Some("20260605001")
         );
+        assert!(response.settings.featured_enabled);
+        assert_eq!(
+            response
+                .featured_section
+                .lotteries
+                .iter()
+                .map(|lottery| lottery.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["au5", "fc3d"]
+        );
+    }
+
+    #[test]
+    /// 高频极速模块默认关闭，不能再按开奖周期自动展示销售中彩种。
+    fn mobile_home_featured_section_is_hidden_by_default() {
+        let response = build_mobile_lottery_home(
+            vec![sample_lottery("au5", "澳洲 5 分彩", "overseas", true)],
+            vec![LotteryCategoryConfig {
+                code: "overseas".to_string(),
+                name: "海外彩种".to_string(),
+            }],
+            Vec::new(),
+            MobileLotteryFeaturedConfig::default(),
+        );
+
+        assert!(!response.settings.featured_enabled);
+        assert!(!response.featured_section.enabled);
+        assert!(response.featured_section.lotteries.is_empty());
+    }
+
+    #[test]
+    /// 系统设置可以控制高频极速开关、标题和展示彩种顺序。
+    fn mobile_featured_config_reads_system_settings() {
+        let config = mobile_featured_config_from_settings(&[
+            SystemSetting {
+                key: "mobile_home_featured_enabled".to_string(),
+                value: "true".to_string(),
+                description: String::new(),
+            },
+            SystemSetting {
+                key: "mobile_home_featured_title".to_string(),
+                value: "极速开奖".to_string(),
+                description: String::new(),
+            },
+            SystemSetting {
+                key: "mobile_home_featured_lottery_codes".to_string(),
+                value: "au5, txffc，fc3d".to_string(),
+                description: String::new(),
+            },
+        ]);
+
+        assert!(config.enabled);
+        assert_eq!(config.title, "极速开奖");
+        assert_eq!(config.lottery_codes, vec!["au5", "txffc", "fc3d"]);
     }
 
     fn sample_lottery(id: &str, name: &str, category: &str, sale_enabled: bool) -> LotteryKind {

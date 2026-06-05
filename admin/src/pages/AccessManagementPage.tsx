@@ -29,6 +29,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import { fetchLotteries } from '../api/client';
 import { ImageUploadAvatar } from '../components/ImageUploadAvatar';
 import { MetricCard } from '../components/MetricCard';
 import { useAccessManagement } from '../hooks/useAccessManagement';
@@ -36,6 +37,7 @@ import type { AdminSaveRequest } from '../types/access';
 import type {
   AdminRole,
   AdminSummary,
+  LotteryKind,
   PermissionScope,
   RegistrationConfig,
   UserKind,
@@ -96,11 +98,17 @@ const ACCESS_SECTIONS: Array<{ key: AccessSection; label: string }> = [
 const MOBILE_PLATFORM_NAME_SETTING_KEY = 'mobile_platform_name';
 const MOBILE_LOGO_SETTING_KEY = 'mobile_logo_image_url';
 const MOBILE_INTRO_SETTING_KEY = 'mobile_site_intro';
+const MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY = 'mobile_home_featured_enabled';
+const MOBILE_HOME_FEATURED_TITLE_SETTING_KEY = 'mobile_home_featured_title';
+const MOBILE_HOME_FEATURED_LOTTERY_CODES_SETTING_KEY = 'mobile_home_featured_lottery_codes';
 const UNCONFIGURED_SETTING_VALUE = '未配置';
 const MOBILE_CUSTOM_SETTING_KEYS = new Set([
   MOBILE_PLATFORM_NAME_SETTING_KEY,
   MOBILE_LOGO_SETTING_KEY,
   MOBILE_INTRO_SETTING_KEY,
+  MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY,
+  MOBILE_HOME_FEATURED_TITLE_SETTING_KEY,
+  MOBILE_HOME_FEATURED_LOTTERY_CODES_SETTING_KEY,
 ]);
 
 const PERMISSION_SCOPE_OPTIONS: Array<{ label: string; value: PermissionScope }> = [
@@ -154,6 +162,7 @@ export function AccessManagementPage({
   );
   const [registrationForm, setRegistrationForm] =
     useState<RegistrationConfig | null>(null);
+  const [lotteries, setLotteries] = useState<LotteryKind[]>([]);
   const [roleForm, setRoleForm] = useState<RoleFormState>(() => emptyRoleForm());
   const [settingDrafts, setSettingDrafts] = useState<Record<string, string>>({});
   const [userForm, setUserForm] = useState<UserFormState>(() => emptyUserForm());
@@ -189,6 +198,20 @@ export function AccessManagementPage({
       setRegistrationForm(registration);
     }
   }, [registration]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchLotteries(controller.signal)
+      .then(setLotteries)
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setLotteries([]);
+        }
+      });
+    return () => {
+      controller.abort();
+    };
+  }, []);
 
   const refreshAll = () => {
     refresh();
@@ -387,6 +410,7 @@ export function AccessManagementPage({
       ) : (
         <SettingsSection
           drafts={settingDrafts}
+          lotteries={lotteries}
           registration={registrationForm}
           saving={saving}
           settings={settings}
@@ -988,6 +1012,7 @@ function RoleSection({
 
 function SettingsSection({
   drafts,
+  lotteries,
   onDraftChange,
   onRegistrationChange,
   onSaveRegistration,
@@ -997,6 +1022,7 @@ function SettingsSection({
   settings,
 }: {
   drafts: Record<string, string>;
+  lotteries: LotteryKind[];
   onDraftChange: (key: string, value: string) => void;
   onRegistrationChange: Dispatch<SetStateAction<RegistrationConfig | null>>;
   onSaveRegistration: () => void;
@@ -1107,6 +1133,7 @@ function SettingsSection({
                         drafts={drafts}
                         imageBedMissingConfigs={imageBedMissingConfigs}
                         imageBedUploadField={imageBedUploadField}
+                        lotteries={lotteries}
                         saving={saving}
                         settings={settings}
                         onDraftChange={onDraftChange}
@@ -1227,6 +1254,7 @@ function MobileSettingsPanel({
   drafts,
   imageBedMissingConfigs,
   imageBedUploadField,
+  lotteries,
   onDraftChange,
   onSaveSetting,
   saving,
@@ -1235,6 +1263,7 @@ function MobileSettingsPanel({
   drafts: Record<string, string>;
   imageBedMissingConfigs: string[];
   imageBedUploadField: string;
+  lotteries: LotteryKind[];
   onDraftChange: (key: string, value: string) => void;
   onSaveSetting: (key: string) => void;
   saving: boolean;
@@ -1247,6 +1276,19 @@ function MobileSettingsPanel({
   );
   const logoValue = draftSettingValue(settings, drafts, MOBILE_LOGO_SETTING_KEY);
   const introValue = draftSettingValue(settings, drafts, MOBILE_INTRO_SETTING_KEY);
+  const featuredEnabledValue =
+    draftSettingValue(settings, drafts, MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY) || 'false';
+  const featuredTitleValue = draftSettingValue(
+    settings,
+    drafts,
+    MOBILE_HOME_FEATURED_TITLE_SETTING_KEY,
+  ) || '高频极速';
+  const featuredLotteryCodesValue = draftSettingValue(
+    settings,
+    drafts,
+    MOBILE_HOME_FEATURED_LOTTERY_CODES_SETTING_KEY,
+  );
+  const selectedFeaturedLotteryCodes = settingListValue(featuredLotteryCodesValue);
   const logoImageUrl =
     logoValue && logoValue !== UNCONFIGURED_SETTING_VALUE ? logoValue : '';
 
@@ -1340,7 +1382,108 @@ function MobileSettingsPanel({
                 size="small"
                 onClick={() => onSaveSetting(MOBILE_INTRO_SETTING_KEY)}
               >
-                保存介绍
+              保存介绍
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded border border-slate-200 bg-white p-3">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium text-ink">
+                  <Settings size={16} />
+                  首页高频极速
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  默认关闭；开启后只展示下方选中的销售中彩种，首页不显示合买标签和合买入口。
+                </p>
+              </div>
+              <Tag color={featuredEnabledValue === 'true' ? 'green' : 'grey'}>
+                {featuredEnabledValue === 'true' ? '已开启' : '已关闭'}
+              </Tag>
+            </div>
+            <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)]">
+              <div>
+                <span className="mb-1 block text-xs font-medium text-slate-500">
+                  模块开关
+                </span>
+                <Select
+                  className="form-input"
+                  value={featuredEnabledValue || 'false'}
+                  onChange={(value) =>
+                    onDraftChange(
+                      MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY,
+                      String(value ?? 'false'),
+                    )
+                  }
+                >
+                  <Select.Option value="false">关闭高频极速</Select.Option>
+                  <Select.Option value="true">开启高频极速</Select.Option>
+                </Select>
+              </div>
+              <div>
+                <span className="mb-1 block text-xs font-medium text-slate-500">
+                  模块标题
+                </span>
+                <Input
+                  className="form-input"
+                  placeholder="例如：高频极速"
+                  value={featuredTitleValue}
+                  onChange={(value) =>
+                    onDraftChange(MOBILE_HOME_FEATURED_TITLE_SETTING_KEY, value)
+                  }
+                />
+              </div>
+              <div className="md:col-span-2">
+                <span className="mb-1 block text-xs font-medium text-slate-500">
+                  展示彩种
+                </span>
+                <Select
+                  className="form-input"
+                  filter
+                  multiple
+                  placeholder="选择需要在首页高频极速模块展示的彩种"
+                  value={selectedFeaturedLotteryCodes}
+                  onChange={(value) =>
+                    onDraftChange(
+                      MOBILE_HOME_FEATURED_LOTTERY_CODES_SETTING_KEY,
+                      settingListText(value),
+                    )
+                  }
+                >
+                  {lotteries.map((lottery) => (
+                    <Select.Option key={lottery.id} value={lottery.id}>
+                      {lottery.name}（{lottery.id}）
+                      {lottery.saleEnabled ? '' : ' - 停售不显示'}
+                    </Select.Option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <Button
+                disabled={saving}
+                icon={<Save size={16} />}
+                size="small"
+                onClick={() => onSaveSetting(MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY)}
+              >
+                保存开关
+              </Button>
+              <Button
+                disabled={saving}
+                icon={<Save size={16} />}
+                size="small"
+                onClick={() => onSaveSetting(MOBILE_HOME_FEATURED_TITLE_SETTING_KEY)}
+              >
+                保存标题
+              </Button>
+              <Button
+                disabled={saving}
+                icon={<Save size={16} />}
+                size="small"
+                onClick={() => onSaveSetting(MOBILE_HOME_FEATURED_LOTTERY_CODES_SETTING_KEY)}
+              >
+                保存彩种
               </Button>
             </div>
           </div>
@@ -1576,6 +1719,23 @@ function draftSettingValue(
   key: string,
 ) {
   return drafts[key] ?? readSettingValue(settings, key);
+}
+
+function settingListValue(value: string): string[] {
+  return value
+    .split(/[,\s，]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function settingListText(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return String(value ?? '').trim();
+  }
+  return value
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean)
+    .join(',');
 }
 
 function ToggleRow({

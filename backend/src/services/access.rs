@@ -2429,6 +2429,21 @@ fn seed_settings() -> Vec<SystemSetting> {
             description: "手机端首页或关于页面展示的站点介绍".to_string(),
         },
         SystemSetting {
+            key: "mobile_home_featured_enabled".to_string(),
+            value: "false".to_string(),
+            description: "手机端首页高频极速模块开关，默认关闭".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_home_featured_title".to_string(),
+            value: "高频极速".to_string(),
+            description: "手机端首页高频极速模块标题".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_home_featured_lottery_codes".to_string(),
+            value: String::new(),
+            description: "手机端首页高频极速展示彩种 ID，多个用英文逗号分隔".to_string(),
+        },
+        SystemSetting {
             key: "recharge_rebate_mode".to_string(),
             value: "immediate".to_string(),
             description: "代理充值返利模式".to_string(),
