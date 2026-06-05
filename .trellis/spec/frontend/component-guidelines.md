@@ -56,6 +56,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端开奖历史和注单状态展示必须通过中文状态映射处理，不能把 `drawn`、`pendingDraw` 等接口状态值直接渲染给用户。
 - 手机端充值页必须以 `GET /api/user/recharge/config` 返回的后台充值配置为准，只展示已开启的 `rainbowEpay` 和 `customerService` 渠道；彩虹易支付使用后端 `payTypes`，客服直充创建订单后跳转绑定的客服会话。不要再调用旧 `/payment/*` 接口，也不要在后端未配置时展示 USDT 或快捷充值模式。
 - 手机端充值页属于高频资金操作页，需要直接展示充值渠道卡片、余额摘要、快捷金额和底部固定提交栏；快捷金额必须按后台 `minAmountMinor/maxAmountMinor` 过滤，最近订单中可继续处理的彩虹易支付订单应提供“继续支付”，客服直充订单应提供“联系客服”。
+- 手机端充值页金额输入属于浏览器原生 `type="number"` 输入，运行时可能返回字符串或数字；金额解析函数不能直接调用 `value.trim()`，必须先用 `String(value ?? '').trim()` 归一化，再按两位小数转换为最小货币单位。
 - 手机端“我的账户”资金流水必须使用当前系统的 `GET /api/user/ledger-entries` 当前用户接口，只展示登录用户自己的流水；页面不得调用后台全量资金流水接口，也不需要为旧系统字段做兼容。流水条目不展示后端 `referenceId` 关联单号，避免把内部关联编号暴露给普通用户。
 - 手机端下注页必须使用 `/api/user/bet/page-config/{lottery_id}`、`POST /api/user/bet/orders` 和 `GET /api/user/bet/orders`，不再调用旧 `/api/bet/*`。提交时前端只负责把位置宫格、胆拖、直选组合和大小单双转换成后端 `selection`，订单金额仍由后端按玩法展开注数和单注金额计算。
 - 手机端实时事件必须通过 `GET /api/user/realtime` WebSocket 接口接入，不再使用旧 `/ws/lottery`；页面组件不得直接依赖后端原始事件信封，必须先通过 `mobile/src/types/realtime.ts` 归一化为 `draw_result`、`issue_opened`、`balance_changed` 等本地事件后再消费。

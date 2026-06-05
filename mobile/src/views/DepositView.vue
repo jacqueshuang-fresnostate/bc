@@ -21,7 +21,7 @@ import { formatDateTime } from '../utils/lotteryFormat'
 
 const props = defineProps<{ wsMessage?: MobileRealtimeEvent | null }>()
 const router = useRouter()
-const amount = ref('')
+const amount = ref<string | number>('')
 const selectedChannel = ref<RechargeChannel | ''>('')
 const selectedPayType = ref('')
 const config = ref<RechargeConfig | null>(null)
@@ -179,8 +179,8 @@ function formatInputAmount(value: number) {
   return formatted.endsWith('.00') ? formatted.slice(0, -3) : formatted
 }
 
-function amountMinorFromYuan(value: string) {
-  const text = value.trim()
+function amountMinorFromYuan(value: unknown) {
+  const text = String(value ?? '').trim()
   if (!/^\d+(?:\.\d{0,2})?$/.test(text)) return null
   const [yuan, cent = ''] = text.split('.')
   const yuanMinor = Number(yuan) * 100
