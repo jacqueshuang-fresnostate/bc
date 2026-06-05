@@ -65,6 +65,10 @@ use crate::{
         },
         order::validate_draw_issue_accepts_order,
         play_rules::{evaluate_play_rule, play_rule_summaries},
+        realtime::{
+            balance_changed_event, draw_result_event, issue_closed_event, issue_opened_event,
+            order_changed_event, recharge_changed_event, withdrawal_changed_event,
+        },
         scheduler::DrawSchedulerConfig,
         scheduler::DrawSchedulerStatus,
     },
@@ -379,6 +383,7 @@ async fn run_draw_automation_request(
         payload,
     )
     .await?;
+    publish_draw_automation_events(&state, &run).await;
 
     Ok(Json(ApiEnvelope::success(run)))
 }
@@ -578,6 +583,7 @@ async fn create_draw_issue(
 ) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
     let lottery = state.lotteries.get(&payload.lottery_id).await?;
     let issue = state.draws.create(&lottery, payload).await?;
+    state.realtime.publish_public(issue_opened_event(&issue));
 
     Ok(Json(ApiEnvelope::success(issue)))
 }
@@ -588,6 +594,7 @@ async fn generate_next_draw_issue_request(
 ) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
     let lottery = state.lotteries.get(&payload.lottery_id).await?;
     let issue = generate_next_draw_issue(&state.draws, &lottery, payload).await?;
+    state.realtime.publish_public(issue_opened_event(&issue));
 
     Ok(Json(ApiEnvelope::success(issue)))
 }
@@ -608,6 +615,9 @@ async fn generate_draw_issue_batch_request(
 ) -> ApiResult<Json<ApiEnvelope<Vec<DrawIssue>>>> {
     let lottery = state.lotteries.get(&payload.lottery_id).await?;
     let issues = generate_draw_issue_batch(&state.draws, &lottery, payload).await?;
+    for issue in &issues {
+        state.realtime.publish_public(issue_opened_event(issue));
+    }
 
     Ok(Json(ApiEnvelope::success(issues)))
 }
@@ -617,6 +627,7 @@ async fn close_draw_issue(
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
     let issue = state.draws.close(&id).await?;
+    state.realtime.publish_public(issue_closed_event(&issue));
 
     Ok(Json(ApiEnvelope::success(issue)))
 }
@@ -627,6 +638,7 @@ async fn draw_issue_result(
     Json(payload): Json<DrawIssueResultRequest>,
 ) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
     let issue = state.draws.draw(&id, payload).await?;
+    state.realtime.publish_public(draw_result_event(&issue));
 
     Ok(Json(ApiEnvelope::success(issue)))
 }
@@ -663,9 +675,75 @@ async fn settle_draw_issue_orders(
 ) -> ApiResult<Json<ApiEnvelope<SettlementRun>>> {
     let draw_issue = state.draws.get(&id).await?;
     let settlement = state.orders.settle_draw_issue(&draw_issue).await?;
-    state.finance.credit_settlement(&settlement).await?;
+    let entries = state.finance.credit_settlement(&settlement).await?;
+    publish_settlement_balance_events(&state, &entries).await;
 
     Ok(Json(ApiEnvelope::success(settlement)))
+}
+
+/// 推送一次开奖自动化产生的公开事件和用户余额事件。
+async fn publish_draw_automation_events(state: &AppState, run: &DrawAutomationRun) {
+    for issue in &run.closed_issues {
+        state.realtime.publish_public(issue_closed_event(issue));
+    }
+    for issue in &run.drawn_issues {
+        state.realtime.publish_public(draw_result_event(issue));
+    }
+    publish_settlement_balance_events(state, &run.ledger_entries).await;
+}
+
+/// 推送结算产生的用户余额变化事件。
+async fn publish_settlement_balance_events(state: &AppState, entries: &[LedgerEntry]) {
+    for entry in entries {
+        publish_user_balance_changed(
+            state,
+            &entry.user_id,
+            "settlement",
+            entry.reference_id.as_deref(),
+        )
+        .await;
+    }
+}
+
+/// 推送用户余额变化事件，读取资金账户失败只记录日志，不影响管理员操作结果。
+async fn publish_user_balance_changed(
+    state: &AppState,
+    user_id: &str,
+    reason: &str,
+    reference_id: Option<&str>,
+) {
+    match state.finance.account_or_create(user_id).await {
+        Ok(account) => state.realtime.publish_user(
+            user_id,
+            balance_changed_event(&account, reason, reference_id),
+        ),
+        Err(error) => tracing::warn!(
+            user_id,
+            error = %error.log_message(),
+            "后台推送用户余额变化时读取资金账户失败"
+        ),
+    }
+}
+
+/// 推送用户注单变化事件，供手机端注单列表按需刷新。
+fn publish_user_order_changed(state: &AppState, order: &OrderDetail, action: &str) {
+    state
+        .realtime
+        .publish_user(&order.user_id, order_changed_event(order, action));
+}
+
+/// 推送用户充值订单变化事件，供手机端充值记录按需刷新。
+fn publish_user_recharge_changed(state: &AppState, order: &RechargeOrderSummary) {
+    state
+        .realtime
+        .publish_user(&order.user_id, recharge_changed_event(order));
+}
+
+/// 推送用户提现订单变化事件，供手机端提现记录按需刷新。
+fn publish_user_withdrawal_changed(state: &AppState, order: &WithdrawalOrderSummary) {
+    state
+        .realtime
+        .publish_user(&order.user_id, withdrawal_changed_event(order));
 }
 
 async fn list_play_rules() -> ApiResult<Json<ApiEnvelope<Vec<PlayRuleSummary>>>> {
@@ -1411,6 +1489,8 @@ async fn confirm_recharge_order(
         .recharges
         .confirm_customer_service_order(&id, payload, &state.finance)
         .await?;
+    publish_user_recharge_changed(&state, &order);
+    publish_user_balance_changed(&state, &order.user_id, "recharge_credit", Some(&order.id)).await;
 
     Ok(Json(ApiEnvelope::success(order)))
 }
@@ -1420,6 +1500,9 @@ async fn approve_withdrawal_order(
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<WithdrawalOrderSummary>>> {
     let order = state.withdrawals.approve_order(&id, &state.finance).await?;
+    publish_user_withdrawal_changed(&state, &order);
+    publish_user_balance_changed(&state, &order.user_id, "withdrawal_payout", Some(&order.id))
+        .await;
 
     Ok(Json(ApiEnvelope::success(order)))
 }
@@ -1429,6 +1512,9 @@ async fn reject_withdrawal_order(
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<WithdrawalOrderSummary>>> {
     let order = state.withdrawals.reject_order(&id, &state.finance).await?;
+    publish_user_withdrawal_changed(&state, &order);
+    publish_user_balance_changed(&state, &order.user_id, "withdrawal_reject", Some(&order.id))
+        .await;
 
     Ok(Json(ApiEnvelope::success(order)))
 }
@@ -1438,6 +1524,13 @@ async fn manual_balance_adjustment(
     Json(payload): Json<ManualBalanceAdjustmentRequest>,
 ) -> ApiResult<Json<ApiEnvelope<LedgerEntry>>> {
     let entry = state.finance.manual_adjust(payload).await?;
+    publish_user_balance_changed(
+        &state,
+        &entry.user_id,
+        "manual_adjustment",
+        entry.reference_id.as_deref(),
+    )
+    .await;
 
     Ok(Json(ApiEnvelope::success(entry)))
 }
@@ -1485,6 +1578,8 @@ async fn create_order(
         }
         return Err(error);
     }
+    publish_user_order_changed(&state, &order, "created");
+    publish_user_balance_changed(&state, &order.user_id, "order_debit", Some(&order.id)).await;
 
     Ok(Json(ApiEnvelope::success(order)))
 }
@@ -1497,6 +1592,8 @@ async fn cancel_order(
     state.finance.ensure_order_can_refund(&existing).await?;
     let order = state.orders.cancel(&id).await?;
     state.finance.refund_order(&order).await?;
+    publish_user_order_changed(&state, &order, "cancelled");
+    publish_user_balance_changed(&state, &order.user_id, "order_refund", Some(&order.id)).await;
 
     Ok(Json(ApiEnvelope::success(order)))
 }

@@ -1,14 +1,17 @@
 //! 用户接口路由，提供注册、登录、会话、账户与提款方式能力
 
 use axum::{
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
     extract::{Form, Path, Query, Request, State},
     http::header::AUTHORIZATION,
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{get, post, put},
     Extension, Json, Router,
 };
+use serde::Deserialize;
 use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::{
     app::AppState,
@@ -40,11 +43,17 @@ use crate::{
         support_ticket_for_recharge,
     },
     services::{
-        mobile_bet::build_mobile_bet_page_config, order::validate_draw_issue_accepts_order,
+        mobile_bet::build_mobile_bet_page_config,
+        order::validate_draw_issue_accepts_order,
+        realtime::{
+            audience_matches, balance_changed_event, heartbeat_event, order_changed_event,
+            recharge_changed_event, withdrawal_changed_event,
+        },
     },
 };
 
 const MAX_USER_BET_BATCH_SIZE: usize = 50;
+const REALTIME_HEARTBEAT_SECONDS: u64 = 30;
 
 /// 组装并返回当前用户模块对应的路由树。
 pub fn router(state: AppState) -> Router<AppState> {
@@ -100,6 +109,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/mobile/advertisements", get(list_mobile_advertisements))
         .route("/mobile/site-config", get(get_mobile_site_config))
+        .route("/realtime", get(open_user_realtime_socket))
         .route("/register-options", get(get_registration_options))
         .route(
             "/recharge/epay/notify",
@@ -140,6 +150,82 @@ fn bearer_token(request: &Request) -> ApiResult<&str> {
     };
 
     Ok(token)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UserRealtimeQuery {
+    token: Option<String>,
+}
+
+/// 建立手机端实时事件连接；匿名连接只接收公开彩种事件，带用户 token 时追加本人私有事件。
+async fn open_user_realtime_socket(
+    State(state): State<AppState>,
+    Query(query): Query<UserRealtimeQuery>,
+    ws: WebSocketUpgrade,
+) -> ApiResult<Response> {
+    let user_id = match query.token {
+        Some(token) if !token.trim().is_empty() => Some(
+            state
+                .access
+                .session_from_user_token(token.trim())
+                .await?
+                .user
+                .id,
+        ),
+        _ => None,
+    };
+    let realtime = state.realtime.clone();
+
+    Ok(ws
+        .on_upgrade(move |socket| handle_user_realtime_socket(socket, realtime, user_id))
+        .into_response())
+}
+
+/// 持续向单个手机端连接发送实时事件和心跳。
+async fn handle_user_realtime_socket(
+    mut socket: WebSocket,
+    realtime: crate::services::realtime::RealtimeHub,
+    user_id: Option<String>,
+) {
+    let mut receiver = realtime.subscribe();
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(REALTIME_HEARTBEAT_SECONDS));
+
+    loop {
+        tokio::select! {
+            _ = heartbeat.tick() => {
+                if send_realtime_payload(&mut socket, heartbeat_event()).await.is_err() {
+                    break;
+                }
+            }
+            message = receiver.recv() => {
+                match message {
+                    Ok(message) => {
+                        if audience_matches(&message.audience, user_id.as_deref())
+                            && send_realtime_payload(&mut socket, message.payload).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped_count)) => {
+                        tracing::warn!(
+                            skipped_count,
+                            "手机端实时事件连接消费过慢，已跳过部分历史事件"
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    }
+}
+
+/// 将实时事件 JSON 发送到 WebSocket 连接。
+async fn send_realtime_payload(
+    socket: &mut WebSocket,
+    payload: serde_json::Value,
+) -> Result<(), axum::Error> {
+    socket.send(Message::Text(payload.to_string().into())).await
 }
 
 async fn list_mobile_advertisements(
@@ -410,6 +496,8 @@ async fn create_user_bet_orders(
             }
             return Err(error);
         }
+        publish_user_order_changed(&state, &order, "created");
+        publish_user_balance_changed(&state, &order.user_id, "order_debit", Some(&order.id)).await;
         created_orders.push(order);
     }
 
@@ -474,6 +562,7 @@ async fn create_recharge_order(
         response.support_conversation_id = Some(conversation.id);
         response.order = order;
     }
+    publish_user_recharge_changed(&state, &response.order);
 
     Ok(Json(ApiEnvelope::success(response)))
 }
@@ -498,10 +587,12 @@ async fn confirm_rainbow_notify(
 ) -> ApiResult<String> {
     let settings = state.access.settings().await?;
     let settings = recharge_settings_from_system_settings(&settings);
-    state
+    let order = state
         .recharges
         .confirm_rainbow_notify(params, &settings, &state.finance)
         .await?;
+    publish_user_recharge_changed(&state, &order);
+    publish_user_balance_changed(&state, &order.user_id, "recharge_credit", Some(&order.id)).await;
 
     Ok("success".to_string())
 }
@@ -623,8 +714,52 @@ async fn create_withdrawal_order(
         .withdrawals
         .create_order(&session.user, &method, payload, &state.finance)
         .await?;
+    publish_user_withdrawal_changed(&state, &order);
+    publish_user_balance_changed(&state, &order.user_id, "withdrawal_freeze", Some(&order.id))
+        .await;
 
     Ok(Json(ApiEnvelope::success(order)))
+}
+
+/// 推送用户余额变化事件，读取资金账户失败只记录日志，不影响主业务结果。
+async fn publish_user_balance_changed(
+    state: &AppState,
+    user_id: &str,
+    reason: &str,
+    reference_id: Option<&str>,
+) {
+    match state.finance.account_or_create(user_id).await {
+        Ok(account) => state.realtime.publish_user(
+            user_id,
+            balance_changed_event(&account, reason, reference_id),
+        ),
+        Err(error) => tracing::warn!(
+            user_id,
+            error = %error.log_message(),
+            "推送用户余额变化时读取资金账户失败"
+        ),
+    }
+}
+
+/// 推送用户注单变化事件，供手机端注单列表按需刷新。
+fn publish_user_order_changed(state: &AppState, order: &OrderDetail, action: &str) {
+    state
+        .realtime
+        .publish_user(&order.user_id, order_changed_event(order, action));
+}
+
+/// 推送用户充值订单变化事件，供手机端充值记录按需刷新。
+fn publish_user_recharge_changed(state: &AppState, order: &RechargeOrderSummary) {
+    state
+        .realtime
+        .publish_user(&order.user_id, recharge_changed_event(order));
+}
+
+/// 推送用户提现订单变化事件，供手机端提现记录按需刷新。
+fn publish_user_withdrawal_changed(state: &AppState, order: &WithdrawalOrderSummary) {
+    state
+        .realtime
+        .publish_user(&order.user_id, withdrawal_changed_event(order));
 }
 
 #[cfg(test)]

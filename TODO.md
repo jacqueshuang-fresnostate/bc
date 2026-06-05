@@ -1,5 +1,27 @@
 # TODO
 
+## 2026-06-05 14:29 HKT 手机端实时事件接口重构
+
+- 完成任务：重构手机端与后端的实时通信链路，移除旧系统 `/ws/lottery` 残留路径。
+- 解决问题：
+  - 手机端此前只尝试连接旧 WebSocket 路径，后端没有对应路由，实时开奖推送实际无法跑通。
+  - 手机端页面直接依赖旧推送字段，不适合当前系统后续扩展封盘、开盘、余额、订单、充值、提现事件。
+  - 用户资产事件如果简单广播会有隐私风险，需要按用户 token 过滤后只推送给本人。
+- 具体实现：
+  - 后端新增 `services/realtime.rs`，提供 `RealtimeHub`、公开/用户受众过滤和统一事件信封。
+  - 用户侧新增 `GET /api/user/realtime` WebSocket 接口；匿名连接接收公开彩种事件，带 `token` 查询参数时可接收本人私有事件。
+  - 开奖调度器、后台手动开奖、封盘、生成期号、自动结算、订单扣款/退款、充值确认、提现申请和提现审核都接入实时事件发布。
+  - 手机端 `useWebSocket.ts` 改为连接 `/api/user/realtime`，并在登录 token 变化时自动重连。
+  - 新增 `mobile/src/types/realtime.ts`，把后端 `lottery.draw_result`、`lottery.issue_opened`、`user.balance_changed` 等事件归一化为页面本地事件。
+  - 手机端下注页监听开奖、封盘和开盘事件，命中当前彩种后刷新下注页配置。
+  - 架构说明和 Trellis 规格同步记录新实时接口契约，后续不再使用旧 `/ws/lottery`。
+- 验证记录：
+  - `cd backend && cargo fmt --check` 通过。
+  - `cd backend && cargo check` 通过。
+  - `cd backend && cargo test` 通过，191 条后端测试全部成功；仍有既有 `LotteryCategory` 未使用导入 warning。
+  - `cd mobile && npm run build` 通过。
+  - `cd mobile && npm test` 未通过，原因是 `package.json` 中列出的 `.test.mjs` 文件当前不存在，命令在查找测试文件阶段失败。
+
 ## 2026-06-05 13:39 HKT 手机端注单详情按玩法展示匹配项
 
 - 完成任务：优化手机端注单详情中的匹配项展示。

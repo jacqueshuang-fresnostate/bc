@@ -16,6 +16,7 @@ pub mod mobile_bet;
 pub mod mobile_home;
 pub mod order;
 pub mod play_rules;
+pub mod realtime;
 pub mod rebate;
 pub mod recharge;
 pub mod robot;

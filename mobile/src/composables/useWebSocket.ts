@@ -1,16 +1,25 @@
-import { ref, onUnmounted } from 'vue'
+import { ref, onUnmounted, watch } from 'vue'
 import { API_BASE } from '../api/http'
+import { useAuthStore } from '../stores/auth'
+import { normalizeRealtimeEvent } from '../types/realtime'
+import type { MobileRealtimeEvent } from '../types/realtime'
 
 export function useWebSocket() {
-  const lastMessage = ref<any>(null)
+  const auth = useAuthStore()
+  const lastMessage = ref<MobileRealtimeEvent | null>(null)
   const connected = ref(false)
   const lastError = ref('')
+  const lastHeartbeatAt = ref('')
   let ws: WebSocket | null = null
   let reconnectTimer: number | undefined
   let stopped = false
 
   function websocketUrl() {
-    return API_BASE.replace(/^http/, 'ws') + '/ws/lottery'
+    const base = API_BASE || window.location.origin
+    const url = new URL('/api/user/realtime', base)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    if (auth.accessToken) url.searchParams.set('token', auth.accessToken)
+    return url.toString()
   }
 
   function scheduleReconnect() {
@@ -34,17 +43,21 @@ export function useWebSocket() {
     socket.onmessage = (event) => {
       if (ws !== socket) return
       try {
-        const message = JSON.parse(event.data)
-        if (message?.event === 'ping') return
+        const message = normalizeRealtimeEvent(JSON.parse(event.data))
+        if (!message) return
+        if (message.event === 'heartbeat') {
+          lastHeartbeatAt.value = message.occurredAt
+          return
+        }
         lastMessage.value = message
       } catch {
-        lastError.value = '开奖推送消息解析失败'
+        lastError.value = '实时消息解析失败'
       }
     }
     socket.onerror = () => {
       if (ws !== socket) return
       connected.value = false
-      lastError.value = '开奖推送连接异常'
+      lastError.value = '实时连接异常'
     }
     socket.onclose = () => {
       if (ws !== socket) return
@@ -55,11 +68,18 @@ export function useWebSocket() {
 
   connect()
 
+  watch(() => auth.accessToken, () => {
+    if (stopped) return
+    connected.value = false
+    ws?.close()
+    connect()
+  })
+
   onUnmounted(() => {
     stopped = true
     if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
     ws?.close()
   })
 
-  return { lastMessage, connected, lastError }
+  return { lastMessage, connected, lastError, lastHeartbeatAt }
 }

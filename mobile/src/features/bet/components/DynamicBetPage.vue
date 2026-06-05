@@ -371,10 +371,18 @@ watch(() => engine.multiple.value, (value) => {
 watch(() => config.value?.round.status, syncOpeningRefresh, { immediate: true })
 
 watch(() => props.wsMessage, async (msg) => {
-  if (msg?.event === 'draw_result' && msg.lottery_code === lotteryCode.value) {
+  const messageLotteryCode = msg?.lotteryCode || msg?.lottery_code
+  if (!messageLotteryCode || messageLotteryCode !== lotteryCode.value) return
+
+  if (msg?.event === 'draw_result') {
     // 广播可能早于下一期完全可读，短暂重试避免页面停在已封盘的 00:00。
     showNotify({ type: 'success', message: `开奖结果：${msg.result}` })
     await refreshAfterDrawResult(msg)
+    return
+  }
+
+  if (msg?.event === 'issue_opened' || msg?.event === 'issue_closed') {
+    await loadPage()
   }
 })
 

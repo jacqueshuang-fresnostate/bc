@@ -30,6 +30,10 @@ use crate::{
         finance::FinanceRepository,
         lottery::LotteryRepository,
         order::OrderRepository,
+        realtime::{
+            balance_changed_event, draw_result_event, issue_closed_event, issue_opened_event,
+            RealtimeHub,
+        },
     },
 };
 
@@ -596,6 +600,7 @@ pub fn spawn_draw_scheduler(
     lotteries: LotteryRepository,
     orders: OrderRepository,
     finance: FinanceRepository,
+    realtime: RealtimeHub,
     config: DrawSchedulerConfig,
     scheduler: DrawSchedulerRepository,
 ) -> JoinHandle<()> {
@@ -636,6 +641,7 @@ pub fn spawn_draw_scheduler(
             .await
             {
                 Ok(run) => {
+                    publish_scheduler_realtime_events(&realtime, &finance, &run).await;
                     let finished_at = current_scheduler_timestamp();
                     if let Err(error) = scheduler
                         .record_success(
@@ -688,6 +694,36 @@ pub fn spawn_draw_scheduler(
             tokio::time::sleep(Duration::from_secs(current_config.interval_seconds)).await;
         }
     })
+}
+
+/// 将调度器本轮产生的业务变化广播给手机端。
+async fn publish_scheduler_realtime_events(
+    realtime: &RealtimeHub,
+    finance: &FinanceRepository,
+    run: &DrawSchedulerRun,
+) {
+    for issue in &run.automation_run.closed_issues {
+        realtime.publish_public(issue_closed_event(issue));
+    }
+    for issue in &run.automation_run.drawn_issues {
+        realtime.publish_public(draw_result_event(issue));
+    }
+    for issue in &run.generated_issues {
+        realtime.publish_public(issue_opened_event(issue));
+    }
+    for entry in &run.automation_run.ledger_entries {
+        match finance.account_or_create(&entry.user_id).await {
+            Ok(account) => realtime.publish_user(
+                &entry.user_id,
+                balance_changed_event(&account, "settlement", entry.reference_id.as_deref()),
+            ),
+            Err(error) => tracing::warn!(
+                user_id = %entry.user_id,
+                error = %error.log_message(),
+                "开奖调度器推送用户余额变化时读取资金账户失败"
+            ),
+        }
+    }
 }
 
 /// 执行一次完整开奖调度流程。
@@ -817,6 +853,7 @@ mod tests {
             finance::FinanceRepository,
             lottery::LotteryRepository,
             order::OrderRepository,
+            realtime::RealtimeHub,
             scheduler::{
                 run_draw_scheduler_once, spawn_draw_scheduler, DrawSchedulerConfig,
                 DrawSchedulerRepository, DrawSchedulerRunStatus, DrawSchedulerRunTrigger,
@@ -1022,6 +1059,7 @@ mod tests {
             LotteryRepository::memory_seeded(),
             OrderRepository::memory(),
             FinanceRepository::memory_seeded(),
+            RealtimeHub::new(),
             DrawSchedulerConfig::default(),
             DrawSchedulerRepository::new(DrawSchedulerConfig::default()),
         );
@@ -1042,6 +1080,7 @@ mod tests {
             lotteries,
             orders,
             finance,
+            RealtimeHub::new(),
             DrawSchedulerConfig::default(),
             scheduler.clone(),
         );

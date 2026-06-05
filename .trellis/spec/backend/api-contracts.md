@@ -125,6 +125,91 @@ export interface InvitePolicySummary {
 
 ---
 
+## 场景：手机端实时事件接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：手机端需要实时刷新开奖、封盘、开盘、用户资金和订单状态。
+- 范围：`GET /api/user/realtime` WebSocket、后端实时事件信封、公开事件与用户私有事件过滤、手机端事件归一化。
+
+### 2. 签名
+
+- 手机端实时事件：`GET /api/user/realtime`
+- 可选鉴权参数：`token=<用户登录 token>`
+- 旧系统路径 `/ws/lottery` 不属于当前系统契约，后续不得继续新增调用。
+
+### 3. 契约
+
+WebSocket 消息统一使用当前系统事件信封：
+
+```json
+{
+  "event": "lottery.draw_result",
+  "scope": "public",
+  "occurredAt": "2026-06-05 14:29:00",
+  "data": {}
+}
+```
+
+公开彩种事件：
+
+- `lottery.draw_result`：开奖完成，`data` 包含 `lotteryId`、`lotteryName`、`issue`、`drawNumber`、`resultNumbers`、`drawnAt`。
+- `lottery.issue_closed`：期号封盘，`data` 包含 `lotteryId`、`issue`、`scheduledAt`、`saleClosedAt`、`status`。
+- `lottery.issue_opened`：新期号开盘，`data` 包含 `lotteryId`、`issue`、`scheduledAt`、`saleClosedAt`、`status`。
+- `system.heartbeat`：连接心跳。
+
+用户私有事件：
+
+- `user.balance_changed`：余额变化，必须只发送给 `data.userId` 对应用户连接。
+- `user.order_changed`：注单变化，必须只发送给订单所属用户。
+- `user.recharge_changed`：充值订单变化，必须只发送给充值订单所属用户。
+- `user.withdrawal_changed`：提现订单变化，必须只发送给提现订单所属用户。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 未携带 token 建立连接 | 允许连接，但只能接收公开事件 |
+| 携带合法用户 token | 允许连接，可接收公开事件和本人私有事件 |
+| 携带非法用户 token | 握手返回未授权错误 |
+| 事件受众为其他用户 | 当前连接不得收到该事件 |
+| 客户端消费过慢 | 后端记录中文 warning，跳过过旧事件，不影响主业务 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：自动开奖产生 `lottery.draw_result`，手机端首页和下注页同步刷新。
+- Good：用户下注扣款后只给该用户推送 `user.balance_changed` 和 `user.order_changed`。
+- Base：匿名用户仍可通过实时连接获取开奖和开盘状态。
+- Bad：手机端继续连接 `/ws/lottery`。
+- Bad：把 `user.balance_changed` 广播给所有在线连接。
+
+### 6. 必要测试
+
+- 后端需要运行 `cargo check` 和 `cargo test`。
+- 手机端需要运行 `npm run build`，确认 WebSocket 事件归一化类型可编译。
+- 源码中不得保留 `/ws/lottery` 调用。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```ts
+new WebSocket(`${API_BASE.replace(/^http/, 'ws')}/ws/lottery`)
+```
+
+这个写法继续依赖旧系统残留路径，且无法接收当前系统的用户私有事件。
+
+#### 正确
+
+```ts
+const url = new URL('/api/user/realtime', API_BASE || window.location.origin)
+url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+```
+
+手机端必须连接当前系统用户侧实时接口，并把后端事件信封先归一化后再交给页面组件。
+
+---
+
 ## 场景：彩种管理 CRUD 接口
 
 ### 1. 范围 / 触发条件
