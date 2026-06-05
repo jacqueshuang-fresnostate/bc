@@ -87,6 +87,15 @@ function valueCombinations(values: string[], size: number): string[][] {
   return values.flatMap((value, index) => valueCombinations(values.slice(index + 1), size - 1).map(items => [value, ...items]))
 }
 
+function valuePermutations(values: string[], size: number): string[][] {
+  if (size === 0) return [[]]
+  if (values.length < size) return []
+  return values.flatMap((value, index) => {
+    const rest = values.slice(0, index).concat(values.slice(index + 1))
+    return valuePermutations(rest, size - 1).map(items => [value, ...items])
+  })
+}
+
 function expandDirectOrderNumbers(value: unknown) {
   const segments = orderPositionSegments(value)
   if (segments.length >= 2 && segments.every(segment => segment.length)) {
@@ -100,6 +109,10 @@ function expandGroup3CompoundOrderNumbers(value: unknown) {
   const digits = uniqueValues(splitOrderDigits(value))
   if (digits.length < 2) return []
   return digits.flatMap(repeated => digits.filter(single => single !== repeated).map(single => `${repeated},${repeated},${single}`))
+}
+
+function expandDirectCombinationOrderNumbers(value: unknown) {
+  return valuePermutations(uniqueValues(splitOrderDigits(value)), 3).map(items => items.join(','))
 }
 
 function expandGroup3DantuoOrderNumbers(value: unknown) {
@@ -127,15 +140,17 @@ export function orderBetNumbers(order: any) {
   const kind = orderPositionGridKind(order)
   const expanded = kind === 'direct'
     ? expandDirectOrderNumbers(order.numbers)
-    : kind === 'group3_compound'
-      ? expandGroup3CompoundOrderNumbers(order.numbers)
-      : kind === 'group3_dantuo'
-        ? expandGroup3DantuoOrderNumbers(order.numbers)
-        : kind === 'group6_compound'
-          ? expandGroup6CompoundOrderNumbers(order.numbers)
-          : kind === 'group6_dantuo'
-            ? expandGroup6DantuoOrderNumbers(order.numbers)
-            : []
+    : kind === 'direct_combination'
+      ? expandDirectCombinationOrderNumbers(order.numbers)
+      : kind === 'group3_compound'
+        ? expandGroup3CompoundOrderNumbers(order.numbers)
+        : kind === 'group3_dantuo'
+          ? expandGroup3DantuoOrderNumbers(order.numbers)
+          : kind === 'group6_compound'
+            ? expandGroup6CompoundOrderNumbers(order.numbers)
+            : kind === 'group6_dantuo'
+              ? expandGroup6DantuoOrderNumbers(order.numbers)
+              : []
   return expanded.length ? expanded : splitNumbers(order.numbers)
 }
 

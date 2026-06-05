@@ -55,6 +55,13 @@ function combinationCount(n: number, k: number) {
   return result
 }
 
+function permutationCount(n: number, k: number) {
+  if (k < 0 || n < k) return 0
+  let result = 1
+  for (let index = 0; index < k; index += 1) result *= n - index
+  return result
+}
+
 function hasOverlap(left: string[], right: string[]) {
   const rightValues = new Set(right)
   return left.some(value => rightValues.has(value))
@@ -74,6 +81,7 @@ function directPositionGridCount(play: DynamicBetPlay, selections: Record<string
 }
 
 function countPositionGridBets(play: DynamicBetPlay, selections: Record<string, string[]>) {
+  if (play.position_grid_kind === 'direct_combination') return permutationCount(selectedValues(play, selections, 0).length, 3)
   if (play.position_grid_kind === 'group3_compound') {
     const numbers = selectedValues(play, selections, 0)
     return numbers.length >= 2 ? numbers.length * (numbers.length - 1) : 0

@@ -621,6 +621,139 @@ await createOrder({
 
 ---
 
+## 场景：用户端下注页接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：手机端下注页新增或修改玩法配置读取、批量下单、用户注单记录查询。
+- 范围：`/api/user/bet/*` 路由、手机端动态下注页、订单仓储、财务扣款、玩法规则引擎和 OpenAPI 文档。
+
+### 2. 签名
+
+- `GET /api/user/bet/page-config/{lottery_id}`：读取当前销售彩种的下注页配置。
+- `GET /api/user/bet/orders`：读取当前登录用户自己的投注订单。
+- `POST /api/user/bet/orders`：批量创建当前登录用户的投注订单。
+
+### 3. 契约
+
+所有接口必须使用用户 Bearer Token。手机端不能继续请求旧 `/api/bet/page-config/{code}`、`/api/bet/place-batch` 或 `/api/bet/orders`。
+
+下注页配置响应使用 `camelCase`，前端可以兼容旧 `snake_case`，但新后端接口必须输出：
+
+```json
+{
+  "lottery": {
+    "code": "txffc",
+    "name": "腾讯分分彩",
+    "category": "overseas",
+    "drawInterval": 60,
+    "groupBuyEnabled": false
+  },
+  "round": {
+    "issue": "202606051234",
+    "status": "selling",
+    "scheduledDrawAt": "2026-06-05 12:35:00",
+    "saleStopAt": "2026-06-05 12:34:30"
+  },
+  "latestDraw": {
+    "issue": "202606051233",
+    "resultNumbers": ["1", "2", "3", "4", "5"],
+    "openedAt": "2026-06-05 12:34:00"
+  },
+  "plays": [
+    {
+      "code": "fiveFrontDirect",
+      "ruleCode": "fiveFrontDirect",
+      "inputMode": "position-grid",
+      "positionGridKind": "direct",
+      "positions": [{ "key": "first", "label": "第 1 位" }],
+      "odds": "9.50",
+      "unitAmount": "2.00"
+    }
+  ]
+}
+```
+
+用户端批量下单请求不允许传 `userId`，后端必须从登录会话中取当前用户：
+
+```json
+{
+  "orders": [
+    {
+      "lotteryId": "txffc",
+      "issue": "202606051234",
+      "ruleCode": "fiveFrontDirect",
+      "selection": {
+        "positions": [[1], [2], [3]]
+      },
+      "unitAmountMinor": 200
+    }
+  ]
+}
+```
+
+手机端倍数没有单独后端字段时，前端可以把 `unitAmountMinor` 折算为“单注金额 × 倍数”；后端仍按玩法展开注数计算 `amountMinor`，不能信任前端提交总金额。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 未登录读取下注配置或下单 | HTTP 401，返回未授权 |
+| 下注页彩种不存在 | HTTP 404，返回彩种不存在 |
+| 下注页彩种停售 | HTTP 400，返回 `彩种已停售` |
+| 批量下单 `orders` 为空 | HTTP 400，返回 `请先选择投注内容` |
+| 批量下单超过 50 笔 | HTTP 400，返回 `一次最多提交 50 笔投注` |
+| 请求期号不存在或非 `open` | HTTP 404/400，沿用订单期号校验错误 |
+| 玩法、号码类型、选号或赔率无效 | HTTP 400，沿用订单和玩法规则引擎错误 |
+| 当前用户余额不足 | HTTP 400/409，沿用财务账户余额校验错误 |
+| 扣款失败 | 回滚本次未入账订单，返回财务错误 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：进入销售中的 `txffc` 下注页，读取到 `round.status=selling`、最近开奖和所有已启用玩法赔率。
+- Good：前端提交 `positions`、`numbers`、`bankerNumbers/dragNumbers` 或 `bigSmallOddEven`，后端复用订单规则计算注数和扣款。
+- Good：直选组合前端使用 `positionGridKind=direct_combination` 多选数字，并按排列数显示注数；后端仍以 `selection.numbers` 展开排列投注。
+- Base：没有 open 期号时，下注页返回 `round.status=opening`，手机端轮询下一期，不允许提交。
+- Bad：手机端继续把 `play_code/numbers/amount` 发到旧 `/bet/place-batch`；该接口不是当前系统契约。
+- Bad：用户端批量下单允许传 `userId`；这会让用户冒充他人下单。
+
+### 6. 必要测试
+
+- 后端运行 `cargo check --manifest-path backend/Cargo.toml`。
+- 后端测试 `cargo test --manifest-path backend/Cargo.toml mobile_bet -- --nocapture`，覆盖当前期、最近开奖、已启用玩法和直选组合配置。
+- OpenAPI 测试必须包含 `/user/bet/page-config/{lottery_id}` 和 `/user/bet/orders`。
+- 手机端运行 `cd mobile && npm run build`，确认下注页 API 客户端、动态配置归一化和批量提交类型通过。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```ts
+await http.post('/bet/place-batch', {
+  lottery_code,
+  issue,
+  items: [{ play_code, numbers, amount }],
+})
+```
+
+这个写法继续沿用旧接口，并让前端决定订单总额。
+
+#### 正确
+
+```ts
+await createUserBetOrders([{
+  lotteryId,
+  issue,
+  ruleCode,
+  selection,
+  unitAmountMinor,
+}])
+```
+
+后端从登录态绑定用户，校验 open 期号、玩法赔率和余额，再创建订单并扣款。
+
+---
+
 ## 场景：开奖期号与开奖源接口
 
 ### 1. 范围 / 触发条件

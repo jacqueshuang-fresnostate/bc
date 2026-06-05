@@ -12,6 +12,7 @@ pub mod finance;
 pub mod group_buy;
 pub mod invite;
 pub mod lottery;
+pub mod mobile_bet;
 pub mod mobile_home;
 pub mod order;
 pub mod play_rules;

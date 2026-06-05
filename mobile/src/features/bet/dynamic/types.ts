@@ -1,5 +1,5 @@
 export type DynamicInputMode = 'position-grid' | 'number-grid' | 'fixed-option' | 'text'
-export type PositionGridKind = 'direct' | 'group3_compound' | 'group6_compound' | 'group3_dantuo' | 'group6_dantuo'
+export type PositionGridKind = 'direct' | 'direct_combination' | 'group3_compound' | 'group6_compound' | 'group3_dantuo' | 'group6_dantuo'
 
 export type DynamicBetPosition = {
   key: string

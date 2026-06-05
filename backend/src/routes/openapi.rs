@@ -1133,6 +1133,33 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/user/bet/page-config/{lottery_id}",
+        "用户端投注",
+        "下注页配置",
+        "返回当前销售彩种的可投注期号、最近开奖、玩法配置、赔率和合买配置。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/user/bet/orders",
+        "用户端投注",
+        "用户注单列表",
+        "返回当前用户自己的投注订单记录。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/user/bet/orders",
+        "用户端投注",
+        "提交投注订单",
+        "按当前用户、彩种、期号、玩法和选号批量创建投注订单，并从资金账户扣款。",
+        AuthMode::User,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "get",
         "/user/recharge/config",
         "用户端充值",
         "读取充值配置",
@@ -1601,6 +1628,9 @@ mod tests {
         assert!(document["paths"]["/user/mobile/advertisements"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/site-config"]["get"].is_object());
         assert!(document["paths"]["/user/register-options"]["get"].is_object());
+        assert!(document["paths"]["/user/bet/page-config/{lottery_id}"]["get"].is_object());
+        assert!(document["paths"]["/user/bet/orders"]["get"].is_object());
+        assert!(document["paths"]["/user/bet/orders"]["post"].is_object());
         assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
         assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());
         assert!(document["paths"]["/user/withdrawals"]["post"].is_object());

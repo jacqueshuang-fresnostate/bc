@@ -54,6 +54,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端首页“高频极速”推荐区的开奖号码必须使用固定正圆号码球，样式需要同时约束 `width`、`height`、`aspect-ratio: 1 / 1` 和 `border-radius: 9999px`，不要只依赖文字内容或内边距撑开形状。
 - 手机端充值页必须以 `GET /api/user/recharge/config` 返回的后台充值配置为准，只展示已开启的 `rainbowEpay` 和 `customerService` 渠道；彩虹易支付使用后端 `payTypes`，客服直充创建订单后跳转绑定的客服会话。不要再调用旧 `/payment/*` 接口，也不要在后端未配置时展示 USDT 或快捷充值模式。
 - 手机端充值页属于高频资金操作页，需要直接展示充值渠道卡片、余额摘要、快捷金额和底部固定提交栏；快捷金额必须按后台 `minAmountMinor/maxAmountMinor` 过滤，最近订单中可继续处理的彩虹易支付订单应提供“继续支付”，客服直充订单应提供“联系客服”。
+- 手机端下注页必须使用 `/api/user/bet/page-config/{lottery_id}`、`POST /api/user/bet/orders` 和 `GET /api/user/bet/orders`，不再调用旧 `/api/bet/*`。提交时前端只负责把位置宫格、胆拖、直选组合和大小单双转换成后端 `selection`，订单金额仍由后端按玩法展开注数和单注金额计算。
 
 错误示例：
 

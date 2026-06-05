@@ -1,5 +1,28 @@
 # TODO
 
+## 2026-06-05 12:34 HKT 手机端下注页接入当前投注接口
+
+- 完成任务：把手机端下注页和注单记录接入当前后端用户端投注接口。
+- 解决问题：
+  - 下注页仍请求旧 `/bet/page-config/{code}`，后端当前没有该路由，无法加载真实玩法、期号和赔率。
+  - 批量下注仍提交旧 `/bet/place-batch` 的 `play_code/numbers/amount` 结构，无法复用当前订单、玩法规则和财务扣款链路。
+  - 注单记录仍请求旧 `/bet/orders`，用户端无法读取当前订单仓储里的投注记录。
+- 具体实现：
+  - 后端新增 `MobileBetPageConfig`、用户端投注批量请求/响应结构，以及 `services/mobile_bet.rs` 下注页配置聚合服务。
+  - 用户路由新增 `GET /api/user/bet/page-config/{lottery_id}`、`GET /api/user/bet/orders` 和 `POST /api/user/bet/orders`。
+  - 用户端下单从登录会话读取用户 ID，先整体校验期号、玩法、赔率和余额，再逐单创建订单并扣款；扣款失败会移除未入账订单。
+  - 手机端新增 `mobile/src/api/bet.ts`，统一封装下注配置、批量下单和注单记录归一化。
+  - 动态下注页改为读取新接口，并把位置宫格、直选组合、复式、胆拖和大小单双转换成后端 `selection`。
+  - 新增 `direct_combination` 位置宫格类型，直选组合按排列数计算注数，并在注单详情中展开显示。
+  - OpenAPI、Trellis 后端 API 契约、前端组件规范和架构说明已同步记录新投注接口契约。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml mobile_bet -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 通过，188 条后端测试全部成功；仍有既有 `LotteryCategory` 未使用导入 warning。
+  - `cd mobile && npm run build` 通过。
+
 ## 2026-06-05 12:08 HKT 手机端充值页体验优化
 
 - 完成任务：优化手机端 `deposit` 页面，让充值流程更像移动端钱包操作页。

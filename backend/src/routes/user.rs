@@ -14,7 +14,11 @@ use crate::{
     app::AppState,
     domain::advertisement::MobileAdvertisement,
     domain::finance::{FinancialAccountSummary, LedgerEntry},
-    domain::mobile::MobileSiteConfig,
+    domain::mobile::{
+        MobileBetPageConfig, MobileCreateBetOrderBatchRequest, MobileCreateBetOrderBatchResponse,
+        MobileSiteConfig,
+    },
+    domain::order::{CreateOrderRequest, OrderDetail},
     domain::permission::SystemSetting,
     domain::recharge::{
         CreateRechargeOrderRequest, CreateRechargeOrderResponse, RechargeConfigResponse,
@@ -35,7 +39,12 @@ use crate::{
         recharge_config_response, recharge_settings_from_system_settings,
         support_ticket_for_recharge,
     },
+    services::{
+        mobile_bet::build_mobile_bet_page_config, order::validate_draw_issue_accepts_order,
+    },
 };
+
+const MAX_USER_BET_BATCH_SIZE: usize = 50;
 
 /// 组装并返回当前用户模块对应的路由树。
 pub fn router(state: AppState) -> Router<AppState> {
@@ -46,6 +55,14 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/password/change", post(change_password))
         .route("/balance", get(get_balance))
         .route("/ledger-entries", get(list_ledger_entries))
+        .route(
+            "/bet/page-config/{lottery_id}",
+            get(get_user_bet_page_config),
+        )
+        .route(
+            "/bet/orders",
+            get(list_user_bet_orders).post(create_user_bet_orders),
+        )
         .route("/recharge/config", get(get_recharge_config))
         .route(
             "/recharge/orders",
@@ -306,6 +323,101 @@ async fn list_ledger_entries(
     let entries = state.finance.user_ledger_entries(&session.user.id).await?;
 
     Ok(Json(ApiEnvelope::success(entries)))
+}
+
+async fn get_user_bet_page_config(
+    State(state): State<AppState>,
+    Path(lottery_id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<MobileBetPageConfig>>> {
+    let lottery = state.lotteries.get(&lottery_id).await?;
+    if !lottery.sale_enabled {
+        return Err(ApiError::BadRequest("彩种已停售".to_string()));
+    }
+    let issues = state.draws.list_by_lottery_id(&lottery.id).await?;
+    let config = build_mobile_bet_page_config(&lottery, issues);
+
+    Ok(Json(ApiEnvelope::success(config)))
+}
+
+async fn list_user_bet_orders(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<Vec<OrderDetail>>>> {
+    let orders = state
+        .orders
+        .list()
+        .await?
+        .into_iter()
+        .filter(|order| order.user_id == session.user.id)
+        .collect();
+
+    Ok(Json(ApiEnvelope::success(orders)))
+}
+
+async fn create_user_bet_orders(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Json(payload): Json<MobileCreateBetOrderBatchRequest>,
+) -> ApiResult<Json<ApiEnvelope<MobileCreateBetOrderBatchResponse>>> {
+    if payload.orders.is_empty() {
+        return Err(ApiError::BadRequest("请先选择投注内容".to_string()));
+    }
+    if payload.orders.len() > MAX_USER_BET_BATCH_SIZE {
+        return Err(ApiError::BadRequest(format!(
+            "一次最多提交 {MAX_USER_BET_BATCH_SIZE} 笔投注"
+        )));
+    }
+
+    let mut checked_orders = Vec::with_capacity(payload.orders.len());
+    let mut total_amount_minor = 0_i64;
+    for item in payload.orders {
+        let order_payload = CreateOrderRequest {
+            user_id: session.user.id.clone(),
+            lottery_id: item.lottery_id,
+            issue: item.issue,
+            rule_code: item.rule_code,
+            selection: item.selection,
+            unit_amount_minor: item.unit_amount_minor,
+        };
+        let lottery = state.lotteries.get(&order_payload.lottery_id).await?;
+        let draw_issue = state
+            .draws
+            .get_by_lottery_issue(&order_payload.lottery_id, &order_payload.issue)
+            .await?;
+        validate_draw_issue_accepts_order(&draw_issue, &lottery, &order_payload.issue)?;
+        let quote = state.orders.quote(&lottery, &order_payload).await?;
+        total_amount_minor = total_amount_minor
+            .checked_add(quote.amount_minor)
+            .ok_or_else(|| ApiError::BadRequest("投注总金额过大".to_string()))?;
+        checked_orders.push((lottery, order_payload));
+    }
+
+    state
+        .finance
+        .ensure_available(&session.user.id, total_amount_minor)
+        .await?;
+
+    let mut created_orders = Vec::with_capacity(checked_orders.len());
+    for (lottery, order_payload) in checked_orders {
+        let order = state.orders.create(&lottery, order_payload).await?;
+        if let Err(error) = state.finance.debit_order(&order).await {
+            if let Err(rollback_error) = state.orders.remove_unfunded(&order.id).await {
+                tracing::error!(
+                    order_id = %order.id,
+                    error = %rollback_error.log_message(),
+                    "扣款失败后移除用户下注订单失败"
+                );
+            }
+            return Err(error);
+        }
+        created_orders.push(order);
+    }
+
+    Ok(Json(ApiEnvelope::success(
+        MobileCreateBetOrderBatchResponse {
+            orders: created_orders,
+        },
+    )))
 }
 
 async fn get_recharge_config(

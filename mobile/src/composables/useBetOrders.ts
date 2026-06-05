@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import type { Router } from 'vue-router'
-import http from '../api/http'
+import { fetchUserBetOrders } from '../api/bet'
 import { orderBetNumbers, orderDrawNumbers, orderNumber } from '../utils/lotteryFormat'
 
 export function useBetOrders(router: Router) {
@@ -14,8 +14,7 @@ export function useBetOrders(router: Router) {
   async function loadOrders() {
     loadingOrders.value = true
     try {
-      const res = await http.get('/bet/orders')
-      orders.value = Array.isArray(res.data) ? res.data : (res.data?.items || [])
+      orders.value = await fetchUserBetOrders()
     } catch {
       orders.value = []
     } finally {

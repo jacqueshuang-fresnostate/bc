@@ -43,8 +43,13 @@ let drawRefreshSeq = 0
 
 const lotteryCode = computed(() => String(route.params.code || ''))
 const selectedPlay = computed(() => config.value?.plays.find(play => play.code === selectedPlayCode.value) || config.value?.plays[0] || null)
-// 批量提交需要知道每个玩法输入模式，用于判断篮子号码是否要按位置组合展开。
-const playInputModes = computed(() => Object.fromEntries((config.value?.plays || []).map(play => [play.code, play.input_mode])))
+// 批量提交需要玩法元数据，用于把本地篮子号码转换成后端标准 selection。
+const playSubmitMeta = computed(() => Object.fromEntries((config.value?.plays || []).map(play => [play.code, {
+  inputMode: play.input_mode,
+  ruleCode: play.rule_code || play.code,
+  positionGridKind: play.position_grid_kind,
+  optionGroups: play.option_groups,
+}])))
 const latestNumbers = computed(() => config.value?.latest_draw?.result_numbers || [])
 const latestIssue = computed(() => config.value?.latest_draw?.issue || '')
 function formatBetCutoffCountdown(diff: number) {
@@ -291,7 +296,7 @@ async function submitCart() {
     if (!added) return
   }
   try {
-    const payload = await submitBatch(lotteryCode.value, config.value?.round.issue || '', engine.cart.value, playInputModes.value)
+    const payload = await submitBatch(lotteryCode.value, config.value?.round.issue || '', engine.cart.value, playSubmitMeta.value)
     if (!payload) return
     // 提交成功后清空本地篮子并刷新页面数据，确保余额和当前期号立刻回到服务端状态。
     engine.clearCart()
