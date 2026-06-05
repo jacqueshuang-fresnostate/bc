@@ -81,10 +81,6 @@ function openLottery(lottery?: LotteryCard) {
   router.push(`/bet/${lottery.code}`)
 }
 
-function openAllLotteries() {
-  router.push('/lotteries')
-}
-
 function openGroupBuy(lottery?: LotteryCard) {
   // 团购入口只对后端标记可团购且有 code 的彩种开放。
   if (!lottery?.groupBuyEnabled || !lottery.code) return
@@ -268,7 +264,6 @@ watch(heroBanners, (banners) => {
         <section class="space-y-4" v-if="lotteriesSetting.featuredEnabled">
           <div class="flex items-end justify-between px-1">
             <h3 class="border-l-4 border-primary pl-3 font-headline text-lg font-extrabold tracking-tight">{{ featuredTitle }}</h3>
-            <button class="flex items-center gap-0.5 p-0 text-xs font-bold text-primary" @click="openAllLotteries">全部 ›</button>
           </div>
           <div class="grid grid-cols-2 gap-3">
             <HomeDrawCard
@@ -304,7 +299,6 @@ watch(heroBanners, (banners) => {
             >
               {{ group.name || '彩种分组' }}
             </h3>
-            <button class="flex items-center gap-0.5 p-0 text-xs font-bold text-primary" @click="openAllLotteries">全部 ›</button>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <HomeDrawCard
