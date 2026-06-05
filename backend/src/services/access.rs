@@ -2399,8 +2399,9 @@ fn seed_settings() -> Vec<SystemSetting> {
         },
         SystemSetting {
             key: "image_bed_authorization_token".to_string(),
-            value: "kvault_5qBXczZB0h2v_BGjpUgMAKfhAazZNhDL2bD1uXQ3Cr9zrdJp9scEZ".to_string(),
-            description: "图床请求 Authorization Token（不含 Bearer 前缀）".to_string(),
+            value: String::new(),
+            description: "图床请求 Authorization Token（不含 Bearer 前缀，必须在后台手动配置）"
+                .to_string(),
         },
         SystemSetting {
             key: "image_bed_upload_field".to_string(),

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "test": "node --test login-branding.test.mjs tauri-packaging.test.mjs home-view.test.mjs support-view.test.mjs all-lottery-view.test.mjs bet-view.test.mjs dynamic-betting-engine.test.mjs dynamic-bet-page.test.mjs profile-view.test.mjs security-center.test.mjs invitation-center.test.mjs withdrawal-flow.test.mjs vant-theme.test.mjs history-view.test.mjs group-buy-view.test.mjs password-reset-flow.test.mjs auth-refresh.test.mjs comment-cleanup.test.mjs websocket-delivery.test.mjs",
+    "test": "node --test",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -33,7 +33,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.1.4",
-      "autoprefixer": "^10.4.21",
+    "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

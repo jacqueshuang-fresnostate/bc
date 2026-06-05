@@ -1,5 +1,26 @@
 # TODO
 
+## 2026-06-05 16:40 HKT 全项目审查首轮修复
+
+- 完成任务：继续审查后端、管理后台、手机端和部署配置，先修复审查中发现的明确问题。
+- 解决问题：
+  - 后端系统设置种子中存在真实图床授权 token 默认值，属于敏感信息泄露风险。
+  - 已经写入 PostgreSQL 的历史图床授权值可能来自该默认种子，需要在迁移中清空，避免继续使用泄露值。
+  - 手机端 `npm test` 引用了一串不存在的 `.test.mjs` 文件，导致测试命令直接失败，无法作为质量门禁。
+- 具体实现：
+  - `image_bed_authorization_token` 种子默认值改为空字符串，说明改为必须由后台手动配置。
+  - 新增迁移 `20260605164000_clear_seeded_image_bed_token.sql`，清空历史默认写入的图床授权值，并补充敏感配置不得写入真实密钥的 SQL 注释。
+  - 手机端 `test` 脚本改为 `node --test` 自动发现测试文件；当前没有测试文件时输出 `0 tests` 并正常结束。
+  - Trellis 数据库规范新增“系统设置敏感配置默认值”场景，约束后续 token、key、secret、password 等配置不能写入真实默认值。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml --check` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml` 通过，201 条后端测试全部成功。
+  - `cd admin && npm run build` 通过；Vite 仍提示后台主 chunk 体积超过 500 kB，这是既有构建体积提示。
+  - `cd mobile && npm run build` 通过。
+  - 修复前 `cd mobile && npm test` 失败，原因是脚本引用的测试文件不存在；修复后 `cd mobile && npm test` 通过，当前输出 `0 tests`。
+- 后续动作：继续审查前端 `any` 使用、资金跨仓储事务、后台硬编码开奖源预设、系统设置敏感值展示和容器 WebSocket 发布后验证。
+
 ## 2026-06-05 16:10 HKT 容器 WebSocket 开奖推送修复
 
 - 完成任务：排查手机端 WebSocket 没有推送开奖信息的问题，并修复单镜像容器里的 Nginx 代理配置。

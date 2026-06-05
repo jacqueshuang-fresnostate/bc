@@ -44,6 +44,7 @@ YYYYMMDDHHMMSS_describe_change.sql
 - 登录接口返回给客户端的原始 token 必须是 opaque token，不能包含用户 ID、管理员 ID、用户名、时间戳或计数器。
 - 认证、登出和会话清理都必须先对请求中的原始 token 计算同样的摘要，再访问会话表或会话索引。
 - 如果历史迁移发现会话表已经保存过原始 token，应优先清空旧会话并要求重新登录，不能继续让旧明文登录态长期存在。
+- `system_settings` 中的 token、key、secret、password 等敏感配置种子值只能为空字符串或“未配置”，不能写入真实第三方密钥。
 
 ---
 
@@ -66,8 +67,74 @@ YYYYMMDDHHMMSS_describe_change.sql
 - 不要新增数据库行为却不更新 API 和前端假设。
 - 不要在路由函数里直接写 SQL；应放在仓储或查询模块。
 - 不要假设 `DATABASE_URL` 一定存在；当前本地开发允许无数据库内存模式。
+- 不要把图床 token、支付密钥、短信密钥、OpenAPI 密钥等真实敏感值写入种子数据、迁移文件、测试夹具或 TODO/架构文档。
 
 ---
+
+## 场景：系统设置敏感配置默认值
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改 `system_settings` 中的第三方接口 token、支付 key、secret、password、回调签名密钥、对象存储凭据等配置。
+- 范围：`seed_settings()`、`system_settings` 迁移、后台系统设置页面、图床/支付/外部 API 配置。
+
+### 2. 签名
+
+- 系统设置表：`system_settings(key, value, description)`
+- 图床授权配置：`image_bed_authorization_token`
+- 彩虹易支付密钥配置：`recharge_rainbow_epay_key`
+- 系统设置接口：`GET /api/admin/system-settings`、`PATCH /api/admin/system-settings/{key}`
+
+### 3. 契约
+
+- 敏感配置的种子默认 `value` 必须为空字符串或“未配置”。
+- 迁移文件只能写入占位值，不能写入真实密钥、真实 token、真实商户私钥或用户提供过的完整授权值。
+- 发现历史默认值泄露时，后续迁移必须清空该配置，并在 TODO/架构说明中提醒部署后重新配置和轮换密钥。
+- 上传、支付等运行时逻辑读取到空敏感配置时必须返回中文业务错误，例如“图床上传 Token 未配置”，不能静默使用假值。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 空库启动 | 敏感配置为空或“未配置”，后台提示需要配置 |
+| 后台保存新密钥 | `PATCH /api/admin/system-settings/{key}` 写入管理员输入值 |
+| 运行时调用依赖敏感配置的能力但配置为空 | 返回中文业务错误，不请求第三方接口 |
+| 历史数据库已有误写默认密钥 | 后续迁移清空该值，要求管理员重新配置 |
+| 源码搜索出现真实 token 前缀或完整密钥 | 审查失败，必须移除并建议轮换密钥 |
+
+### 5. Good/Base/Bad Cases
+
+- Good：`image_bed_authorization_token` 默认值为空，管理员在系统设置中手动填入后再测试上传。
+- Base：`recharge_rainbow_epay_key` 默认值为“未配置”，未配置前彩虹易支付下单返回配置错误。
+- Bad：把用户提供的真实图床 Bearer token 写入 `seed_settings()` 或迁移文件。
+
+### 6. Tests Required
+
+- 后端变更后运行 `cargo fmt --check`、`cargo check` 和 `cargo test`。
+- 安全审查需要运行源码搜索，确认真实 token、key、secret 没有出现在可提交文件中。
+- 修改前端系统设置展示时运行管理后台 `npm run build`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+SystemSetting {
+    key: "image_bed_authorization_token".to_string(),
+    value: "真实第三方 token".to_string(),
+    description: "图床请求 Authorization Token".to_string(),
+}
+```
+
+#### Correct
+
+```rust
+SystemSetting {
+    key: "image_bed_authorization_token".to_string(),
+    value: String::new(),
+    description: "图床请求 Authorization Token（不含 Bearer 前缀，必须在后台手动配置）".to_string(),
+}
+```
 
 ## 场景：用户资金账户生命周期
 
