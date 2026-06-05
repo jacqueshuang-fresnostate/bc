@@ -1,5 +1,21 @@
 # TODO
 
+## 2026-06-05 16:10 HKT 容器 WebSocket 开奖推送修复
+
+- 完成任务：排查手机端 WebSocket 没有推送开奖信息的问题，并修复单镜像容器里的 Nginx 代理配置。
+- 解决问题：
+  - 后端开奖调度、后台手动开奖和自动开奖链路已经会发布 `lottery.draw_result`，手机端也已经连接 `/api/user/realtime` 并监听开奖事件。
+  - 容器内 Nginx 只按普通 HTTP 代理 `/api/`，没有转发 WebSocket `Upgrade` 和 `Connection` 头，导致打包部署后实时连接无法正确升级或长时间保持。
+- 具体实现：
+  - `docker/nginx.conf` 新增 `$connection_upgrade` 映射。
+  - `/api/` 代理新增 `Upgrade`、`Connection` 请求头转发。
+  - `/api/` 代理新增 `proxy_read_timeout` 和 `proxy_send_timeout`，覆盖后端实时心跳间隔，避免开奖推送连接被代理层提前断开。
+  - Trellis 容器部署规范和架构设计同步记录 WebSocket 代理要求。
+- 验证记录：
+  - 已确认后端发布事件、用户端实时路由、手机端 `useWebSocket` 和页面 `wsMessage` 传递链路字段一致。
+  - 本次按本地联调规则未执行 Docker 镜像打包；需要发布镜像时再做容器级 WebSocket 升级验证。
+- 后续动作：部署新镜像后，在手机端保持首页打开并执行一次手动开奖或等待调度开奖，确认收到 `lottery.draw_result` 后最近开奖刷新。
+
 ## 2026-06-05 15:48 HKT 合买机器人真实执行
 
 - 完成任务：完善合买机器人，让已启用的合买机器人可以在开盘期间自动发起合买、自动补满自身计划和同彩种当前期的非机器人未满单计划，并生成真实投注订单。
