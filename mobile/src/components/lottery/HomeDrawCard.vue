@@ -91,7 +91,6 @@ function statusClass() {
     </div>
     <div class="grid grid-cols-1 gap-2">
       <button class="w-full rounded-full lacquer-gradient py-2.5 font-headline text-sm font-bold !text-on-primary shadow-md" @click="emit('open', lottery)">立即投注</button>
-      <button v-if="lottery.groupBuyEnabled" class="w-full rounded-full border border-primary/15 bg-white py-2.5 font-headline text-sm font-bold text-primary shadow-sm" @click="emit('groupBuy', lottery)">合买大厅</button>
     </div>
   </div>
 
