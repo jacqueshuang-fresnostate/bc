@@ -140,6 +140,7 @@ function selectionNumbers(order: UserBetOrderDetail) {
 }
 
 function positionGridKind(ruleCode: string) {
+  if (ruleCode === 'fiveBigSmallOddEven') return 'big_small_odd_even'
   if (/DirectCombination$/.test(ruleCode)) return 'direct_combination'
   if (/GroupThreeBanker$/.test(ruleCode) || ruleCode === 'threeGroupThreeBanker') return 'group3_dantuo'
   if (/GroupSixBanker$/.test(ruleCode) || ruleCode === 'threeGroupSixBanker') return 'group6_dantuo'
@@ -161,6 +162,8 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     canonical_numbers: numbers,
     result_numbers: splitDrawNumber(order.drawNumber),
     draw_numbers: splitDrawNumber(order.drawNumber),
+    matched_bets: order.matchedBets || [],
+    expanded_bets: order.expandedBets || [],
     status: statusMap[order.status] || order.status,
     bet_count: order.stakeCount,
     unit_amount: formatMinorAmount(order.unitAmountMinor),

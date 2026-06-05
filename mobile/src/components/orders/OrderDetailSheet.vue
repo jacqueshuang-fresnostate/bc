@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { detailHeroAmount, detailHeroNote, formatDateTime, moneyText, orderAmountText, orderBetCount, orderMultiple, orderSourceText, orderStatusIcon, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
+import { detailHeroAmount, detailHeroNote, formatDateTime, moneyText, orderAmountText, orderBetCount, orderMatchItems, orderMatchedBetKeys, orderMultiple, orderSourceText, orderStatusIcon, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
 
 const props = defineProps<{
   selectedOrder: any
@@ -20,9 +20,15 @@ function splitBetNumberParts(value: string) {
 const selectedOrderNumberGroups = computed(() => props.selectedOrderNumbers.map(splitBetNumberParts).filter(group => group.length))
 const visibleOrderNumberGroups = computed(() => selectedOrderNumberGroups.value.slice(0, visibleOrderNumberGroupCount.value))
 const hasMoreOrderNumberGroups = computed(() => visibleOrderNumberGroupCount.value < selectedOrderNumberGroups.value.length)
+const selectedOrderMatchItems = computed(() => orderMatchItems(props.selectedOrder, props.selectedDrawNumbers))
+const matchedBetKeys = computed(() => new Set(orderMatchedBetKeys(props.selectedOrder)))
 
 function showMoreOrderNumberGroups() {
   visibleOrderNumberGroupCount.value += ORDER_DETAIL_BATCH_SIZE
+}
+
+function isMatchedOrderNumberGroup(group: string[]) {
+  return matchedBetKeys.value.has(group.join('').replace(/\s+/g, ''))
 }
 
 watch(() => props.selectedOrder?.id, () => {
@@ -70,6 +76,7 @@ watch(() => props.selectedOrder?.id, () => {
               v-for="(group, groupIndex) in visibleOrderNumberGroups"
               :key="`bet-group-${selectedOrder.id}-${groupIndex}-${group.join('-')}`"
               class="detail-number-balls detail-number-balls--bet"
+              :class="{ 'detail-number-balls--matched': isMatchedOrderNumberGroup(group) }"
             >
               <span
                 v-for="(number, numberIndex) in group"
@@ -133,6 +140,22 @@ watch(() => props.selectedOrder?.id, () => {
             </span>
           </div>
           <div v-else class="detail-empty-value">{{ selectedOrder.status === 'pending' ? '待开奖' : '暂无开奖数据' }}</div>
+        </section>
+
+        <section class="detail-panel detail-panel--match">
+          <h3><span></span>匹配项</h3>
+          <div class="detail-match-list">
+            <article
+              v-for="(item, index) in selectedOrderMatchItems"
+              :key="`match-${selectedOrder.id}-${index}-${item.label}-${item.value}`"
+              class="detail-match-item"
+              :class="`detail-match-item--${item.tone}`"
+            >
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <p>{{ item.detail }}</p>
+            </article>
+          </div>
         </section>
 
         <section class="detail-meta-card">
@@ -399,6 +422,10 @@ watch(() => props.selectedOrder?.id, () => {
   background: #e9c349;
 }
 
+.detail-panel--match h3 span {
+  background: #2f7d32;
+}
+
 .detail-bet-groups {
   display: grid;
   gap: 10px;
@@ -428,6 +455,13 @@ watch(() => props.selectedOrder?.id, () => {
   margin-bottom: 0;
 }
 
+.detail-number-balls--matched {
+  border-radius: 16px;
+  padding: 8px;
+  background: #fff7f6;
+  box-shadow: inset 0 0 0 1px rgba(140, 10, 21, 0.16);
+}
+
 .detail-number-ball {
   display: inline-flex;
   width: 40px;
@@ -451,6 +485,55 @@ watch(() => props.selectedOrder?.id, () => {
   color: #1a1c1c;
   background: #e2e2e2;
   box-shadow: 0 2px 8px rgba(26, 28, 28, 0.05);
+}
+
+.detail-match-list {
+  display: grid;
+  gap: 10px;
+}
+
+.detail-match-item {
+  border: 1px solid #e2e2e2;
+  border-radius: 16px;
+  padding: 14px;
+  background: #fff;
+}
+
+.detail-match-item--hit {
+  border-color: #ffb3ad;
+  background: #fff7f6;
+}
+
+.detail-match-item--miss {
+  background: #f9f9f9;
+}
+
+.detail-match-item--pending {
+  border-color: #f2d675;
+  background: #fff9de;
+}
+
+.detail-match-item span {
+  display: block;
+  color: #5a403e;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.detail-match-item strong {
+  display: block;
+  margin-top: 5px;
+  color: #1a1c1c;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.detail-match-item p {
+  margin: 6px 0 0;
+  color: #5a403e;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .detail-empty-value {

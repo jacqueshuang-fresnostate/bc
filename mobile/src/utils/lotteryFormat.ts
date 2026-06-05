@@ -7,6 +7,13 @@ const statusTextMap: Record<string, string> = {
   cancelled: '已取消',
 }
 
+export type OrderMatchItem = {
+  label: string
+  value: string
+  detail: string
+  tone: 'hit' | 'miss' | 'pending'
+}
+
 export function statusText(status?: string) {
   return statusTextMap[status || ''] || status || '-'
 }
@@ -19,52 +26,42 @@ export function splitNumbers(value: unknown) {
   return text.split(/[\s,，|/]+/).map(item => item.trim()).filter(Boolean)
 }
 
-function orderPlaySnapshot(order: any) {
-  return order?.play_snapshot && typeof order.play_snapshot === 'object' ? order.play_snapshot : {}
-}
-
 export function orderBetCount(order: any) {
-  const snapshot = orderPlaySnapshot(order)
-  const count = Number(order?.bet_count ?? snapshot.bet_count ?? 1)
+  const count = Number(order?.bet_count ?? 1)
   return Number.isSafeInteger(count) && count > 0 ? count : 1
 }
 
 export function orderMultiple(order: any) {
-  const snapshot = orderPlaySnapshot(order)
-  const multiple = Number(order?.multiple ?? snapshot.multiple ?? 1)
+  const multiple = Number(order?.multiple ?? 1)
   return Number.isSafeInteger(multiple) && multiple > 0 ? multiple : 1
 }
 
 export function orderUnitAmount(order: any) {
-  const snapshot = orderPlaySnapshot(order)
-  const configured = Number(order?.unit_amount ?? snapshot.unit_amount)
+  const configured = Number(order?.unit_amount)
   if (Number.isFinite(configured) && configured > 0) return configured
   const amount = Number(order?.amount || 0)
   return amount > 0 ? amount / orderBetCount(order) / orderMultiple(order) : 0
 }
 
-function orderDescriptor(order: any) {
-  const snapshot = orderPlaySnapshot(order)
-  return [
-    order?.rule_code,
-    snapshot.rule_code,
-    order?.play_code,
-    order?.play_name,
-    snapshot.name,
-  ].map(value => String(value || '').trim().toLowerCase()).filter(Boolean).join(' ')
+function orderRuleCode(order: any) {
+  return String(order?.rule_code || order?.ruleCode || '').trim()
+}
+
+function normalizedRuleCode(order: any) {
+  return orderRuleCode(order).toLowerCase()
 }
 
 function orderPositionGridKind(order: any) {
-  const snapshot = orderPlaySnapshot(order)
-  const configuredKind = String(order?.position_grid_kind || snapshot.position_grid_kind || '').trim()
+  const configuredKind = String(order?.position_grid_kind || '').trim()
   if (configuredKind) return configuredKind
 
-  const descriptor = orderDescriptor(order)
-  if (/group3_dantuo|zuxuan3_dantuo|组三胆拖/.test(descriptor)) return 'group3_dantuo'
-  if (/group6_dantuo|zuxuan6_dantuo|组六胆拖/.test(descriptor)) return 'group6_dantuo'
-  if (/group3_compound|zuxuan3|组三/.test(descriptor)) return 'group3_compound'
-  if (/group6_compound|zuxuan6|组六/.test(descriptor)) return 'group6_compound'
-  if (/\.direct\b|\bdirect\b|zhixuan|直选/.test(descriptor)) return 'direct'
+  const ruleCode = normalizedRuleCode(order)
+  if (ruleCode === 'fivebigsmalloddeven') return 'big_small_odd_even'
+  if (/groupthreebanker/.test(ruleCode)) return 'group3_dantuo'
+  if (/groupsixbanker/.test(ruleCode)) return 'group6_dantuo'
+  if (/groupthree/.test(ruleCode)) return 'group3_compound'
+  if (/groupsix/.test(ruleCode)) return 'group6_compound'
+  if (/direct/.test(ruleCode)) return 'direct'
   return ''
 }
 
@@ -73,6 +70,13 @@ function splitOrderDigits(value: unknown) {
   if (!text) return []
   if (text.includes(',')) return text.split(',').map(item => item.trim()).filter(Boolean)
   return Array.from(text).map(item => item.trim()).filter(Boolean)
+}
+
+function splitCompactBetDigits(value: unknown) {
+  const text = String(value || '').trim().replace(/，/g, ',')
+  if (!text) return []
+  if (/^\d+$/.test(text)) return Array.from(text)
+  return text.split(/[\s,]+/).map(item => item.trim()).filter(Boolean)
 }
 
 function uniqueValues(values: string[]) {
@@ -154,6 +158,158 @@ export function orderBetNumbers(order: any) {
               ? expandGroup6DantuoOrderNumbers(order.numbers)
               : []
   return expanded.length ? expanded : splitNumbers(order.numbers)
+}
+
+function ruleMatchKind(order: any) {
+  const ruleCode = normalizedRuleCode(order)
+  if (ruleCode === 'fivebigsmalloddeven') return 'big_small_odd_even'
+  if (/directcombination/.test(ruleCode)) return 'direct_combination'
+  if (/groupthree/.test(ruleCode)) return 'group_three'
+  if (/groupsix/.test(ruleCode)) return 'group_six'
+  if (/direct/.test(ruleCode)) return 'direct'
+  return 'unknown'
+}
+
+function isBankerRule(order: any) {
+  return /banker/.test(normalizedRuleCode(order))
+}
+
+function ruleWindowText(order: any) {
+  const ruleCode = normalizedRuleCode(order)
+  if (ruleCode === 'fivebigsmalloddeven') return '后两位'
+  if (ruleCode.startsWith('fivefront')) return '前 3 位'
+  if (ruleCode.startsWith('fivemiddle')) return '中 3 位'
+  if (ruleCode.startsWith('fiveback')) return '后 3 位'
+  return '完整 3 位'
+}
+
+function drawWindowNumbers(order: any, drawNumbers: string[]) {
+  const ruleCode = normalizedRuleCode(order)
+  if (!drawNumbers.length) return []
+  if (ruleCode === 'fivebigsmalloddeven' && drawNumbers.length >= 5) return drawNumbers.slice(3, 5)
+  if (ruleCode.startsWith('fivefront') && drawNumbers.length >= 3) return drawNumbers.slice(0, 3)
+  if (ruleCode.startsWith('fivemiddle') && drawNumbers.length >= 4) return drawNumbers.slice(1, 4)
+  if (ruleCode.startsWith('fiveback') && drawNumbers.length >= 5) return drawNumbers.slice(2, 5)
+  return drawNumbers.slice(0, 3)
+}
+
+function matchWindowDetail(order: any, drawNumbers: string[]) {
+  const windowNumbers = drawWindowNumbers(order, drawNumbers)
+  return windowNumbers.length ? `${ruleWindowText(order)}：${windowNumbers.join(',')}` : ruleWindowText(order)
+}
+
+function matchKey(value: unknown) {
+  return String(value || '').trim().replace(/[,，\s]+/g, '')
+}
+
+export function orderMatchedBetValues(order: any) {
+  const values = order?.matched_bets ?? order?.matchedBets
+  if (Array.isArray(values)) return values.map(value => String(value).trim()).filter(Boolean)
+  return []
+}
+
+export function orderMatchedBetKeys(order: any) {
+  return orderMatchedBetValues(order).map(matchKey).filter(Boolean)
+}
+
+function matchItemLabel(order: any) {
+  const kind = ruleMatchKind(order)
+  if (kind === 'direct_combination') return '直选组合匹配'
+  if (kind === 'group_three') return isBankerRule(order) ? '组三胆拖匹配' : '组三匹配'
+  if (kind === 'group_six') return isBankerRule(order) ? '组六胆拖匹配' : '组六匹配'
+  if (kind === 'big_small_odd_even') return '大小单双匹配'
+  if (kind === 'direct') return '直选匹配'
+  return '号码匹配'
+}
+
+function missItemText(order: any) {
+  const kind = ruleMatchKind(order)
+  if (kind === 'direct_combination') return '直选组合未命中'
+  if (kind === 'group_three') return isBankerRule(order) ? '组三胆拖未命中' : '组三未命中'
+  if (kind === 'group_six') return isBankerRule(order) ? '组六胆拖未命中' : '组六未命中'
+  if (kind === 'big_small_odd_even') return '大小单双未命中'
+  if (kind === 'direct') return '直选未命中'
+  return '未命中'
+}
+
+function matchItemDetail(order: any, drawNumbers: string[]) {
+  const kind = ruleMatchKind(order)
+  const windowDetail = matchWindowDetail(order, drawNumbers)
+  if (kind === 'direct') return `${windowDetail}，按位完全一致`
+  if (kind === 'direct_combination') return `${windowDetail}，排列组合命中`
+  if (kind === 'group_three' || kind === 'group_six') {
+    return isBankerRule(order) ? `${windowDetail}，由胆码和拖码组成` : `${windowDetail}，数字一致，顺序不限`
+  }
+  if (kind === 'big_small_odd_even') return `${windowDetail}，属性命中`
+  return windowDetail
+}
+
+function displayBetCode(value: unknown) {
+  const digits = splitCompactBetDigits(value)
+  return digits.length ? digits.join(',') : String(value || '-')
+}
+
+function bigSmallOddEvenMatchItem(value: string, order: any, drawNumbers: string[]) {
+  const [position, attribute] = value.split(':').map(item => item.trim())
+  const positionTextMap: Record<string, string> = { tens: '十位', ones: '个位' }
+  const attrTextMap: Record<string, string> = { big: '大', small: '小', odd: '单', even: '双' }
+  const label = positionTextMap[position] ? `${positionTextMap[position]}匹配` : matchItemLabel(order)
+  const attrText = attrTextMap[attribute] || attribute || value
+  return {
+    label,
+    value: attrText,
+    detail: matchItemDetail(order, drawNumbers),
+    tone: 'hit' as const,
+  }
+}
+
+export function orderMatchItems(order: any, drawNumbers: string[] = []) {
+  const status = String(order?.status || '').trim()
+  const draw = drawNumbers.length ? drawNumbers : orderDrawNumbers(order)
+  if (status === 'pending' || status === 'pendingDraw') {
+    return [{
+      label: '待开奖',
+      value: '开奖后显示匹配项',
+      detail: `${ruleWindowText(order)}，以实际开奖号码为准`,
+      tone: 'pending' as const,
+    }]
+  }
+  if (status === 'cancelled') {
+    return [{
+      label: '已取消',
+      value: '不参与开奖匹配',
+      detail: '本注单已取消，不再计算命中项',
+      tone: 'miss' as const,
+    }]
+  }
+  if (!draw.length) {
+    return [{
+      label: '暂无开奖',
+      value: '暂无匹配项',
+      detail: '拿到开奖号码后会展示命中明细',
+      tone: 'pending' as const,
+    }]
+  }
+
+  const matchedValues = orderMatchedBetValues(order)
+  if (!matchedValues.length) {
+    return [{
+      label: '未命中',
+      value: missItemText(order),
+      detail: `${matchWindowDetail(order, draw)}未匹配投注内容`,
+      tone: 'miss' as const,
+    }]
+  }
+
+  return matchedValues.map((value, index) => {
+    if (ruleMatchKind(order) === 'big_small_odd_even') return bigSmallOddEvenMatchItem(value, order, draw)
+    return {
+      label: matchedValues.length > 1 ? `${matchItemLabel(order)} ${index + 1}` : matchItemLabel(order),
+      value: displayBetCode(value),
+      detail: matchItemDetail(order, draw),
+      tone: 'hit' as const,
+    }
+  })
 }
 
 export function formatNumbers(item: any) {
