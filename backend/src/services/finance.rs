@@ -1214,6 +1214,7 @@ mod tests {
             finance::{LedgerEntryKind, ManualBalanceAdjustmentRequest},
             group_buy::{GroupBuyParticipant, GroupBuyPlan, GroupBuyPlanStatus},
             lottery::LotteryNumberType,
+            order::OrderSource,
             order::{OrderDetail, OrderStatus},
             play::{PlayRuleCode, PlaySelection},
             settlement::{OrderSettlement, SettlementRun},
@@ -1514,6 +1515,7 @@ mod tests {
     fn order_detail(id: &str, user_id: &str, amount_minor: i64, payout_minor: i64) -> OrderDetail {
         OrderDetail {
             id: id.to_string(),
+            order_source: OrderSource::Direct,
             user_id: user_id.to_string(),
             lottery_id: "fc3d".to_string(),
             lottery_name: "福彩 3D".to_string(),

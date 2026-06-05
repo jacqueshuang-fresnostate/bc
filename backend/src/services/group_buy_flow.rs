@@ -4,7 +4,7 @@ use crate::{
     domain::{
         group_buy::{GroupBuyPlan, GroupBuyPlanStatus},
         lottery::LotteryKind,
-        order::{CreateOrderRequest, OrderDetail},
+        order::{CreateOrderRequest, OrderDetail, OrderSource},
         play::{
             BigSmallOddEvenPick, BigSmallOddEvenPosition, DigitAttribute, PlayRuleCode,
             PlaySelection,
@@ -103,7 +103,9 @@ pub async fn create_order_for_filled_group_buy(
     }
 
     let payload = build_group_buy_order_request_from_plan(draws, orders, lottery, plan).await?;
-    let order = orders.create(lottery, payload).await?;
+    let order = orders
+        .create_with_source(lottery, payload, OrderSource::GroupBuy)
+        .await?;
     match group_buys.attach_order(&plan.id, &order.id).await {
         Ok(attached_plan) => Ok(Some((order, attached_plan))),
         Err(error) => {

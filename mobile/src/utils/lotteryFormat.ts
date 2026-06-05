@@ -585,11 +585,17 @@ export function orderTagText(order: any) {
 }
 
 export function isGroupBuyOrder(order: any) {
-  return Boolean(order?.is_group_buy || String(order?.source_name || '').startsWith('group_buy:'))
+  return Boolean(
+    order?.is_group_buy
+      || order?.orderSource === 'groupBuy'
+      || order?.order_source === 'groupBuy'
+      || order?.order_source === 'group_buy'
+      || String(order?.source_name || '').startsWith('group_buy:'),
+  )
 }
 
 export function orderSourceText(order: any) {
-  return isGroupBuyOrder(order) ? '合买' : '普通'
+  return isGroupBuyOrder(order) ? '合买下单' : '独立下单'
 }
 
 export function orderAmountText(order: any) {

@@ -12,7 +12,7 @@ const props = withDefaults(defineProps<{
   editing: false,
   canAdd: true,
   canSubmit: true,
-  addText: '加入篮子',
+  addText: '加入购彩篮',
   submitText: '立即投注',
 })
 

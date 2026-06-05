@@ -13,7 +13,9 @@ use crate::{
     domain::{
         draw::{DrawIssue, DrawIssueStatus},
         lottery::LotteryKind,
-        order::{CreateOrderRequest, OrderDetail, OrderQuote, OrderStatus, OrderSummary},
+        order::{
+            CreateOrderRequest, OrderDetail, OrderQuote, OrderSource, OrderStatus, OrderSummary,
+        },
         play::PlayRuleEvaluateRequest,
         settlement::{OrderSettlement, SettlementRun},
     },
@@ -109,6 +111,25 @@ impl OrderRepository {
                 .write()
                 .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?;
             let result = store.create(lottery, payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 校验入参并按指定来源创建一条新记录。
+    pub async fn create_with_source(
+        &self,
+        lottery: &LotteryKind,
+        payload: CreateOrderRequest,
+        order_source: OrderSource,
+    ) -> ApiResult<OrderDetail> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?;
+            let result = store.create_with_source(lottery, payload, order_source)?;
             (result, store.clone())
         };
         self.persist(&snapshot).await?;
@@ -215,7 +236,7 @@ async fn load_order_store(database: &BusinessDatabase) -> ApiResult<OrderStore> 
     let pool = database.pool();
     let mut orders = BTreeMap::new();
     for row in sqlx::query(
-        "SELECT id, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+        "SELECT id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
                 stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
                 draw_number, matched_bets, payout_minor, status, settled_at, created_at
          FROM orders
@@ -235,6 +256,10 @@ async fn load_order_store(database: &BusinessDatabase) -> ApiResult<OrderStore> 
             id.clone(),
             OrderDetail {
                 id,
+                order_source: enum_from_string(
+                    row.try_get("order_source")
+                        .map_err(|_| ApiError::Internal("订单来源数据读取失败".to_string()))?,
+                )?,
                 user_id: row
                     .try_get("user_id")
                     .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
@@ -460,12 +485,13 @@ async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> Ap
     for order in store.orders.values() {
         sqlx::query(
             "INSERT INTO orders
-             (id, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+             (id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
               stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
               draw_number, matched_bets, payout_minor, status, settled_at, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
         )
         .bind(&order.id)
+        .bind(enum_to_string(&order.order_source)?)
         .bind(&order.user_id)
         .bind(&order.lottery_id)
         .bind(&order.lottery_name)
@@ -594,11 +620,22 @@ impl OrderStore {
         lottery: &LotteryKind,
         payload: CreateOrderRequest,
     ) -> ApiResult<OrderDetail> {
+        self.create_with_source(lottery, payload, OrderSource::Direct)
+    }
+
+    /// 校验入参并按来源创建新记录。
+    fn create_with_source(
+        &mut self,
+        lottery: &LotteryKind,
+        payload: CreateOrderRequest,
+        order_source: OrderSource,
+    ) -> ApiResult<OrderDetail> {
         let calculation = calculated_order(lottery, &payload)?;
 
         self.next_sequence += 1;
         let order = OrderDetail {
             id: format!("O{:012}", self.next_sequence),
+            order_source,
             user_id: payload.user_id.trim().to_string(),
             lottery_id: lottery.id.clone(),
             lottery_name: lottery.name.clone(),
@@ -914,7 +951,7 @@ mod tests {
                 DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
                 LotteryPlayConfig, PlayCategory,
             },
-            order::{CreateOrderRequest, OrderStatus},
+            order::{CreateOrderRequest, OrderSource, OrderStatus},
             play::{PlayRuleCode, PlaySelection},
         },
         services::order::OrderStore,
@@ -944,6 +981,7 @@ mod tests {
             .expect("order can be created");
 
         assert_eq!(order.stake_count, 1);
+        assert_eq!(order.order_source, OrderSource::Direct);
         assert_eq!(order.amount_minor, 200);
         assert_eq!(order.odds_basis_points, 100_000);
         assert_eq!(order.expanded_bets, vec!["247"]);
@@ -952,6 +990,34 @@ mod tests {
         assert!(order.matched_bets.is_empty());
         assert_eq!(order.payout_minor, 0);
         assert_eq!(order.settled_at, None);
+    }
+
+    #[test]
+    /// 处理 store_creates_group_buy_source_order 的具体内部流程。
+    fn store_creates_group_buy_source_order() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let mut store = OrderStore::default();
+
+        let order = store
+            .create_with_source(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10001".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026155".to_string(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: PlaySelection {
+                        positions: vec![vec![2], vec![4], vec![7]],
+                        ..PlaySelection::default()
+                    },
+                    unit_amount_minor: 200,
+                },
+                OrderSource::GroupBuy,
+            )
+            .expect("group buy order can be created");
+
+        assert_eq!(order.order_source, OrderSource::GroupBuy);
+        assert_eq!(order.summary().order_source, OrderSource::GroupBuy);
     }
 
     #[test]

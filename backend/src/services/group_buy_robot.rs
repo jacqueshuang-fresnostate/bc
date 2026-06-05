@@ -853,6 +853,7 @@ mod tests {
         domain::{
             draw::CreateDrawIssueRequest,
             lottery::{DrawSchedule, GroupBuyConfig, LotteryNumberType, PlayCategory},
+            order::OrderSource,
         },
         services::{
             draw::DrawRepository, finance::FinanceRepository, lottery::LotteryRepository,
@@ -999,6 +1000,10 @@ mod tests {
         assert_eq!(final_stage_run.filled_plans.len(), 1);
         assert_eq!(final_stage_run.created_orders.len(), 1);
         assert_eq!(final_stage_run.ledger_entries.len(), 1);
+        assert_eq!(
+            final_stage_run.created_orders[0].order_source,
+            OrderSource::GroupBuy
+        );
         assert_eq!(
             final_stage_run.filled_plans[0].order_id,
             Some(final_stage_run.created_orders[0].id.clone())

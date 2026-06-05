@@ -101,14 +101,14 @@ const roundSelling = computed(() => config.value?.round.status === 'selling' && 
 const canAddCurrentDraft = computed(() => roundSelling.value && engine.draftBetCount.value > 0)
 const canSubmitCurrentOrder = computed(() => roundSelling.value && (engine.draftBetCount.value > 0 || engine.cartTotalCount.value > 0))
 const addButtonText = computed(() => {
-  if (selectedPlay.value?.option_groups.length) return '加入选项'
-  if (selectedPlay.value?.input_mode === 'fixed-option') return '加入选项'
-  if (selectedPlay.value?.input_mode === 'position-grid') return '加入组合'
-  return '加入篮子'
+  if (selectedPlay.value?.option_groups.length) return '加入购彩篮'
+  if (selectedPlay.value?.input_mode === 'fixed-option') return '加入购彩篮'
+  if (selectedPlay.value?.input_mode === 'position-grid') return '加入购彩篮'
+  return '加入购彩篮'
 })
 const submitButtonText = computed(() => {
   if (groupBuyMode.value) return '发起合买'
-  if (engine.cartTotalCount.value > 0) return '提交篮子'
+  if (engine.cartTotalCount.value > 0) return '提交购彩篮'
   if (selectedPlay.value?.option_groups.length) return '立即投注选项'
   if (selectedPlay.value?.input_mode === 'fixed-option') return '立即投注选项'
   return '立即投注'
@@ -249,6 +249,10 @@ function adjustMultiple(delta: number) {
   multipleInputValue.value = String(engine.multiple.value)
 }
 
+function apiErrorMessage(error: any, fallback: string) {
+  return error?.response?.data?.message || error?.response?.data?.detail || fallback
+}
+
 function normalizeGroupBuyShares() {
   if (groupBuyDerivedShareCount.value > 0) groupBuyShareCount.value = groupBuyDerivedShareCount.value
   groupBuySelfShares.value = groupBuySafeSelfShares.value
@@ -302,7 +306,7 @@ async function submitGroupBuyCart() {
     groupBuyMode.value = false
     await loadPage()
   } catch (e: any) {
-    showToast(e.response?.data?.detail || '发起合买失败')
+    showToast(apiErrorMessage(e, '发起合买失败'))
     await loadPage()
   } finally {
     submittingGroupBuy.value = false
@@ -327,7 +331,7 @@ async function submitCart() {
     await loadPage()
   } catch (e: any) {
     // 提交失败也刷新一次，避免前端继续停留在已封盘或余额变化前的状态。
-    showToast(e.response?.data?.detail || '投注失败')
+    showToast(apiErrorMessage(e, '投注失败'))
     await loadPage()
   }
 }
@@ -347,7 +351,7 @@ watch(lotteryCode, async () => {
   try {
     await loadPage()
   } catch (e: any) {
-    showToast(e.response?.data?.detail || '加载投注页失败')
+    showToast(apiErrorMessage(e, '加载投注页失败'))
   }
 }, { immediate: true })
 

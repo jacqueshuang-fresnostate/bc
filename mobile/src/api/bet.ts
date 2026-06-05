@@ -23,6 +23,7 @@ export type CreateUserBetOrdersResponse = {
 
 export type UserBetOrderDetail = {
   id: string
+  orderSource: 'direct' | 'groupBuy'
   userId: string
   lotteryId: string
   lotteryName: string
@@ -151,8 +152,12 @@ function positionGridKind(ruleCode: string) {
 
 export function normalizeUserBetOrder(order: UserBetOrderDetail) {
   const numbers = selectionNumbers(order)
+  const isGroupBuy = order.orderSource === 'groupBuy'
   return {
     ...order,
+    order_source: order.orderSource,
+    source_name: order.orderSource,
+    is_group_buy: isGroupBuy,
     lottery_code: order.lotteryId,
     lottery_name: order.lotteryName,
     play_code: order.ruleCode,

@@ -108,6 +108,7 @@ export interface SaveDrawSourceRequest {
 export interface OrderSummary {
   createdAt: string;
   id: string;
+  orderSource: 'direct' | 'groupBuy';
   userId: string;
   lotteryId: string;
   lotteryName: string;

@@ -2,6 +2,7 @@ import type { LotteryNumberType } from './dashboard';
 import type { PlayRuleCode, PlaySelection } from './playRules';
 
 export type OrderStatus = 'pendingDraw' | 'won' | 'lost' | 'cancelled';
+export type OrderSource = 'direct' | 'groupBuy';
 
 export interface CreateOrderRequest {
   issue: string;
@@ -25,6 +26,7 @@ export interface OrderDetail {
   selection: PlaySelection;
   stakeCount: number;
   oddsBasisPoints: number;
+  orderSource: OrderSource;
   drawNumber: string | null;
   matchedBets: string[];
   payoutMinor: number;

@@ -80,7 +80,15 @@ export function useBetBatchSubmit() {
       return null
     }
     if (!cart.length) {
-      showToast('请先加入篮子')
+      showToast('请先加入购彩篮')
+      return null
+    }
+    if (cart.some(item => item.lottery_code !== lotteryCode)) {
+      showToast('购彩篮只能提交同一个彩种的投注')
+      return null
+    }
+    if (cart.some(item => item.issue !== issue)) {
+      showToast('期号已变化，请清空购彩篮后重新选择')
       return null
     }
     const items = buildUserBetOrders(cart, lotteryCode, issue, playMeta)

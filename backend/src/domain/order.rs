@@ -18,8 +18,16 @@ pub enum OrderStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum OrderSource {
+    Direct,
+    GroupBuy,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderSummary {
     pub id: String,
+    pub order_source: OrderSource,
     pub user_id: String,
     pub lottery_id: String,
     pub lottery_name: String,
@@ -59,6 +67,7 @@ pub struct OrderQuote {
 #[serde(rename_all = "camelCase")]
 pub struct OrderDetail {
     pub id: String,
+    pub order_source: OrderSource,
     pub user_id: String,
     pub lottery_id: String,
     pub lottery_name: String,
@@ -84,6 +93,7 @@ impl OrderDetail {
     pub fn summary(&self) -> OrderSummary {
         OrderSummary {
             id: self.id.clone(),
+            order_source: self.order_source.clone(),
             user_id: self.user_id.clone(),
             lottery_id: self.lottery_id.clone(),
             lottery_name: self.lottery_name.clone(),

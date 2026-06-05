@@ -43,14 +43,14 @@ function confirmChanges() {
       <div class="mx-auto mb-5 h-1.5 w-12 rounded-full bg-[#e2e2e2]"></div>
       <div class="mb-5 flex items-center justify-between">
         <div>
-          <h2 class="font-headline text-2xl font-extrabold text-[#1a1c1c]">编辑单据</h2>
+          <h2 class="font-headline text-2xl font-extrabold text-[#1a1c1c]">编辑购彩篮</h2>
           <p class="mt-1 text-xs text-[#8e706d]">编辑后请确认修改</p>
         </div>
         <button class="text-sm text-[#5a403e] disabled:opacity-40" type="button" :disabled="editableItems.length === 0" @click="clearEditableItems">清空</button>
       </div>
       <div v-if="editableItems.length === 0" class="rounded-3xl bg-white px-5 py-10 text-center shadow-sm shadow-red-900/5">
         <div class="font-headline text-xl font-extrabold text-[#1a1c1c]">暂无单据</div>
-        <p class="mt-2 text-sm text-[#8e706d]">先选择号码并加入篮子</p>
+        <p class="mt-2 text-sm text-[#8e706d]">先选择号码并加入购彩篮</p>
       </div>
       <div v-else class="max-h-[58vh] space-y-4 overflow-y-auto pb-4">
         <article v-for="item in editableItems" :key="item.id" class="rounded-3xl bg-white p-5 shadow-sm shadow-red-900/5">

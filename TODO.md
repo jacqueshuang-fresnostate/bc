@@ -1,5 +1,29 @@
 # TODO
 
+## 2026-06-05 17:36 HKT 注单来源与下注购彩篮提示修正
+
+- 完成任务：修正注单记录来源展示和下注页加入购彩篮交互。
+- 解决问题：
+  - 注单记录此前无法稳定区分独立下单和合买满单生成的真实投注订单。
+  - 手机端下注页按钮使用“加入组合/加入篮子”文案，容易让用户误解为跨彩种玩法组合。
+  - 下注页失败提示仍读取旧系统 `detail` 字段，当前后端统一信封返回 `message` 时可能只显示兜底提示。
+  - 购彩篮虽然路由切换时会清空，但加入和提交动作缺少同彩种、同期号的边界校验。
+- 具体实现：
+  - 后端订单领域新增 `orderSource`，普通订单为 `direct`，合买成单订单为 `groupBuy`。
+  - 新增迁移 `20260605173000_add_order_source.sql`，为 `orders.order_source` 设置默认值并补充中文注释。
+  - 订单仓储 PostgreSQL 读写、订单摘要、用户注单列表和后台订单类型同步返回订单来源。
+  - 合买满单成单链路调用 `create_with_source(..., OrderSource::GroupBuy)`，普通下单仍走默认 `direct`。
+  - 手机端注单归一化保留 `orderSource/order_source/is_group_buy`，卡片和详情展示“独立下单/合买下单”。
+  - 动态下注页按钮和购物篮弹层统一使用“加入购彩篮/提交购彩篮”，加入和提交时校验只能同一彩种、同一期号。
+  - 下注页错误提示优先读取 `response.data.message`，兼容旧 `detail` 字段。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml --check` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml` 通过，202 条后端测试全部成功。
+  - `cd admin && npm run build` 通过；Vite 仍提示后台主 chunk 体积超过 500 kB，这是既有构建体积提示。
+  - `cd mobile && npm run build` 通过。
+- 后续动作：如后续需要把注单记录按来源筛选，可在 `/api/user/bet/orders` 和后台订单列表继续增加 `orderSource` 筛选参数。
+
 ## 2026-06-05 17:26 HKT 合买机器人分阶段补单修正
 
 - 完成任务：修正合买机器人补单策略，让机器人不能创建后一次性满单，而是在临近封盘时按节奏分阶段补单。

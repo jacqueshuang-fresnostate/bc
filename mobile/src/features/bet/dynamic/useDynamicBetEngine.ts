@@ -228,6 +228,14 @@ export function useDynamicBetEngine(config: () => BetPageConfig | null, selected
       showToast('请输入投注金额')
       return false
     }
+    if (cart.value.some(item => item.lottery_code !== pageConfig.lottery.code)) {
+      showToast('购彩篮只能加入同一个彩种的投注')
+      return false
+    }
+    if (cart.value.some(item => item.issue !== pageConfig.round.issue)) {
+      showToast('当前期号已变化，请先清空购彩篮后重新选择')
+      return false
+    }
     unitAmount.value = backendUnitAmount.value
     multiple.value = clampMultiple(multiple.value || backendMultiple.value, play)
     // 篮子单据保存提交号码和展示号码两份数据，后续弹层编辑不需要重新读取玩法配置。
@@ -247,7 +255,7 @@ export function useDynamicBetEngine(config: () => BetPageConfig | null, selected
       bet_count: draftBetCount.value,
     })
     resetDraft(play)
-    showToast('已加入篮子')
+    showToast('已加入购彩篮')
     return true
   }
 

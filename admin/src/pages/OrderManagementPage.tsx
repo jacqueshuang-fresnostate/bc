@@ -210,6 +210,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                   <tr>
                     <th className="py-2 pr-4 font-medium">订单</th>
                     <th className="py-2 pr-4 font-medium">用户</th>
+                    <th className="py-2 pr-4 font-medium">来源</th>
                     <th className="py-2 pr-4 font-medium">彩种</th>
                     <th className="py-2 pr-4 font-medium">玩法</th>
                     <th className="py-2 pr-4 font-medium">注数</th>
@@ -229,6 +230,11 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                         <div className="mt-1 text-xs text-slate-400">{order.issue}</div>
                       </td>
                       <td className="py-3 pr-4 text-slate-600">{order.userId}</td>
+                      <td className="py-3 pr-4">
+                        <Tag color={order.orderSource === 'groupBuy' ? 'orange' : 'blue'}>
+                          {orderSourceText(order.orderSource)}
+                        </Tag>
+                      </td>
                       <td className="py-3 pr-4">
                         <div className="font-medium text-ink">{order.lotteryName}</div>
                         <div className="mt-1 text-xs text-slate-400">{order.lotteryId}</div>
@@ -722,6 +728,10 @@ function statusText(status: OrderStatus) {
     won: '已中奖',
   };
   return labels[status];
+}
+
+function orderSourceText(source: OrderDetail['orderSource']) {
+  return source === 'groupBuy' ? '合买下单' : '独立下单';
 }
 
 function statusColor(status: OrderStatus) {
