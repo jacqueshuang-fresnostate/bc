@@ -1,3 +1,4 @@
+import type { FinancePage } from './finance';
 import type { OrderStatus } from './orders';
 import type { PlayRuleCode } from './playRules';
 
@@ -28,3 +29,5 @@ export interface SettlementRun {
   createdAt: string;
   orders: OrderSettlement[];
 }
+
+export type SettlementPage = FinancePage<SettlementRun>;

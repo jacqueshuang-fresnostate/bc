@@ -1,6 +1,7 @@
 import { Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
 import { Calculator, RefreshCcw } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { PageControls } from '../components/PageControls';
 import { useDraws } from '../hooks/useDraws';
 import { useSettlements } from '../hooks/useSettlements';
 import type { DrawIssue } from '../types/draws';
@@ -21,14 +22,20 @@ export function SettlementManagementPage({
     loading: drawsLoading,
     refresh: refreshDraws,
   } = useDraws();
+  const [settlementPageNumber, setSettlementPageNumber] = useState(1);
+  const [settlementPageSize, setSettlementPageSize] = useState(20);
   const {
     error: settlementError,
     loading: settlementsLoading,
     refresh: refreshSettlements,
     saving,
     settle,
+    settlementPage,
     settlements,
-  } = useSettlements();
+  } = useSettlements({
+    page: settlementPageNumber,
+    pageSize: settlementPageSize,
+  });
   const [selectedDrawIssueId, setSelectedDrawIssueId] = useState<string | null>(null);
   const [selectedSettlementId, setSelectedSettlementId] = useState<string | null>(null);
 
@@ -77,6 +84,7 @@ export function SettlementManagementPage({
       return;
     }
     const settlement = await settle(selectedDrawIssue.id);
+    setSettlementPageNumber(1);
     setSelectedSettlementId(settlement.id);
     refreshDraws();
     onDashboardRefresh();
@@ -159,9 +167,23 @@ export function SettlementManagementPage({
         </Card>
 
         <Card className="rounded-md border border-line">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">结算批次</h2>
-            <Tag color="cyan">{settlements.length} 个批次</Tag>
+          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-ink">结算批次</h2>
+              <Tag color="cyan">{settlementPage.totalCount} 个批次</Tag>
+            </div>
+            <PageControls
+              loading={loading}
+              page={settlementPage.page}
+              pageSize={settlementPageSize}
+              totalCount={settlementPage.totalCount}
+              totalPages={settlementPage.totalPages}
+              onPageChange={setSettlementPageNumber}
+              onPageSizeChange={(nextPageSize) => {
+                setSettlementPageNumber(1);
+                setSettlementPageSize(nextPageSize);
+              }}
+            />
           </div>
 
           {loading ? (

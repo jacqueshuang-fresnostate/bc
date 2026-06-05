@@ -1,5 +1,18 @@
 # TODO
 
+## 2026-06-06 02:55 HKT 后台计奖派奖分页
+
+- 完成任务：为后台“计奖派奖”的结算批次列表补充分页能力。
+- 解决问题：
+  - 结算批次此前一次性拉取并展示全部记录，历史开奖结算增多后页面加载和扫描会变慢。
+  - 计奖派奖页面没有复用后台公共分页控件，和订单、财务、合买列表的分页交互不一致。
+- 实施内容：
+  - 后端 `GET /api/admin/settlements` 改为返回分页结构 `items/totalCount/page/pageSize/totalPages`，支持 `page` 和 `pageSize`。
+  - 管理后台 `fetchSettlements` 和 `useSettlements` 改为消费分页结构。
+  - 计奖派奖页面新增每页条数、上一页和下一页控件，并在执行新结算后回到第 1 页。
+  - OpenAPI 说明、前端规范和架构说明同步记录结算批次分页契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`cd admin && npm run build` 和 `git diff --check` 均通过；管理后台构建仅保留既有 Vite chunk 体积提示。
+
 ## 2026-06-06 02:50 HKT 后台订单管理分页
 
 - 完成任务：为后台订单管理补充分页能力，并统一后台分页控件。

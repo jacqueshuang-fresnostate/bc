@@ -974,7 +974,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/settlements",
         "订单与结算",
         "结算批次列表",
-        "返回开奖结算批次列表。",
+        "分页返回开奖结算批次列表，可通过 page 和 pageSize 查询。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),

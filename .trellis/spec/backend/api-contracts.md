@@ -1243,7 +1243,7 @@ await drawIssueResult(issue.id, issue.drawMode === 'manual'
 
 ### 2. 签名
 
-- `GET /api/admin/settlements`
+- `GET /api/admin/settlements?page=1&pageSize=20`
 - `GET /api/admin/settlements/{id}`
 - `POST /api/admin/settlements/draw-issues/{id}`
 - `GET /api/admin/orders` 和 `GET /api/admin/orders/{id}` 的订单响应新增结算字段。
@@ -1252,6 +1252,20 @@ await drawIssueResult(issue.id, issue.drawMode === 'manual'
 ### 3. 契约
 
 所有接口继续使用统一 API 信封，金额字段必须使用最小货币单位整数。派奖金额使用订单创建时保存的 `oddsBasisPoints` 赔率快照计算，不能在结算时重新读取当前彩种赔率。
+
+结算批次列表返回分页结构：
+
+```json
+{
+  "items": [],
+  "totalCount": 0,
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 0
+}
+```
+
+`items` 中每一项为结算批次响应结构。
 
 执行结算：
 
@@ -1321,15 +1335,19 @@ POST /api/admin/settlements/draw-issues/D000000000001
 | 待结算订单玩法评估失败 | HTTP 400，透传玩法规则引擎校验错误 |
 | 派奖金额溢出 | HTTP 400，返回 `payout amount is too large` |
 | 期号没有待结算订单 | HTTP 200，生成 `settledOrderCount=0` 的结算批次 |
+| 结算批次列表 `page` 超过最大页 | 返回最后一页 |
+| 结算批次列表为空 | 返回空 `items`，`totalCount=0`，`totalPages=0` |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：`fc3d` 期号开奖 `0,2,3`，同期开奖的 `threeDirect` 订单选号 `023`，订单赔率快照 `oddsBasisPoints=104000`，结算后订单状态为 `won`，`matchedBets=["023"]`，单注 `200` 分派发 `2080` 分。
 - Good：同期开奖的未命中订单结算后状态为 `lost`，`matchedBets=[]`，`payoutMinor=0`。
 - Good：同一期号存在已取消订单时，取消订单不参与结算且状态保持 `cancelled`。
+- Good：计奖派奖页面请求 `GET /api/admin/settlements?page=1&pageSize=20`，表格展示第一页结算批次，总数来自 `totalCount`。
 - Base：结算批次当前保存在内存订单仓储，服务重启后清空；这适合当前后台流程验证。
 - Bad：路由函数直接判断中奖或修改订单状态；结算逻辑必须留在服务层/仓储层并复用玩法规则引擎。
 - Bad：结算路由绕过资金服务直接修改用户余额；派奖入账必须通过资金仓储生成 `payoutCredit` 流水。
+- Bad：前端继续把 `GET /api/admin/settlements` 当成 `SettlementRun[]` 消费；分页后必须读取 `data.items`。
 
 ### 6. 必要测试
 
@@ -1339,6 +1357,7 @@ POST /api/admin/settlements/draw-issues/D000000000001
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`。
 - 跨层联调需要完成“创建订单 → 创建/开奖期号 → 执行计奖派奖 → 查询订单列表和结算批次”。
+- 修改结算批次列表时，需要确认 `useSettlements` 消费分页信封，页面复用公共 `PageControls`。
 
 ### 7. Wrong vs Correct
 

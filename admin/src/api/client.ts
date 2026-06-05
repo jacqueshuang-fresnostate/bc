@@ -85,7 +85,7 @@ import type {
   InvitePolicySummary,
   InvitePolicyUpdateRequest,
 } from '../types/rebates';
-import type { SettlementRun } from '../types/settlements';
+import type { SettlementPage, SettlementRun } from '../types/settlements';
 import type {
   CreateSupportConversationRequest,
   SupportConversation,
@@ -847,8 +847,11 @@ export function cancelOrder(id: string) {
   });
 }
 
-export function fetchSettlements(signal?: AbortSignal) {
-  return requestJson<SettlementRun[]>('/api/admin/settlements', { signal });
+export function fetchSettlements(signal?: AbortSignal, query?: FinancePageQuery) {
+  return requestJson<SettlementPage>(
+    adminQueryPath('/api/admin/settlements', query),
+    { signal },
+  );
 }
 
 export function fetchSettlement(id: string, signal?: AbortSignal) {

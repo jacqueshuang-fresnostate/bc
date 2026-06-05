@@ -829,10 +829,12 @@ async fn cancel_draw_issue(
 
 async fn list_settlements(
     State(state): State<AppState>,
-) -> ApiResult<Json<ApiEnvelope<Vec<SettlementRun>>>> {
+    Query(query): Query<FinancePageQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<SettlementRun>>>> {
+    // 计奖派奖批次会持续增长，后台列表按统一分页信封返回。
     let settlements = state.orders.settlement_runs().await?;
 
-    Ok(Json(ApiEnvelope::success(settlements)))
+    Ok(Json(ApiEnvelope::success(page_items(settlements, query))))
 }
 
 async fn get_settlement(
