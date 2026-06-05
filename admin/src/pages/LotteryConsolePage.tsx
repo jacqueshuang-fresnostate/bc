@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
+import { OrderBetInfo } from '../components/OrderBetInfo';
 import { useLotteryConsole } from '../hooks/useLotteryConsole';
 import type { DrawMode, LotteryKind } from '../types/dashboard';
 import type {
@@ -27,6 +28,7 @@ import {
   drawNumberInputMeta,
   lotteryNumberTypeText as numberTypeText,
 } from '../utils/lotteries';
+import { formatBetInfoSummary } from '../utils/orderBetInfo';
 
 interface LotteryConsolePageProps {
   onDashboardRefresh: () => void;
@@ -559,7 +561,7 @@ function DrawControlSideSheet({
       aria-label="控制开奖号码"
       title="控制开奖号码"
       visible={visible}
-      width={520}
+      width={760}
       onCancel={onClose}
     >
       {lottery ? (
@@ -666,7 +668,14 @@ function DrawControlSideSheet({
               >
                 {controlOrders.map((order) => (
                   <Select.Option key={order.id} value={order.id}>
-                    {order.id} · 用户 {order.userId} · 第 {order.issue} 期 · {formatMoney(order.amountMinor)}
+                    <div className="min-w-0">
+                      <div className="truncate">
+                        {order.id} · 用户 {order.userId} · 第 {order.issue} 期 · {formatMoney(order.amountMinor)}
+                      </div>
+                      <div className="truncate text-xs text-slate-500">
+                        {formatBetInfoSummary(order.selection, order.expandedBets)}
+                      </div>
+                    </div>
                   </Select.Option>
                 ))}
               </Select>
@@ -685,13 +694,14 @@ function DrawControlSideSheet({
             </div>
             {visibleOrders.length > 0 ? (
               <div className="mt-3 max-h-[320px] overflow-auto">
-                <table className="w-full min-w-[760px] text-left text-xs">
+                <table className="w-full min-w-[1040px] text-left text-xs">
                   <thead className="border-b border-line text-slate-500">
                     <tr>
                       <th className="py-2 pr-3 font-medium">订单</th>
                       <th className="py-2 pr-3 font-medium">用户</th>
                       <th className="py-2 pr-3 font-medium">期号</th>
                       <th className="py-2 pr-3 font-medium">玩法</th>
+                      <th className="py-2 pr-3 font-medium">下注信息</th>
                       <th className="py-2 pr-3 font-medium">金额</th>
                       <th className="py-2 pr-3 font-medium">状态</th>
                       <th className="py-2 pr-3 font-medium">控制</th>
@@ -706,6 +716,9 @@ function DrawControlSideSheet({
                         <td className="py-2 pr-3 text-slate-600">{order.userId}</td>
                         <td className="py-2 pr-3 text-slate-600">{order.issue}</td>
                         <td className="py-2 pr-3 text-slate-600">{order.ruleCode}</td>
+                        <td className="py-2 pr-3">
+                          <OrderBetInfo compact expandedLimit={6} order={order} />
+                        </td>
                         <td className="py-2 pr-3 text-slate-600">
                           {formatMoney(order.amountMinor)}
                         </td>

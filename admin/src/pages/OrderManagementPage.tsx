@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import { OrderBetInfo } from '../components/OrderBetInfo';
 import { useDraws } from '../hooks/useDraws';
 import { useLotteries } from '../hooks/useLotteries';
 import { useOrders } from '../hooks/useOrders';
@@ -215,7 +216,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
             </div>
           ) : orders.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1120px] text-left text-sm">
+              <table className="w-full min-w-[1360px] text-left text-sm">
                 <thead className="border-b border-line text-xs text-slate-500">
                   <tr>
                     <th className="py-2 pr-4 font-medium">订单</th>
@@ -223,6 +224,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                     <th className="py-2 pr-4 font-medium">来源</th>
                     <th className="py-2 pr-4 font-medium">彩种</th>
                     <th className="py-2 pr-4 font-medium">玩法</th>
+                    <th className="py-2 pr-4 font-medium">下注信息</th>
                     <th className="py-2 pr-4 font-medium">注数</th>
                     <th className="py-2 pr-4 font-medium">金额</th>
                     <th className="py-2 pr-4 font-medium">赔率</th>
@@ -250,6 +252,9 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                         <div className="mt-1 text-xs text-slate-400">{order.lotteryId}</div>
                       </td>
                       <td className="py-3 pr-4 text-slate-600">{ruleLabel(order.ruleCode, rules)}</td>
+                      <td className="py-3 pr-4">
+                        <OrderBetInfo compact expandedLimit={8} order={order} />
+                      </td>
                       <td className="py-3 pr-4 text-slate-600">{order.stakeCount} 注</td>
                       <td className="py-3 pr-4 text-slate-600">{formatMoney(order.amountMinor)}</td>
                       <td className="py-3 pr-4 text-slate-600">
@@ -432,12 +437,8 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
               <div className="mt-1">
                 {createdOrder.stakeCount} 注，金额 {formatMoney(createdOrder.amountMinor)}
               </div>
-              <div className="mt-2 flex max-h-[120px] flex-wrap gap-2 overflow-auto">
-                {createdOrder.expandedBets.slice(0, 24).map((bet) => (
-                  <Tag key={bet} color="blue">
-                    {bet}
-                  </Tag>
-                ))}
+              <div className="mt-3 max-h-[180px] overflow-auto">
+                <OrderBetInfo expandedLimit={24} order={createdOrder} />
               </div>
             </div>
           ) : null}
