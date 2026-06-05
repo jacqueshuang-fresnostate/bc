@@ -63,6 +63,7 @@ use crate::{
             audience_matches, balance_changed_event, heartbeat_event, order_changed_event,
             recharge_changed_event, support_message_created_event, withdrawal_changed_event,
         },
+        rebate::credit_recharge_rebate_for_order,
     },
 };
 
@@ -506,7 +507,7 @@ async fn get_user_invitation_summary(
         direct_count: direct_users.len(),
         active_direct_count,
         total_direct_deposit_minor,
-        total_paid_commission_minor: 0,
+        total_paid_commission_minor: user_recharge_rebate_minor(&state, &session.user.id).await?,
         rebate_mode: policy.rebate_mode,
         default_recharge_rebate_basis_points: policy.default_recharge_rebate_basis_points,
         direct_users,
@@ -589,6 +590,26 @@ fn sum_recharge_credits_minor(entries: &[LedgerEntry]) -> ApiResult<i64> {
             total
                 .checked_add(entry.amount_minor)
                 .ok_or_else(|| ApiError::Internal("直属用户充值汇总金额溢出".to_string()))
+        })
+}
+
+/// 统计当前代理已真实入账的充值返利流水。
+async fn user_recharge_rebate_minor(state: &AppState, user_id: &str) -> ApiResult<i64> {
+    let entries = state.finance.user_ledger_entries(user_id).await?;
+    sum_recharge_rebate_credits_minor(&entries)
+}
+
+/// 汇总正向充值返利流水，作为邀请中心“已结算返利”来源。
+fn sum_recharge_rebate_credits_minor(entries: &[LedgerEntry]) -> ApiResult<i64> {
+    entries
+        .iter()
+        .filter(|entry| {
+            matches!(entry.kind, LedgerEntryKind::RechargeRebateCredit) && entry.amount_minor > 0
+        })
+        .try_fold(0_i64, |total, entry| {
+            total
+                .checked_add(entry.amount_minor)
+                .ok_or_else(|| ApiError::Internal("邀请返利汇总金额溢出".to_string()))
         })
 }
 
@@ -1423,8 +1444,25 @@ async fn confirm_rainbow_notify(
         .recharges
         .confirm_rainbow_notify(params, &settings, &state.finance)
         .await?;
+    let rebate_entry = credit_recharge_rebate_for_order(
+        &state.access,
+        &state.invites,
+        &state.rebates,
+        &state.finance,
+        &order,
+    )
+    .await?;
     publish_user_recharge_changed(&state, &order);
     publish_user_balance_changed(&state, &order.user_id, "recharge_credit", Some(&order.id)).await;
+    if let Some(entry) = rebate_entry {
+        publish_user_balance_changed(
+            &state,
+            &entry.user_id,
+            "recharge_rebate_credit",
+            entry.reference_id.as_deref(),
+        )
+        .await;
+    }
 
     Ok("success".to_string())
 }
@@ -1699,6 +1737,21 @@ mod tests {
         let amount = sum_recharge_credits_minor(&entries).expect("充值汇总不应失败");
 
         assert_eq!(amount, 15_000);
+    }
+
+    #[test]
+    /// 验证邀请中心已结算返利只统计真实充值返利入账流水。
+    fn user_invitation_paid_commission_counts_recharge_rebate_credit() {
+        let entries = vec![
+            test_ledger_entry("L-001", LedgerEntryKind::RechargeRebateCredit, 350),
+            test_ledger_entry("L-002", LedgerEntryKind::RechargeCredit, 10_000),
+            test_ledger_entry("L-003", LedgerEntryKind::RechargeRebateCredit, -100),
+            test_ledger_entry("L-004", LedgerEntryKind::PayoutCredit, 500),
+        ];
+
+        let amount = sum_recharge_rebate_credits_minor(&entries).expect("返利汇总不应失败");
+
+        assert_eq!(amount, 350);
     }
 
     #[test]

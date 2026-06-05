@@ -6,8 +6,15 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::{
-    domain::rebate::{InvitePolicySummary, InvitePolicyUpdateRequest, RebateMode},
+    domain::{
+        finance::LedgerEntry,
+        invite::{InviteRecord, InviteStatus},
+        rebate::{InvitePolicySummary, InvitePolicyUpdateRequest, RebateMode},
+        recharge::RechargeOrderSummary,
+        user::{UserKind, UserStatus, UserSummary},
+    },
     error::{ApiError, ApiResult},
+    services::{access::AccessRepository, finance::FinanceRepository, invite::InviteRepository},
 };
 
 use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
@@ -199,10 +206,112 @@ fn supported_rebate_modes() -> Vec<RebateMode> {
     vec![RebateMode::Immediate, RebateMode::RechargeTiered]
 }
 
+/// 充值成功后尝试给上级代理发放返利；没有符合条件的代理时静默跳过。
+pub async fn credit_recharge_rebate_for_order(
+    access: &AccessRepository,
+    invites: &InviteRepository,
+    rebates: &RebateRepository,
+    finance: &FinanceRepository,
+    order: &RechargeOrderSummary,
+) -> ApiResult<Option<LedgerEntry>> {
+    let policy = rebates.get().await?;
+    let rebate_amount_minor = recharge_rebate_amount_minor(order.amount_minor, &policy)?;
+    if rebate_amount_minor <= 0 {
+        return Ok(None);
+    }
+
+    let users = access.users().await?;
+    let invite_records = invites.list().await?;
+    let Some(recipient) =
+        recharge_rebate_recipient(&order.user_id, &users, &invite_records, &policy)
+    else {
+        return Ok(None);
+    };
+
+    let entry = finance
+        .credit_recharge_rebate(
+            &recipient.id,
+            &order.user_id,
+            rebate_amount_minor,
+            &order.id,
+        )
+        .await?;
+
+    Ok(Some(entry))
+}
+
+/// 计算充值返利金额；阶梯模式未配置独立阶梯时沿用默认比例，避免策略开启后不发放。
+fn recharge_rebate_amount_minor(
+    recharge_amount_minor: i64,
+    policy: &InvitePolicySummary,
+) -> ApiResult<i64> {
+    if recharge_amount_minor <= 0 || policy.default_recharge_rebate_basis_points == 0 {
+        return Ok(0);
+    }
+
+    let basis_points = i64::from(policy.default_recharge_rebate_basis_points);
+    recharge_amount_minor
+        .checked_mul(basis_points)
+        .map(|amount| amount / 10_000)
+        .ok_or_else(|| ApiError::BadRequest("充值返利金额过大".to_string()))
+}
+
+/// 根据后台邀请记录或注册代理关系解析返利接收代理。
+fn recharge_rebate_recipient(
+    invitee_user_id: &str,
+    users: &[UserSummary],
+    invite_records: &[InviteRecord],
+    policy: &InvitePolicySummary,
+) -> Option<UserSummary> {
+    if !policy.agents_can_invite {
+        return None;
+    }
+
+    let users_by_id = users
+        .iter()
+        .map(|user| (user.id.as_str(), user))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let records_for_invitee = invite_records
+        .iter()
+        .filter(|record| record.invitee_user_id == invitee_user_id)
+        .collect::<Vec<_>>();
+
+    if !records_for_invitee.is_empty() {
+        return records_for_invitee.into_iter().find_map(|record| {
+            if !matches!(record.status, InviteStatus::Active) || !record.rebate_enabled {
+                return None;
+            }
+            let inviter = users_by_id.get(record.inviter_user_id.as_str())?;
+            eligible_rebate_agent(inviter, invitee_user_id).then(|| (*inviter).clone())
+        });
+    }
+
+    let invitee = users_by_id.get(invitee_user_id)?;
+    let agent_id = invitee.agent_id.as_deref()?;
+    let agent = users_by_id.get(agent_id)?;
+    eligible_rebate_agent(agent, invitee_user_id).then(|| (*agent).clone())
+}
+
+/// 校验返利接收方必须是有效代理，普通用户的邀请码不会产生充值返利。
+fn eligible_rebate_agent(user: &UserSummary, invitee_user_id: &str) -> bool {
+    user.id != invitee_user_id
+        && matches!(user.kind, UserKind::Agent)
+        && matches!(user.status, UserStatus::Active)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::business_database::BusinessDatabase;
+    use crate::{
+        domain::{
+            recharge::{RechargeChannel, RechargeOrderStatus, RechargeOrderSummary},
+            user::{UserKind, UserStatus, UserSummary},
+        },
+        services::{
+            access::AccessRepository, business_database::BusinessDatabase,
+            finance::FinanceRepository, invite::InviteRepository,
+        },
+    };
 
     #[tokio::test]
     async fn rebate_repository_updates_invite_policy() {
@@ -260,6 +369,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recharge_rebate_is_paid_to_active_agent_once() {
+        let access = AccessRepository::memory_seeded();
+        let invites = InviteRepository::memory_seeded();
+        let rebates = RebateRepository::memory_seeded();
+        let finance = FinanceRepository::memory_seeded();
+        let order = recharge_order("U10001", 10_000);
+
+        let entry = credit_recharge_rebate_for_order(&access, &invites, &rebates, &finance, &order)
+            .await
+            .expect("recharge rebate should be processed")
+            .expect("active agent invite should receive rebate");
+        let repeated =
+            credit_recharge_rebate_for_order(&access, &invites, &rebates, &finance, &order)
+                .await
+                .expect("recharge rebate should stay idempotent")
+                .expect("existing rebate entry should be returned");
+        let account = finance
+            .account_or_create("U90001")
+            .await
+            .expect("agent account should exist");
+
+        assert_eq!(entry.id, repeated.id);
+        assert_eq!(entry.amount_minor, 350);
+        assert_eq!(account.available_balance_minor, 520_350);
+    }
+
+    #[tokio::test]
+    async fn recharge_rebate_skips_disabled_invite_record_without_agent_link_fallback() {
+        let access = AccessRepository::memory_seeded();
+        let invites = InviteRepository::memory_seeded();
+        let rebates = RebateRepository::memory_seeded();
+        let finance = FinanceRepository::memory_seeded();
+        let order = recharge_order("U10004", 10_000);
+
+        let entry = credit_recharge_rebate_for_order(&access, &invites, &rebates, &finance, &order)
+            .await
+            .expect("recharge rebate skip should not fail");
+        let account = finance
+            .account_or_create("U90001")
+            .await
+            .expect("agent account should exist");
+
+        assert!(entry.is_none());
+        assert_eq!(account.available_balance_minor, 520_000);
+    }
+
+    #[tokio::test]
+    async fn recharge_rebate_uses_registered_agent_link_when_no_manual_record_exists() {
+        let access = AccessRepository::memory_seeded();
+        access
+            .create_user(UserSummary {
+                id: "U20010".to_string(),
+                username: "linked_invitee".to_string(),
+                email: None,
+                kind: UserKind::Regular,
+                status: UserStatus::Active,
+                balance_minor: 0,
+                agent_id: Some("U90001".to_string()),
+                invite_code: "ZXCV1234".to_string(),
+            })
+            .await
+            .expect("linked user can be created");
+        let invites = InviteRepository::memory_seeded();
+        let rebates = RebateRepository::memory_seeded();
+        let finance = FinanceRepository::memory_seeded();
+        let order = recharge_order("U20010", 20_000);
+
+        let entry = credit_recharge_rebate_for_order(&access, &invites, &rebates, &finance, &order)
+            .await
+            .expect("recharge rebate should be processed")
+            .expect("agent link should receive rebate");
+
+        assert_eq!(entry.user_id, "U90001");
+        assert_eq!(entry.amount_minor, 700);
+    }
+
+    #[tokio::test]
     async fn rebate_repository_persists_policy_when_test_database_configured() {
         let Ok(database_url) = std::env::var("BC_TEST_DATABASE_URL") else {
             return;
@@ -293,5 +479,22 @@ mod tests {
         assert!(restored.regular_users_can_invite);
         assert_eq!(restored.rebate_mode, RebateMode::RechargeTiered);
         assert_eq!(restored.default_recharge_rebate_basis_points, 618);
+    }
+
+    fn recharge_order(user_id: &str, amount_minor: i64) -> RechargeOrderSummary {
+        RechargeOrderSummary {
+            id: "R000000000001".to_string(),
+            user_id: user_id.to_string(),
+            username: "demo_user".to_string(),
+            channel: RechargeChannel::CustomerService,
+            amount_minor,
+            status: RechargeOrderStatus::Paid,
+            pay_type: None,
+            provider_trade_no: Some("测试收款".to_string()),
+            payment_url: None,
+            support_conversation_id: None,
+            created_at: "2026-06-06 03:00:00".to_string(),
+            paid_at: Some("2026-06-06 03:00:00".to_string()),
+        }
     }
 }

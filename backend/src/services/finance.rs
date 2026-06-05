@@ -199,6 +199,31 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 按充值订单给上级代理发放返利；同一个充值单和代理组合重复触发保持幂等。
+    pub async fn credit_recharge_rebate(
+        &self,
+        agent_user_id: &str,
+        invitee_user_id: &str,
+        rebate_amount_minor: i64,
+        recharge_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.credit_recharge_rebate(
+                agent_user_id,
+                invitee_user_id,
+                rebate_amount_minor,
+                recharge_order_id,
+            )?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     /// 提交提现申请时冻结用户可用余额，并按提现单号保持幂等。
     pub async fn freeze_withdrawal(
         &self,
@@ -869,6 +894,52 @@ impl FinanceStore {
         )
     }
 
+    /// 处理上级代理充值返利，引用 ID 使用充值单和代理 ID 保证幂等。
+    fn credit_recharge_rebate(
+        &mut self,
+        agent_user_id: &str,
+        invitee_user_id: &str,
+        rebate_amount_minor: i64,
+        recharge_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let agent_user_id = agent_user_id.trim();
+        let invitee_user_id = invitee_user_id.trim();
+        let recharge_order_id = recharge_order_id.trim();
+        if agent_user_id.is_empty() {
+            return Err(ApiError::BadRequest("代理用户 ID 不能为空".to_string()));
+        }
+        if invitee_user_id.is_empty() {
+            return Err(ApiError::BadRequest("下级用户 ID 不能为空".to_string()));
+        }
+        if agent_user_id == invitee_user_id {
+            return Err(ApiError::BadRequest(
+                "不能给同一用户发放邀请返利".to_string(),
+            ));
+        }
+        if rebate_amount_minor <= 0 {
+            return Err(ApiError::BadRequest("返利金额必须大于 0".to_string()));
+        }
+        if recharge_order_id.is_empty() {
+            return Err(ApiError::BadRequest("充值订单 ID 不能为空".to_string()));
+        }
+
+        let reference_id = recharge_rebate_reference_id(recharge_order_id, agent_user_id);
+        if let Some(entry) =
+            self.reference_entry(&LedgerEntryKind::RechargeRebateCredit, &reference_id)
+        {
+            return Ok(entry);
+        }
+
+        self.account_or_create(agent_user_id)?;
+        self.apply_available_delta(
+            agent_user_id,
+            LedgerEntryKind::RechargeRebateCredit,
+            rebate_amount_minor,
+            Some(reference_id),
+            format!("下级用户充值返利：订单 {recharge_order_id}，下级 {invitee_user_id}"),
+        )
+    }
+
     /// 提交提现申请时把可用余额转入冻结余额，并生成提现冻结流水。
     fn freeze_withdrawal(
         &mut self,
@@ -1198,6 +1269,11 @@ fn proportional_amount(total_minor: i64, part_minor: i64, base_minor: i64) -> Ap
         .ok_or_else(|| ApiError::BadRequest("合买派奖金额过大".to_string()))
 }
 
+/// 生成充值返利流水的业务引用 ID，用于支付回调、后台确认重复触发时识别同一笔返利。
+fn recharge_rebate_reference_id(recharge_order_id: &str, agent_user_id: &str) -> String {
+    format!("recharge-rebate:{recharge_order_id}:{agent_user_id}")
+}
+
 /// 处理 current_timestamp_label 的具体内部流程。
 fn current_timestamp_label() -> String {
     let seconds = SystemTime::now()
@@ -1419,6 +1495,29 @@ mod tests {
         assert_eq!(entry.kind, LedgerEntryKind::RechargeCredit);
         assert_eq!(entry.amount_minor, 1_500);
         assert_eq!(account.available_balance_minor, 13_500);
+    }
+
+    #[test]
+    /// 充值返利会入账给上级代理，并按充值单和代理组合保持幂等。
+    fn store_credits_recharge_rebate_once() {
+        let mut store = FinanceStore::seeded();
+
+        let entry = store
+            .credit_recharge_rebate("U90001", "U10001", 350, "R000000000001")
+            .expect("recharge rebate can be credited");
+        let repeated = store
+            .credit_recharge_rebate("U90001", "U10001", 350, "R000000000001")
+            .expect("recharge rebate is idempotent");
+        let account = store.account("U90001").expect("agent account exists");
+
+        assert_eq!(entry.id, repeated.id);
+        assert_eq!(entry.kind, LedgerEntryKind::RechargeRebateCredit);
+        assert_eq!(entry.amount_minor, 350);
+        assert_eq!(
+            entry.reference_id.as_deref(),
+            Some("recharge-rebate:R000000000001:U90001")
+        );
+        assert_eq!(account.available_balance_minor, 520_350);
     }
 
     #[test]

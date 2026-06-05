@@ -2118,3 +2118,10 @@
 - 解决问题：合买管理页此前一次性请求全部合买计划，计划数量增加后会拖慢页面加载和运营扫描。
 - 实施内容：`GET /api/admin/group-buy/plans` 支持 `page/pageSize` 并返回 `items/totalCount/page/pageSize/totalPages`；后台 API client、`useGroupBuyPlans` 和合买管理页面接入分页参数；列表顶部增加每页条数、上一页和下一页控件。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`npm run build`（admin）和 `git diff --check` 均通过；后端全量 220 条测试成功，新增覆盖后台分页结构的当前页切片、总数和总页数。
+
+## 2026-06-06 03:03 HKT 充值返利真实入账修复
+
+- 完成任务：补齐充值成功后给上级代理发放返利的真实资金链路，新增 `rechargeRebateCredit` 资金流水类型，并接入彩虹易支付回调和后台客服直充确认。
+- 解决问题：此前系统只有返利策略配置、邀请关系和邀请中心摘要，充值确认只给充值用户写 `rechargeCredit`，没有给上级代理写返利流水，导致“充值返利给上级代理”看起来完全没有作用；本次按后台邀请记录或注册 `agentId` 解析上级代理，并用 `recharge-rebate:{充值单号}:{代理用户 ID}` 幂等引用避免重复回调重复发放。
+- 实施内容：后端新增返利发放服务逻辑，优先使用 `status=active` 且 `rebateEnabled=true` 的人工邀请记录；被邀请人已有人工邀请记录但记录禁用时不回退 `agentId`；无人工记录时使用注册代理关系；返利接收方必须是有效代理用户。邀请中心 `totalPaidCommissionMinor` 改为统计真实正向 `rechargeRebateCredit` 流水；后台和手机端资金流水补充“充值返利”展示；数据库迁移更新 `ledger_entries.kind` 中文注释；同步更新架构说明和 API 契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、管理后台 `npm run build`、手机端 `npm run build` 和 `git diff --check` 均通过；后端全量 230 条测试成功。使用本地 PostgreSQL 连接启动后端烟测时迁移和仓储初始化未出现版本错误，随后立即停止服务；期间仅出现已有腾讯分分彩历史期号开奖源缺期警告，与本次返利修复无关。

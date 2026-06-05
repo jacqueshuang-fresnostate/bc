@@ -74,6 +74,7 @@ use crate::{
             support_conversation_updated_event, support_message_created_event,
             withdrawal_changed_event,
         },
+        rebate::credit_recharge_rebate_for_order,
         scheduler::DrawSchedulerConfig,
         scheduler::DrawSchedulerStatus,
     },
@@ -2017,8 +2018,25 @@ async fn confirm_recharge_order(
         .recharges
         .confirm_customer_service_order(&id, payload, &state.finance)
         .await?;
+    let rebate_entry = credit_recharge_rebate_for_order(
+        &state.access,
+        &state.invites,
+        &state.rebates,
+        &state.finance,
+        &order,
+    )
+    .await?;
     publish_user_recharge_changed(&state, &order);
     publish_user_balance_changed(&state, &order.user_id, "recharge_credit", Some(&order.id)).await;
+    if let Some(entry) = rebate_entry {
+        publish_user_balance_changed(
+            &state,
+            &entry.user_id,
+            "recharge_rebate_credit",
+            entry.reference_id.as_deref(),
+        )
+        .await;
+    }
 
     Ok(Json(ApiEnvelope::success(order)))
 }

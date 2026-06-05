@@ -98,7 +98,7 @@ export function RebateManagementPage({
               <div>
                 <h2 className="text-base font-semibold text-ink">策略维护</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  当前阶段只保存配置，真实充值返利发放在后续资金链路中接入。
+                  充值成功后会按当前策略给符合条件的上级代理发放返利。
                 </p>
               </div>
               <Button

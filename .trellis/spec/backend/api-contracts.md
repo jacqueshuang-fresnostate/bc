@@ -2389,7 +2389,7 @@ run_group_buy_robots(...).await?;
 2. `defaultRechargeRebateBasisPoints` 使用 basis points，`350` 表示 `3.50%`。
 3. `supportedRebateModes` 是后端只读能力列表，前端更新时不能提交该字段。
 4. `DashboardSummary.invitePolicy` 必须从 `RebateRepository` 读取，不允许 dashboard 内部返回静态返利摘要。
-5. 本阶段只维护配置，不执行真实充值返利发放，不写返利流水或财务入账。
+5. 充值成功后会按 `defaultRechargeRebateBasisPoints` 给符合条件的上级代理写入 `rechargeRebateCredit` 流水；`rechargeTiered` 尚未维护独立阶梯表时沿用默认比例发放。
 
 ### 4. 校验与错误矩阵
 
@@ -2686,9 +2686,9 @@ await createSupportConversation({
 2. 创建邀请关系时后端必须读取 `InvitePolicySummary` 判断邀请人是否有邀请权限。
 3. 邀请码所有人必须是 `agent` 用户；普通用户自己的邀请码会返回“邀请码无效”。
 4. `inviterUsername` 和 `inviteeUsername` 由后端根据用户仓储回填，前端不能提交或覆盖。
-5. `rebateEnabled` 只表示该邀请关系有返利资格，不代表已经发放返利。
+5. `rebateEnabled` 表示该邀请关系是否参与充值返利发放；充值成功时只有 `status=active` 且 `rebateEnabled=true` 的人工邀请记录会触发返利。
 6. 同一个代理邀请码可以创建多条不同被邀请人的邀请关系；重复关系仍按邀请人和被邀请人组合拒绝。
-7. 本阶段只做邀请关系配置，不执行真实充值返利发放，不写返利流水或财务入账。
+7. 同一被邀请人存在后台邀请记录时，充值返利以后台邀请记录为准；记录禁用或关闭返利时不再回退到用户表 `agentId`。
 
 ### 4. 校验与错误矩阵
 
@@ -4462,7 +4462,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
   "directCount": 2,
   "activeDirectCount": 1,
   "totalDirectDepositMinor": 15000,
-  "totalPaidCommissionMinor": 0,
+  "totalPaidCommissionMinor": 350,
   "rebateMode": "immediate",
   "defaultRechargeRebateBasisPoints": 300,
   "directUsers": []
@@ -4490,7 +4490,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 - 直属用户必须合并两类来源：后台邀请记录里的 `inviterUserId`，以及注册时写入用户表的 `agentId`。
 - 同一直属用户同时存在两类来源时，后台邀请记录优先，因为它包含人工维护的 `inviteStatus`、`rebateEnabled` 和 `createdAt`。
 - `totalDirectDepositMinor` 和直属用户 `totalDepositMinor` 只统计正向 `rechargeCredit` 资金流水。
-- 当前没有真实返利入账流水类型时，`totalPaidCommissionMinor` 固定返回 `0`，不能伪造返利金额。
+- `totalPaidCommissionMinor` 只统计当前代理自己的正向 `rechargeRebateCredit` 资金流水，不能用直属充值金额推算或伪造返利金额。
 
 ### 4. 校验与错误矩阵
 

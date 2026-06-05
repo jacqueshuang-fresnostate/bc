@@ -173,6 +173,7 @@ export type LedgerEntryKind =
   | 'orderRefund'
   | 'payoutCredit'
   | 'rechargeCredit'
+  | 'rechargeRebateCredit'
   | 'withdrawalFreeze'
   | 'withdrawalPayout'
   | 'withdrawalReject'
