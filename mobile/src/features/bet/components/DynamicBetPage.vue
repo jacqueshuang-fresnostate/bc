@@ -78,6 +78,11 @@ const groupBuyAvailable = computed(() => Boolean(config.value?.lottery.group_buy
 const groupBuyTotalAmount = computed(() => engine.cartTotalAmount.value + engine.draftAmount.value)
 const groupBuyTotalAmountText = computed(() => groupBuyTotalAmount.value.toFixed(2))
 const groupBuyFixedShareAmount = computed(() => config.value?.group_buy_settings.share_amount || '1.00')
+const groupBuyInitiatorMinBuyRatioText = computed(() => {
+  const ratio = Number(groupBuyInitiatorMinBuyRatio.value)
+  if (!Number.isFinite(ratio)) return `${groupBuyInitiatorMinBuyRatio.value}%`
+  return `${ratio.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}%`
+})
 const groupBuyDerivedShareCount = computed(() => calculateFixedShareCount(groupBuyTotalAmountText.value, groupBuyFixedShareAmount.value))
 const groupBuySafeShareCount = computed(() => groupBuyDerivedShareCount.value > 0 ? groupBuyDerivedShareCount.value : Math.max(1, Math.floor(Number(groupBuyShareCount.value || 1))))
 const groupBuySafeSelfShares = computed(() => Math.min(groupBuySafeShareCount.value, Math.max(0, Math.floor(Number(groupBuySelfShares.value || 0)))))
@@ -452,7 +457,7 @@ onBeforeUnmount(() => {
           <label class="flex items-center justify-between gap-4 rounded-2xl border border-[#f1dedb] bg-[#fffdfc] px-4 py-3">
             <span>
               <span class="block text-sm font-extrabold text-[#1a1c1c]">自购份数</span>
-              <span class="mt-0.5 block text-xs font-bold text-[#8e706d]">发起人最低自购 {{ groupBuyRequiredSelfShares }} 份（{{ groupBuyInitiatorMinBuyRatio }}%，0% 表示不限制）</span>
+              <span class="mt-0.5 block text-xs font-bold text-[#8e706d]">发起人最低自购{{ groupBuyInitiatorMinBuyRatioText }}</span>
             </span>
             <span class="flex shrink-0 items-center rounded-2xl bg-[#f8f1ef] px-3 py-2">
               <input v-model.number="groupBuySelfShares" class="w-16 bg-transparent text-right font-headline text-2xl font-extrabold text-[#1a1c1c] outline-none" type="number" inputmode="numeric" min="0" :max="groupBuySafeShareCount" @blur="clampGroupBuySelfShares" />
