@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  adminRealtimeUrl,
   fetchAdmins,
   fetchSupportConversations,
   replySupportConversation,
   updateSupportConversation,
 } from '../api/client';
+import { normalizeAdminRealtimeEvent } from '../types/realtime';
 import type { AdminSummary } from '../types/dashboard';
 import type {
   SupportConversation,
@@ -53,6 +55,69 @@ export function useSupportConversations() {
       controller.abort();
     };
   }, [refreshToken]);
+
+  useEffect(() => {
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | undefined;
+    let stopped = false;
+
+    const scheduleReconnect = () => {
+      if (stopped || reconnectTimer !== undefined) {
+        return;
+      }
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = undefined;
+        connect();
+      }, 3000);
+    };
+
+    const connect = () => {
+      if (stopped) {
+        return;
+      }
+      const url = adminRealtimeUrl();
+      if (!url) {
+        return;
+      }
+      socket?.close();
+      const nextSocket = new WebSocket(url);
+      socket = nextSocket;
+
+      nextSocket.onmessage = (event) => {
+        if (socket !== nextSocket) {
+          return;
+        }
+        try {
+          const message = normalizeAdminRealtimeEvent(JSON.parse(event.data));
+          if (message?.event === 'support.message_created') {
+            setConversations((current) => upsertById(current, message.conversation));
+          }
+        } catch {
+          setError('后台实时客服消息解析失败');
+        }
+      };
+      nextSocket.onclose = () => {
+        if (socket === nextSocket) {
+          scheduleReconnect();
+        }
+      };
+      nextSocket.onerror = () => {
+        if (socket === nextSocket) {
+          setError('后台实时客服连接异常');
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      stopped = true;
+      if (reconnectTimer !== undefined) {
+        window.clearTimeout(reconnectTimer);
+      }
+      socket?.close();
+    };
+  }, []);
 
   const update = useCallback(
     async (id: string, payload: UpdateSupportConversationRequest) => {

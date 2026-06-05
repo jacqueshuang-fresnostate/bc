@@ -1,5 +1,29 @@
 # TODO
 
+## 2026-06-05 17:58 HKT 客服直充 WebSocket 实时聊天
+
+- 完成任务：把客服直充会话接入 WebSocket 实时聊天，用户和后台客服发送消息后对方可以实时刷新。
+- 解决问题：
+  - 客服直充此前只通过 HTTP 创建会话和手动查询消息，用户或客服发消息后另一端无法实时看到。
+  - 现有用户实时通道只有开奖、余额、订单、充值和提现事件，缺少客服消息事件。
+  - 后台没有可供浏览器使用的实时连接入口，不能实时接收用户发来的客服直充消息。
+- 具体实现：
+  - 后端实时事件中心新增后台受众和 `publish_admin`，普通用户和匿名连接不会收到后台私有事件。
+  - 新增 `support.message_created` 事件，携带 `conversationId`、`userId`、完整会话和最新消息。
+  - 新增后台 `/api/admin/realtime?token=<管理员登录 token>` WebSocket 入口，校验管理员 token 和客服权限。
+  - 客服直充创建会话、用户发送客服消息、后台回复客服消息后，都会把消息事件推送给会话所属用户和后台客服连接。
+  - 管理后台客服 hook 建立后台实时连接，收到消息事件后 upsert 会话。
+  - 手机端实时事件归一化新增 `support_message_created`，客服页收到事件后重新拉取会话详情。
+  - OpenAPI、Trellis 后端契约和架构设计同步记录客服直充实时聊天规则。
+- 验证记录：
+  - `cargo fmt --manifest-path backend/Cargo.toml --check` 通过。
+  - `cargo check --manifest-path backend/Cargo.toml` 通过。
+  - `cargo test --manifest-path backend/Cargo.toml realtime -- --nocapture` 通过，4 条实时事件定向测试全部成功。
+  - `cargo test --manifest-path backend/Cargo.toml` 通过，205 条后端测试全部成功。
+  - `cd admin && npm run build` 通过；Vite 仍提示后台主 chunk 超过 500 kB，这是既有构建体积提示。
+  - `cd mobile && npm run build` 通过。
+- 后续动作：后续继续补消息已读回执、客服在线状态、输入中状态和文件消息。
+
 ## 2026-06-05 17:43 HKT 合买机器人前台展示伪装修正
 
 - 完成任务：隐藏合买机器人发起计划在手机端的机器人痕迹，并保证不同机器人计划显示不同发起人。

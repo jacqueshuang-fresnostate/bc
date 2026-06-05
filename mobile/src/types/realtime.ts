@@ -2,6 +2,7 @@ export type MobileRealtimeEvent =
   | MobileDrawResultEvent
   | MobileIssueEvent
   | MobileUserRealtimeEvent
+  | MobileSupportRealtimeEvent
   | MobileHeartbeatEvent
 
 export type MobileDrawResultEvent = {
@@ -33,6 +34,14 @@ export type MobileIssueEvent = {
 export type MobileUserRealtimeEvent = {
   event: 'balance_changed' | 'order_changed' | 'recharge_changed' | 'withdrawal_changed'
   sourceEvent: 'user.balance_changed' | 'user.order_changed' | 'user.recharge_changed' | 'user.withdrawal_changed'
+  data: Record<string, unknown>
+  occurredAt: string
+}
+
+export type MobileSupportRealtimeEvent = {
+  event: 'support_message_created'
+  sourceEvent: 'support.message_created'
+  conversationId: string
   data: Record<string, unknown>
   occurredAt: string
 }
@@ -100,6 +109,15 @@ export function normalizeRealtimeEvent(raw: unknown): MobileRealtimeEvent | null
     return {
       event: event.replace('user.', '').replace(/_/g, '_') as MobileUserRealtimeEvent['event'],
       sourceEvent: event,
+      data,
+      occurredAt,
+    }
+  }
+  if (event === 'support.message_created') {
+    return {
+      event: 'support_message_created',
+      sourceEvent: event,
+      conversationId: stringValue(data.conversationId),
       data,
       occurredAt,
     }

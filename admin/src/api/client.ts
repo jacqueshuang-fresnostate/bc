@@ -132,6 +132,21 @@ export function getStoredAuthToken() {
   return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
 }
 
+export function adminRealtimeUrl() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const token = getStoredAuthToken();
+  if (!token) {
+    return null;
+  }
+  const base = API_BASE_URL || window.location.origin;
+  const url = new URL('/api/admin/realtime', base);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('token', token);
+  return url.toString();
+}
+
 export function setStoredAuthToken(token: string) {
   window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
 }

@@ -11,8 +11,10 @@ import {
   type SupportMessage,
 } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import type { MobileRealtimeEvent } from '../types/realtime'
 import { formatDateTime } from '../utils/lotteryFormat'
 
+const props = defineProps<{ wsMessage?: MobileRealtimeEvent | null }>()
 const router = useRouter()
 const route = useRoute()
 const draft = ref('')
@@ -107,6 +109,16 @@ watch(routeConversationId, (conversationId) => {
   if (conversationId && conversationId !== activeConversationId.value) {
     void loadSupportData(conversationId)
   }
+})
+
+watch(() => props.wsMessage, (message) => {
+  if (message?.event !== 'support_message_created' || !message.conversationId) return
+  const preferredConversationId = (
+    !activeConversationId.value || activeConversationId.value === message.conversationId
+      ? message.conversationId
+      : activeConversationId.value
+  )
+  void loadSupportData(preferredConversationId)
 })
 
 onMounted(() => {

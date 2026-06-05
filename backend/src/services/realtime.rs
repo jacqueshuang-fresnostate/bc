@@ -5,8 +5,12 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
 use crate::domain::{
-    draw::DrawIssue, finance::FinancialAccountSummary, order::OrderDetail,
-    recharge::RechargeOrderSummary, withdrawal::WithdrawalOrderSummary,
+    draw::DrawIssue,
+    finance::FinancialAccountSummary,
+    order::OrderDetail,
+    recharge::RechargeOrderSummary,
+    support::{SupportConversation, SupportMessage},
+    withdrawal::WithdrawalOrderSummary,
 };
 
 const REALTIME_CHANNEL_CAPACITY: usize = 512;
@@ -15,6 +19,7 @@ const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RealtimeAudience {
     Public,
+    Admin,
     User(String),
 }
 
@@ -58,6 +63,11 @@ impl RealtimeHub {
         self.publish(RealtimeAudience::User(user_id.to_string()), payload);
     }
 
+    /// 发布后台私有事件，仅推给通过管理员 token 建立的后台连接。
+    pub fn publish_admin(&self, payload: Value) {
+        self.publish(RealtimeAudience::Admin, payload);
+    }
+
     /// 写入广播通道；没有订阅者时忽略发送失败，避免影响主业务事务。
     fn publish(&self, audience: RealtimeAudience, payload: Value) {
         let _ = self.sender.send(RealtimeMessage { audience, payload });
@@ -68,8 +78,14 @@ impl RealtimeHub {
 pub fn audience_matches(audience: &RealtimeAudience, user_id: Option<&str>) -> bool {
     match audience {
         RealtimeAudience::Public => true,
+        RealtimeAudience::Admin => false,
         RealtimeAudience::User(target_user_id) => user_id.is_some_and(|id| id == target_user_id),
     }
+}
+
+/// 判断当前后台连接是否可以收到目标事件。
+pub fn admin_audience_matches(audience: &RealtimeAudience) -> bool {
+    matches!(audience, RealtimeAudience::Public | RealtimeAudience::Admin)
 }
 
 /// 封装心跳事件，帮助客户端判断连接是否存活。
@@ -182,6 +198,23 @@ pub fn withdrawal_changed_event(order: &WithdrawalOrderSummary) -> Value {
     )
 }
 
+/// 封装客服消息新增事件，用于客服直充和在线客服聊天实时刷新。
+pub fn support_message_created_event(
+    conversation: &SupportConversation,
+    message: &SupportMessage,
+) -> Value {
+    realtime_envelope(
+        "support.message_created",
+        "support",
+        json!({
+            "conversationId": conversation.id,
+            "userId": conversation.user_id,
+            "conversation": conversation,
+            "message": message,
+        }),
+    )
+}
+
 /// 统一构造实时事件信封，保证客户端只解析一种结构。
 fn realtime_envelope(event: &str, scope: &str, data: Value) -> Value {
     json!({
@@ -238,6 +271,7 @@ mod tests {
     /// 验证公开事件可以被匿名连接接收，用户私有事件只推送给目标用户。
     fn realtime_audience_filters_user_events() {
         assert!(audience_matches(&RealtimeAudience::Public, None));
+        assert!(!audience_matches(&RealtimeAudience::Admin, Some("U10001")));
         assert!(audience_matches(
             &RealtimeAudience::User("U10001".to_string()),
             Some("U10001")
@@ -250,6 +284,11 @@ mod tests {
             &RealtimeAudience::User("U10001".to_string()),
             None
         ));
+        assert!(admin_audience_matches(&RealtimeAudience::Public));
+        assert!(admin_audience_matches(&RealtimeAudience::Admin));
+        assert!(!admin_audience_matches(&RealtimeAudience::User(
+            "U10001".to_string()
+        )));
     }
 
     #[test]
@@ -290,5 +329,40 @@ mod tests {
             event["data"]["resultNumbers"],
             json!(["1", "2", "3", "4", "5"])
         );
+    }
+
+    #[test]
+    /// 验证客服消息事件会携带会话和最新消息，供后台与用户端实时刷新。
+    fn support_message_created_event_contains_conversation_and_message() {
+        let message = SupportMessage {
+            id: "CS-10001-M001".to_string(),
+            author: crate::domain::support::SupportMessageAuthor::User,
+            author_id: "U10001".to_string(),
+            author_name: "demo_user".to_string(),
+            content: "我已提交客服直充。".to_string(),
+            created_at: "2026-06-05 18:20:00".to_string(),
+        };
+        let conversation = SupportConversation {
+            id: "CS-R000000000001".to_string(),
+            user_id: "U10001".to_string(),
+            username: "demo_user".to_string(),
+            subject: "客服直充 R000000000001".to_string(),
+            status: crate::domain::support::SupportConversationStatus::Open,
+            priority: crate::domain::support::SupportPriority::Normal,
+            assigned_admin_id: None,
+            assigned_admin_name: None,
+            unread_count: 1,
+            created_at: "2026-06-05 18:20:00".to_string(),
+            updated_at: "2026-06-05 18:20:00".to_string(),
+            messages: vec![message.clone()],
+        };
+
+        let event = support_message_created_event(&conversation, &message);
+
+        assert_eq!(event["event"], "support.message_created");
+        assert_eq!(event["scope"], "support");
+        assert_eq!(event["data"]["conversationId"], "CS-R000000000001");
+        assert_eq!(event["data"]["conversation"]["userId"], "U10001");
+        assert_eq!(event["data"]["message"]["content"], "我已提交客服直充。");
     }
 }

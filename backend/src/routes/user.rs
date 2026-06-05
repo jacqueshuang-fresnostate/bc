@@ -58,7 +58,7 @@ use crate::{
         play_rules::play_rule_summaries,
         realtime::{
             audience_matches, balance_changed_event, heartbeat_event, order_changed_event,
-            recharge_changed_event, withdrawal_changed_event,
+            recharge_changed_event, support_message_created_event, withdrawal_changed_event,
         },
     },
 };
@@ -1221,8 +1221,9 @@ async fn create_recharge_order(
             .recharges
             .attach_support_conversation(&response.order.id, &conversation.id)
             .await?;
-        response.support_conversation_id = Some(conversation.id);
+        response.support_conversation_id = Some(conversation.id.clone());
         response.order = order;
+        publish_support_message_created(&state, &conversation);
     }
     publish_user_recharge_changed(&state, &response.order);
 
@@ -1294,6 +1295,7 @@ async fn reply_user_support_conversation(
         .support
         .user_reply(&id, &session.user, payload)
         .await?;
+    publish_support_message_created(&state, &conversation);
 
     Ok(Json(ApiEnvelope::success(conversation)))
 }
@@ -1415,6 +1417,18 @@ fn publish_user_recharge_changed(state: &AppState, order: &RechargeOrderSummary)
     state
         .realtime
         .publish_user(&order.user_id, recharge_changed_event(order));
+}
+
+/// 推送客服消息新增事件，保证客服直充聊天在用户端和后台之间实时同步。
+fn publish_support_message_created(state: &AppState, conversation: &SupportConversation) {
+    let Some(message) = conversation.messages.last() else {
+        return;
+    };
+    let event = support_message_created_event(conversation, message);
+    state
+        .realtime
+        .publish_user(&conversation.user_id, event.clone());
+    state.realtime.publish_admin(event);
 }
 
 /// 推送用户提现订单变化事件，供手机端提现记录按需刷新。

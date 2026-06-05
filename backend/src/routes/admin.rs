@@ -1,17 +1,18 @@
 //! 管理后台 API 路由总控，汇总和注册所有后台接口
 
 use axum::{
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
     extract::{Multipart, Path, Query, Request, State},
     http::header::AUTHORIZATION,
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{get, patch, post, put},
     Extension, Json, Router,
 };
 use chrono::Local;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 use crate::{
     app::AppState,
@@ -68,8 +69,9 @@ use crate::{
         order::validate_draw_issue_accepts_order,
         play_rules::{evaluate_play_rule, play_rule_summaries},
         realtime::{
-            balance_changed_event, draw_result_event, issue_closed_event, issue_opened_event,
-            order_changed_event, recharge_changed_event, withdrawal_changed_event,
+            admin_audience_matches, balance_changed_event, draw_result_event, heartbeat_event,
+            issue_closed_event, issue_opened_event, order_changed_event, recharge_changed_event,
+            support_message_created_event, withdrawal_changed_event,
         },
         scheduler::DrawSchedulerConfig,
         scheduler::DrawSchedulerStatus,
@@ -77,6 +79,7 @@ use crate::{
 };
 
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+const ADMIN_REALTIME_HEARTBEAT_SECONDS: u64 = 30;
 const IMAGE_BED_UPLOAD_URL_SETTING: &str = "image_bed_upload_url";
 const IMAGE_BED_AUTHORIZATION_TOKEN_SETTING: &str = "image_bed_authorization_token";
 const IMAGE_BED_UPLOAD_FIELD_SETTING: &str = "image_bed_upload_field";
@@ -247,7 +250,85 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     Router::new()
         .route("/auth/login", post(login_admin))
+        .route("/realtime", get(open_admin_realtime_socket))
         .merge(protected_routes)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AdminRealtimeQuery {
+    token: Option<String>,
+}
+
+/// 建立后台实时事件连接；浏览器 WebSocket 不能设置 Authorization，所以通过查询参数校验管理员 token。
+async fn open_admin_realtime_socket(
+    State(state): State<AppState>,
+    Query(query): Query<AdminRealtimeQuery>,
+    ws: WebSocketUpgrade,
+) -> ApiResult<Response> {
+    let token = query
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::Unauthorized("后台实时连接 token 不能为空".to_string()))?;
+    let session = state.access.session_from_token(token).await?;
+    if !session.scopes.contains(&PermissionScope::CustomerService) {
+        return Err(ApiError::Forbidden("后台实时客服权限不足".to_string()));
+    }
+
+    let realtime = state.realtime.clone();
+    Ok(ws
+        .on_upgrade(move |socket| handle_admin_realtime_socket(socket, realtime, session.admin.id))
+        .into_response())
+}
+
+/// 持续向单个后台连接发送实时事件和心跳。
+async fn handle_admin_realtime_socket(
+    mut socket: WebSocket,
+    realtime: crate::services::realtime::RealtimeHub,
+    admin_id: String,
+) {
+    let mut receiver = realtime.subscribe();
+    let mut heartbeat =
+        tokio::time::interval(Duration::from_secs(ADMIN_REALTIME_HEARTBEAT_SECONDS));
+
+    loop {
+        tokio::select! {
+            _ = heartbeat.tick() => {
+                if send_realtime_payload(&mut socket, heartbeat_event()).await.is_err() {
+                    break;
+                }
+            }
+            message = receiver.recv() => {
+                match message {
+                    Ok(message) => {
+                        if admin_audience_matches(&message.audience)
+                            && send_realtime_payload(&mut socket, message.payload).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped_count)) => {
+                        tracing::warn!(
+                            admin_id = %admin_id,
+                            skipped_count,
+                            "后台实时事件连接消费过慢，已跳过部分历史事件"
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    }
+}
+
+/// 将实时事件 JSON 发送到后台 WebSocket 连接。
+async fn send_realtime_payload(
+    socket: &mut WebSocket,
+    payload: serde_json::Value,
+) -> Result<(), axum::Error> {
+    socket.send(Message::Text(payload.to_string().into())).await
 }
 
 async fn require_admin_auth(
@@ -756,6 +837,18 @@ fn publish_user_recharge_changed(state: &AppState, order: &RechargeOrderSummary)
         .publish_user(&order.user_id, recharge_changed_event(order));
 }
 
+/// 推送客服消息新增事件，后台客服页和用户客服页都会收到同一条消息通知。
+fn publish_support_message_created(state: &AppState, conversation: &SupportConversation) {
+    let Some(message) = conversation.messages.last() else {
+        return;
+    };
+    let event = support_message_created_event(conversation, message);
+    state
+        .realtime
+        .publish_user(&conversation.user_id, event.clone());
+    state.realtime.publish_admin(event);
+}
+
 /// 推送用户提现订单变化事件，供手机端提现记录按需刷新。
 fn publish_user_withdrawal_changed(state: &AppState, order: &WithdrawalOrderSummary) {
     state
@@ -1108,6 +1201,7 @@ async fn create_support_conversation(
 ) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
     let access = state.access.snapshot().await?;
     let conversation = state.support.create(payload, &access.users).await?;
+    publish_support_message_created(&state, &conversation);
 
     Ok(Json(ApiEnvelope::success(conversation)))
 }
@@ -1130,6 +1224,7 @@ async fn reply_support_conversation(
 ) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
     let access = state.access.snapshot().await?;
     let conversation = state.support.reply(&id, payload, &access.admins).await?;
+    publish_support_message_created(&state, &conversation);
 
     Ok(Json(ApiEnvelope::success(conversation)))
 }

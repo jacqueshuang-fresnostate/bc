@@ -539,6 +539,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/admin/realtime",
+        "在线客服",
+        "后台实时事件",
+        "后台通过 WebSocket 接收客服消息等实时事件，浏览器连接时使用 token 查询参数鉴权。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
         "/admin/support/conversations",
         "在线客服",
         "客服会话列表",
@@ -1223,6 +1232,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/user/realtime",
+        "用户端实时",
+        "用户实时事件",
+        "用户端通过 WebSocket 接收开奖、余额、订单、充值、提现和客服消息事件。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
         "/user/recharge/config",
         "用户端充值",
         "读取充值配置",
@@ -1681,6 +1699,7 @@ mod tests {
         assert!(document["paths"]["/admin/finance-overview"]["get"].is_object());
         assert!(document["paths"]["/admin/recharge-orders"]["get"].is_object());
         assert!(document["paths"]["/admin/recharge-orders/{id}/confirm"]["post"].is_object());
+        assert!(document["paths"]["/admin/realtime"]["get"].is_object());
         assert!(document["paths"]["/admin/withdrawal-orders"]["get"].is_object());
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/approve"]["post"].is_object());
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/reject"]["post"].is_object());
@@ -1701,6 +1720,7 @@ mod tests {
         assert!(document["paths"]["/user/group-buy/plans/{id}/participants"]["post"].is_object());
         assert!(document["paths"]["/user/group-buy/my"]["get"].is_object());
         assert!(document["paths"]["/user/group-buy/create-options"]["get"].is_object());
+        assert!(document["paths"]["/user/realtime"]["get"].is_object());
         assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
         assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());
         assert!(document["paths"]["/user/withdrawals"]["post"].is_object());

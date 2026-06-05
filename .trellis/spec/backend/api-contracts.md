@@ -135,6 +135,7 @@ export interface InvitePolicySummary {
 ### 2. 签名
 
 - 手机端实时事件：`GET /api/user/realtime`
+- 后台实时事件：`GET /api/admin/realtime?token=<管理员登录 token>`
 - 可选鉴权参数：`token=<用户登录 token>`
 - 旧系统路径 `/ws/lottery` 不属于当前系统契约，后续不得继续新增调用。
 
@@ -165,6 +166,11 @@ WebSocket 消息统一使用当前系统事件信封：
 - `user.recharge_changed`：充值订单变化，必须只发送给充值订单所属用户。
 - `user.withdrawal_changed`：提现订单变化，必须只发送给提现订单所属用户。
 
+客服实时事件：
+
+- `support.message_created`：客服会话新增消息，`data` 包含 `conversationId`、`userId`、`conversation` 和 `message`。该事件必须同时发布给会话所属用户和后台客服连接，不允许发给匿名用户或其他普通用户。
+- 后台连接使用 `/api/admin/realtime?token=...`，因为浏览器 WebSocket 不能设置 `Authorization` 头；后端必须用查询参数 token 校验管理员会话，并要求具备 `customerService` 权限。
+
 ### 4. 校验与错误矩阵
 
 | 条件 | 预期行为 |
@@ -173,20 +179,27 @@ WebSocket 消息统一使用当前系统事件信封：
 | 携带合法用户 token | 允许连接，可接收公开事件和本人私有事件 |
 | 携带非法用户 token | 握手返回未授权错误 |
 | 事件受众为其他用户 | 当前连接不得收到该事件 |
+| 客服消息新增 | 当前用户和后台客服连接收到 `support.message_created`，其他用户或匿名连接收不到 |
+| 后台实时连接缺少 token 或 token 无效 | 握手返回未授权错误 |
+| 后台实时连接缺少客服权限 | 握手返回权限不足 |
 | 客户端消费过慢 | 后端记录中文 warning，跳过过旧事件，不影响主业务 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：自动开奖产生 `lottery.draw_result`，手机端首页和下注页同步刷新。
 - Good：用户下注扣款后只给该用户推送 `user.balance_changed` 和 `user.order_changed`。
+- Good：客服直充创建会话、用户继续发消息或后台回复后，用户客服页和后台客服页都能通过 `support.message_created` 实时刷新。
 - Base：匿名用户仍可通过实时连接获取开奖和开盘状态。
 - Bad：手机端继续连接 `/ws/lottery`。
 - Bad：把 `user.balance_changed` 广播给所有在线连接。
+- Bad：把客服消息作为公开事件广播，导致匿名连接或其他用户收到会话内容。
 
 ### 6. 必要测试
 
 - 后端需要运行 `cargo check` 和 `cargo test`。
+- 后端需要覆盖客服消息事件结构和管理员实时受众过滤。
 - 手机端需要运行 `npm run build`，确认 WebSocket 事件归一化类型可编译。
+- 管理后台需要运行 `npm run build`，确认后台实时事件归一化和客服页消费类型可编译。
 - 源码中不得保留 `/ws/lottery` 调用。
 
 ### 7. Wrong vs Correct
@@ -3584,6 +3597,8 @@ if let Some(draw_number) = active_draw_control_number(&issue.lottery_id)? {
 - `GET /api/user/support/conversations`
 - `GET /api/user/support/conversations/{id}`
 - `POST /api/user/support/conversations/{id}/messages`
+- `GET /api/user/realtime`
+- `GET /api/admin/realtime?token=<管理员登录 token>`
 - `GET /api/admin/recharge-orders`
 - `POST /api/admin/recharge-orders/{id}/confirm`
 
@@ -3644,6 +3659,13 @@ if let Some(draw_number) = active_draw_control_number(&issue.lottery_id)? {
 
 确认成功后订单状态变为 `paid`，并写入 `rechargeCredit` 资金流水。
 
+客服直充实时聊天规则：
+
+- 创建客服直充订单后，后端同步创建客服会话、关联 `supportConversationId`，并发布 `support.message_created`。
+- 用户调用 `POST /api/user/support/conversations/{id}/messages` 后，消息落库，再发布 `support.message_created` 给本人和后台客服。
+- 后台调用 `POST /api/admin/support/conversations/{id}/messages` 后，消息落库，再发布 `support.message_created` 给会话所属用户和后台客服。
+- WebSocket 只负责实时通知；断线重连后仍必须通过 HTTP 拉取会话历史和充值订单状态。
+
 ### 4. 校验与错误矩阵
 
 | 条件 | 预期行为 |
@@ -3661,10 +3683,12 @@ if let Some(draw_number) = active_draw_control_number(&issue.lottery_id)? {
 | 重复支付通知 | 保持幂等，不重复生成 `rechargeCredit` 流水 |
 | 后台确认非客服直充订单 | HTTP 400 |
 | 后台重复确认已入账客服直充订单 | 保持幂等，不重复生成 `rechargeCredit` 流水 |
+| WebSocket 断线或错过客服消息 | 前端通过 HTTP 重新拉取会话详情恢复完整历史 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：客服直充创建订单后返回 `waitingCustomerService`，后台在线客服可看到会话，用户端可继续发消息。
+- Good：客服直充会话任意一方发送消息后，另一方通过 WebSocket 收到 `support.message_created` 并刷新消息列表。
 - Good：客服确认收到客服直充款项后，后台调用确认接口，订单变为 `paid`，用户余额增加。
 - Good：彩虹易支付通知验签成功后，充值订单变为 `paid`，资金流水新增 `rechargeCredit`，用户余额增加。
 - Base：彩虹易支付默认关闭，客服直充默认开启，方便未接入支付网关时先通过客服处理充值。
@@ -3678,6 +3702,7 @@ if let Some(draw_number) = active_draw_control_number(&issue.lottery_id)? {
 - 后端需要覆盖充值入账流水幂等。
 - 后端需要覆盖用户只能查看和回复自己的客服会话。
 - 后端需要覆盖客服直充后台确认入账及重复确认幂等。
+- 后端需要覆盖客服消息实时事件和后台实时受众。
 - OpenAPI 测试需要覆盖后台充值订单、用户端充值和用户端客服路径。
 - 前端需要运行 `npm run build`，确认充值订单类型、资金流水类型和财务页面展示与后端枚举一致。
 - PostgreSQL 冒烟需要覆盖用户注册/登录、充值配置读取、客服直充下单、用户客服消息和后台充值订单查询。
