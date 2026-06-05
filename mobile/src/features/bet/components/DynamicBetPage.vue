@@ -52,6 +52,7 @@ const playSubmitMeta = computed(() => Object.fromEntries((config.value?.plays ||
 }])))
 const latestNumbers = computed(() => config.value?.latest_draw?.result_numbers || [])
 const latestIssue = computed(() => config.value?.latest_draw?.issue || '')
+const multipleInputValue = ref('1')
 function formatBetCutoffCountdown(diff: number) {
   if (diff <= 0) return '开奖中'
   const hours = Math.floor(diff / 3600000)
@@ -72,6 +73,8 @@ const countdownText = computed(() => {
 
 const engine = useDynamicBetEngine(() => config.value, () => selectedPlay.value)
 const multipleSliderMax = computed(() => engine.maxMultiple.value || Math.max(100, engine.minMultiple.value))
+const canDecreaseMultiple = computed(() => Number(engine.multiple.value || 0) > engine.minMultiple.value)
+const canIncreaseMultiple = computed(() => Number(engine.multiple.value || 0) < multipleSliderMax.value)
 const groupBuyMinShareAmount = computed(() => Number(config.value?.group_buy_settings.min_share_amount || 0.01))
 const groupBuyInitiatorMinBuyRatio = computed(() => config.value?.group_buy_settings.initiator_min_buy_ratio || '0.00')
 const groupBuyAvailable = computed(() => Boolean(config.value?.lottery.group_buy_enabled))
@@ -227,7 +230,23 @@ function clearPosition(positionKey: string) {
 }
 
 function normalizeMultipleInput() {
-  engine.multiple.value = engine.clampMultiple(engine.multiple.value, selectedPlay.value)
+  engine.multiple.value = engine.clampMultiple(multipleInputValue.value || engine.minMultiple.value, selectedPlay.value)
+  multipleInputValue.value = String(engine.multiple.value)
+}
+
+function updateMultipleInput(event: Event) {
+  const input = event.target as HTMLInputElement
+  const digits = input.value.replace(/\D/g, '')
+  multipleInputValue.value = digits
+  input.value = digits
+  if (!digits) return
+  engine.multiple.value = engine.clampMultiple(Number(digits), selectedPlay.value)
+}
+
+function adjustMultiple(delta: number) {
+  const current = Number(engine.multiple.value || engine.minMultiple.value)
+  engine.multiple.value = engine.clampMultiple(current + delta, selectedPlay.value)
+  multipleInputValue.value = String(engine.multiple.value)
 }
 
 function normalizeGroupBuyShares() {
@@ -345,6 +364,10 @@ watch(() => config.value?.plays, (plays) => {
 // 当前玩法变化即重置草稿，使输入模式、位置键和固定选项值与新玩法一致。
 watch(selectedPlay, (play) => engine.resetDraft(play), { immediate: true })
 
+watch(() => engine.multiple.value, (value) => {
+  multipleInputValue.value = String(value || engine.minMultiple.value)
+}, { immediate: true })
+
 watch(() => config.value?.round.status, syncOpeningRefresh, { immediate: true })
 
 watch(() => props.wsMessage, async (msg) => {
@@ -405,16 +428,28 @@ onBeforeUnmount(() => {
       />
 
       <section class="rounded-[28px] bg-white p-5 shadow-sm shadow-red-900/5">
-        <div class="flex items-center justify-between">
-          <div>
+        <div class="flex items-start justify-between gap-4">
+          <div class="min-w-0">
             <div class="text-xs font-bold tracking-wider text-[#5a403e]">投注倍数</div>
+            <p class="mt-1 text-xs font-bold text-[#8e706d]">允许 {{ engine.minMultiple.value }}-{{ multipleSliderMax }} 倍</p>
           </div>
-          <label class="flex items-center gap-1 rounded-2xl bg-[#f8f1ef] px-3 py-2">
-            <input v-model.number="engine.multiple.value" class="w-16 bg-transparent text-right font-headline text-3xl font-extrabold text-[#1a1c1c] outline-none" type="number" inputmode="numeric" :min="engine.minMultiple.value" :max="multipleSliderMax" step="1" @blur="normalizeMultipleInput" @change="normalizeMultipleInput" @keyup.enter="normalizeMultipleInput" />
-            <span class="font-headline text-2xl font-extrabold text-[#1a1c1c]">x</span>
-          </label>
+          <div class="flex shrink-0 items-center rounded-[20px] border border-[#f1dedb] bg-[#fffdfc] p-1 shadow-inner shadow-red-900/5" role="group" aria-label="投注倍数">
+            <button class="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#f8f1ef] text-xl font-black text-[#8c0a15] transition active:scale-95 disabled:cursor-not-allowed disabled:text-[#b8aaa8] disabled:opacity-55" type="button" :disabled="!canDecreaseMultiple" aria-label="减少倍数" @click="adjustMultiple(-1)">-</button>
+            <input
+              :value="multipleInputValue"
+              class="mx-1 h-9 w-16 rounded-2xl bg-transparent text-center font-headline text-2xl font-extrabold leading-none text-[#1a1c1c] outline-none"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              aria-label="投注倍数"
+              @input="updateMultipleInput"
+              @blur="normalizeMultipleInput"
+              @keyup.enter="normalizeMultipleInput"
+            />
+            <span class="mr-1 text-sm font-extrabold text-[#5a403e]">倍</span>
+            <button class="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#8c0a15] text-xl font-black text-white shadow-sm shadow-red-900/15 transition active:scale-95 disabled:cursor-not-allowed disabled:bg-[#d8d1cf] disabled:text-white/80 disabled:shadow-none" type="button" :disabled="!canIncreaseMultiple" aria-label="增加倍数" @click="adjustMultiple(1)">+</button>
+          </div>
         </div>
-        <div class="mt-1 text-xs font-bold text-[#8e706d]">允许 {{ engine.minMultiple.value }}-{{ multipleSliderMax }} 倍</div>
         <van-slider v-model="engine.multiple.value" class="mt-5" :min="engine.minMultiple.value" :max="multipleSliderMax" :step="1" active-color="#af2829" inactive-color="#eeeeee" />
       </section>
 
