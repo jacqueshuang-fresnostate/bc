@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { cancelOrder, createOrder, fetchOrders } from '../api/client';
-import type { CreateOrderRequest, OrderDetail, OrderListQuery } from '../types/orders';
+import type {
+  CreateOrderRequest,
+  OrderDetail,
+  OrderListQuery,
+  OrderPage,
+} from '../types/orders';
 
 export function useOrders(query: OrderListQuery = {}) {
-  const [orders, setOrders] = useState<OrderDetail[]>([]);
+  const [orderPage, setOrderPage] = useState<OrderPage>(emptyPage);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +25,7 @@ export function useOrders(query: OrderListQuery = {}) {
     setError(null);
 
     fetchOrders(controller.signal, query)
-      .then(setOrders)
+      .then(setOrderPage)
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) {
           setError(errorMessage(requestError));
@@ -35,31 +40,32 @@ export function useOrders(query: OrderListQuery = {}) {
     return () => {
       controller.abort();
     };
-  }, [query.includeRobotData, refreshToken]);
+  }, [query.includeRobotData, query.page, query.pageSize, refreshToken]);
 
-  const create = useCallback(async (payload: CreateOrderRequest) => {
-    setSaving(true);
-    setError(null);
-    try {
-      const created = await createOrder(payload);
-      setOrders((current) => [created, ...current]);
-      return created;
-    } catch (requestError) {
-      setError(errorMessage(requestError));
-      throw requestError;
-    } finally {
-      setSaving(false);
-    }
-  }, []);
+  const create = useCallback(
+    async (payload: CreateOrderRequest) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const created = await createOrder(payload);
+        refresh();
+        return created;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refresh],
+  );
 
   const cancel = useCallback(async (id: string) => {
     setSaving(true);
     setError(null);
     try {
       const cancelled = await cancelOrder(id);
-      setOrders((current) =>
-        current.map((order) => (order.id === id ? cancelled : order)),
-      );
+      setOrderPage((current) => replacePageItem(current, cancelled));
       return cancelled;
     } catch (requestError) {
       setError(errorMessage(requestError));
@@ -74,9 +80,27 @@ export function useOrders(query: OrderListQuery = {}) {
     create,
     error,
     loading,
-    orders,
+    orderPage,
+    orders: orderPage.items,
     refresh,
     saving,
+  };
+}
+
+const emptyPage: OrderPage = {
+  items: [],
+  page: 1,
+  pageSize: 20,
+  totalCount: 0,
+  totalPages: 0,
+};
+
+function replacePageItem(page: OrderPage, item: OrderDetail): OrderPage {
+  return {
+    ...page,
+    items: page.items.map((current) =>
+      current.id === item.id ? item : current,
+    ),
   };
 }
 

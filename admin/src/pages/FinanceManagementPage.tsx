@@ -17,6 +17,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { MetricCard } from '../components/MetricCard';
+import { PageControls } from '../components/PageControls';
 import { useFinance } from '../hooks/useFinance';
 import type {
   FinancePage,
@@ -39,8 +40,6 @@ interface AdjustmentFormState {
   description: string;
   userId: string;
 }
-
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementPageProps) {
   const [activeFinanceTab, setActiveFinanceTab] = useState('accounts');
@@ -650,64 +649,6 @@ function Field({ children, label }: FieldProps) {
       <span className="text-xs font-medium text-slate-500">{label}</span>
       {children}
     </label>
-  );
-}
-
-interface PageControlsProps {
-  loading: boolean;
-  page: number;
-  pageSize: number;
-  totalCount: number;
-  totalPages: number;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (pageSize: number) => void;
-}
-
-function PageControls({
-  loading,
-  page,
-  pageSize,
-  totalCount,
-  totalPages,
-  onPageChange,
-  onPageSizeChange,
-}: PageControlsProps) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-      <span>共 {totalCount} 条</span>
-      <label className="flex items-center gap-1">
-        每页
-        <Select
-          className="form-input min-w-[86px]"
-          value={pageSize}
-          onChange={(value) => onPageSizeChange(Number(value ?? 10))}
-        >
-          {PAGE_SIZE_OPTIONS.map((size) => (
-            <Select.Option key={size} value={size}>
-              {size}
-            </Select.Option>
-          ))}
-        </Select>
-        条
-      </label>
-      <Button
-        disabled={loading || page <= 1 || totalPages === 0}
-        size="small"
-        onClick={() => onPageChange(page - 1)}
-      >
-        上一页
-      </Button>
-      <span>
-        第 {totalPages === 0 ? 0 : page} / {totalPages} 页
-      </span>
-      <Button
-        disabled={loading || page >= totalPages || totalPages === 0}
-        size="small"
-        onClick={() => onPageChange(page + 1)}
-      >
-        下一页
-      </Button>
-    </div>
   );
 }
 

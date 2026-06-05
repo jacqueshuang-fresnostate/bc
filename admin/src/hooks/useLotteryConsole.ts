@@ -44,12 +44,12 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
       fetchDrawSchedulerStatus(controller.signal),
       fetchOrders(controller.signal),
     ])
-      .then(([lotteryList, drawIssuePage, controls, scheduler, orderList]) => {
+      .then(([lotteryList, drawIssuePage, controls, scheduler, orderPage]) => {
         setLotteries(lotteryList);
         setIssues(drawIssuePage.items);
         setDrawControls(controls);
         setSchedulerStatus(scheduler);
-        setOrders(orderList);
+        setOrders(orderPage.items);
       })
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) {

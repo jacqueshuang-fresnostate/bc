@@ -1,5 +1,18 @@
 # TODO
 
+## 2026-06-06 02:50 HKT 后台订单管理分页
+
+- 完成任务：为后台订单管理补充分页能力，并统一后台分页控件。
+- 解决问题：
+  - 订单管理此前一次性拉取并展示全部订单，订单增长后页面加载、扫描和控单效率都会下降。
+  - 财务管理和合买管理各自维护相同分页控件，后续新增分页列表容易出现样式和行为不一致。
+- 实施内容：
+  - 后端 `GET /api/admin/orders` 改为返回分页结构 `items/totalCount/page/pageSize/totalPages`，支持 `page`、`pageSize` 和 `includeRobotData`。
+  - 管理后台 `useOrders` 改为消费分页结构，订单管理页面新增每页条数、上一页和下一页控件。
+  - 抽取公共 `PageControls` 组件，财务管理、合买管理和订单管理统一复用。
+  - OpenAPI 说明、前后端规范和架构说明同步记录订单分页契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`cd admin && npm run build` 和 `git diff --check` 均通过；管理后台构建仅保留既有 Vite chunk 体积提示。
+
 ## 2026-06-06 02:42 HKT 手机端下注提示去重
 
 - 完成任务：修复手机端下注时同时出现“已加入购彩篮”和“下注成功”两个提示的问题。

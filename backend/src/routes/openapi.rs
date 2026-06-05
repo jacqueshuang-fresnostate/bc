@@ -938,7 +938,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/orders",
         "订单与结算",
         "订单列表",
-        "返回后台订单列表；默认过滤机器人账户订单，可通过 includeRobotData=true 显示，彩种控制台会复用该接口查看用户下注信息。",
+        "分页返回后台订单列表；默认过滤机器人账户订单，可通过 page、pageSize 和 includeRobotData=true 查询，彩种控制台不传分页参数时会复用该接口读取完整订单页查看用户下注信息。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),

@@ -2063,8 +2063,9 @@ async fn manual_balance_adjustment(
 
 async fn list_orders(
     State(state): State<AppState>,
-    Query(query): Query<RobotDataQuery>,
-) -> ApiResult<Json<ApiEnvelope<Vec<OrderDetail>>>> {
+    Query(query): Query<FinancePageQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<OrderDetail>>>> {
+    // 订单管理按分页读取；彩种控制台不传分页参数时仍通过同一信封拿到完整订单页。
     let orders = state
         .orders
         .list()
@@ -2075,7 +2076,7 @@ async fn list_orders(
         })
         .collect::<Vec<_>>();
 
-    Ok(Json(ApiEnvelope::success(orders)))
+    Ok(Json(ApiEnvelope::success(page_items(orders, query))))
 }
 
 async fn get_order(

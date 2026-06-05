@@ -69,7 +69,12 @@ import type {
   PlayRuleEvaluation,
   PlayRuleSummary,
 } from '../types/playRules';
-import type { CreateOrderRequest, OrderDetail, OrderListQuery } from '../types/orders';
+import type {
+  CreateOrderRequest,
+  OrderDetail,
+  OrderListQuery,
+  OrderPage,
+} from '../types/orders';
 import type { DrawSchedulerConfig, DrawSchedulerStatus } from '../types/scheduler';
 import type {
   GroupBuyRobotRun,
@@ -826,7 +831,7 @@ export function evaluatePlayRule(payload: PlayRuleEvaluateRequest) {
 }
 
 export function fetchOrders(signal?: AbortSignal, query?: OrderListQuery) {
-  return requestJson<OrderDetail[]>(adminQueryPath('/api/admin/orders', query), { signal });
+  return requestJson<OrderPage>(adminQueryPath('/api/admin/orders', query), { signal });
 }
 
 export function createOrder(payload: CreateOrderRequest) {

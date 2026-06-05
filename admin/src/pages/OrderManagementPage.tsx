@@ -9,6 +9,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { OrderBetInfo } from '../components/OrderBetInfo';
+import { PageControls } from '../components/PageControls';
 import { useDraws } from '../hooks/useDraws';
 import { useLotteries } from '../hooks/useLotteries';
 import { useOrders } from '../hooks/useOrders';
@@ -60,15 +61,22 @@ const digitAttributeOptions: Array<{ label: string; value: DigitAttribute }> = [
 
 export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageProps) {
   const [includeRobotData, setIncludeRobotData] = useState(false);
+  const [orderPageNumber, setOrderPageNumber] = useState(1);
+  const [orderPageSize, setOrderPageSize] = useState(20);
   const {
     cancel,
     create,
     error: orderError,
     loading: ordersLoading,
+    orderPage,
     orders,
     refresh: refreshOrders,
     saving,
-  } = useOrders({ includeRobotData });
+  } = useOrders({
+    includeRobotData,
+    page: orderPageNumber,
+    pageSize: orderPageSize,
+  });
   const {
     error: lotteryError,
     loading: lotteriesLoading,
@@ -192,7 +200,10 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
           <label className="inline-flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm text-slate-600">
             <Switch
               checked={includeRobotData}
-              onChange={(checked) => setIncludeRobotData(checked)}
+              onChange={(checked) => {
+                setIncludeRobotData(checked);
+                setOrderPageNumber(1);
+              }}
             />
             <span>显示机器人数据</span>
           </label>
@@ -206,9 +217,23 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
 
       <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
         <Card className="rounded-md border border-line">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">订单列表</h2>
-            <Tag color="cyan">{orders.length} 个订单</Tag>
+          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-ink">订单列表</h2>
+              <Tag color="cyan">{orderPage.totalCount} 个订单</Tag>
+            </div>
+            <PageControls
+              loading={loading}
+              page={orderPage.page}
+              pageSize={orderPageSize}
+              totalCount={orderPage.totalCount}
+              totalPages={orderPage.totalPages}
+              onPageChange={setOrderPageNumber}
+              onPageSizeChange={(nextPageSize) => {
+                setOrderPageNumber(1);
+                setOrderPageSize(nextPageSize);
+              }}
+            />
           </div>
           {loading ? (
             <div className="grid min-h-[280px] place-items-center">

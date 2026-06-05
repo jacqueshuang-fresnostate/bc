@@ -1,4 +1,5 @@
 import type { LotteryNumberType } from './dashboard';
+import type { FinancePage } from './finance';
 import type { PlayRuleCode, PlaySelection } from './playRules';
 
 export type OrderStatus = 'pendingDraw' | 'won' | 'lost' | 'cancelled';
@@ -15,7 +16,11 @@ export interface CreateOrderRequest {
 
 export interface OrderListQuery {
   includeRobotData?: boolean;
+  page?: number;
+  pageSize?: number;
 }
+
+export type OrderPage = FinancePage<OrderDetail>;
 
 export interface OrderDetail {
   amountMinor: number;

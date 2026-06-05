@@ -442,6 +442,82 @@ pub enum DrawSchedule {
 
 ---
 
+## 场景：后台订单列表分页
+
+### 1. 范围 / 触发条件
+
+- 触发条件：后台订单管理展示投注订单列表，或彩种控制台需要读取订单用于控单信息展示。
+- 范围：`GET /api/admin/orders`、后台订单 API client、`useOrders` 和订单管理页面。
+
+### 2. 签名
+
+- `GET /api/admin/orders?page=1&pageSize=20`
+- 可选参数：`includeRobotData=true`
+- 统一响应信封中的 `data` 字段为分页结构：
+
+```json
+{
+  "items": [],
+  "totalCount": 0,
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 0
+}
+```
+
+### 3. 契约
+
+- 后台订单管理必须显式传入 `page` 和 `pageSize`。
+- 后端默认过滤合买机器人账户订单；只有 `includeRobotData=true` 时才返回机器人订单。
+- 不传 `page/pageSize` 时，后端仍返回分页结构，但 `items` 包含过滤后的完整订单列表，供彩种控制台继续一次读取控单所需订单。
+- 分页字段使用 `camelCase`，前端类型必须与后端 `FinancePage<OrderDetail>` 结构一致。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 未传分页参数 | 返回完整订单页，`page=1`，`pageSize` 为当前总数或 1 |
+| `pageSize` 小于 1 | 按 1 处理 |
+| `page` 超过最大页 | 返回最后一页 |
+| 无订单 | 返回空 `items`，`totalCount=0`，`totalPages=0` |
+| 未传 `includeRobotData` | 过滤机器人订单 |
+| `includeRobotData=true` | 纳入机器人订单 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：订单管理页请求 `GET /api/admin/orders?page=1&pageSize=20`，表格展示第一页订单，总数来自 `totalCount`。
+- Good：运营打开“显示机器人数据”后，请求带 `includeRobotData=true`，并把页码重置为第 1 页。
+- Base：彩种控制台请求 `GET /api/admin/orders` 不传分页参数，仍能通过 `data.items` 读取全部可见订单。
+- Bad：前端继续把 `GET /api/admin/orders` 当成 `OrderDetail[]` 消费，会导致订单管理和彩种控制台拿不到列表。
+
+### 6. 必要测试
+
+- 后端需要运行 `cargo check`。
+- 管理后台需要运行 `npm run build`。
+- 修改分页控件时，确认财务管理、合买管理和订单管理均能编译。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```ts
+const orders = await fetchOrders()
+setOrders(orders)
+```
+
+这个写法把后端分页响应当成数组，会丢失 `totalCount`、`page` 和 `totalPages`，也会破坏彩种控制台读取 `items` 的路径。
+
+#### 正确
+
+```ts
+const orderPage = await fetchOrders(signal, { page: 1, pageSize: 20 })
+setOrders(orderPage.items)
+```
+
+前端必须消费分页信封，并从 `items` 中读取当前页订单。
+
+---
+
 ## 场景：玩法规则评估接口
 
 ### 1. 范围 / 触发条件
