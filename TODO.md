@@ -1606,3 +1606,10 @@
 - 解决问题：手机端首页统计卡片由 `settings.statsEnabled` 控制，前端本地兜底已经是关闭，但后端首页聚合接口默认返回开启，导致首页默认展示“今日中奖人数”和“累计派奖金额”统计卡片；本次改为默认不显示。
 - 实施内容：更新 `build_mobile_lottery_home` 默认配置，新增单元测试断言 `stats_enabled=false`，并同步 API 契约说明。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml mobile_home -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过；后端全量 188 个测试通过，保留既有测试导入警告。
+
+## 2026-06-05 14:14 HKT 手机端大小单双投注内容显示修正
+
+- 完成任务：修正手机端注单列表和注单详情中大小单双投注内容的展示方式。
+- 解决问题：此前大小单双订单的 `numbers` 文本会被普通投注号码逻辑拆分，详情页可能显示为“十位:大”“小”这类普通号码球，位置和属性关系不清晰；本次新增投注内容格式化逻辑，把 `big/small/odd/even` 翻译成“大/小/单/双”，并按位置展示。
+- 实施内容：新增订单投注内容文本和分组格式化方法；注单列表显示“十位：大、小；个位：单、双”；注单详情对大小单双使用属性标签，不再使用普通号码球。
+- 验证结果：`npm run build` 和 `git diff --check` 通过；`npm test` 仍因 `mobile/package.json` 中列出的测试文件在 `mobile/` 目录下不存在或路径未配置正确而失败，本次未改动该既有测试脚本。

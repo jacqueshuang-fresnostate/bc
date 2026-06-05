@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { detailHeroAmount, detailHeroNote, formatDateTime, moneyText, orderAmountText, orderBetCount, orderMatchItems, orderMatchedBetKeys, orderMultiple, orderSourceText, orderStatusIcon, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
+import { detailHeroAmount, detailHeroNote, formatDateTime, moneyText, orderAmountText, orderBetContentGroups, orderBetCount, orderMatchItems, orderMatchedBetKeys, orderMultiple, orderSourceText, orderStatusIcon, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
 
 const props = defineProps<{
   selectedOrder: any
@@ -13,11 +13,9 @@ const emit = defineEmits<{ close: []; copy: []; rebet: [] }>()
 const ORDER_DETAIL_BATCH_SIZE = 10
 const visibleOrderNumberGroupCount = ref(ORDER_DETAIL_BATCH_SIZE)
 
-function splitBetNumberParts(value: string) {
-  return String(value || '').split(/[,，|]/).map(item => item.trim()).filter(Boolean)
-}
-
-const selectedOrderNumberGroups = computed(() => props.selectedOrderNumbers.map(splitBetNumberParts).filter(group => group.length))
+const selectedOrderBetGroups = computed(() => orderBetContentGroups(props.selectedOrder, props.selectedOrderNumbers))
+const selectedAttributeGroups = computed(() => selectedOrderBetGroups.value.filter(group => group.kind === 'attributes' && group.values.length))
+const selectedOrderNumberGroups = computed(() => selectedOrderBetGroups.value.filter(group => group.kind === 'numbers' && group.values.length))
 const visibleOrderNumberGroups = computed(() => selectedOrderNumberGroups.value.slice(0, visibleOrderNumberGroupCount.value))
 const hasMoreOrderNumberGroups = computed(() => visibleOrderNumberGroupCount.value < selectedOrderNumberGroups.value.length)
 const selectedOrderMatchItems = computed(() => orderMatchItems(props.selectedOrder, props.selectedDrawNumbers))
@@ -27,8 +25,12 @@ function showMoreOrderNumberGroups() {
   visibleOrderNumberGroupCount.value += ORDER_DETAIL_BATCH_SIZE
 }
 
-function isMatchedOrderNumberGroup(group: string[]) {
-  return matchedBetKeys.value.has(group.join('').replace(/\s+/g, ''))
+function isMatchedOrderNumberGroup(group: { key: string }) {
+  return matchedBetKeys.value.has(group.key)
+}
+
+function isMatchedAttributeValue(value: { key: string }) {
+  return matchedBetKeys.value.has(value.key)
 }
 
 watch(() => props.selectedOrder?.id, () => {
@@ -71,19 +73,38 @@ watch(() => props.selectedOrder?.id, () => {
 
         <section class="detail-panel">
           <h3><span></span>投注内容</h3>
-          <div v-if="selectedOrderNumberGroups.length" class="detail-bet-groups">
+          <div v-if="selectedAttributeGroups.length" class="detail-attribute-groups">
+            <article
+              v-for="group in selectedAttributeGroups"
+              :key="`bet-attribute-${selectedOrder.id}-${group.key}`"
+              class="detail-attribute-group"
+            >
+              <span class="detail-attribute-group__label">{{ group.label }}</span>
+              <div class="detail-attribute-group__values">
+                <span
+                  v-for="value in group.values"
+                  :key="`bet-attribute-${selectedOrder.id}-${group.key}-${value.key}`"
+                  class="detail-attribute-pill"
+                  :class="{ 'detail-attribute-pill--matched': isMatchedAttributeValue(value) }"
+                >
+                  {{ value.label }}
+                </span>
+              </div>
+            </article>
+          </div>
+          <div v-else-if="selectedOrderNumberGroups.length" class="detail-bet-groups">
             <div
               v-for="(group, groupIndex) in visibleOrderNumberGroups"
-              :key="`bet-group-${selectedOrder.id}-${groupIndex}-${group.join('-')}`"
+              :key="`bet-group-${selectedOrder.id}-${groupIndex}-${group.key}`"
               class="detail-number-balls detail-number-balls--bet"
               :class="{ 'detail-number-balls--matched': isMatchedOrderNumberGroup(group) }"
             >
               <span
-                v-for="(number, numberIndex) in group"
-                :key="`bet-${selectedOrder.id}-${groupIndex}-${numberIndex}-${number}`"
+                v-for="value in group.values"
+                :key="`bet-${selectedOrder.id}-${group.key}-${value.key}`"
                 class="detail-number-ball detail-number-ball--bet"
               >
-                {{ number }}
+                {{ value.label }}
               </span>
             </div>
             <button v-if="hasMoreOrderNumberGroups" class="detail-show-more" type="button" @click="showMoreOrderNumberGroups">
@@ -430,6 +451,59 @@ watch(() => props.selectedOrder?.id, () => {
   display: grid;
   gap: 10px;
   margin-bottom: 18px;
+}
+
+.detail-attribute-groups {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.detail-attribute-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 16px;
+  padding: 12px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(140, 10, 21, 0.08);
+}
+
+.detail-attribute-group__label {
+  flex: 0 0 auto;
+  color: #5a403e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.detail-attribute-group__values {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.detail-attribute-pill {
+  display: inline-flex;
+  min-width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #8c0a15;
+  background: #ffdad7;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.detail-attribute-pill--matched {
+  color: #fff;
+  background: linear-gradient(135deg, #8c0a15, #af2829);
+  box-shadow: 0 6px 16px rgba(140, 10, 21, 0.2);
 }
 
 .detail-number-balls {

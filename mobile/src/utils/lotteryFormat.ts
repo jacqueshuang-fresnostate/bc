@@ -14,6 +14,60 @@ export type OrderMatchItem = {
   tone: 'hit' | 'miss' | 'pending'
 }
 
+export type OrderBetContentValue = {
+  label: string
+  key: string
+}
+
+export type OrderBetContentGroup = {
+  kind: 'numbers' | 'attributes'
+  label: string
+  values: OrderBetContentValue[]
+  key: string
+}
+
+const BIG_SMALL_ODD_EVEN_POSITION_LABELS: Record<string, string> = {
+  tens: '十位',
+  ones: '个位',
+  ten: '十位',
+  one: '个位',
+  '十位': '十位',
+  '个位': '个位',
+}
+
+const BIG_SMALL_ODD_EVEN_POSITION_KEYS: Record<string, string> = {
+  tens: 'tens',
+  ones: 'ones',
+  ten: 'tens',
+  one: 'ones',
+  '十位': 'tens',
+  '个位': 'ones',
+}
+
+const BIG_SMALL_ODD_EVEN_ATTRIBUTE_LABELS: Record<string, string> = {
+  big: '大',
+  small: '小',
+  odd: '单',
+  even: '双',
+  large: '大',
+  大: '大',
+  小: '小',
+  单: '单',
+  双: '双',
+}
+
+const BIG_SMALL_ODD_EVEN_ATTRIBUTE_KEYS: Record<string, string> = {
+  big: 'big',
+  small: 'small',
+  odd: 'odd',
+  even: 'even',
+  large: 'big',
+  大: 'big',
+  小: 'small',
+  单: 'odd',
+  双: 'even',
+}
+
 export function statusText(status?: string) {
   return statusTextMap[status || ''] || status || '-'
 }
@@ -63,6 +117,90 @@ function orderPositionGridKind(order: any) {
   if (/groupsix/.test(ruleCode)) return 'group6_compound'
   if (/direct/.test(ruleCode)) return 'direct'
   return ''
+}
+
+function isBigSmallOddEvenOrder(order: any) {
+  return orderPositionGridKind(order) === 'big_small_odd_even'
+    || normalizedRuleCode(order) === 'fivebigsmalloddeven'
+}
+
+function bigSmallOddEvenPositionLabel(value: unknown) {
+  const text = String(value || '').trim()
+  const key = text.toLowerCase()
+  return BIG_SMALL_ODD_EVEN_POSITION_LABELS[text] || BIG_SMALL_ODD_EVEN_POSITION_LABELS[key] || text || '位置'
+}
+
+function bigSmallOddEvenPositionKey(value: unknown) {
+  const text = String(value || '').trim()
+  const key = text.toLowerCase()
+  return BIG_SMALL_ODD_EVEN_POSITION_KEYS[text] || BIG_SMALL_ODD_EVEN_POSITION_KEYS[key] || key || text
+}
+
+function bigSmallOddEvenAttributeLabel(value: unknown) {
+  const text = String(value || '').trim()
+  const key = text.toLowerCase()
+  return BIG_SMALL_ODD_EVEN_ATTRIBUTE_LABELS[text] || BIG_SMALL_ODD_EVEN_ATTRIBUTE_LABELS[key] || text
+}
+
+function bigSmallOddEvenAttributeKey(value: unknown) {
+  const text = String(value || '').trim()
+  const key = text.toLowerCase()
+  return BIG_SMALL_ODD_EVEN_ATTRIBUTE_KEYS[text] || BIG_SMALL_ODD_EVEN_ATTRIBUTE_KEYS[key] || key || text
+}
+
+function bigSmallOddEvenValues(values: unknown) {
+  const items = Array.isArray(values)
+    ? values
+    : String(values || '').split(/[,，、/\s]+/)
+  return items
+    .map(value => ({
+      label: bigSmallOddEvenAttributeLabel(value),
+      key: bigSmallOddEvenAttributeKey(value),
+    }))
+    .filter(value => value.label)
+}
+
+function bigSmallOddEvenGroupsFromSelection(selection: any): OrderBetContentGroup[] {
+  const items: any[] = Array.isArray(selection?.bigSmallOddEven) ? selection.bigSmallOddEven : []
+  return items
+    .map((item: any): OrderBetContentGroup => {
+      const positionKey = bigSmallOddEvenPositionKey(item?.position)
+      const values = bigSmallOddEvenValues(item?.attributes)
+      return {
+        kind: 'attributes' as const,
+        label: bigSmallOddEvenPositionLabel(item?.position),
+        values: values.map(value => ({ ...value, key: `${positionKey}:${value.key}` })),
+        key: `${positionKey}:${values.map(value => value.key).join(',')}`,
+      }
+    })
+    .filter(group => group.values.length > 0)
+}
+
+function bigSmallOddEvenGroupsFromText(value: unknown): OrderBetContentGroup[] {
+  const text = String(value || '').trim()
+  if (!text) return []
+  return text
+    .split(/[|;；]+/)
+    .map(segment => segment.trim())
+    .filter(Boolean)
+    .map((segment): OrderBetContentGroup => {
+      const [position = '', attributes = ''] = segment.split(/[:：]/).map(item => item.trim())
+      const positionKey = bigSmallOddEvenPositionKey(position)
+      const values = bigSmallOddEvenValues(attributes || position)
+      return {
+        kind: 'attributes' as const,
+        label: attributes ? bigSmallOddEvenPositionLabel(position) : '投注属性',
+        values: values.map(value => ({ ...value, key: attributes ? `${positionKey}:${value.key}` : value.key })),
+        key: attributes ? `${positionKey}:${values.map(value => value.key).join(',')}` : values.map(value => value.key).join(','),
+      }
+    })
+    .filter(group => group.values.length > 0)
+}
+
+function orderBigSmallOddEvenGroups(order: any): OrderBetContentGroup[] {
+  const selectionGroups = bigSmallOddEvenGroupsFromSelection(order?.selection || {})
+  if (selectionGroups.length) return selectionGroups
+  return bigSmallOddEvenGroupsFromText(order?.numbers || order?.canonical_numbers)
 }
 
 function splitOrderDigits(value: unknown) {
@@ -143,6 +281,9 @@ function expandGroup6DantuoOrderNumbers(value: unknown) {
 
 export function orderBetNumbers(order: any) {
   if (!order) return []
+  if (isBigSmallOddEvenOrder(order)) {
+    return orderBigSmallOddEvenGroups(order).map(group => `${group.label}：${group.values.map(value => value.label).join('、')}`)
+  }
   const kind = orderPositionGridKind(order)
   const expanded = kind === 'direct'
     ? expandDirectOrderNumbers(order.numbers)
@@ -158,6 +299,36 @@ export function orderBetNumbers(order: any) {
               ? expandGroup6DantuoOrderNumbers(order.numbers)
               : []
   return expanded.length ? expanded : splitNumbers(order.numbers)
+}
+
+function betNumberParts(value: string) {
+  return String(value || '').split(/[,，|]/).map(item => item.trim()).filter(Boolean)
+}
+
+export function orderBetContentText(order: any) {
+  if (isBigSmallOddEvenOrder(order)) {
+    const groups = orderBigSmallOddEvenGroups(order)
+    if (groups.length) {
+      return groups.map(group => `${group.label}：${group.values.map(value => value.label).join('、')}`).join('；')
+    }
+  }
+  return String(order?.numbers || order?.canonical_numbers || '').trim() || orderBetNumbers(order).join(' ') || '-'
+}
+
+export function orderBetContentGroups(order: any, fallbackNumbers: string[] = []): OrderBetContentGroup[] {
+  if (isBigSmallOddEvenOrder(order)) return orderBigSmallOddEvenGroups(order)
+  const numbers = fallbackNumbers.length ? fallbackNumbers : orderBetNumbers(order)
+  return numbers
+    .map(rawValue => {
+      const values = betNumberParts(rawValue).map(value => ({ label: value, key: value }))
+      return {
+        kind: 'numbers' as const,
+        label: '',
+        values,
+        key: values.map(value => value.label).join('').replace(/\s+/g, ''),
+      }
+    })
+    .filter(group => group.values.length > 0)
 }
 
 function ruleMatchKind(order: any) {
@@ -251,10 +422,9 @@ function displayBetCode(value: unknown) {
 
 function bigSmallOddEvenMatchItem(value: string, order: any, drawNumbers: string[]) {
   const [position, attribute] = value.split(':').map(item => item.trim())
-  const positionTextMap: Record<string, string> = { tens: '十位', ones: '个位' }
-  const attrTextMap: Record<string, string> = { big: '大', small: '小', odd: '单', even: '双' }
-  const label = positionTextMap[position] ? `${positionTextMap[position]}匹配` : matchItemLabel(order)
-  const attrText = attrTextMap[attribute] || attribute || value
+  const positionLabel = bigSmallOddEvenPositionLabel(position)
+  const label = positionLabel !== '位置' ? `${positionLabel}匹配` : matchItemLabel(order)
+  const attrText = bigSmallOddEvenAttributeLabel(attribute) || attribute || value
   return {
     label,
     value: attrText,

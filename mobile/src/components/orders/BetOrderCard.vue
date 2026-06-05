@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatDateTime, moneyText, orderBetCount, orderMultiple, orderResultLabel, orderResultText, orderSourceText, orderStatusIcon, orderTagText, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
+import { formatDateTime, moneyText, orderBetContentText, orderBetCount, orderMultiple, orderResultLabel, orderResultText, orderSourceText, orderStatusIcon, orderTagText, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
 
 const props = defineProps<{ order: any }>()
 const emit = defineEmits<{ open: [any] }>()
-const orderNumbersText = computed(() => String(props.order?.numbers || props.order?.canonical_numbers || '').trim() || '-')
+const orderNumbersText = computed(() => orderBetContentText(props.order))
 </script>
 
 <template>
