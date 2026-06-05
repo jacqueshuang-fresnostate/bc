@@ -418,7 +418,7 @@ onMounted(async () => {
                 <span class="text-xs text-stone-500">共计金额</span>
                 <b class="font-headline text-xl font-black text-red-900">{{ formatMoney(joinAmount) }}</b>
               </div>
-              <van-button block :loading="submittingJoin" class="lacquer-gradient border-0 font-headline font-black !text-white" @click="joinGroupBuy">确认认购</van-button>
+              <van-button block round type="primary" :loading="submittingJoin" class="group-buy-join-button font-headline font-black" @click="joinGroupBuy">确认认购</van-button>
             </div>
             <van-empty v-else image="search" description="该合买计划暂不可参与" />
           </div>
@@ -427,3 +427,32 @@ onMounted(async () => {
     </van-popup>
   </div>
 </template>
+
+<style scoped>
+.group-buy-join-button {
+  height: 48px;
+  border: 0 !important;
+  border-radius: 16px !important;
+  background: linear-gradient(135deg, #8c0a15 0%, #b91c1c 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 10px 24px rgba(140, 10, 21, 0.24);
+}
+
+.group-buy-join-button :deep(.van-button__text),
+.group-buy-join-button :deep(.van-loading),
+.group-buy-join-button :deep(.van-loading__spinner) {
+  color: #ffffff !important;
+}
+
+.group-buy-join-button.van-button--disabled {
+  background: #d8d0ce !important;
+  color: rgba(26, 28, 28, 0.56) !important;
+  box-shadow: none;
+}
+
+.group-buy-join-button.van-button--disabled :deep(.van-button__text),
+.group-buy-join-button.van-button--disabled :deep(.van-loading),
+.group-buy-join-button.van-button--disabled :deep(.van-loading__spinner) {
+  color: rgba(26, 28, 28, 0.56) !important;
+}
+</style>
