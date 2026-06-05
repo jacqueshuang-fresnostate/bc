@@ -38,6 +38,17 @@ const digitSum = computed(() => {
   return values.length ? values.reduce((sum, value) => sum + value, 0) : '-'
 })
 
+const countdownDisplay = computed(() => {
+  // 倒计时文案由首页组合函数统一计算，这里只负责拆成适合卡片展示的短标签和值。
+  const rawText = String(props.countdownText(props.lottery) || '--:--').trim()
+  const sealedMatch = rawText.match(/^封盘\s+(.+)$/)
+  if (sealedMatch) return { label: '封盘', value: sealedMatch[1] }
+  if (/^\d{2}:\d{2}(:\d{2})?$/.test(rawText)) return { label: '计时', value: rawText }
+  return { label: '状态', value: rawText || '--:--' }
+})
+
+const issueText = computed(() => props.lottery.issue ? `第 ${props.lottery.issue} 期` : '暂无期号')
+
 function statusLabel() {
   switch (props.lottery.status) {
     case 'selling':
@@ -64,52 +75,61 @@ function statusClass() {
 </script>
 
 <template>
-  <div v-if="variant === 'featured'" class="col-span-2 flex flex-col gap-4 rounded-xl border border-outline-variant/10 bg-surface-container-lowest p-5 shadow-sm">
-    <div class="flex items-start justify-between">
-      <div class="flex items-center gap-3">
-        <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-12 w-12 flex-shrink-0 rounded-full object-cover" @error="logoLoadFailed = true" />
-        <div v-else class="lottery-card-icon-fallback flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">★</div>
-        <div>
-          <h4 class="font-headline text-base font-bold">{{ lottery.name }}</h4>
-          <div class="mt-1 flex flex-wrap items-start gap-1.5">
-            <span class="text-[10px] text-on-surface-variant">第 {{ lottery.issue || '-' }} 期</span>
-            <span class="lottery-status-stack inline-flex flex-col items-start gap-1">
-              <span :class="['lottery-state-pill rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
-            </span>
+  <div v-if="variant === 'featured'" class="featured-lottery-card col-span-2 flex flex-col gap-3 overflow-hidden rounded-xl border border-primary/10 bg-surface-container-lowest p-4 shadow-sm shadow-red-900/5">
+    <div class="flex items-start justify-between gap-3">
+      <div class="flex min-w-0 items-center gap-3">
+        <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-12 w-12 flex-shrink-0 rounded-xl object-cover shadow-sm" @error="logoLoadFailed = true" />
+        <div v-else class="lottery-card-icon-fallback flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">★</div>
+        <div class="min-w-0">
+          <h4 class="truncate font-headline text-lg font-extrabold leading-tight">{{ lottery.name }}</h4>
+          <div class="mt-1 flex flex-wrap items-center gap-1.5">
+            <span class="whitespace-nowrap text-[11px] font-medium text-on-surface-variant">{{ issueText }}</span>
+            <span :class="['lottery-state-pill rounded-full px-2 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
           </div>
         </div>
       </div>
-      <CountdownBadge :text="countdownText(lottery)" />
+      <CountdownBadge class="featured-countdown shrink-0" :label="countdownDisplay.label" :text="countdownDisplay.value" />
     </div>
-    <div class="flex flex-wrap items-center gap-2">
-      <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-featured-${index}`" class="home-result-ball home-result-ball--featured lacquer-gradient font-headline text-base font-bold !text-white shadow-sm">{{ digit }}</div>
-      <div class="flex min-w-8 flex-1 flex-col items-end justify-center">
-        <span class="text-[10px] font-medium uppercase text-on-surface-variant">和值</span>
-        <span class="font-headline font-bold text-primary">{{ digitSum }}</span>
+    <div class="featured-result-panel rounded-xl bg-primary/5 p-3">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-[10px] font-bold text-primary/80">最近开奖</span>
+        <span class="truncate text-[10px] font-medium text-on-surface-variant">{{ issueText }}</span>
+      </div>
+      <div class="mt-3 flex items-center gap-2">
+        <div class="flex min-w-0 flex-1 flex-wrap gap-2">
+          <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-featured-${index}`" class="home-result-ball home-result-ball--featured lacquer-gradient font-headline text-base font-bold !text-white shadow-sm">{{ digit }}</div>
+        </div>
+        <div class="sum-pill flex shrink-0 flex-col items-center justify-center rounded-xl bg-white px-3 py-1.5 shadow-sm shadow-red-900/5">
+          <span class="text-[10px] font-medium text-on-surface-variant">和值</span>
+          <span class="font-headline text-lg font-extrabold leading-none text-primary">{{ digitSum }}</span>
+        </div>
       </div>
     </div>
-    <div class="grid grid-cols-1 gap-2">
-      <button class="w-full rounded-full lacquer-gradient py-2.5 font-headline text-sm font-bold !text-on-primary shadow-md" @click="emit('open', lottery)">立即投注</button>
-    </div>
+    <button class="w-full rounded-xl lacquer-gradient py-2.5 font-headline text-sm font-bold !text-on-primary shadow-md shadow-red-900/15 active:scale-[0.99]" @click="emit('open', lottery)">立即投注</button>
   </div>
 
-  <div v-else-if="variant === 'secondary'" class="flex flex-col gap-3 rounded-xl bg-surface-container-low p-4">
-    <div class="flex items-center justify-between gap-3">
-      <div class="flex min-w-0 items-center gap-2">
-        <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-8 w-8 flex-shrink-0 rounded-full object-cover" @error="logoLoadFailed = true" />
-        <div v-else class="lottery-card-icon-fallback flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs text-primary">★</div>
-        <span class="truncate text-sm font-bold">{{ lottery.name }}</span>
-        <span class="lottery-status-stack inline-flex flex-col items-start gap-1">
-          <span :class="['lottery-state-pill rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
-        </span>
+  <button v-else-if="variant === 'secondary'" class="secondary-lottery-card flex min-h-[7.75rem] w-full flex-col justify-between rounded-xl border border-primary/5 bg-surface-container-lowest p-3 text-left shadow-sm shadow-red-900/5 active:scale-[0.99]" @click="emit('open', lottery)">
+    <div class="flex items-start justify-between gap-2">
+      <div class="flex min-w-0 items-start gap-2">
+        <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-8 w-8 flex-shrink-0 rounded-xl object-cover" @error="logoLoadFailed = true" />
+        <div v-else class="lottery-card-icon-fallback flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-primary/10 text-xs text-primary">★</div>
+        <div class="min-w-0">
+          <span class="block truncate text-sm font-extrabold leading-tight">{{ lottery.name }}</span>
+          <span :class="['lottery-state-pill mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
+        </div>
       </div>
-      <span class="shrink-0 text-[10px] font-bold text-primary">{{ countdownText(lottery) }}</span>
+      <span class="secondary-countdown shrink-0 rounded-full bg-red-50 px-2 py-1 text-right text-primary">
+        <span class="block text-[9px] leading-none text-primary/70">{{ countdownDisplay.label }}</span>
+        <span class="block font-headline text-[11px] font-extrabold leading-tight">{{ countdownDisplay.value }}</span>
+      </span>
     </div>
-    <div class="flex flex-wrap justify-center gap-1.5">
-      <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-secondary-${index}`" class="home-result-ball home-result-ball--secondary border border-outline-variant/30 bg-surface-container-highest text-[9px] font-bold text-on-surface-variant">{{ digit }}</div>
+    <div class="mt-3 flex items-center justify-between gap-2">
+      <div class="flex min-w-0 flex-1 flex-wrap gap-1.5">
+        <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-secondary-${index}`" class="home-result-ball home-result-ball--secondary border border-outline-variant/30 bg-surface-container-highest text-[9px] font-bold text-on-surface-variant">{{ digit }}</div>
+      </div>
+      <span class="enter-chip shrink-0 rounded-full bg-primary px-2.5 py-1 text-[10px] font-bold !text-on-primary">进入</span>
     </div>
-    <button class="w-full rounded-full border border-primary/10 bg-white py-1.5 text-xs font-bold text-primary shadow-sm" @click="emit('open', lottery)">进入</button>
-  </div>
+  </button>
 
   <button v-else class="flex w-full flex-col gap-2 rounded-xl bg-surface-container-lowest p-3 text-left shadow-sm" @click="emit('open', lottery)">
     <div class="flex items-start gap-2">
@@ -141,13 +161,31 @@ function statusClass() {
   justify-content: center;
   border-radius: 9999px;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .home-result-ball--featured {
-  --home-result-ball-size: 2.25rem;
+  --home-result-ball-size: 2.125rem;
 }
 
 .home-result-ball--secondary {
-  --home-result-ball-size: 1.5rem;
+  --home-result-ball-size: 1.375rem;
+}
+
+.lottery-state-pill,
+.featured-countdown,
+.secondary-countdown,
+.enter-chip {
+  white-space: nowrap;
+}
+
+@media (max-width: 374px) {
+  .home-result-ball--featured {
+    --home-result-ball-size: 1.95rem;
+  }
+
+  .home-result-ball--secondary {
+    --home-result-ball-size: 1.25rem;
+  }
 }
 </style>

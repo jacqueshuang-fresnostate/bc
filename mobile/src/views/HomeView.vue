@@ -295,13 +295,15 @@ watch(heroBanners, (banners) => {
       <template v-else>
         <!-- 推荐区受后端 settings.featuredEnabled 控制，关闭时不展示高频卡片组。 -->
         <section class="space-y-4" v-if="showFeatured">
-          <div class="flex items-end justify-between px-1">
-            <div>
-              <h3 class="border-l-4 border-primary pl-3 font-headline text-lg font-extrabold tracking-tight">{{ featuredTitle }}</h3>
-              <p class="mt-1 pl-4 text-[11px] font-medium text-on-surface-variant">精选高频彩种，开奖后自动刷新下一期倒计时</p>
+          <div class="featured-section-heading flex items-end justify-between rounded-xl bg-surface-container-lowest px-4 py-3 shadow-sm shadow-red-900/5">
+            <div class="min-w-0">
+              <p class="text-[10px] font-bold uppercase tracking-[0.18em] text-primary/70">HOT DRAW</p>
+              <h3 class="mt-0.5 truncate font-headline text-lg font-extrabold tracking-tight">{{ featuredTitle }}</h3>
+              <p class="mt-1 text-[11px] font-medium text-on-surface-variant">开奖后自动刷新下一期倒计时</p>
             </div>
+            <span class="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold text-primary">精选</span>
           </div>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-2 gap-2.5">
             <HomeDrawCard
               v-if="featuredLottery"
               :lottery="featuredLottery"
