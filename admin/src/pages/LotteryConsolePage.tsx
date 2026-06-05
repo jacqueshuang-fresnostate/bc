@@ -254,7 +254,7 @@ export function LotteryConsolePage({
       />
 
       {filteredItems.length > 0 ? (
-        <section className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {filteredItems.map((item) => (
             <LotteryConsoleCard
               key={item.lottery.id}
@@ -344,33 +344,35 @@ function LotteryConsoleCard({
       ? currentIssue.drawNumber
       : null;
   const drawNumber = currentIssueDrawNumber ?? recentDrawnIssue?.drawNumber ?? null;
-  const drawNumberLabel = currentIssueDrawNumber ? '本期开奖号码' : '最近开奖号码';
+  const drawNumberLabel = currentIssueDrawNumber ? '本期开奖' : '最近开奖';
   const controlEnabled = Boolean(drawControl?.enabled);
 
   return (
-    <Card shadows="hover" className="rounded-md border border-line">
-      <div className="flex items-start justify-between gap-3">
+    <Card
+      bodyStyle={{ padding: 12 }}
+      shadows="hover"
+      className="min-w-0 rounded-md border border-line"
+    >
+      <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h2 className="truncate text-base font-semibold text-ink">{lottery.name}</h2>
-          <div className="mt-1 text-xs text-slate-400">{lottery.id}</div>
+          <h2 className="truncate text-sm font-semibold text-ink">{lottery.name}</h2>
+          <div className="mt-0.5 truncate text-[11px] text-slate-400">
+            {lottery.id} · {scheduleText(lottery)}
+          </div>
         </div>
-        <Tag color={lottery.saleEnabled ? 'green' : 'grey'}>
-          {lottery.saleEnabled ? '销售开启' : '已停售'}
-        </Tag>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Tag color={currentIssue ? statusColor(currentIssue.status) : 'grey'}>
+            {currentIssue ? statusText(currentIssue.status) : '无当前期'}
+          </Tag>
+          <Tag color={lottery.saleEnabled ? 'green' : 'grey'}>
+            {lottery.saleEnabled ? '开售' : '停售'}
+          </Tag>
+        </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-2 flex flex-wrap gap-1.5">
         <Tag color="cyan">{numberTypeText(lottery.numberType)}</Tag>
-        <Tag color={drawModeColor(lottery.drawMode)}>
-          {drawModeText(lottery.drawMode)}
-        </Tag>
-        {currentIssue ? (
-          <Tag color={statusColor(currentIssue.status)}>
-            {statusText(currentIssue.status)}
-          </Tag>
-        ) : (
-          <Tag color="grey">暂无当前期</Tag>
-        )}
+        <Tag color={drawModeColor(lottery.drawMode)}>{drawModeText(lottery.drawMode)}</Tag>
         <Tag color={controlEnabled ? 'red' : 'grey'}>
           {controlEnabled ? '控制开奖' : '未控制'}
         </Tag>
@@ -379,98 +381,116 @@ function LotteryConsoleCard({
         ) : null}
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <div className="mt-3 grid grid-cols-2 gap-2">
         <CountdownBlock
           icon={<Clock3 size={16} />}
-          label="封盘倒计时"
+          label="封盘"
           value={countdownText(currentIssue?.saleClosedAt, now, '已到封盘', '暂无期号')}
         />
         <CountdownBlock
           icon={<Timer size={16} />}
-          label="开奖倒计时"
+          label="开奖"
           value={drawCountdownText(currentIssue, now, schedulerStatus)}
         />
       </div>
 
-      <div className="mt-4 rounded-md bg-slate-50 p-3">
-        <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-          <Hash size={14} />
-          当前期号
-        </div>
-        <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <div className="text-lg font-semibold text-ink">
-              {currentIssue?.issue ?? '暂无 open/closed 期号'}
-            </div>
-            {currentIssue ? (
-              <div className="mt-1 text-xs text-slate-500">
-                封盘 {currentIssue.saleClosedAt} · 开奖 {currentIssue.scheduledAt}
-              </div>
-            ) : (
-              <div className="mt-1 text-xs text-slate-500">
-                已配置 {item.issueCount} 个历史期号
-              </div>
-            )}
-          </div>
-          <Tag color={currentIssue ? statusColor(currentIssue.status) : 'grey'}>
-            {currentIssue ? statusText(currentIssue.status) : '无当前期'}
-          </Tag>
-        </div>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <CompactInfoRow
+          icon={<Hash size={13} />}
+          label="期号"
+          meta={
+            currentIssue
+              ? `封 ${formatTimePoint(currentIssue.saleClosedAt)} / 开 ${formatTimePoint(currentIssue.scheduledAt)}`
+              : `历史 ${item.issueCount} 期`
+          }
+          value={currentIssue?.issue ?? '暂无当前期'}
+        />
+        <CompactInfoRow
+          icon={<Radio size={13} />}
+          label={drawNumberLabel}
+          meta={
+            recentDrawnIssue
+              ? `第 ${recentDrawnIssue.issue} 期 · ${recentDrawnIssue.drawnAt ? formatTimePoint(recentDrawnIssue.drawnAt) : '已开奖'}`
+              : undefined
+          }
+          value={drawNumber ?? '待开奖'}
+          valueClassName={drawNumber ? 'font-mono text-sm text-ink' : 'text-sm text-slate-400'}
+        />
       </div>
 
-      <div className="mt-3 rounded-md border border-line p-3">
-        <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-          <Radio size={14} />
-          {drawNumberLabel}
-        </div>
-        {drawNumber ? (
-          <div className="mt-2 font-mono text-2xl font-semibold text-ink">
-            {drawNumber}
+      <div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded border border-slate-100 bg-slate-50 px-2.5 py-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
+            <Settings2 size={13} />
+            开奖控制
           </div>
-        ) : (
-          <div className="mt-2 text-sm text-slate-400">待开奖</div>
-        )}
-        {recentDrawnIssue ? (
-          <div className="mt-2 text-xs text-slate-500">
-            最近期号 {recentDrawnIssue.issue} · {recentDrawnIssue.drawnAt ?? '已开奖'}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="mt-3 rounded-md border border-line p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-              <Settings2 size={14} />
-              开奖号码控制
-            </div>
-            <div className="mt-2 font-mono text-lg font-semibold text-ink">
-              {controlEnabled ? drawControl?.drawNumber ?? '-' : '未启用'}
-            </div>
-            {drawControl?.updatedAt ? (
-              <div className="mt-1 text-xs text-slate-500">
-                更新 {drawControl.updatedAt}
-              </div>
-            ) : null}
-          </div>
-          <Button
-            icon={<Settings2 size={15} />}
-            size="small"
-            onClick={() => onOpenControl(item)}
+          <div
+            className={`mt-1 truncate text-sm font-semibold ${
+              controlEnabled ? 'font-mono text-rose-700' : 'text-slate-400'
+            }`}
+            title={controlEnabled ? drawControl?.drawNumber ?? '-' : '未启用'}
           >
-            控制
-          </Button>
+            {controlEnabled ? drawControl?.drawNumber ?? '-' : '未启用'}
+          </div>
+          {drawControl?.updatedAt ? (
+            <div className="mt-0.5 truncate text-[11px] text-slate-500">
+              更新 {formatTimePoint(drawControl.updatedAt)}
+            </div>
+          ) : null}
         </div>
+        <Button
+          icon={<Settings2 size={14} />}
+          size="small"
+          onClick={() => onOpenControl(item)}
+        >
+          控制
+        </Button>
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
         <span className="flex items-center gap-1">
           <Activity size={13} />
           期号 {item.issueCount} 个
         </span>
-        <span>{scheduleText(lottery)}</span>
+        <span className="truncate">{lottery.drawMode === 'api' ? '开奖源同步' : '本地调度'}</span>
       </div>
     </Card>
+  );
+}
+
+function CompactInfoRow({
+  action,
+  icon,
+  label,
+  meta,
+  value,
+  valueClassName = 'font-mono text-sm text-ink',
+}: {
+  action?: ReactNode;
+  icon: ReactNode;
+  label: string;
+  meta?: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-2 rounded border border-slate-100 bg-slate-50 px-2.5 py-2">
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
+          {icon}
+          <span>{label}</span>
+        </div>
+        <div className={`mt-1 truncate font-semibold ${valueClassName}`} title={value}>
+          {value}
+        </div>
+        {meta ? (
+          <div className="mt-0.5 truncate text-[11px] text-slate-500" title={meta}>
+            {meta}
+          </div>
+        ) : null}
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </div>
   );
 }
 
@@ -593,12 +613,14 @@ function CountdownBlock({
   value: string;
 }) {
   return (
-    <div className="rounded-md border border-line px-3 py-2">
-      <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+    <div className="min-w-0 rounded border border-slate-100 bg-white px-2.5 py-2">
+      <div className="flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-slate-500">
         {icon}
         {label}
       </div>
-      <div className="mt-2 font-mono text-xl font-semibold text-ink">{value}</div>
+      <div className="mt-1 truncate font-mono text-sm font-semibold text-ink" title={value}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -824,6 +846,15 @@ function parseTimeLabel(value: string | null | undefined) {
 function formatClock(value: Date) {
   const pad = (part: number) => part.toString().padStart(2, '0');
   return `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
+}
+
+function formatTimePoint(value: string | null | undefined) {
+  const timestamp = parseTimeLabel(value);
+  if (timestamp === null) {
+    return value || '-';
+  }
+
+  return formatClock(new Date(timestamp));
 }
 
 function drawModeText(mode: DrawMode) {
