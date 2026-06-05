@@ -36,7 +36,7 @@ use crate::{
         lottery::{
             DrawMode, DrawSource, LotteryCategoryConfig, LotteryKind, SaveDrawSourceRequest,
         },
-        order::{CreateOrderRequest, OrderDetail},
+        order::{CreateOrderRequest, OrderDetail, OrderStatus},
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
         rebate::{InvitePolicySummary, InvitePolicyUpdateRequest},
@@ -63,6 +63,7 @@ use crate::{
         draw_generation::{
             generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
         },
+        group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
         order::validate_draw_issue_accepts_order,
         play_rules::{evaluate_play_rule, play_rule_summaries},
         realtime::{
@@ -380,6 +381,7 @@ async fn run_draw_automation_request(
         &state.lotteries,
         &state.orders,
         &state.finance,
+        &state.group_buys,
         payload,
     )
     .await?;
@@ -675,7 +677,20 @@ async fn settle_draw_issue_orders(
 ) -> ApiResult<Json<ApiEnvelope<SettlementRun>>> {
     let draw_issue = state.draws.get(&id).await?;
     let settlement = state.orders.settle_draw_issue(&draw_issue).await?;
-    let entries = state.finance.credit_settlement(&settlement).await?;
+    let order_ids = settlement
+        .orders
+        .iter()
+        .map(|order| order.order_id.clone())
+        .collect::<Vec<_>>();
+    let group_buy_plans = state.group_buys.plans_for_order_ids(&order_ids).await?;
+    let entries = state
+        .finance
+        .credit_settlement_with_group_buys(&settlement, &group_buy_plans)
+        .await?;
+    state
+        .group_buys
+        .mark_settled_by_order_ids(&order_ids)
+        .await?;
     publish_settlement_balance_events(&state, &entries).await;
 
     Ok(Json(ApiEnvelope::success(settlement)))
@@ -807,12 +822,47 @@ async fn create_group_buy_plan(
     State(state): State<AppState>,
     Json(payload): Json<CreateGroupBuyPlanRequest>,
 ) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
-    let lotteries = state.lotteries.list().await?;
+    let lottery = state.lotteries.get(&payload.lottery_id).await?;
+    build_group_buy_order_request(
+        &state.draws,
+        &state.orders,
+        &lottery,
+        &payload.initiator_user_id,
+        &payload.issue,
+        &payload.rule_code,
+        &payload.numbers,
+        payload.total_amount_minor,
+    )
+    .await?;
     let access = state.access.snapshot().await?;
-    let plan = state
+    let mut plan = state
         .group_buys
-        .create(payload, &lotteries, &access.users)
+        .create(payload, std::slice::from_ref(&lottery), &access.users)
         .await?;
+    let mut created_order = match create_order_for_filled_group_buy(
+        &state.draws,
+        &state.orders,
+        &state.group_buys,
+        &lottery,
+        &plan,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            if let Err(rollback_error) = state.group_buys.remove_unfunded_plan(&plan.id).await {
+                tracing::error!(
+                    group_buy_plan_id = %plan.id,
+                    error = %rollback_error.log_message(),
+                    "后台合买满单成单失败后移除计划失败"
+                );
+            }
+            return Err(error);
+        }
+    };
+    if let Some((_, attached_plan)) = &created_order {
+        plan = attached_plan.clone();
+    }
     let participant_id = format!("{}-P001", plan.id);
     if let Err(error) = state
         .finance
@@ -824,6 +874,15 @@ async fn create_group_buy_plan(
         )
         .await
     {
+        if let Some((order, _)) = created_order.take() {
+            if let Err(rollback_error) = state.orders.remove_unfunded(&order.id).await {
+                tracing::error!(
+                    order_id = %order.id,
+                    error = %rollback_error.log_message(),
+                    "后台创建合买扣款失败后移除满单订单失败"
+                );
+            }
+        }
         if let Err(rollback_error) = state.group_buys.remove_unfunded_plan(&plan.id).await {
             tracing::error!(
                 group_buy_plan_id = %plan.id,
@@ -832,6 +891,9 @@ async fn create_group_buy_plan(
             );
         }
         return Err(error);
+    }
+    if let Some((order, _)) = &created_order {
+        publish_user_order_changed(&state, order, "created");
     }
     publish_user_balance_changed(
         &state,
@@ -849,7 +911,31 @@ async fn update_group_buy_plan(
     Path(id): Path<String>,
     Json(payload): Json<UpdateGroupBuyPlanRequest>,
 ) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
+    let existing = state.group_buys.get(&id).await?;
+    if payload.status == crate::domain::group_buy::GroupBuyPlanStatus::Cancelled {
+        if let Some(order_id) = existing.order_id.as_deref() {
+            let order = state.orders.get(order_id).await?;
+            if order.status != OrderStatus::PendingDraw {
+                return Err(ApiError::BadRequest(
+                    "已开奖或已取消的合买订单不能取消".to_string(),
+                ));
+            }
+        }
+    }
     let plan = state.group_buys.update(&id, payload).await?;
+    if plan.status == crate::domain::group_buy::GroupBuyPlanStatus::Cancelled
+        && existing.status != crate::domain::group_buy::GroupBuyPlanStatus::Cancelled
+    {
+        if let Some(order_id) = existing.order_id.or_else(|| plan.order_id.clone()) {
+            let order = state.orders.cancel(&order_id).await?;
+            publish_user_order_changed(&state, &order, "cancelled");
+        }
+        let entries = state
+            .finance
+            .refund_group_buy_plan(&plan, "后台取消合买")
+            .await?;
+        publish_settlement_balance_events(&state, &entries).await;
+    }
 
     Ok(Json(ApiEnvelope::success(plan)))
 }
@@ -859,14 +945,56 @@ async fn add_group_buy_participant(
     Path(id): Path<String>,
     Json(payload): Json<AddGroupBuyParticipantRequest>,
 ) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
+    let existing = state.group_buys.get(&id).await?;
+    let lottery = state.lotteries.get(&existing.lottery_id).await?;
+    build_group_buy_order_request(
+        &state.draws,
+        &state.orders,
+        &lottery,
+        &existing.initiator_user_id,
+        &existing.issue,
+        &existing.rule_code,
+        &existing.numbers,
+        existing.total_amount_minor,
+    )
+    .await?;
     let participant_id = payload.id.clone();
     let participant_user_id = payload.user_id.clone();
     let participant_amount_minor = payload.amount_minor;
     let access = state.access.snapshot().await?;
-    let plan = state
+    let mut plan = state
         .group_buys
         .add_participant(&id, payload, &access.users)
         .await?;
+    let mut created_order = match create_order_for_filled_group_buy(
+        &state.draws,
+        &state.orders,
+        &state.group_buys,
+        &lottery,
+        &plan,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            if let Err(rollback_error) = state
+                .group_buys
+                .remove_unfunded_participant(&id, &participant_id)
+                .await
+            {
+                tracing::error!(
+                    group_buy_plan_id = %id,
+                    group_buy_participant_id = %participant_id,
+                    error = %rollback_error.log_message(),
+                    "后台合买满单成单失败后移除参与记录失败"
+                );
+            }
+            return Err(error);
+        }
+    };
+    if let Some((_, attached_plan)) = &created_order {
+        plan = attached_plan.clone();
+    }
     if let Err(error) = state
         .finance
         .debit_group_buy(
@@ -877,6 +1005,15 @@ async fn add_group_buy_participant(
         )
         .await
     {
+        if let Some((order, _)) = created_order.take() {
+            if let Err(rollback_error) = state.orders.remove_unfunded(&order.id).await {
+                tracing::error!(
+                    order_id = %order.id,
+                    error = %rollback_error.log_message(),
+                    "后台合买参与扣款失败后移除满单订单失败"
+                );
+            }
+        }
         if let Err(rollback_error) = state
             .group_buys
             .remove_unfunded_participant(&id, &participant_id)
@@ -890,6 +1027,9 @@ async fn add_group_buy_participant(
             );
         }
         return Err(error);
+    }
+    if let Some((order, _)) = &created_order {
+        publish_user_order_changed(&state, order, "created");
     }
     publish_user_balance_changed(
         &state,

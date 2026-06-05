@@ -701,6 +701,8 @@ function numberField(value: string) {
 
 function ledgerKindText(kind: LedgerEntryKind) {
   const labels: Record<LedgerEntryKind, string> = {
+    groupBuyDebit: '合买认购',
+    groupBuyRefund: '合买退款',
     manualAdjustment: '手动调账',
     orderDebit: '投注扣款',
     orderRefund: '取消退款',
@@ -715,6 +717,8 @@ function ledgerKindText(kind: LedgerEntryKind) {
 
 function ledgerKindColor(kind: LedgerEntryKind) {
   const colors: Record<LedgerEntryKind, 'blue' | 'green' | 'orange' | 'red'> = {
+    groupBuyDebit: 'red',
+    groupBuyRefund: 'blue',
     manualAdjustment: 'orange',
     orderDebit: 'red',
     orderRefund: 'blue',

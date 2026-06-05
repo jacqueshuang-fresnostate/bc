@@ -15,8 +15,9 @@ use crate::{
             FinanceOverview, FinancialAccountSummary, LedgerEntry, LedgerEntryKind,
             ManualBalanceAdjustmentRequest,
         },
+        group_buy::{GroupBuyParticipant, GroupBuyPlan},
         order::OrderDetail,
-        settlement::SettlementRun,
+        settlement::{OrderSettlement, SettlementRun},
     },
     error::{ApiError, ApiResult},
 };
@@ -161,17 +162,18 @@ impl FinanceRepository {
         Ok(result)
     }
 
-    /// 将结算金额回写给用户。
-    pub async fn credit_settlement(
+    /// 将结算金额回写给用户；合买订单按参与份额分账。
+    pub async fn credit_settlement_with_group_buys(
         &self,
         settlement: &SettlementRun,
+        group_buy_plans: &[GroupBuyPlan],
     ) -> ApiResult<Vec<LedgerEntry>> {
         let (result, snapshot) = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let result = store.credit_settlement(settlement)?;
+            let result = store.credit_settlement_with_group_buys(settlement, group_buy_plans)?;
             (result, store.clone())
         };
         self.persist(&snapshot).await?;
@@ -268,6 +270,24 @@ impl FinanceRepository {
                 .write()
                 .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
             let result = store.debit_group_buy(user_id, amount_minor, participant_id, plan_id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 合买取消或流单时按参与记录退还认购金额。
+    pub async fn refund_group_buy_plan(
+        &self,
+        plan: &GroupBuyPlan,
+        reason: &str,
+    ) -> ApiResult<Vec<LedgerEntry>> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.refund_group_buy_plan(plan, reason)?;
             (result, store.clone())
         };
         self.persist(&snapshot).await?;
@@ -689,6 +709,7 @@ impl FinanceStore {
         )
     }
 
+    #[cfg(test)]
     /// 处理 credit_settlement 的具体内部流程。
     fn credit_settlement(&mut self, settlement: &SettlementRun) -> ApiResult<Vec<LedgerEntry>> {
         let mut entries = Vec::new();
@@ -698,7 +719,99 @@ impl FinanceStore {
                 continue;
             }
 
-            let reference_id = format!("{}:{}", settlement.id, order.order_id);
+            entries.push(self.credit_order_payout(settlement, order)?);
+        }
+
+        Ok(entries)
+    }
+
+    /// 结算派奖时识别合买总单，并把奖金拆给参与人。
+    fn credit_settlement_with_group_buys(
+        &mut self,
+        settlement: &SettlementRun,
+        group_buy_plans: &[GroupBuyPlan],
+    ) -> ApiResult<Vec<LedgerEntry>> {
+        let mut entries = Vec::new();
+
+        for order in &settlement.orders {
+            if !order.is_winning || order.payout_minor <= 0 {
+                continue;
+            }
+
+            if let Some(plan) = group_buy_plans
+                .iter()
+                .find(|plan| plan.order_id.as_deref() == Some(order.order_id.as_str()))
+            {
+                entries.extend(self.credit_group_buy_payout(settlement, order, plan)?);
+            } else {
+                entries.push(self.credit_order_payout(settlement, order)?);
+            }
+        }
+
+        Ok(entries)
+    }
+
+    /// 给普通投注订单派奖。
+    fn credit_order_payout(
+        &mut self,
+        settlement: &SettlementRun,
+        order: &OrderSettlement,
+    ) -> ApiResult<LedgerEntry> {
+        let reference_id = format!("{}:{}", settlement.id, order.order_id);
+        if let Some(entry) = self.reference_entry(&LedgerEntryKind::PayoutCredit, &reference_id) {
+            return Ok(entry);
+        }
+
+        self.apply_available_delta(
+            &order.user_id,
+            LedgerEntryKind::PayoutCredit,
+            order.payout_minor,
+            Some(reference_id),
+            format!("中奖派奖：{} {}", settlement.lottery_name, settlement.issue),
+        )
+    }
+
+    /// 给合买参与人按出资比例分配派奖金额。
+    fn credit_group_buy_payout(
+        &mut self,
+        settlement: &SettlementRun,
+        order: &OrderSettlement,
+        plan: &GroupBuyPlan,
+    ) -> ApiResult<Vec<LedgerEntry>> {
+        if plan.total_amount_minor <= 0 {
+            return Err(ApiError::BadRequest("合买总金额无效".to_string()));
+        }
+
+        let mut entries = Vec::new();
+        let mut remaining_payout = order.payout_minor;
+        let participants = plan
+            .participants
+            .iter()
+            .filter(|participant| participant.amount_minor > 0)
+            .collect::<Vec<_>>();
+        let participant_count = participants.len();
+        if participant_count == 0 {
+            return Err(ApiError::BadRequest("合买计划没有可派奖参与人".to_string()));
+        }
+
+        for (index, participant) in participants.into_iter().enumerate() {
+            let payout_minor = if index + 1 == participant_count {
+                remaining_payout
+            } else {
+                proportional_amount(
+                    order.payout_minor,
+                    participant.amount_minor,
+                    plan.total_amount_minor,
+                )?
+            };
+            remaining_payout = remaining_payout
+                .checked_sub(payout_minor)
+                .ok_or_else(|| ApiError::BadRequest("合买派奖金额过大".to_string()))?;
+            if payout_minor <= 0 {
+                continue;
+            }
+
+            let reference_id = format!("{}:{}:{}", settlement.id, order.order_id, participant.id);
             if let Some(entry) = self.reference_entry(&LedgerEntryKind::PayoutCredit, &reference_id)
             {
                 entries.push(entry);
@@ -706,11 +819,14 @@ impl FinanceStore {
             }
 
             let entry = self.apply_available_delta(
-                &order.user_id,
+                &participant.user_id,
                 LedgerEntryKind::PayoutCredit,
-                order.payout_minor,
+                payout_minor,
                 Some(reference_id),
-                format!("中奖派奖：{} {}", settlement.lottery_name, settlement.issue),
+                format!(
+                    "合买中奖分账：{} {} {}",
+                    settlement.lottery_name, settlement.issue, plan.id
+                ),
             )?;
             entries.push(entry);
         }
@@ -889,6 +1005,51 @@ impl FinanceStore {
         )
     }
 
+    /// 合买取消或流单时按参与记录退还认购金额。
+    fn refund_group_buy_plan(
+        &mut self,
+        plan: &GroupBuyPlan,
+        reason: &str,
+    ) -> ApiResult<Vec<LedgerEntry>> {
+        let mut entries = Vec::new();
+        let reason = reason.trim();
+        for participant in &plan.participants {
+            if participant.amount_minor <= 0 {
+                continue;
+            }
+            entries.push(self.refund_group_buy_participant(
+                plan,
+                participant,
+                if reason.is_empty() {
+                    "合买退款"
+                } else {
+                    reason
+                },
+            )?);
+        }
+        Ok(entries)
+    }
+
+    /// 退还单条合买参与记录，按参与记录 ID 保持幂等。
+    fn refund_group_buy_participant(
+        &mut self,
+        plan: &GroupBuyPlan,
+        participant: &GroupBuyParticipant,
+        reason: &str,
+    ) -> ApiResult<LedgerEntry> {
+        if let Some(entry) = self.reference_entry(&LedgerEntryKind::GroupBuyRefund, &participant.id)
+        {
+            return Ok(entry);
+        }
+        self.apply_available_delta(
+            &participant.user_id,
+            LedgerEntryKind::GroupBuyRefund,
+            participant.amount_minor,
+            Some(participant.id.clone()),
+            format!("合买退款：{} {reason}", plan.id),
+        )
+    }
+
     /// 处理 account 的具体内部流程。
     #[cfg(test)]
     fn account(&self, user_id: &str) -> ApiResult<&FinancialAccountSummary> {
@@ -1026,6 +1187,17 @@ impl FinanceStore {
     }
 }
 
+/// 按比例计算金额，向下取整，最后一名参与人由调用方承接余数。
+fn proportional_amount(total_minor: i64, part_minor: i64, base_minor: i64) -> ApiResult<i64> {
+    if total_minor < 0 || part_minor < 0 || base_minor <= 0 {
+        return Err(ApiError::BadRequest("合买派奖比例金额无效".to_string()));
+    }
+    total_minor
+        .checked_mul(part_minor)
+        .map(|amount| amount / base_minor)
+        .ok_or_else(|| ApiError::BadRequest("合买派奖金额过大".to_string()))
+}
+
 /// 处理 current_timestamp_label 的具体内部流程。
 fn current_timestamp_label() -> String {
     let seconds = SystemTime::now()
@@ -1040,6 +1212,7 @@ mod tests {
     use crate::{
         domain::{
             finance::{LedgerEntryKind, ManualBalanceAdjustmentRequest},
+            group_buy::{GroupBuyParticipant, GroupBuyPlan, GroupBuyPlanStatus},
             lottery::LotteryNumberType,
             order::{OrderDetail, OrderStatus},
             play::{PlayRuleCode, PlaySelection},
@@ -1158,6 +1331,55 @@ mod tests {
         assert_eq!(entries[0].amount_minor, 2_000);
         assert_eq!(account.available_balance_minor, 14_000);
         assert_eq!(overview.today_payout_minor, 2_000);
+    }
+
+    #[test]
+    /// 合买总单派奖会按参与金额拆给每个参与用户。
+    fn store_credits_group_buy_settlement_by_participant_share() {
+        let mut store = FinanceStore::seeded();
+        let settlement = settlement_run("S000000000001", "U90001", 3_000);
+        let plan = group_buy_plan_with_order("G202606050001", "O000000000001");
+
+        let entries = store
+            .credit_settlement_with_group_buys(&settlement, &[plan])
+            .expect("group buy payout can be credited");
+        let agent = store.account("U90001").expect("agent account exists");
+        let user = store.account("U10001").expect("user account exists");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].kind, LedgerEntryKind::PayoutCredit);
+        assert_eq!(entries[0].amount_minor, 1_000);
+        assert_eq!(entries[1].amount_minor, 2_000);
+        assert_eq!(agent.available_balance_minor, 521_000);
+        assert_eq!(user.available_balance_minor, 14_000);
+    }
+
+    #[test]
+    /// 合买退款按参与记录退还认购金额，并按参与记录保持幂等。
+    fn store_refunds_group_buy_plan_once() {
+        let mut store = FinanceStore::seeded();
+        let plan = group_buy_plan_with_order("G202606050001", "O000000000001");
+        store
+            .debit_group_buy("U90001", 1_000, "G202606050001-P001", "G202606050001")
+            .expect("initiator debit can be applied");
+        store
+            .debit_group_buy("U10001", 2_000, "G202606050001-P002", "G202606050001")
+            .expect("participant debit can be applied");
+
+        let entries = store
+            .refund_group_buy_plan(&plan, "流单退款")
+            .expect("group buy plan can be refunded");
+        let repeated = store
+            .refund_group_buy_plan(&plan, "流单退款")
+            .expect("group buy refund is idempotent");
+        let agent = store.account("U90001").expect("agent account exists");
+        let user = store.account("U10001").expect("user account exists");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].kind, LedgerEntryKind::GroupBuyRefund);
+        assert_eq!(entries[0].id, repeated[0].id);
+        assert_eq!(agent.available_balance_minor, 520_000);
+        assert_eq!(user.available_balance_minor, 12_000);
     }
 
     #[test]
@@ -1339,6 +1561,51 @@ mod tests {
                 payout_minor,
                 status: OrderStatus::Won,
             }],
+        }
+    }
+
+    /// 构造带两名参与人的合买计划，用于财务分账和退款测试。
+    fn group_buy_plan_with_order(id: &str, order_id: &str) -> GroupBuyPlan {
+        GroupBuyPlan {
+            id: id.to_string(),
+            lottery_id: "fc3d".to_string(),
+            lottery_name: "福彩 3D".to_string(),
+            order_id: Some(order_id.to_string()),
+            issue: "20260605001".to_string(),
+            rule_code: "threeDirect".to_string(),
+            title: "测试合买".to_string(),
+            numbers: "1,2,3".to_string(),
+            initiator_user_id: "U90001".to_string(),
+            initiator_username: "agent_alpha".to_string(),
+            total_amount_minor: 3_000,
+            filled_amount_minor: 3_000,
+            min_share_amount_minor: 1_000,
+            participant_min_amount_minor: 1_000,
+            share_count: 3,
+            status: GroupBuyPlanStatus::Filled,
+            participants: vec![
+                GroupBuyParticipant {
+                    id: format!("{id}-P001"),
+                    user_id: "U90001".to_string(),
+                    username: "agent_alpha".to_string(),
+                    amount_minor: 1_000,
+                    share_count: 1,
+                    note: "发起人认购".to_string(),
+                    created_at: "2026-06-05 16:00:00".to_string(),
+                },
+                GroupBuyParticipant {
+                    id: format!("{id}-P002"),
+                    user_id: "U10001".to_string(),
+                    username: "demo_user".to_string(),
+                    amount_minor: 2_000,
+                    share_count: 2,
+                    note: "参与合买".to_string(),
+                    created_at: "2026-06-05 16:01:00".to_string(),
+                },
+            ],
+            note: "测试计划".to_string(),
+            created_at: "2026-06-05 16:00:00".to_string(),
+            updated_at: "2026-06-05 16:01:00".to_string(),
         }
     }
 }

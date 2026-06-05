@@ -28,6 +28,7 @@ use crate::{
         draw::DrawRepository,
         draw_generation::{generate_draw_issue_batch, DEFAULT_SALE_CLOSE_LEAD_SECONDS},
         finance::FinanceRepository,
+        group_buy::GroupBuyRepository,
         lottery::LotteryRepository,
         order::OrderRepository,
         realtime::{
@@ -600,6 +601,7 @@ pub fn spawn_draw_scheduler(
     lotteries: LotteryRepository,
     orders: OrderRepository,
     finance: FinanceRepository,
+    group_buys: GroupBuyRepository,
     realtime: RealtimeHub,
     config: DrawSchedulerConfig,
     scheduler: DrawSchedulerRepository,
@@ -635,6 +637,7 @@ pub fn spawn_draw_scheduler(
                 &lotteries,
                 &orders,
                 &finance,
+                &group_buys,
                 &current_config,
                 now.clone(),
             )
@@ -732,6 +735,7 @@ pub async fn run_draw_scheduler_once(
     lotteries: &LotteryRepository,
     orders: &OrderRepository,
     finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
     config: &DrawSchedulerConfig,
     now: String,
 ) -> ApiResult<DrawSchedulerRun> {
@@ -748,6 +752,7 @@ pub async fn run_draw_scheduler_once(
         lotteries,
         orders,
         finance,
+        group_buys,
         DrawAutomationRunRequest { now: now.clone() },
     )
     .await?;
@@ -851,6 +856,7 @@ mod tests {
             draw::DrawRepository,
             draw_api::ApiDrawSourceRepository,
             finance::FinanceRepository,
+            group_buy::GroupBuyRepository,
             lottery::LotteryRepository,
             order::OrderRepository,
             realtime::RealtimeHub,
@@ -869,6 +875,7 @@ mod tests {
         enable_lottery_sale(&lotteries, "ssc60").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let config = enabled_config(2);
 
         let run = run_draw_scheduler_once(
@@ -876,6 +883,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )
@@ -907,6 +915,7 @@ mod tests {
         enable_lottery_sale(&lotteries, "ssc60").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let config = enabled_config(1);
 
         let run = run_draw_scheduler_once(
@@ -914,6 +923,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )
@@ -939,6 +949,7 @@ mod tests {
         enable_lottery_sale(&lotteries, "ssc60").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let config = enabled_config(1);
 
         run_draw_scheduler_once(
@@ -946,6 +957,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )
@@ -956,6 +968,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )
@@ -972,6 +985,7 @@ mod tests {
         enable_lottery_sale(&lotteries, "ssc60").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let config = enabled_config(1);
         let lottery = lotteries.get("ssc60").await.expect("lottery exists");
         let issue = draws
@@ -992,6 +1006,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )
@@ -1016,6 +1031,7 @@ mod tests {
         enable_lottery_sale(&lotteries, "ssc60").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let config = enabled_config(1);
         let lottery = lotteries.get("ssc60").await.expect("lottery exists");
         let current_issue = draws
@@ -1036,6 +1052,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             &config,
             "2026-06-02 20:00:30".to_string(),
         )
@@ -1059,6 +1076,7 @@ mod tests {
             LotteryRepository::memory_seeded(),
             OrderRepository::memory(),
             FinanceRepository::memory_seeded(),
+            GroupBuyRepository::memory_seeded(),
             RealtimeHub::new(),
             DrawSchedulerConfig::default(),
             DrawSchedulerRepository::new(DrawSchedulerConfig::default()),
@@ -1074,12 +1092,14 @@ mod tests {
         let lotteries = LotteryRepository::memory_seeded();
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let scheduler = DrawSchedulerRepository::new(DrawSchedulerConfig::default());
         let handle = spawn_draw_scheduler(
             draws,
             lotteries,
             orders,
             finance,
+            group_buys,
             RealtimeHub::new(),
             DrawSchedulerConfig::default(),
             scheduler.clone(),
@@ -1115,6 +1135,7 @@ mod tests {
         let lotteries = LotteryRepository::memory_seeded();
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let config = enabled_config(1);
         let scheduler = DrawSchedulerRepository::new(config.clone());
         let run = run_draw_scheduler_once(
@@ -1122,6 +1143,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )

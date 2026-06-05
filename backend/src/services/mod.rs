@@ -10,6 +10,7 @@ pub mod draw_api;
 pub mod draw_generation;
 pub mod finance;
 pub mod group_buy;
+pub mod group_buy_flow;
 pub mod invite;
 pub mod lottery;
 pub mod mobile_bet;

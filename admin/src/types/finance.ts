@@ -2,6 +2,8 @@ export type { FinanceOverview } from './dashboard';
 
 export type LedgerEntryKind =
   | 'manualAdjustment'
+  | 'groupBuyDebit'
+  | 'groupBuyRefund'
   | 'orderDebit'
   | 'orderRefund'
   | 'payoutCredit'

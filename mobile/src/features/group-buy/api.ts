@@ -92,6 +92,7 @@ function normalizeGroupBuyPlan(item: any): GroupBuyPlan {
 
   return {
     id: String(item?.id || ''),
+    order_id: item?.orderId ? String(item.orderId) : null,
     lottery_code: String(item?.lotteryId || ''),
     lottery_name: String(item?.lotteryName || ''),
     category: item?.category ? String(item.category) : undefined,

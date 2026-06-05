@@ -962,10 +962,7 @@ mod tests {
                 CreateDrawIssueRequest, DrawIssueResultRequest, DrawIssueStatus,
                 SaveLotteryDrawControlRequest,
             },
-            lottery::{
-                DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategory, LotteryKind,
-                LotteryNumberType,
-            },
+            lottery::{DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType},
         },
         services::{
             draw::{DrawRepository, DrawStore},

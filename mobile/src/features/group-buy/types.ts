@@ -7,6 +7,7 @@ export type GroupBuyParticipation = {
 
 export type GroupBuyPlan = {
   id: string
+  order_id?: string | null
   lottery_code: string
   lottery_name: string
   category?: string

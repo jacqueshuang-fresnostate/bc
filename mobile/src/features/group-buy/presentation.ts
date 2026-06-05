@@ -143,11 +143,6 @@ export function calculateRequiredSelfShares(totalAmount: string | number, shareA
   return Math.ceil(minimumCents / shareCents)
 }
 
-/** 判断福彩3D合买是否仍在使用无逗号旧号码。 */
-export function isLegacyPlainFc3dNumbers(lotteryCode: string, numbers: string) {
-  return lotteryCode === 'fc3d' && /^\d{2,}$/.test(String(numbers || '').trim())
-}
-
 /** 构建移动端创建合买请求体。 */
 export function buildCreateGroupBuyPayload(form: CreateGroupBuyForm, fallbackLotteryCode: string, shareAmount: string, shareCount: number): CreateGroupBuyPayload {
   return {

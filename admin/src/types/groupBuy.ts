@@ -19,6 +19,10 @@ export interface GroupBuyPlanSummary {
   id: string;
   lotteryId: string;
   lotteryName: string;
+  orderId?: string | null;
+  issue: string;
+  ruleCode: string;
+  title: string;
   initiatorUserId: string;
   initiatorUsername: string;
   totalAmountMinor: number;
@@ -30,6 +34,7 @@ export interface GroupBuyPlanSummary {
 export interface GroupBuyPlan extends GroupBuyPlanSummary {
   minShareAmountMinor: number;
   participantMinAmountMinor: number;
+  numbers: string;
   participants: GroupBuyParticipant[];
   note: string;
   createdAt: string;
@@ -39,6 +44,10 @@ export interface GroupBuyPlan extends GroupBuyPlanSummary {
 export interface CreateGroupBuyPlanRequest {
   id: string;
   lotteryId: string;
+  issue: string;
+  ruleCode: string;
+  title: string;
+  numbers: string;
   initiatorUserId: string;
   totalAmountMinor: number;
   initiatorAmountMinor: number;

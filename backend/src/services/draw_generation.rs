@@ -455,8 +455,8 @@ mod tests {
         domain::{
             draw::{CreateDrawIssueRequest, GenerateDrawIssueRequest, GenerateDrawIssuesRequest},
             lottery::{
-                DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategory, LotteryKind,
-                LotteryNumberType, PlayCategory,
+                DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
+                PlayCategory,
             },
         },
         services::{

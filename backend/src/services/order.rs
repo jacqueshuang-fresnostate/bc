@@ -911,8 +911,8 @@ mod tests {
         domain::{
             draw::{DrawIssue, DrawIssueStatus},
             lottery::{
-                DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategory, LotteryKind,
-                LotteryNumberType, LotteryPlayConfig, PlayCategory,
+                DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
+                LotteryPlayConfig, PlayCategory,
             },
             order::{CreateOrderRequest, OrderStatus},
             play::{PlayRuleCode, PlaySelection},

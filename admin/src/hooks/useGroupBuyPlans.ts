@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   addGroupBuyParticipant,
   createGroupBuyPlan,
+  fetchDrawIssues,
   fetchGroupBuyPlan,
   fetchGroupBuyPlans,
   fetchLotteries,
@@ -9,6 +10,7 @@ import {
   updateGroupBuyPlan,
 } from '../api/client';
 import type { LotteryKind, UserSummary } from '../types/dashboard';
+import type { DrawIssue } from '../types/draws';
 import type {
   AddGroupBuyParticipantRequest,
   CreateGroupBuyPlanRequest,
@@ -20,6 +22,7 @@ import type {
 export function useGroupBuyPlans() {
   const [lotteries, setLotteries] = useState<LotteryKind[]>([]);
   const [plans, setPlans] = useState<GroupBuyPlanSummary[]>([]);
+  const [drawIssues, setDrawIssues] = useState<DrawIssue[]>([]);
   const [selectedPlan, setSelectedPlan] = useState<GroupBuyPlan | null>(null);
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,14 +44,16 @@ export function useGroupBuyPlans() {
       fetchGroupBuyPlans(controller.signal),
       fetchLotteries(controller.signal),
       fetchUsers(controller.signal),
+      fetchDrawIssues(controller.signal, { pageSize: 300 }),
     ])
-      .then(async ([nextPlans, nextLotteries, nextUsers]) => {
+      .then(async ([nextPlans, nextLotteries, nextUsers, nextDrawIssuePage]) => {
         if (controller.signal.aborted) {
           return;
         }
         setPlans(nextPlans);
         setLotteries(nextLotteries);
         setUsers(nextUsers);
+        setDrawIssues(nextDrawIssuePage.items);
 
         const selectedId = selectedPlan?.id ?? nextPlans[0]?.id;
         if (!selectedId) {
@@ -154,6 +159,7 @@ export function useGroupBuyPlans() {
   return {
     addParticipant,
     create,
+    drawIssues,
     error,
     loadPlan,
     loading,
@@ -178,6 +184,10 @@ function summaryFromPlan(plan: GroupBuyPlan): GroupBuyPlanSummary {
     shareCount: plan.shareCount,
     status: plan.status,
     totalAmountMinor: plan.totalAmountMinor,
+    orderId: plan.orderId,
+    issue: plan.issue,
+    ruleCode: plan.ruleCode,
+    title: plan.title,
   };
 }
 

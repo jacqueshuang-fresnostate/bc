@@ -2487,8 +2487,8 @@ await createInvitation({
 ### 1. 范围 / 触发条件
 
 - 触发条件：新增或修改后端合买领域模型、合买计划仓储、管理后台 API、用户端合买 API、前端 API client、`useGroupBuyPlans` hook 和手机端合买大厅。
-- 范围：合买计划列表、详情、创建、状态维护、参与记录添加、dashboard `groupBuyPlans` 真实数据来源、手机端发起合买、参与合买、我的合买和发起选项。
-- 当前阶段创建和参与合买都会扣减用户可用余额并写入 `groupBuyDebit` 资金流水；仍不创建真实投注订单，不执行撤单退款和中奖分账。
+- 范围：合买计划列表、详情、创建、状态维护、参与记录添加、dashboard `groupBuyPlans` 真实数据来源、手机端发起合买、参与合买、我的合买、发起选项、满单真实成单、封盘流单退款和开奖中奖分账。
+- 当前阶段创建和参与合买都会扣减用户可用余额并写入 `groupBuyDebit` 资金流水；计划满单后会创建一张真实投注订单并回写 `orderId`，封盘未满员会取消计划并写入 `groupBuyRefund`，开奖结算中奖时按参与金额比例写入参与人的 `payoutCredit`。
 
 ### 2. 签名
 
@@ -2514,6 +2514,7 @@ await createInvitation({
   "id": "G202606020001",
   "lotteryId": "fc3d",
   "lotteryName": "福彩 3D",
+  "orderId": null,
   "issue": "20260605001",
   "ruleCode": "threeDirect",
   "title": "福彩 3D 第20260605001期合买",
@@ -2612,8 +2613,11 @@ await createInvitation({
 6. 参与金额达到计划总金额时，计划状态自动变为 `filled`。
 7. 用户端发起和参与合买时，用户 ID 始终来自登录态；前端不能提交或覆盖发起人、参与人 ID。
 8. `issue` 必须是当前彩种处于 `open` 状态的期号，`ruleCode` 必须对应当前彩种已启用玩法。
-9. `numbers` 是当前合买投注内容，后端只保存当前文本并限制长度；真实拆单、赔率快照和中奖判定需在后续投注订单阶段实现。
+9. `numbers` 是当前合买投注内容，后端必须通过 `group_buy_flow` 转换为当前订单引擎的 `PlaySelection`；支持直选位置 `1|2|3`、单注逗号 `1,2,3`、组合 `1,2,3`、胆拖 `1|2,3,4` 和大小单双 `tens:big|ones:odd` / 中文“大、小、单、双”。
 10. 发起或参与合买扣款成功后必须写入 `ledger_entries.kind=groupBuyDebit`，并通过实时事件推送余额变化。
+11. 当 `filledAmountMinor == totalAmountMinor` 时，后端必须立即创建一张真实投注订单，并通过 `group_buy_plans.order_id` 关联；该真实订单不能再次执行普通订单扣款，合买参与扣款才是资金来源。
+12. 封盘时仍未满员的 `draft/open` 计划必须自动取消，并按参与记录写入幂等的 `groupBuyRefund` 资金流水。
+13. 开奖结算时，如果中奖订单属于合买计划，派奖必须按参与金额占计划总金额的比例拆给参与人；除最后一名参与人外向下取整，最后一名承接余数，随后把计划标记为 `settled`。
 
 ### 4. 校验与错误矩阵
 
@@ -2631,6 +2635,7 @@ await createInvitation({
 | 发起人不存在 | HTTP 404，返回用户不存在 |
 | 总金额或发起人认购金额小于等于 0 | HTTP 400，返回金额必须大于 0 |
 | 总金额或参与金额不能按 `minShareAmountMinor` 整除 | HTTP 400，返回必须按最小份额金额整除 |
+| 总金额不能按投注注数平均分配单注金额 | HTTP 400，返回合买总金额必须能按注数平均分配 |
 | 发起人认购低于彩种 `initiatorMinPercent` | HTTP 400，返回发起人最低认购金额 |
 | 发起人认购超过计划总金额 | HTTP 400，返回发起人认购不能超过总金额 |
 | 发起人或参与人余额不足 | HTTP 400，返回余额不足 |
@@ -2642,16 +2647,21 @@ await createInvitation({
 | 参与金额低于 `participantMinAmountMinor` | HTTP 400，返回参与金额最低要求 |
 | 参与金额超过剩余可认购金额 | HTTP 400，返回超额参与错误 |
 | 计划不是 `draft` 或 `open` | HTTP 400，返回计划不可参与 |
+| 满员计划关联真实订单失败 | 回滚新建计划或新增参与记录，已创建的未入账订单必须移除 |
+| 后台取消已开奖或已取消的合买真实订单 | HTTP 400，返回已开奖或已取消的合买订单不能取消 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：`fc3d` 开启合买，`U90001` 发起 `100000` 分计划并认购 `10000` 分，后端自动生成发起人参与记录和 `1000` 份总份额。
 - Good：手机端当前用户发起或参与合买后，后端扣减可用余额，写入 `groupBuyDebit` 资金流水，并返回最新合买计划和余额。
-- Good：追加 `U10001` 参与记录后，如果 `filledAmountMinor == totalAmountMinor`，后端自动把计划状态改为 `filled`。
+- Good：追加 `U10001` 参与记录后，如果 `filledAmountMinor == totalAmountMinor`，后端自动把计划状态改为 `filled`，创建真实投注订单并在响应里返回 `orderId`。
+- Good：自动化封盘时取消未满员计划，按每条参与记录退回认购金额，重复执行不会重复退款。
+- Good：开奖结算时识别合买订单，中奖金额按参与金额比例拆给参与用户，普通订单仍按订单用户派奖。
 - Base：无数据库环境下使用内存合买仓储，服务重启后恢复种子合买计划；数据库模式下使用 `group_buy_plans`、`group_buy_participants` 和 `ledger_entries` 持久化。
 - Bad：前端自行计算 `shareCount` 并提交给后端，后续会与彩种合买配置漂移。
 - Bad：直接把 dashboard 的 `groupBuyPlans` 写成静态函数，页面创建计划后首页摘要不会同步。
 - Bad：用户端继续请求旧 `/group-buys/*` 路径，当前后端没有该旧系统接口。
+- Bad：满单后创建普通订单并再次调用 `debit_order`；这会导致用户既被合买认购扣款，又被订单扣款。
 
 ### 6. 必要测试
 
@@ -2661,9 +2671,12 @@ await createInvitation({
 - 后端需要覆盖添加参与记录后自动满单。
 - 后端需要覆盖超额参与被拒绝。
 - 后端需要覆盖合买扣款写入 `groupBuyDebit` 且相同参与记录不会重复扣款。
+- 后端需要覆盖满单创建真实订单并回写 `orderId`。
+- 后端需要覆盖封盘流单退款写入 `groupBuyRefund` 且幂等。
+- 后端需要覆盖合买中奖按参与人份额拆分派奖。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`，确认计划状态、请求字段和 API client 类型一致。
-- API 冒烟需要创建计划、更新状态、添加参与记录到满单，并验证 dashboard `groupBuyPlans` 来自真实仓储。
+- API 冒烟需要创建计划、更新状态、添加参与记录到满单、确认 `orderId` 已生成，并验证 dashboard `groupBuyPlans` 来自真实仓储。
 - 浏览器验证需要进入“合买配置”入口，确认真实页面显示、保存状态和添加参与记录无接口错误且控制台无错误。
 
 ### 7. Wrong vs Correct

@@ -71,6 +71,14 @@ impl GroupBuyRepository {
             .get(id)
     }
 
+    /// 按真实投注订单 ID 批量查找合买计划。
+    pub async fn plans_for_order_ids(&self, order_ids: &[String]) -> ApiResult<Vec<GroupBuyPlan>> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))
+            .map(|store| store.plans_for_order_ids(order_ids))
+    }
+
     /// 校验入参并创建一条新记录。
     pub async fn create(
         &self,
@@ -87,6 +95,57 @@ impl GroupBuyRepository {
             (result, store.clone())
         };
         self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 满单后把合买计划关联到真实投注订单。
+    pub async fn attach_order(&self, id: &str, order_id: &str) -> ApiResult<GroupBuyPlan> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
+            let result = store.attach_order(id, order_id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 根据结算订单 ID 把对应合买计划标记为已结算。
+    pub async fn mark_settled_by_order_ids(
+        &self,
+        order_ids: &[String],
+    ) -> ApiResult<Vec<GroupBuyPlan>> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
+            let result = store.mark_settled_by_order_ids(order_ids);
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 封盘时取消未满单的合买计划，返回需要退款的计划。
+    pub async fn cancel_unfilled_for_issue(
+        &self,
+        lottery_id: &str,
+        issue: &str,
+    ) -> ApiResult<Vec<GroupBuyPlan>> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
+            let result = store.cancel_unfilled_for_issue(lottery_id, issue);
+            (result, store.clone())
+        };
+        if !result.is_empty() {
+            self.persist(&snapshot).await?;
+        }
         Ok(result)
     }
 
@@ -178,7 +237,7 @@ async fn load_group_buy_store(database: &BusinessDatabase) -> ApiResult<GroupBuy
 
     for row in sqlx::query(
         "SELECT id, lottery_id, lottery_name, initiator_user_id, initiator_username,
-                issue, rule_code, title, numbers,
+                order_id, issue, rule_code, title, numbers,
                 total_amount_minor, filled_amount_minor, min_share_amount_minor,
                 participant_min_amount_minor, share_count, status, note, created_at, updated_at
          FROM group_buy_plans
@@ -203,6 +262,9 @@ async fn load_group_buy_store(database: &BusinessDatabase) -> ApiResult<GroupBuy
                     .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
                 lottery_name: row
                     .try_get("lottery_name")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                order_id: row
+                    .try_get("order_id")
                     .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
                 issue: row
                     .try_get("issue")
@@ -322,16 +384,17 @@ async fn save_group_buy_store(database: &BusinessDatabase, store: &GroupBuyStore
         sqlx::query(
             "INSERT INTO group_buy_plans
              (id, lottery_id, lottery_name, initiator_user_id, initiator_username,
-              issue, rule_code, title, numbers,
+              order_id, issue, rule_code, title, numbers,
               total_amount_minor, filled_amount_minor, min_share_amount_minor,
               participant_min_amount_minor, share_count, status, note, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
         )
         .bind(&plan.id)
         .bind(&plan.lottery_id)
         .bind(&plan.lottery_name)
         .bind(&plan.initiator_user_id)
         .bind(&plan.initiator_username)
+        .bind(&plan.order_id)
         .bind(&plan.issue)
         .bind(&plan.rule_code)
         .bind(&plan.title)
@@ -401,6 +464,19 @@ impl GroupBuyStore {
         self.plans.values().cloned().collect()
     }
 
+    /// 按订单 ID 查找已经成单的合买计划。
+    fn plans_for_order_ids(&self, order_ids: &[String]) -> Vec<GroupBuyPlan> {
+        self.plans
+            .values()
+            .filter(|plan| {
+                plan.order_id
+                    .as_ref()
+                    .is_some_and(|order_id| order_ids.iter().any(|id| id == order_id))
+            })
+            .cloned()
+            .collect()
+    }
+
     /// 按标识查询并返回单条记录。
     fn get(&self, id: &str) -> ApiResult<GroupBuyPlan> {
         self.plans
@@ -463,10 +539,10 @@ impl GroupBuyStore {
         }
 
         let now = current_time_label();
-        let issue = request.issue.trim().to_string();
-        let rule_code = request.rule_code.trim().to_string();
+        let issue = required_trimmed(request.issue, "group buy issue")?;
+        let rule_code = required_trimmed(request.rule_code, "group buy rule code")?;
         let title = optional_title(&request.title, &lottery.name, &issue);
-        let numbers = request.numbers.trim().to_string();
+        let numbers = required_trimmed(request.numbers, "group buy numbers")?;
         let participant = GroupBuyParticipant {
             id: format!("{id}-P001"),
             user_id: initiator.id.clone(),
@@ -488,6 +564,7 @@ impl GroupBuyStore {
             id: id.clone(),
             lottery_id: lottery.id.clone(),
             lottery_name: lottery.name.clone(),
+            order_id: None,
             issue,
             rule_code,
             title,
@@ -520,6 +597,13 @@ impl GroupBuyStore {
             .get_mut(id)
             .ok_or_else(|| ApiError::NotFound(format!("group buy plan `{id}` not found")))?;
 
+        if matches!(plan.status, GroupBuyPlanStatus::Settled)
+            && !matches!(request.status, GroupBuyPlanStatus::Settled)
+        {
+            return Err(ApiError::BadRequest(
+                "settled group buy plan cannot change status".to_string(),
+            ));
+        }
         if matches!(
             request.status,
             GroupBuyPlanStatus::Filled | GroupBuyPlanStatus::Settled
@@ -529,12 +613,87 @@ impl GroupBuyStore {
                 "group buy plan must be fully filled before filled or settled status".to_string(),
             ));
         }
+        if matches!(request.status, GroupBuyPlanStatus::Settled) && plan.order_id.is_none() {
+            return Err(ApiError::BadRequest(
+                "group buy plan must create order before settled status".to_string(),
+            ));
+        }
 
         plan.status = request.status;
         plan.note = request.note.trim().to_string();
         plan.updated_at = current_time_label();
 
         Ok(plan.clone())
+    }
+
+    /// 关联真实投注订单号，避免同一合买重复成单。
+    fn attach_order(&mut self, id: &str, order_id: &str) -> ApiResult<GroupBuyPlan> {
+        let plan = self
+            .plans
+            .get_mut(id)
+            .ok_or_else(|| ApiError::NotFound(format!("group buy plan `{id}` not found")))?;
+        let order_id = required_trimmed(order_id.to_string(), "group buy order id")?;
+        if !matches!(plan.status, GroupBuyPlanStatus::Filled) {
+            return Err(ApiError::BadRequest(
+                "group buy plan must be filled before creating order".to_string(),
+            ));
+        }
+        if let Some(existing_order_id) = &plan.order_id {
+            if existing_order_id == &order_id {
+                return Ok(plan.clone());
+            }
+            return Err(ApiError::Conflict(format!(
+                "group buy plan `{id}` already has order `{existing_order_id}`"
+            )));
+        }
+
+        plan.order_id = Some(order_id);
+        plan.updated_at = current_time_label();
+        Ok(plan.clone())
+    }
+
+    /// 按订单 ID 将已结算合买计划标记为已结算。
+    fn mark_settled_by_order_ids(&mut self, order_ids: &[String]) -> Vec<GroupBuyPlan> {
+        let mut settled = Vec::new();
+        for plan in self.plans.values_mut() {
+            let matches_order = plan
+                .order_id
+                .as_ref()
+                .is_some_and(|order_id| order_ids.iter().any(|id| id == order_id));
+            if matches_order
+                && matches!(
+                    plan.status,
+                    GroupBuyPlanStatus::Filled | GroupBuyPlanStatus::Open
+                )
+            {
+                plan.status = GroupBuyPlanStatus::Settled;
+                plan.updated_at = current_time_label();
+                settled.push(plan.clone());
+            }
+        }
+        settled
+    }
+
+    /// 封盘时取消仍未满单的合买计划。
+    fn cancel_unfilled_for_issue(&mut self, lottery_id: &str, issue: &str) -> Vec<GroupBuyPlan> {
+        let lottery_id = lottery_id.trim();
+        let issue = issue.trim();
+        let mut cancelled = Vec::new();
+        for plan in self.plans.values_mut() {
+            if plan.lottery_id == lottery_id
+                && plan.issue == issue
+                && plan.filled_amount_minor < plan.total_amount_minor
+                && matches!(
+                    plan.status,
+                    GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open
+                )
+            {
+                plan.status = GroupBuyPlanStatus::Cancelled;
+                plan.updated_at = current_time_label();
+                cancelled.push(plan.clone());
+            }
+        }
+        cancelled
     }
 
     /// 处理 add_participant 的具体内部流程。
@@ -645,6 +804,7 @@ impl GroupBuyStore {
             && plan.filled_amount_minor < plan.total_amount_minor
         {
             plan.status = GroupBuyPlanStatus::Open;
+            plan.order_id = None;
         }
         plan.updated_at = current_time_label();
         Ok(plan.clone())
@@ -753,6 +913,7 @@ fn seed_group_buy_plans() -> Vec<GroupBuyPlan> {
         id: "G202606020001".to_string(),
         lottery_id: "fc3d".to_string(),
         lottery_name: "福彩 3D".to_string(),
+        order_id: None,
         issue: "20260602001".to_string(),
         rule_code: "threeDirect".to_string(),
         title: "福彩 3D 第20260602001期合买".to_string(),

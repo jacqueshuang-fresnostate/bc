@@ -11,7 +11,10 @@ use crate::{
         lottery::DrawMode,
     },
     error::{ApiError, ApiResult},
-    services::{draw::DrawRepository, finance::FinanceRepository, order::OrderRepository},
+    services::{
+        draw::DrawRepository, finance::FinanceRepository, group_buy::GroupBuyRepository,
+        order::OrderRepository,
+    },
 };
 
 /// 触发自动化开奖一轮任务并返回执行结果。
@@ -20,6 +23,7 @@ pub async fn run_draw_automation(
     lotteries: &crate::services::lottery::LotteryRepository,
     orders: &OrderRepository,
     finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
     payload: DrawAutomationRunRequest,
 ) -> ApiResult<DrawAutomationRun> {
     let now = payload.now.trim().to_string();
@@ -48,6 +52,15 @@ pub async fn run_draw_automation(
 
         if should_close(&issue, &now) {
             let closed = draws.close(&issue.id).await?;
+            let cancelled_plans = group_buys
+                .cancel_unfilled_for_issue(&closed.lottery_id, &closed.issue)
+                .await?;
+            for plan in cancelled_plans {
+                let entries = finance
+                    .refund_group_buy_plan(&plan, "封盘未满员流单退款")
+                    .await?;
+                run.ledger_entries.extend(entries);
+            }
             run.closed_issues.push(closed);
         }
     }
@@ -94,7 +107,16 @@ pub async fn run_draw_automation(
             }
         };
         let settlement = orders.settle_draw_issue(&drawn).await?;
-        let entries = finance.credit_settlement(&settlement).await?;
+        let order_ids = settlement
+            .orders
+            .iter()
+            .map(|order| order.order_id.clone())
+            .collect::<Vec<_>>();
+        let group_buy_plans = group_buys.plans_for_order_ids(&order_ids).await?;
+        let entries = finance
+            .credit_settlement_with_group_buys(&settlement, &group_buy_plans)
+            .await?;
+        group_buys.mark_settled_by_order_ids(&order_ids).await?;
 
         run.drawn_issues.push(drawn);
         run.settlement_runs.push(settlement);
@@ -184,17 +206,19 @@ mod tests {
                 CreateDrawIssueRequest, DrawAutomationRunRequest, DrawIssueStatus,
                 SaveLotteryDrawControlRequest,
             },
+            finance::LedgerEntryKind,
+            group_buy::{CreateGroupBuyPlanRequest, GroupBuyPlanStatus},
             lottery::{
-                DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategory, LotteryKind,
-                LotteryNumberType, LotteryPlayConfig, PlayCategory,
+                DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
+                LotteryPlayConfig, PlayCategory,
             },
             order::CreateOrderRequest,
             play::{PlayRuleCode, PlaySelection},
         },
         services::{
-            automation::run_draw_automation, draw::DrawRepository,
+            access::AccessRepository, automation::run_draw_automation, draw::DrawRepository,
             draw_api::ApiDrawSourceRepository, finance::FinanceRepository,
-            lottery::LotteryRepository, order::OrderRepository,
+            group_buy::GroupBuyRepository, lottery::LotteryRepository, order::OrderRepository,
         },
     };
 
@@ -217,6 +241,7 @@ mod tests {
         enable_lottery_sale(&lotteries, "fc3d").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let lottery = lottery(DrawMode::Api);
         let issue = draws
             .create(&lottery, create_request("AUTO20260602001"))
@@ -242,6 +267,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             DrawAutomationRunRequest {
                 now: "2026-06-02 22:00:00".to_string(),
             },
@@ -277,6 +303,7 @@ mod tests {
             .expect("lottery sale can be disabled");
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let lottery = lottery(DrawMode::Api);
         let issue = draws
             .create(&lottery, create_request("AUTO_STOPPED"))
@@ -288,6 +315,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             DrawAutomationRunRequest {
                 now: "2026-06-02 22:00:00".to_string(),
             },
@@ -311,6 +339,7 @@ mod tests {
         enable_lottery_sale(&lotteries, "fc3d").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let lottery = lottery(DrawMode::Manual);
         let issue = draws
             .create(&lottery, create_request("MANUAL20260602001"))
@@ -322,6 +351,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             DrawAutomationRunRequest {
                 now: "2026-06-02 22:00:00".to_string(),
             },
@@ -344,6 +374,7 @@ mod tests {
         enable_lottery_sale(&lotteries, "fc3d").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let lottery = lottery(DrawMode::Manual);
         draws
             .save_draw_control(
@@ -365,6 +396,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             DrawAutomationRunRequest {
                 now: "2026-06-02 22:00:00".to_string(),
             },
@@ -389,6 +421,7 @@ mod tests {
         enable_lottery_sale(&lotteries, "fc3d").await;
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
         let lottery = lottery(DrawMode::Api);
         let issue = draws
             .create(&lottery, create_request("2099999"))
@@ -400,6 +433,7 @@ mod tests {
             &lotteries,
             &orders,
             &finance,
+            &group_buys,
             DrawAutomationRunRequest {
                 now: "2026-06-02 22:00:00".to_string(),
             },
@@ -414,6 +448,73 @@ mod tests {
         assert_eq!(stored.status, DrawIssueStatus::Closed);
         assert!(stored.draw_number.is_none());
         assert!(run.skipped_issues[0].reason.contains("未找到"));
+    }
+
+    #[tokio::test]
+    async fn automation_refunds_unfilled_group_buy_when_issue_closes() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let lottery = lottery(DrawMode::Api);
+        let issue = draws
+            .create(&lottery, create_request("GROUP_BUY_CLOSE"))
+            .await
+            .expect("issue can be created");
+        let plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-AUTO-CLOSE-001".to_string(),
+                    lottery_id: lottery.id.clone(),
+                    issue: issue.issue.clone(),
+                    rule_code: "threeDirect".to_string(),
+                    title: "封盘流单测试".to_string(),
+                    numbers: "1|2|3".to_string(),
+                    initiator_user_id: "U90001".to_string(),
+                    total_amount_minor: 100_000,
+                    initiator_amount_minor: 10_000,
+                    note: "封盘流单测试".to_string(),
+                },
+                std::slice::from_ref(&lottery),
+                &access.users,
+            )
+            .await
+            .expect("group buy plan can be created");
+        finance
+            .debit_group_buy(
+                &plan.initiator_user_id,
+                plan.filled_amount_minor,
+                "G-AUTO-CLOSE-001-P001",
+                &plan.id,
+            )
+            .await
+            .expect("group buy debit can be written");
+
+        let run = run_draw_automation(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            DrawAutomationRunRequest {
+                now: "2026-06-02 20:59:45".to_string(),
+            },
+        )
+        .await
+        .expect("automation can close and refund unfilled group buy");
+        let stored_plan = group_buys.get(&plan.id).await.expect("plan exists");
+
+        assert_eq!(run.closed_issues.len(), 1);
+        assert!(run.drawn_issues.is_empty());
+        assert_eq!(stored_plan.status, GroupBuyPlanStatus::Cancelled);
+        assert_eq!(run.ledger_entries.len(), 1);
+        assert_eq!(run.ledger_entries[0].kind, LedgerEntryKind::GroupBuyRefund);
     }
 
     /// 处理 create_request 的具体内部流程。

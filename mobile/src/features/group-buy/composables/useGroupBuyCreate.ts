@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { showToast } from 'vant'
 import { createGroupBuyPlan, fetchCurrentBalance, fetchGroupBuyCreateOptions, fetchMyGroupBuys } from '../api'
-import { buildCreateGroupBuyPayload, calculateCreatePaymentAmount, calculateFixedShareCount, calculateRequiredSelfShares, createDefaultGroupBuyForm, isLegacyPlainFc3dNumbers, normalizeItems, normalizeOptionPayload } from '../presentation'
+import { buildCreateGroupBuyPayload, calculateCreatePaymentAmount, calculateFixedShareCount, calculateRequiredSelfShares, createDefaultGroupBuyForm, normalizeItems, normalizeOptionPayload } from '../presentation'
 import type { GroupBuySettings, SelectOption } from '../types'
 
 /** 创建发起合买弹窗的模板方法状态流。 */
@@ -95,10 +95,6 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
     submittingCreate.value = true
     try {
       const payload = buildCreateGroupBuyPayload(createForm.value, lotteryCode.value, fixedShareAmount.value, computedShareCount.value)
-      if (isLegacyPlainFc3dNumbers(payload.lottery_code, payload.numbers)) {
-        showToast('福彩3D号码请使用逗号分隔，如 1,2,3')
-        return null
-      }
       if (computedShareCount.value <= 0) {
         showToast('总金额必须能按每份金额整除')
         return null

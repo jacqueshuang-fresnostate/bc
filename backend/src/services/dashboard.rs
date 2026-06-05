@@ -598,6 +598,7 @@ mod tests {
                 id: "G202606020001".to_string(),
                 lottery_id: "fc3d".to_string(),
                 lottery_name: "福彩 3D".to_string(),
+                order_id: None,
                 issue: "20260602001".to_string(),
                 rule_code: "threeDirect".to_string(),
                 title: "福彩 3D 第20260602001期合买".to_string(),

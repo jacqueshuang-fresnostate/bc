@@ -1,4 +1,4 @@
-import { Input, Banner, Button, Card, Select, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, Spin, Tag, TextArea } from '@douyinfe/semi-ui';
 import { Plus, RefreshCcw, Save, Share2, Users } from 'lucide-react';
 import {
   useEffect,
@@ -18,6 +18,7 @@ import type {
   GroupBuyPlanSummary,
   UpdateGroupBuyPlanRequest,
 } from '../types/groupBuy';
+import type { PlayRuleCode } from '../types/playRules';
 import { formatMoney } from '../utils/format';
 
 interface GroupBuyManagementPageProps {
@@ -28,8 +29,12 @@ interface CreateFormState {
   id: string;
   initiatorAmountMinor: string;
   initiatorUserId: string;
+  issue: string;
   lotteryId: string;
   note: string;
+  numbers: string;
+  ruleCode: string;
+  title: string;
   totalAmountMinor: string;
 }
 
@@ -51,6 +56,7 @@ export function GroupBuyManagementPage({
   const {
     addParticipant,
     create,
+    drawIssues,
     error,
     loadPlan,
     loading,
@@ -80,6 +86,17 @@ export function GroupBuyManagementPage({
     () => eligibleLotteries.find((lottery) => lottery.id === createForm.lotteryId),
     [createForm.lotteryId, eligibleLotteries],
   );
+  const availableIssues = useMemo(
+    () =>
+      drawIssues.filter(
+        (issue) => issue.lotteryId === createForm.lotteryId && issue.status === 'open',
+      ),
+    [createForm.lotteryId, drawIssues],
+  );
+  const availablePlayConfigs = useMemo(
+    () => selectedLottery?.playConfigs.filter((config) => config.enabled) ?? [],
+    [selectedLottery],
+  );
 
   useEffect(() => {
     if (!createForm.lotteryId && eligibleLotteries[0]) {
@@ -89,6 +106,36 @@ export function GroupBuyManagementPage({
       }));
     }
   }, [createForm.lotteryId, eligibleLotteries]);
+
+  useEffect(() => {
+    if (availableIssues.length === 0) {
+      if (createForm.issue) {
+        setCreateForm((current) => ({ ...current, issue: '' }));
+      }
+      return;
+    }
+    if (!availableIssues.some((issue) => issue.issue === createForm.issue)) {
+      setCreateForm((current) => ({
+        ...current,
+        issue: availableIssues[0].issue,
+      }));
+    }
+  }, [availableIssues, createForm.issue]);
+
+  useEffect(() => {
+    if (availablePlayConfigs.length === 0) {
+      if (createForm.ruleCode) {
+        setCreateForm((current) => ({ ...current, ruleCode: '' }));
+      }
+      return;
+    }
+    if (!availablePlayConfigs.some((config) => config.ruleCode === createForm.ruleCode)) {
+      setCreateForm((current) => ({
+        ...current,
+        ruleCode: availablePlayConfigs[0].ruleCode,
+      }));
+    }
+  }, [availablePlayConfigs, createForm.ruleCode]);
 
   useEffect(() => {
     if (!createForm.initiatorUserId && users[0]) {
@@ -196,7 +243,8 @@ export function GroupBuyManagementPage({
                     <thead className="border-b border-line text-xs text-slate-500">
                       <tr>
                         <th className="py-2 pr-4 font-medium">计划</th>
-                        <th className="py-2 pr-4 font-medium">彩种</th>
+                        <th className="py-2 pr-4 font-medium">彩种/期号</th>
+                        <th className="py-2 pr-4 font-medium">成单</th>
                         <th className="py-2 pr-4 font-medium">进度</th>
                         <th className="py-2 pr-4 font-medium">状态</th>
                       </tr>
@@ -220,7 +268,17 @@ export function GroupBuyManagementPage({
                             </div>
                           </td>
                           <td className="py-3 pr-4 text-slate-600">
-                            {plan.lotteryName}
+                            <div>{plan.lotteryName}</div>
+                            <div className="mt-1 text-xs text-slate-400">
+                              第 {plan.issue || '-'} 期
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4 text-slate-600">
+                            {plan.orderId ? (
+                              <Tag color="green">{plan.orderId}</Tag>
+                            ) : (
+                              <Tag color="grey">未成单</Tag>
+                            )}
                           </td>
                           <td className="py-3 pr-4">
                             <div className="font-medium text-ink">
@@ -278,6 +336,38 @@ export function GroupBuyManagementPage({
                     ))}
                   </Select>
                 </Field>
+                <Field label="期号">
+                  <Select
+                    className="form-input"
+                    disabled={availableIssues.length === 0}
+                    value={createForm.issue}
+                    onChange={(value) =>
+                      setCreateFormValue(setCreateForm, 'issue', String(value ?? ''))
+                    }
+                  >
+                    {availableIssues.map((issue) => (
+                      <Select.Option key={issue.id} value={issue.issue}>
+                        第 {issue.issue} 期
+                      </Select.Option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="玩法">
+                  <Select
+                    className="form-input"
+                    disabled={availablePlayConfigs.length === 0}
+                    value={createForm.ruleCode}
+                    onChange={(value) =>
+                      setCreateFormValue(setCreateForm, 'ruleCode', String(value ?? ''))
+                    }
+                  >
+                    {availablePlayConfigs.map((config) => (
+                      <Select.Option key={config.ruleCode} value={config.ruleCode}>
+                        {formatRuleCode(config.ruleCode)}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                </Field>
                 <Field label="发起人">
                   <Select
                     className="form-input"
@@ -327,6 +417,15 @@ export function GroupBuyManagementPage({
                     }
                   />
                 </Field>
+                <Field label="标题">
+                  <Input
+                    className="form-input"
+                    value={createForm.title}
+                    onChange={(value) =>
+                      setCreateFormValue(setCreateForm, 'title', value)
+                    }
+                  />
+                </Field>
                 <Field label="备注">
                   <Input
                     className="form-input"
@@ -336,6 +435,19 @@ export function GroupBuyManagementPage({
                     }
                   />
                 </Field>
+                <div className="md:col-span-2">
+                  <Field label="投注内容">
+                    <TextArea
+                      autosize
+                      className="form-input"
+                      placeholder="直选：1|2|3；组合：1,2,3；胆拖：1|2,3,4；大小单双：tens:big|ones:odd"
+                      value={createForm.numbers}
+                      onChange={(value) =>
+                        setCreateFormValue(setCreateForm, 'numbers', value)
+                      }
+                    />
+                  </Field>
+                </div>
               </div>
               {selectedLottery ? (
                 <div className="mt-3 flex flex-wrap gap-2 text-xs">
@@ -385,6 +497,12 @@ export function GroupBuyManagementPage({
                 <div className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <InfoLine label="彩种" value={selectedPlan.lotteryName} />
+                    <InfoLine label="期号" value={selectedPlan.issue || '-'} />
+                    <InfoLine
+                      label="玩法"
+                      value={formatRuleCode(selectedPlan.ruleCode as PlayRuleCode)}
+                    />
+                    <InfoLine label="订单号" value={selectedPlan.orderId ?? '未成单'} />
                     <InfoLine label="发起人" value={selectedPlan.initiatorUsername} />
                     <InfoLine
                       label="计划总额"
@@ -399,6 +517,12 @@ export function GroupBuyManagementPage({
                       label="每份金额"
                       value={formatMoney(selectedPlan.minShareAmountMinor)}
                     />
+                  </div>
+                  <div className="rounded-md border border-line px-3 py-2">
+                    <div className="text-xs text-slate-500">投注内容</div>
+                    <div className="mt-1 whitespace-pre-wrap break-all text-sm font-medium text-ink">
+                      {selectedPlan.numbers || '-'}
+                    </div>
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
@@ -622,8 +746,12 @@ function emptyCreateForm(
     id: 'G-NEW-001',
     initiatorAmountMinor: '10000',
     initiatorUserId,
+    issue: '',
     lotteryId,
     note: '后台创建合买计划',
+    numbers: '1|2|3',
+    ruleCode: '',
+    title: '后台合买计划',
     totalAmountMinor: '100000',
   };
 }
@@ -656,8 +784,12 @@ function createPayload(form: CreateFormState): CreateGroupBuyPlanRequest {
     id: form.id.trim(),
     initiatorAmountMinor: numberField(form.initiatorAmountMinor),
     initiatorUserId: form.initiatorUserId.trim(),
+    issue: form.issue.trim(),
     lotteryId: form.lotteryId.trim(),
     note: form.note.trim(),
+    numbers: form.numbers.trim(),
+    ruleCode: form.ruleCode.trim(),
+    title: form.title.trim(),
     totalAmountMinor: numberField(form.totalAmountMinor),
   };
 }
@@ -753,4 +885,35 @@ function statusColor(status: GroupBuyPlanStatus) {
   } as const satisfies Record<GroupBuyPlanStatus, string>;
 
   return mapping[status];
+}
+
+function formatRuleCode(code: PlayRuleCode | string) {
+  const labels: Partial<Record<PlayRuleCode, string>> = {
+    fiveBackDirect: '后三直选',
+    fiveBackDirectCombination: '后三直选组合',
+    fiveBackGroupSix: '后三组六',
+    fiveBackGroupSixBanker: '后三组六胆拖',
+    fiveBackGroupThree: '后三组三',
+    fiveBackGroupThreeBanker: '后三组三胆拖',
+    fiveBigSmallOddEven: '大小单双',
+    fiveFrontDirect: '前三直选',
+    fiveFrontDirectCombination: '前三直选组合',
+    fiveFrontGroupSix: '前三组六',
+    fiveFrontGroupSixBanker: '前三组六胆拖',
+    fiveFrontGroupThree: '前三组三',
+    fiveFrontGroupThreeBanker: '前三组三胆拖',
+    fiveMiddleDirect: '中三直选',
+    fiveMiddleDirectCombination: '中三直选组合',
+    fiveMiddleGroupSix: '中三组六',
+    fiveMiddleGroupSixBanker: '中三组六胆拖',
+    fiveMiddleGroupThree: '中三组三',
+    fiveMiddleGroupThreeBanker: '中三组三胆拖',
+    threeDirect: '三位直选',
+    threeGroupSix: '三位组六',
+    threeGroupSixBanker: '三位组六胆拖',
+    threeGroupThree: '三位组三',
+    threeGroupThreeBanker: '三位组三胆拖',
+  };
+
+  return labels[code as PlayRuleCode] ?? code;
 }

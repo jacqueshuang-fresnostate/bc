@@ -277,7 +277,7 @@ onMounted(async () => {
               </div>
               <div class="rounded-lg bg-stone-50 p-4">
                 <div class="flex items-start justify-between gap-3">
-                  <textarea v-model="createForm.numbers" class="min-h-20 flex-1 resize-none border-0 bg-transparent p-0 text-sm font-bold text-stone-900 focus:ring-0" placeholder="投注号码/选项，如 1|2|3 或 1,2,3"></textarea>
+                  <textarea v-model="createForm.numbers" class="min-h-20 flex-1 resize-none border-0 bg-transparent p-0 text-sm font-bold text-stone-900 focus:ring-0" placeholder="直选 1|2|3；组合 1,2,3；胆拖 1|2,3,4；大小单双 tens:big|ones:odd"></textarea>
                   <button type="button" class="text-xl text-stone-400" @click="createForm.numbers = ''">×</button>
                 </div>
                 <div class="mt-3 flex justify-between text-xs text-stone-500">
@@ -394,6 +394,7 @@ onMounted(async () => {
               <p class="mb-2 text-xs font-bold text-stone-400">投注信息</p>
               <div class="space-y-2 text-sm">
                 <div class="flex justify-between gap-4"><span class="text-stone-500">玩法</span><b class="text-right">{{ formatPlayName(selectedGroupBuy) }}</b></div>
+                <div class="flex justify-between gap-4"><span class="text-stone-500">成单订单</span><b class="text-right">{{ selectedGroupBuy.order_id || '未成单' }}</b></div>
                 <div class="flex justify-between gap-4"><span class="text-stone-500">号码</span><b class="text-right">{{ selectedGroupBuy.numbers }}</b></div>
                 <div class="flex justify-between gap-4"><span class="text-stone-500">我的参与</span><b class="text-right">{{ selectedGroupBuy.my_participation ? `${selectedGroupBuy.my_participation.amount}元` : '暂未参与' }}</b></div>
               </div>

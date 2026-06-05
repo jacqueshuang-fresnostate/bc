@@ -52,6 +52,7 @@ use crate::{
     },
     services::{
         business_database::enum_to_string,
+        group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
         mobile_bet::build_mobile_bet_page_config,
         order::validate_draw_issue_accepts_order,
         play_rules::play_rule_summaries,
@@ -654,6 +655,17 @@ async fn create_user_group_buy_plan(
     validate_lottery_accepts_group_buy(&lottery)?;
     validate_group_buy_issue_and_play(&state, &lottery, &payload.issue, &payload.rule_code).await?;
     validate_group_buy_numbers(&payload.numbers)?;
+    build_group_buy_order_request(
+        &state.draws,
+        &state.orders,
+        &lottery,
+        &session.user.id,
+        &payload.issue,
+        &payload.rule_code,
+        &payload.numbers,
+        payload.total_amount_minor,
+    )
+    .await?;
     state
         .finance
         .ensure_available(&session.user.id, payload.self_amount_minor)
@@ -674,10 +686,34 @@ async fn create_user_group_buy_plan(
         initiator_amount_minor: payload.self_amount_minor,
         note: "用户发起合买".to_string(),
     };
-    let plan = state
+    let mut plan = state
         .group_buys
         .create(request, std::slice::from_ref(&lottery), &access.users)
         .await?;
+    let mut created_order = match create_order_for_filled_group_buy(
+        &state.draws,
+        &state.orders,
+        &state.group_buys,
+        &lottery,
+        &plan,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            if let Err(rollback_error) = state.group_buys.remove_unfunded_plan(&plan.id).await {
+                tracing::error!(
+                    group_buy_plan_id = %plan.id,
+                    error = %rollback_error.log_message(),
+                    "合买满单成单失败后移除计划失败"
+                );
+            }
+            return Err(error);
+        }
+    };
+    if let Some((_, attached_plan)) = &created_order {
+        plan = attached_plan.clone();
+    }
 
     if let Err(error) = state
         .finance
@@ -689,6 +725,15 @@ async fn create_user_group_buy_plan(
         )
         .await
     {
+        if let Some((order, _)) = created_order.take() {
+            if let Err(rollback_error) = state.orders.remove_unfunded(&order.id).await {
+                tracing::error!(
+                    order_id = %order.id,
+                    error = %rollback_error.log_message(),
+                    "合买发起扣款失败后移除满单订单失败"
+                );
+            }
+        }
         if let Err(rollback_error) = state.group_buys.remove_unfunded_plan(&plan.id).await {
             tracing::error!(
                 group_buy_plan_id = %plan.id,
@@ -697,6 +742,9 @@ async fn create_user_group_buy_plan(
             );
         }
         return Err(error);
+    }
+    if let Some((order, _)) = &created_order {
+        publish_user_order_changed(&state, order, "created");
     }
 
     publish_user_balance_changed(
@@ -722,13 +770,26 @@ async fn join_user_group_buy_plan(
     Json(payload): Json<UserJoinGroupBuyPlanRequest>,
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyActionResponse>>> {
     let existing = state.group_buys.get(&id).await?;
+    let lottery = state.lotteries.get(&existing.lottery_id).await?;
+    validate_lottery_accepts_group_buy(&lottery)?;
+    build_group_buy_order_request(
+        &state.draws,
+        &state.orders,
+        &lottery,
+        &existing.initiator_user_id,
+        &existing.issue,
+        &existing.rule_code,
+        &existing.numbers,
+        existing.total_amount_minor,
+    )
+    .await?;
     let participant_id = next_group_buy_participant_id(&existing);
     state
         .finance
         .ensure_available(&session.user.id, payload.amount_minor)
         .await?;
     let access = state.access.snapshot().await?;
-    let updated = state
+    let mut updated = state
         .group_buys
         .add_participant(
             &id,
@@ -741,12 +802,50 @@ async fn join_user_group_buy_plan(
             &access.users,
         )
         .await?;
+    let mut created_order = match create_order_for_filled_group_buy(
+        &state.draws,
+        &state.orders,
+        &state.group_buys,
+        &lottery,
+        &updated,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            if let Err(rollback_error) = state
+                .group_buys
+                .remove_unfunded_participant(&id, &participant_id)
+                .await
+            {
+                tracing::error!(
+                    group_buy_plan_id = %id,
+                    group_buy_participant_id = %participant_id,
+                    error = %rollback_error.log_message(),
+                    "合买满单成单失败后移除参与记录失败"
+                );
+            }
+            return Err(error);
+        }
+    };
+    if let Some((_, attached_plan)) = &created_order {
+        updated = attached_plan.clone();
+    }
 
     if let Err(error) = state
         .finance
         .debit_group_buy(&session.user.id, payload.amount_minor, &participant_id, &id)
         .await
     {
+        if let Some((order, _)) = created_order.take() {
+            if let Err(rollback_error) = state.orders.remove_unfunded(&order.id).await {
+                tracing::error!(
+                    order_id = %order.id,
+                    error = %rollback_error.log_message(),
+                    "合买参与扣款失败后移除满单订单失败"
+                );
+            }
+        }
         if let Err(rollback_error) = state
             .group_buys
             .remove_unfunded_participant(&id, &participant_id)
@@ -760,6 +859,9 @@ async fn join_user_group_buy_plan(
             );
         }
         return Err(error);
+    }
+    if let Some((order, _)) = &created_order {
+        publish_user_order_changed(&state, order, "created");
     }
 
     publish_user_balance_changed(
@@ -854,6 +956,7 @@ fn user_group_buy_plan(
         id: plan.id.clone(),
         lottery_id: plan.lottery_id.clone(),
         lottery_name: plan.lottery_name.clone(),
+        order_id: plan.order_id.clone(),
         category: lottery.map(|lottery| lottery.category.clone()),
         issue: plan.issue.clone(),
         rule_code: plan.rule_code.clone(),

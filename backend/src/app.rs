@@ -156,6 +156,7 @@ pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
         state.lotteries.clone(),
         state.orders.clone(),
         state.finance.clone(),
+        state.group_buys.clone(),
         state.realtime.clone(),
         scheduler_config,
         state.scheduler.clone(),
