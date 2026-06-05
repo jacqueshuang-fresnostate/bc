@@ -1,6 +1,8 @@
-//! 合买机器人执行服务，负责按当前彩种、期号和玩法规则自动发起并补满合买。
+//! 合买机器人执行服务，负责按当前彩种、期号和玩法规则自动发起并按节奏补单。
 
 use std::collections::BTreeMap;
+
+use chrono::NaiveDateTime;
 
 use crate::{
     domain::{
@@ -34,6 +36,16 @@ use crate::{
 const ROBOT_GROUP_BUY_USER_ID: &str = "U90001";
 const ROBOT_GROUP_BUY_USERNAME: &str = "agent_alpha";
 const ROBOT_FILL_PARTICIPANT_SUFFIX: &str = "P-ROBOT-FILL";
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+const ROBOT_FILL_WINDOW_SECONDS: i64 = 90;
+const ROBOT_FILL_STAGE_ONE_SECONDS: i64 = 60;
+const ROBOT_FILL_STAGE_TWO_SECONDS: i64 = 30;
+const ROBOT_FILL_FINAL_STAGE_SECONDS: i64 = 15;
+const ROBOT_FILL_STAGE_ONE_TARGET_PERCENT: i64 = 40;
+const ROBOT_FILL_STAGE_TWO_TARGET_PERCENT: i64 = 60;
+const ROBOT_FILL_STAGE_THREE_TARGET_PERCENT: i64 = 80;
+const ROBOT_FILL_FINAL_TARGET_PERCENT: i64 = 100;
+const ROBOT_FILL_STAGE_COUNT: i64 = 5;
 
 /// 执行全部已启用的合买机器人，并返回本轮创建、满单、成单和跳过明细。
 pub async fn run_group_buy_robots(
@@ -47,6 +59,7 @@ pub async fn run_group_buy_robots(
     now: String,
 ) -> ApiResult<GroupBuyRobotRun> {
     let now = required_now(now)?;
+    let now_at = parse_robot_timestamp(&now, "机器人执行时间")?;
     let access = access.snapshot().await?;
     let robot_user = robot_user(&access.users)?;
     let lotteries_by_id = lotteries
@@ -103,6 +116,7 @@ pub async fn run_group_buy_robots(
                 group_buys,
                 &access.users,
                 robot_user,
+                now_at,
             )
             .await
             {
@@ -124,6 +138,7 @@ pub async fn run_group_buy_robots(
                 finance,
                 group_buys,
                 &access.users,
+                now_at,
             )
             .await?;
         }
@@ -144,6 +159,7 @@ async fn execute_lottery_robot(
     group_buys: &GroupBuyRepository,
     users: &[UserSummary],
     robot_user: &UserSummary,
+    now_at: NaiveDateTime,
 ) -> ApiResult<()> {
     let plan_id = robot_plan_id(robot, lottery, issue);
     let mut plan = match group_buys.get(&plan_id).await {
@@ -190,7 +206,8 @@ async fn execute_lottery_robot(
     match plan.status {
         GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open => {
             fill_robot_plan(
-                run, lottery, &mut plan, draws, orders, finance, group_buys, users,
+                run, robot, lottery, issue, &mut plan, draws, orders, finance, group_buys, users,
+                now_at,
             )
             .await?;
         }
@@ -224,6 +241,7 @@ async fn fill_existing_group_buy_plans(
     finance: &FinanceRepository,
     group_buys: &GroupBuyRepository,
     users: &[UserSummary],
+    now_at: NaiveDateTime,
 ) -> ApiResult<()> {
     let robot_plan_id = robot_plan_id(robot, lottery, issue);
     let candidate_plans = group_buys
@@ -246,7 +264,8 @@ async fn fill_existing_group_buy_plans(
     for mut plan in candidate_plans {
         let plan_id = plan.id.clone();
         if let Err(error) = fill_robot_plan(
-            run, lottery, &mut plan, draws, orders, finance, group_buys, users,
+            run, robot, lottery, issue, &mut plan, draws, orders, finance, group_buys, users,
+            now_at,
         )
         .await
         {
@@ -266,25 +285,33 @@ async fn fill_existing_group_buy_plans(
 /// 补足机器人合买剩余金额，满单后生成真实投注订单。
 async fn fill_robot_plan(
     run: &mut GroupBuyRobotRun,
+    robot: &RobotConfigSummary,
     lottery: &LotteryKind,
+    issue: &DrawIssue,
     plan: &mut GroupBuyPlan,
     draws: &DrawRepository,
     orders: &OrderRepository,
     finance: &FinanceRepository,
     group_buys: &GroupBuyRepository,
     users: &[UserSummary],
+    now_at: NaiveDateTime,
 ) -> ApiResult<()> {
-    let remaining_amount_minor = plan
-        .total_amount_minor
-        .checked_sub(plan.filled_amount_minor)
-        .ok_or_else(|| ApiError::BadRequest("合买剩余金额无效".to_string()))?;
-    if remaining_amount_minor <= 0 {
+    let decision = match robot_fill_decision(plan, issue, now_at)? {
+        RobotFillDecision::Skip(reason) => {
+            push_skipped(run, robot, &lottery.id, Some(issue.issue.clone()), reason);
+            return Ok(());
+        }
+        RobotFillDecision::Add(decision) => decision,
+    };
+    if decision.amount_minor <= 0 {
         return Ok(());
     }
+    let fill_amount_minor = decision.amount_minor;
+    let fill_note = decision.note.clone();
 
-    let participant_id = robot_fill_participant_id(&plan.id);
+    let participant_id = next_robot_fill_participant_id(plan);
     finance
-        .ensure_available(ROBOT_GROUP_BUY_USER_ID, remaining_amount_minor)
+        .ensure_available(ROBOT_GROUP_BUY_USER_ID, fill_amount_minor)
         .await?;
     let next_plan = group_buys
         .add_participant(
@@ -292,13 +319,44 @@ async fn fill_robot_plan(
             AddGroupBuyParticipantRequest {
                 id: participant_id.clone(),
                 user_id: ROBOT_GROUP_BUY_USER_ID.to_string(),
-                amount_minor: remaining_amount_minor,
-                note: "合买机器人自动补满".to_string(),
+                amount_minor: fill_amount_minor,
+                note: fill_note,
             },
             users,
         )
         .await?;
     *plan = next_plan;
+
+    if !matches!(plan.status, GroupBuyPlanStatus::Filled) {
+        match finance
+            .debit_group_buy(
+                ROBOT_GROUP_BUY_USER_ID,
+                fill_amount_minor,
+                &participant_id,
+                &plan.id,
+            )
+            .await
+        {
+            Ok(entry) => {
+                run.ledger_entries.push(entry);
+                return Ok(());
+            }
+            Err(error) => {
+                if let Err(rollback_error) = group_buys
+                    .remove_unfunded_participant(&plan.id, &participant_id)
+                    .await
+                {
+                    tracing::error!(
+                        "合买计划ID" = %plan.id,
+                        "参与记录ID" = %participant_id,
+                        error = %rollback_error.log_message(),
+                        "合买机器人扣款失败后移除分段参与记录失败"
+                    );
+                }
+                return Err(error);
+            }
+        }
+    }
 
     let mut created_order =
         match create_order_for_filled_group_buy(draws, orders, group_buys, lottery, plan).await {
@@ -326,7 +384,7 @@ async fn fill_robot_plan(
     match finance
         .debit_group_buy(
             ROBOT_GROUP_BUY_USER_ID,
-            remaining_amount_minor,
+            fill_amount_minor,
             &participant_id,
             &plan.id,
         )
@@ -460,6 +518,12 @@ fn robot_group_buy_amounts(lottery: &LotteryKind, stake_count: i64) -> ApiResult
     let total_unit = lcm(min_share, stake_count)?;
     let mut total = round_up_to_multiple(participant_min * 2, total_unit)?;
     total = total.max(round_up_to_multiple(min_share * 10, total_unit)?);
+    total = total.max(round_up_to_multiple(
+        participant_min
+            .checked_mul(ROBOT_FILL_STAGE_COUNT)
+            .ok_or_else(|| ApiError::BadRequest("机器人合买金额过大".to_string()))?,
+        total_unit,
+    )?);
 
     for _ in 0..8 {
         let required_by_percent =
@@ -552,8 +616,19 @@ fn robot_plan_id(robot: &RobotConfigSummary, lottery: &LotteryKind, issue: &Draw
 }
 
 /// 生成机器人补满参与记录 ID。
-fn robot_fill_participant_id(plan_id: &str) -> String {
-    format!("{plan_id}-{ROBOT_FILL_PARTICIPANT_SUFFIX}")
+fn next_robot_fill_participant_id(plan: &GroupBuyPlan) -> String {
+    let mut index = 1;
+    loop {
+        let participant_id = format!("{}-{}-{:03}", plan.id, ROBOT_FILL_PARTICIPANT_SUFFIX, index);
+        if !plan
+            .participants
+            .iter()
+            .any(|participant| participant.id == participant_id)
+        {
+            return participant_id;
+        }
+        index += 1;
+    }
 }
 
 /// 将外部标识收敛为适合作为计划 ID 的片段。
@@ -584,6 +659,124 @@ fn required_now(now: String) -> ApiResult<String> {
         return Err(ApiError::BadRequest("机器人执行时间不能为空".to_string()));
     }
     Ok(now)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RobotFillDecision {
+    Skip(String),
+    Add(RobotFillAmount),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RobotFillAmount {
+    amount_minor: i64,
+    note: String,
+}
+
+/// 按临近封盘的阶段目标计算本轮机器人应补金额。
+fn robot_fill_decision(
+    plan: &GroupBuyPlan,
+    issue: &DrawIssue,
+    now_at: NaiveDateTime,
+) -> ApiResult<RobotFillDecision> {
+    let remaining_amount_minor = plan
+        .total_amount_minor
+        .checked_sub(plan.filled_amount_minor)
+        .ok_or_else(|| ApiError::BadRequest("合买剩余金额无效".to_string()))?;
+    if remaining_amount_minor <= 0 {
+        return Ok(RobotFillDecision::Skip("合买计划已满单".to_string()));
+    }
+
+    let sale_closed_at = parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?;
+    let seconds_until_sale_close = (sale_closed_at - now_at).num_seconds();
+    if seconds_until_sale_close <= 0 {
+        return Ok(RobotFillDecision::Skip(
+            "已到封盘时间，机器人不再补单".to_string(),
+        ));
+    }
+    if seconds_until_sale_close > ROBOT_FILL_WINDOW_SECONDS {
+        return Ok(RobotFillDecision::Skip(format!(
+            "未到合买机器人补单窗口，距离封盘还有 {seconds_until_sale_close} 秒"
+        )));
+    }
+
+    let (target_percent, stage_label) = robot_fill_stage(seconds_until_sale_close);
+    let target_amount = target_fill_amount(plan, target_percent)?;
+    if target_amount <= plan.filled_amount_minor {
+        return Ok(RobotFillDecision::Skip(format!(
+            "当前合买进度已达到机器人{stage_label}节奏目标 {target_percent}%"
+        )));
+    }
+
+    let mut amount_minor = target_amount
+        .checked_sub(plan.filled_amount_minor)
+        .ok_or_else(|| ApiError::BadRequest("机器人补单金额无效".to_string()))?;
+    amount_minor = amount_minor.min(remaining_amount_minor);
+    amount_minor = round_down_to_multiple(amount_minor, plan.min_share_amount_minor.max(1));
+    if amount_minor <= 0 {
+        return Ok(RobotFillDecision::Skip(
+            "本轮机器人补单金额小于最小份额，等待下一阶段".to_string(),
+        ));
+    }
+
+    let participant_min = plan
+        .participant_min_amount_minor
+        .max(plan.min_share_amount_minor)
+        .max(1);
+    if amount_minor < participant_min {
+        return Ok(RobotFillDecision::Skip(format!(
+            "本轮机器人补单金额低于参与最低金额 {participant_min}，等待下一阶段"
+        )));
+    }
+
+    let remaining_after = remaining_amount_minor
+        .checked_sub(amount_minor)
+        .ok_or_else(|| ApiError::BadRequest("机器人补单后剩余金额无效".to_string()))?;
+    if target_percent < ROBOT_FILL_FINAL_TARGET_PERCENT
+        && remaining_after > 0
+        && remaining_after < participant_min
+    {
+        return Ok(RobotFillDecision::Skip(
+            "本轮补单会导致剩余金额低于参与最低金额，等待最终阶段".to_string(),
+        ));
+    }
+
+    Ok(RobotFillDecision::Add(RobotFillAmount {
+        amount_minor,
+        note: format!("合买机器人{stage_label}节奏补单"),
+    }))
+}
+
+/// 根据距离封盘秒数返回机器人当前阶段目标。
+fn robot_fill_stage(seconds_until_sale_close: i64) -> (i64, &'static str) {
+    if seconds_until_sale_close > ROBOT_FILL_STAGE_ONE_SECONDS {
+        (ROBOT_FILL_STAGE_ONE_TARGET_PERCENT, "第一阶段")
+    } else if seconds_until_sale_close > ROBOT_FILL_STAGE_TWO_SECONDS {
+        (ROBOT_FILL_STAGE_TWO_TARGET_PERCENT, "第二阶段")
+    } else if seconds_until_sale_close > ROBOT_FILL_FINAL_STAGE_SECONDS {
+        (ROBOT_FILL_STAGE_THREE_TARGET_PERCENT, "第三阶段")
+    } else {
+        (ROBOT_FILL_FINAL_TARGET_PERCENT, "临近封盘")
+    }
+}
+
+/// 计算当前阶段应达到的认购金额，按最小份额向下取整。
+fn target_fill_amount(plan: &GroupBuyPlan, target_percent: i64) -> ApiResult<i64> {
+    let raw = plan
+        .total_amount_minor
+        .checked_mul(target_percent)
+        .ok_or_else(|| ApiError::BadRequest("机器人节奏目标金额过大".to_string()))?
+        / 100;
+    Ok(round_down_to_multiple(
+        raw.min(plan.total_amount_minor),
+        plan.min_share_amount_minor.max(1),
+    ))
+}
+
+/// 解析机器人使用的时间字符串。
+fn parse_robot_timestamp(value: &str, label: &str) -> ApiResult<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(value.trim(), TIMESTAMP_FORMAT)
+        .map_err(|_| ApiError::BadRequest(format!("{label}格式无效")))
 }
 
 /// 根据百分比计算最低自购金额。
@@ -628,6 +821,14 @@ fn round_up_to_multiple(value: i64, multiple: i64) -> ApiResult<i64> {
         .ok_or_else(|| ApiError::BadRequest("机器人金额过大".to_string()))
 }
 
+/// 按指定倍数向下取整。
+fn round_down_to_multiple(value: i64, multiple: i64) -> i64 {
+    if value <= 0 || multiple <= 0 {
+        return 0;
+    }
+    value - (value % multiple)
+}
+
 /// 记录跳过原因，便于后台定位机器人为什么没有执行。
 fn push_skipped(
     run: &mut GroupBuyRobotRun,
@@ -668,10 +869,14 @@ mod tests {
         assert_eq!(total % lottery.group_buy.min_share_amount_minor, 0);
         assert!(initiator >= lottery.group_buy.participant_min_amount_minor);
         assert!(total - initiator >= lottery.group_buy.participant_min_amount_minor);
+        assert!(
+            total >= lottery.group_buy.participant_min_amount_minor * ROBOT_FILL_STAGE_COUNT,
+            "机器人发起金额需要支持多阶段补单"
+        );
     }
 
     #[tokio::test]
-    async fn robot_run_creates_fills_and_orders_group_buy() {
+    async fn robot_run_creates_plan_then_fills_group_buy_with_rhythm() {
         let access = AccessRepository::memory_seeded();
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
@@ -702,7 +907,7 @@ mod tests {
         let group_buys = GroupBuyRepository::memory_seeded();
         let robots = RobotRepository::memory_seeded();
 
-        let run = run_group_buy_robots(
+        let before_window_run = run_group_buy_robots(
             &robots,
             &draws,
             &lotteries,
@@ -710,23 +915,99 @@ mod tests {
             &finance,
             &group_buys,
             &access,
-            "2026-06-05 19:58:00".to_string(),
+            "2026-06-05 19:57:00".to_string(),
         )
         .await
         .expect("robot can run");
 
-        assert_eq!(run.created_plans.len(), 1);
-        assert_eq!(run.filled_plans.len(), 1);
-        assert_eq!(run.created_orders.len(), 1);
-        assert_eq!(run.ledger_entries.len(), 2);
+        assert_eq!(before_window_run.created_plans.len(), 1);
+        assert_eq!(before_window_run.filled_plans.len(), 0);
+        assert_eq!(before_window_run.created_orders.len(), 0);
+        assert_eq!(before_window_run.ledger_entries.len(), 1);
+        assert!(before_window_run
+            .skipped_items
+            .iter()
+            .any(|item| item.reason.contains("未到合买机器人补单窗口")));
+        let plan_id = before_window_run.created_plans[0].id.clone();
+        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 1_000, 1, false).await;
+
+        let stage_one_run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 19:58:10".to_string(),
+        )
+        .await
+        .expect("robot can run first fill stage");
+        assert_eq!(stage_one_run.created_plans.len(), 0);
+        assert_eq!(stage_one_run.filled_plans.len(), 0);
+        assert_eq!(stage_one_run.created_orders.len(), 0);
+        assert_eq!(stage_one_run.ledger_entries.len(), 1);
+        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 2_000, 2, false).await;
+
+        let stage_two_run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 19:58:40".to_string(),
+        )
+        .await
+        .expect("robot can run second fill stage");
+        assert_eq!(stage_two_run.filled_plans.len(), 0);
+        assert_eq!(stage_two_run.created_orders.len(), 0);
+        assert_eq!(stage_two_run.ledger_entries.len(), 1);
+        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 3_000, 3, false).await;
+
+        let stage_three_run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 19:59:05".to_string(),
+        )
+        .await
+        .expect("robot can run third fill stage");
+        assert_eq!(stage_three_run.filled_plans.len(), 0);
+        assert_eq!(stage_three_run.created_orders.len(), 0);
+        assert_eq!(stage_three_run.ledger_entries.len(), 1);
+        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 4_000, 4, false).await;
+
+        let final_stage_run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 19:59:20".to_string(),
+        )
+        .await
+        .expect("robot can run final fill stage");
+
+        assert_eq!(final_stage_run.filled_plans.len(), 1);
+        assert_eq!(final_stage_run.created_orders.len(), 1);
+        assert_eq!(final_stage_run.ledger_entries.len(), 1);
         assert_eq!(
-            run.filled_plans[0].order_id,
-            Some(run.created_orders[0].id.clone())
+            final_stage_run.filled_plans[0].order_id,
+            Some(final_stage_run.created_orders[0].id.clone())
         );
+        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 5_000, 5, true).await;
     }
 
     #[tokio::test]
-    async fn robot_run_fills_existing_non_robot_group_buy_plan() {
+    async fn robot_run_fills_existing_non_robot_group_buy_plan_with_rhythm() {
         let access = AccessRepository::memory_seeded();
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
@@ -766,7 +1047,7 @@ mod tests {
                     title: "用户发起未满单合买".to_string(),
                     numbers: "1|2|3".to_string(),
                     initiator_user_id: "U10001".to_string(),
-                    total_amount_minor: 2_000,
+                    total_amount_minor: 5_000,
                     initiator_amount_minor: 1_000,
                     note: "测试用户计划".to_string(),
                 },
@@ -781,7 +1062,25 @@ mod tests {
             .expect("user initiator can be debited");
         let robots = RobotRepository::memory_seeded();
 
-        let run = run_group_buy_robots(
+        let before_window_run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 19:58:00".to_string(),
+        )
+        .await
+        .expect("robot can run before fill window");
+        assert!(before_window_run
+            .skipped_items
+            .iter()
+            .any(|item| item.reason.contains("未到合买机器人补单窗口")));
+        assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 1_000, 1, false).await;
+
+        let stage_one_run = run_group_buy_robots(
             &robots,
             &draws,
             &lotteries,
@@ -792,18 +1091,89 @@ mod tests {
             "2026-06-05 19:59:00".to_string(),
         )
         .await
-        .expect("robot can run");
+        .expect("robot can run first fill stage");
+        assert!(stage_one_run
+            .filled_plans
+            .iter()
+            .all(|plan| plan.id != "G-USER-OPEN"));
+        assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 2_000, 2, false).await;
 
-        let filled_user_plan = run
+        run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 19:59:30".to_string(),
+        )
+        .await
+        .expect("robot can run second fill stage");
+        assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 3_000, 3, false).await;
+
+        run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 20:00:05".to_string(),
+        )
+        .await
+        .expect("robot can run third fill stage");
+        assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 4_000, 4, false).await;
+
+        let final_stage_run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 20:00:20".to_string(),
+        )
+        .await
+        .expect("robot can run final fill stage");
+
+        let filled_user_plan = final_stage_run
             .filled_plans
             .iter()
             .find(|plan| plan.id == "G-USER-OPEN")
             .expect("existing user plan should be filled");
         assert!(filled_user_plan.order_id.is_some());
-        assert!(run
+        assert!(final_stage_run
             .created_orders
             .iter()
             .any(|order| Some(&order.id) == filled_user_plan.order_id.as_ref()));
+        assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 5_000, 5, true).await;
+    }
+
+    async fn assert_robot_plan_progress(
+        group_buys: &GroupBuyRepository,
+        plan_id: &str,
+        expected_total: i64,
+        expected_filled: i64,
+        expected_participants: usize,
+        should_be_filled: bool,
+    ) {
+        let plan = group_buys
+            .get(plan_id)
+            .await
+            .expect("group buy plan exists");
+        assert_eq!(plan.total_amount_minor, expected_total);
+        assert_eq!(plan.filled_amount_minor, expected_filled);
+        assert_eq!(plan.participants.len(), expected_participants);
+        if should_be_filled {
+            assert!(matches!(plan.status, GroupBuyPlanStatus::Filled));
+            assert!(plan.order_id.is_some());
+        } else {
+            assert!(matches!(plan.status, GroupBuyPlanStatus::Open));
+            assert!(plan.order_id.is_none());
+        }
     }
 
     fn robot_test_lottery() -> LotteryKind {
