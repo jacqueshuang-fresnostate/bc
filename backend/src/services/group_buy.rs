@@ -55,6 +55,14 @@ impl GroupBuyRepository {
             .map(|store| store.list())
     }
 
+    /// 返回完整计划列表，供用户端大厅按参与记录计算我的合买。
+    pub async fn list_details(&self) -> ApiResult<Vec<GroupBuyPlan>> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))
+            .map(|store| store.list_details())
+    }
+
     /// 按 ID 查询单条记录。
     pub async fn get(&self, id: &str) -> ApiResult<GroupBuyPlan> {
         self.inner
@@ -119,6 +127,37 @@ impl GroupBuyRepository {
         Ok(result)
     }
 
+    /// 移除刚创建但尚未成功扣款的合买计划，用于业务回滚。
+    pub async fn remove_unfunded_plan(&self, id: &str) -> ApiResult<()> {
+        let snapshot = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
+            store.remove_plan(id)?;
+            store.clone()
+        };
+        self.persist(&snapshot).await
+    }
+
+    /// 移除刚追加但尚未成功扣款的参与记录，用于业务回滚。
+    pub async fn remove_unfunded_participant(
+        &self,
+        id: &str,
+        participant_id: &str,
+    ) -> ApiResult<GroupBuyPlan> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
+            let result = store.remove_participant(id, participant_id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     async fn persist(&self, store: &GroupBuyStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_group_buy_store(persistence, store).await?;
@@ -139,6 +178,7 @@ async fn load_group_buy_store(database: &BusinessDatabase) -> ApiResult<GroupBuy
 
     for row in sqlx::query(
         "SELECT id, lottery_id, lottery_name, initiator_user_id, initiator_username,
+                issue, rule_code, title, numbers,
                 total_amount_minor, filled_amount_minor, min_share_amount_minor,
                 participant_min_amount_minor, share_count, status, note, created_at, updated_at
          FROM group_buy_plans
@@ -163,6 +203,18 @@ async fn load_group_buy_store(database: &BusinessDatabase) -> ApiResult<GroupBuy
                     .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
                 lottery_name: row
                     .try_get("lottery_name")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                issue: row
+                    .try_get("issue")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                rule_code: row
+                    .try_get("rule_code")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                title: row
+                    .try_get("title")
+                    .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
+                numbers: row
+                    .try_get("numbers")
                     .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?,
                 initiator_user_id: row
                     .try_get("initiator_user_id")
@@ -270,15 +322,20 @@ async fn save_group_buy_store(database: &BusinessDatabase, store: &GroupBuyStore
         sqlx::query(
             "INSERT INTO group_buy_plans
              (id, lottery_id, lottery_name, initiator_user_id, initiator_username,
+              issue, rule_code, title, numbers,
               total_amount_minor, filled_amount_minor, min_share_amount_minor,
               participant_min_amount_minor, share_count, status, note, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
         )
         .bind(&plan.id)
         .bind(&plan.lottery_id)
         .bind(&plan.lottery_name)
         .bind(&plan.initiator_user_id)
         .bind(&plan.initiator_username)
+        .bind(&plan.issue)
+        .bind(&plan.rule_code)
+        .bind(&plan.title)
+        .bind(&plan.numbers)
         .bind(plan.total_amount_minor)
         .bind(plan.filled_amount_minor)
         .bind(plan.min_share_amount_minor)
@@ -337,6 +394,11 @@ impl GroupBuyStore {
     /// 返回完整数据列表。
     fn list(&self) -> Vec<GroupBuyPlanSummary> {
         self.plans.values().map(GroupBuyPlan::summary).collect()
+    }
+
+    /// 返回完整计划列表。
+    fn list_details(&self) -> Vec<GroupBuyPlan> {
+        self.plans.values().cloned().collect()
     }
 
     /// 按标识查询并返回单条记录。
@@ -401,6 +463,10 @@ impl GroupBuyStore {
         }
 
         let now = current_time_label();
+        let issue = request.issue.trim().to_string();
+        let rule_code = request.rule_code.trim().to_string();
+        let title = optional_title(&request.title, &lottery.name, &issue);
+        let numbers = request.numbers.trim().to_string();
         let participant = GroupBuyParticipant {
             id: format!("{id}-P001"),
             user_id: initiator.id.clone(),
@@ -422,6 +488,10 @@ impl GroupBuyStore {
             id: id.clone(),
             lottery_id: lottery.id.clone(),
             lottery_name: lottery.name.clone(),
+            issue,
+            rule_code,
+            title,
+            numbers,
             initiator_user_id: initiator.id.clone(),
             initiator_username: initiator.username.clone(),
             total_amount_minor: request.total_amount_minor,
@@ -542,6 +612,43 @@ impl GroupBuyStore {
 
         Ok(plan.clone())
     }
+
+    /// 移除指定合买计划。
+    fn remove_plan(&mut self, id: &str) -> ApiResult<()> {
+        self.plans
+            .remove(id)
+            .map(|_| ())
+            .ok_or_else(|| ApiError::NotFound(format!("group buy plan `{id}` not found")))
+    }
+
+    /// 移除指定参与记录，并回退进度和状态。
+    fn remove_participant(&mut self, id: &str, participant_id: &str) -> ApiResult<GroupBuyPlan> {
+        let plan = self
+            .plans
+            .get_mut(id)
+            .ok_or_else(|| ApiError::NotFound(format!("group buy plan `{id}` not found")))?;
+        let index = plan
+            .participants
+            .iter()
+            .position(|participant| participant.id == participant_id)
+            .ok_or_else(|| {
+                ApiError::NotFound(format!(
+                    "group buy participant `{participant_id}` not found"
+                ))
+            })?;
+        let participant = plan.participants.remove(index);
+        plan.filled_amount_minor = plan
+            .filled_amount_minor
+            .checked_sub(participant.amount_minor)
+            .ok_or_else(|| ApiError::Internal("group buy filled amount underflow".to_string()))?;
+        if matches!(plan.status, GroupBuyPlanStatus::Filled)
+            && plan.filled_amount_minor < plan.total_amount_minor
+        {
+            plan.status = GroupBuyPlanStatus::Open;
+        }
+        plan.updated_at = current_time_label();
+        Ok(plan.clone())
+    }
 }
 
 /// 处理 participant_min_amount 的具体内部流程。
@@ -612,6 +719,20 @@ fn share_count(amount_minor: i64, min_share_amount_minor: i64) -> ApiResult<u32>
         .map_err(|_| ApiError::BadRequest("group buy share count is too large".to_string()))
 }
 
+/// 生成合买计划标题，用户未填写时使用彩种和期号兜底。
+fn optional_title(title: &str, lottery_name: &str, issue: &str) -> String {
+    let title = title.trim();
+    if !title.is_empty() {
+        return title.to_string();
+    }
+
+    if issue.trim().is_empty() {
+        format!("{lottery_name} 合买计划")
+    } else {
+        format!("{lottery_name} 第{issue}期合买")
+    }
+}
+
 /// 去除空白并校验必填字段。
 fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     let value = value.trim().to_string();
@@ -632,6 +753,10 @@ fn seed_group_buy_plans() -> Vec<GroupBuyPlan> {
         id: "G202606020001".to_string(),
         lottery_id: "fc3d".to_string(),
         lottery_name: "福彩 3D".to_string(),
+        issue: "20260602001".to_string(),
+        rule_code: "threeDirect".to_string(),
+        title: "福彩 3D 第20260602001期合买".to_string(),
+        numbers: "1,2,3".to_string(),
         initiator_user_id: "U90001".to_string(),
         initiator_username: "agent_alpha".to_string(),
         total_amount_minor: 100_000,
@@ -687,6 +812,10 @@ mod tests {
                 CreateGroupBuyPlanRequest {
                     id: "G-TEST-001".to_string(),
                     lottery_id: "fc3d".to_string(),
+                    issue: "20260602001".to_string(),
+                    rule_code: "threeDirect".to_string(),
+                    title: "测试合买".to_string(),
+                    numbers: "1,2,3".to_string(),
                     initiator_user_id: "U90001".to_string(),
                     total_amount_minor: 100_000,
                     initiator_amount_minor: 10_000,
@@ -718,6 +847,10 @@ mod tests {
                 CreateGroupBuyPlanRequest {
                     id: "G-TEST-002".to_string(),
                     lottery_id: "manual-test".to_string(),
+                    issue: "20260602001".to_string(),
+                    rule_code: "threeDirect".to_string(),
+                    title: "关闭合买彩种".to_string(),
+                    numbers: "1,2,3".to_string(),
                     initiator_user_id: "U90001".to_string(),
                     total_amount_minor: 100_000,
                     initiator_amount_minor: 10_000,
@@ -745,6 +878,10 @@ mod tests {
                 CreateGroupBuyPlanRequest {
                     id: "G-TEST-003".to_string(),
                     lottery_id: "fc3d".to_string(),
+                    issue: "20260602001".to_string(),
+                    rule_code: "threeDirect".to_string(),
+                    title: "低于发起人比例".to_string(),
+                    numbers: "1,2,3".to_string(),
                     initiator_user_id: "U90001".to_string(),
                     total_amount_minor: 100_000,
                     initiator_amount_minor: 9_900,
@@ -774,6 +911,10 @@ mod tests {
                 CreateGroupBuyPlanRequest {
                     id: "G-TEST-004".to_string(),
                     lottery_id: "fc3d".to_string(),
+                    issue: "20260602001".to_string(),
+                    rule_code: "threeDirect".to_string(),
+                    title: "可满单计划".to_string(),
+                    numbers: "1,2,3".to_string(),
                     initiator_user_id: "U90001".to_string(),
                     total_amount_minor: 20_000,
                     initiator_amount_minor: 10_000,

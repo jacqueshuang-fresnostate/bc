@@ -2486,9 +2486,9 @@ await createInvitation({
 
 ### 1. 范围 / 触发条件
 
-- 触发条件：新增后端合买领域模型、合买计划仓储、管理后台 API、前端 API client、`useGroupBuyPlans` hook 和“合买配置”页面。
-- 范围：合买计划列表、详情、创建、状态维护、参与记录添加、dashboard `groupBuyPlans` 真实数据来源。
-- 本阶段只维护合买计划和参与记录，不创建真实投注订单，不冻结/扣减用户资金，不执行中奖分账。
+- 触发条件：新增或修改后端合买领域模型、合买计划仓储、管理后台 API、用户端合买 API、前端 API client、`useGroupBuyPlans` hook 和手机端合买大厅。
+- 范围：合买计划列表、详情、创建、状态维护、参与记录添加、dashboard `groupBuyPlans` 真实数据来源、手机端发起合买、参与合买、我的合买和发起选项。
+- 当前阶段创建和参与合买都会扣减用户可用余额并写入 `groupBuyDebit` 资金流水；仍不创建真实投注订单，不执行撤单退款和中奖分账。
 
 ### 2. 签名
 
@@ -2497,6 +2497,12 @@ await createInvitation({
 - `POST /api/admin/group-buy/plans`
 - `PUT /api/admin/group-buy/plans/{id}`
 - `POST /api/admin/group-buy/plans/{id}/participants`
+- `GET /api/user/group-buy/plans`
+- `POST /api/user/group-buy/plans`
+- `GET /api/user/group-buy/plans/{id}`
+- `POST /api/user/group-buy/plans/{id}/participants`
+- `GET /api/user/group-buy/my`
+- `GET /api/user/group-buy/create-options`
 - dashboard：`GET /api/admin/dashboard` 的 `groupBuyPlans` 来自 `GroupBuyRepository::list()`。
 
 ### 3. 契约
@@ -2508,6 +2514,10 @@ await createInvitation({
   "id": "G202606020001",
   "lotteryId": "fc3d",
   "lotteryName": "福彩 3D",
+  "issue": "20260605001",
+  "ruleCode": "threeDirect",
+  "title": "福彩 3D 第20260605001期合买",
+  "numbers": "1,2,3",
   "initiatorUserId": "U90001",
   "initiatorUsername": "agent_alpha",
   "totalAmountMinor": 100000,
@@ -2539,10 +2549,36 @@ await createInvitation({
 {
   "id": "G-NEW-001",
   "lotteryId": "fc3d",
+  "issue": "20260605001",
+  "ruleCode": "threeDirect",
+  "title": "福彩 3D 第20260605001期合买",
+  "numbers": "1,2,3",
   "initiatorUserId": "U90001",
   "totalAmountMinor": 100000,
   "initiatorAmountMinor": 10000,
   "note": "后台创建合买计划"
+}
+```
+
+用户端发起合买请求字段：
+
+```json
+{
+  "lotteryId": "fc3d",
+  "issue": "20260605001",
+  "ruleCode": "threeDirect",
+  "title": "用户发起合买",
+  "numbers": "1,2,3",
+  "totalAmountMinor": 100000,
+  "selfAmountMinor": 10000
+}
+```
+
+用户端参与合买请求字段：
+
+```json
+{
+  "amountMinor": 1000
 }
 ```
 
@@ -2574,6 +2610,10 @@ await createInvitation({
 4. `shareCount = amountMinor / minShareAmountMinor`，计划总金额和参与金额都必须能按最小份额金额整除。
 5. 创建计划会自动写入一条发起人参与记录，参与记录 ID 使用 `{planId}-P001`。
 6. 参与金额达到计划总金额时，计划状态自动变为 `filled`。
+7. 用户端发起和参与合买时，用户 ID 始终来自登录态；前端不能提交或覆盖发起人、参与人 ID。
+8. `issue` 必须是当前彩种处于 `open` 状态的期号，`ruleCode` 必须对应当前彩种已启用玩法。
+9. `numbers` 是当前合买投注内容，后端只保存当前文本并限制长度；真实拆单、赔率快照和中奖判定需在后续投注订单阶段实现。
+10. 发起或参与合买扣款成功后必须写入 `ledger_entries.kind=groupBuyDebit`，并通过实时事件推送余额变化。
 
 ### 4. 校验与错误矩阵
 
@@ -2584,11 +2624,16 @@ await createInvitation({
 | 彩种 ID 为空 | HTTP 400，返回 `lottery id is required` |
 | 彩种不存在 | HTTP 404，返回彩种不存在 |
 | 彩种未开启合买 | HTTP 400，返回 `lottery ... group buy is disabled` |
+| 彩种未开售 | HTTP 400，返回彩种未开售 |
+| 期号为空或不是当前开放期 | HTTP 400，返回期号错误或期号已停止销售 |
+| 玩法为空或未开启 | HTTP 400，返回玩法错误或玩法未开启 |
+| 投注内容为空 | HTTP 400，返回请输入合买投注内容 |
 | 发起人不存在 | HTTP 404，返回用户不存在 |
 | 总金额或发起人认购金额小于等于 0 | HTTP 400，返回金额必须大于 0 |
 | 总金额或参与金额不能按 `minShareAmountMinor` 整除 | HTTP 400，返回必须按最小份额金额整除 |
 | 发起人认购低于彩种 `initiatorMinPercent` | HTTP 400，返回发起人最低认购金额 |
 | 发起人认购超过计划总金额 | HTTP 400，返回发起人认购不能超过总金额 |
+| 发起人或参与人余额不足 | HTTP 400，返回余额不足 |
 | 查询或更新不存在计划 | HTTP 404，返回计划不存在 |
 | 计划未满额却更新为 `filled` 或 `settled` | HTTP 400，返回必须满额后才能进入已满单或已结算 |
 | 参与记录 ID 为空 | HTTP 400，返回参与记录 ID 必填 |
@@ -2601,10 +2646,12 @@ await createInvitation({
 ### 5. Good / Base / Bad Cases
 
 - Good：`fc3d` 开启合买，`U90001` 发起 `100000` 分计划并认购 `10000` 分，后端自动生成发起人参与记录和 `1000` 份总份额。
+- Good：手机端当前用户发起或参与合买后，后端扣减可用余额，写入 `groupBuyDebit` 资金流水，并返回最新合买计划和余额。
 - Good：追加 `U10001` 参与记录后，如果 `filledAmountMinor == totalAmountMinor`，后端自动把计划状态改为 `filled`。
-- Base：无数据库环境下使用内存合买仓储，服务重启后恢复种子合买计划。
+- Base：无数据库环境下使用内存合买仓储，服务重启后恢复种子合买计划；数据库模式下使用 `group_buy_plans`、`group_buy_participants` 和 `ledger_entries` 持久化。
 - Bad：前端自行计算 `shareCount` 并提交给后端，后续会与彩种合买配置漂移。
 - Bad：直接把 dashboard 的 `groupBuyPlans` 写成静态函数，页面创建计划后首页摘要不会同步。
+- Bad：用户端继续请求旧 `/group-buys/*` 路径，当前后端没有该旧系统接口。
 
 ### 6. 必要测试
 
@@ -2613,6 +2660,7 @@ await createInvitation({
 - 后端需要覆盖发起人认购低于最低比例被拒绝。
 - 后端需要覆盖添加参与记录后自动满单。
 - 后端需要覆盖超额参与被拒绝。
+- 后端需要覆盖合买扣款写入 `groupBuyDebit` 且相同参与记录不会重复扣款。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`，确认计划状态、请求字段和 API client 类型一致。
 - API 冒烟需要创建计划、更新状态、添加参与记录到满单，并验证 dashboard `groupBuyPlans` 来自真实仓储。
@@ -2672,6 +2720,19 @@ await addGroupBuyParticipant(id, {
 ```
 
 前端只提交参与金额和绑定 ID，份额数量由后端按彩种合买配置计算。
+
+```ts
+await http.post('/user/group-buy/plans', {
+  lotteryId,
+  issue,
+  ruleCode,
+  numbers,
+  totalAmountMinor,
+  selfAmountMinor,
+});
+```
+
+手机端只提交当前用户选择的彩种、期号、玩法、投注内容和金额，发起人身份、扣款和流水由后端完成。
 
 ---
 

@@ -6,7 +6,7 @@ export type GroupBuyParticipation = {
 }
 
 export type GroupBuyPlan = {
-  id: number
+  id: string
   lottery_code: string
   lottery_name: string
   category?: string
@@ -40,6 +40,7 @@ export type GroupBuySettings = {
   min_share_amount: string
   initiator_min_buy_ratio: string
   share_amount: string
+  participant_min_amount?: string
 }
 
 export type CreateGroupBuyForm = {

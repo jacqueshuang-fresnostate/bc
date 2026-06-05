@@ -813,6 +813,33 @@ async fn create_group_buy_plan(
         .group_buys
         .create(payload, &lotteries, &access.users)
         .await?;
+    let participant_id = format!("{}-P001", plan.id);
+    if let Err(error) = state
+        .finance
+        .debit_group_buy(
+            &plan.initiator_user_id,
+            plan.filled_amount_minor,
+            &participant_id,
+            &plan.id,
+        )
+        .await
+    {
+        if let Err(rollback_error) = state.group_buys.remove_unfunded_plan(&plan.id).await {
+            tracing::error!(
+                group_buy_plan_id = %plan.id,
+                error = %rollback_error.log_message(),
+                "后台创建合买扣款失败后移除计划失败"
+            );
+        }
+        return Err(error);
+    }
+    publish_user_balance_changed(
+        &state,
+        &plan.initiator_user_id,
+        "group_buy_debit",
+        Some(&participant_id),
+    )
+    .await;
 
     Ok(Json(ApiEnvelope::success(plan)))
 }
@@ -832,11 +859,45 @@ async fn add_group_buy_participant(
     Path(id): Path<String>,
     Json(payload): Json<AddGroupBuyParticipantRequest>,
 ) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
+    let participant_id = payload.id.clone();
+    let participant_user_id = payload.user_id.clone();
+    let participant_amount_minor = payload.amount_minor;
     let access = state.access.snapshot().await?;
     let plan = state
         .group_buys
         .add_participant(&id, payload, &access.users)
         .await?;
+    if let Err(error) = state
+        .finance
+        .debit_group_buy(
+            &participant_user_id,
+            participant_amount_minor,
+            &participant_id,
+            &id,
+        )
+        .await
+    {
+        if let Err(rollback_error) = state
+            .group_buys
+            .remove_unfunded_participant(&id, &participant_id)
+            .await
+        {
+            tracing::error!(
+                group_buy_plan_id = %id,
+                group_buy_participant_id = %participant_id,
+                error = %rollback_error.log_message(),
+                "后台合买参与扣款失败后移除参与记录失败"
+            );
+        }
+        return Err(error);
+    }
+    publish_user_balance_changed(
+        &state,
+        &participant_user_id,
+        "group_buy_debit",
+        Some(&participant_id),
+    )
+    .await;
 
     Ok(Json(ApiEnvelope::success(plan)))
 }

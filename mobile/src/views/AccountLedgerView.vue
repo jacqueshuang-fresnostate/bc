@@ -33,6 +33,8 @@ const kindTextMap: Record<LedgerEntryKind, string> = {
   withdrawalFreeze: '提现冻结',
   withdrawalPayout: '提现打款',
   withdrawalReject: '提现驳回',
+  groupBuyDebit: '合买认购',
+  groupBuyRefund: '合买退款',
 }
 
 function kindText(kind: LedgerEntryKind) {
@@ -41,8 +43,8 @@ function kindText(kind: LedgerEntryKind) {
 
 function kindIcon(kind: LedgerEntryKind) {
   if (kind === 'rechargeCredit') return 'output_circle'
-  if (kind === 'payoutCredit' || kind === 'orderRefund' || kind === 'withdrawalReject') return 'add_circle'
-  if (kind === 'orderDebit' || kind === 'withdrawalFreeze' || kind === 'withdrawalPayout') return 'payments'
+  if (kind === 'payoutCredit' || kind === 'orderRefund' || kind === 'withdrawalReject' || kind === 'groupBuyRefund') return 'add_circle'
+  if (kind === 'orderDebit' || kind === 'withdrawalFreeze' || kind === 'withdrawalPayout' || kind === 'groupBuyDebit') return 'payments'
   return 'account_balance_wallet'
 }
 

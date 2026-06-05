@@ -325,7 +325,7 @@ onMounted(async () => {
                 <div class="flex items-center justify-between rounded-lg bg-stone-50 p-3 transition-all focus-within:bg-white focus-within:shadow-[inset_0_0_0_1px_rgba(140,10,21,0.2)]">
                   <div>
                     <label class="mb-1 block text-sm font-medium text-stone-950">发起人自购</label>
-                    <span class="text-xs text-stone-500">发起人最低自购 {{ createSettings.initiator_min_buy_ratio }}%，0% 表示不限制</span>
+                    <span class="text-xs text-stone-500">发起人最低自购{{ createSettings.initiator_min_buy_ratio }}%</span>
                     <span v-if="requiredSelfShares > 0" class="mt-1 block text-xs font-medium text-red-900">至少 {{ requiredSelfShares }} 份</span>
                   </div>
                   <div class="flex items-center rounded border border-red-100 bg-white px-2 py-1">

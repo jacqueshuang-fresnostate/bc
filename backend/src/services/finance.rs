@@ -254,6 +254,26 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 合买认购时扣减用户可用余额，并按参与记录 ID 保持幂等。
+    pub async fn debit_group_buy(
+        &self,
+        user_id: &str,
+        amount_minor: i64,
+        participant_id: &str,
+        plan_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.debit_group_buy(user_id, amount_minor, participant_id, plan_id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     async fn persist(&self, store: &FinanceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_finance_store(persistence, store).await?;
@@ -832,6 +852,43 @@ impl FinanceStore {
         )
     }
 
+    /// 合买认购扣款，重复参与记录不会重复扣款。
+    fn debit_group_buy(
+        &mut self,
+        user_id: &str,
+        amount_minor: i64,
+        participant_id: &str,
+        plan_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let user_id = user_id.trim();
+        let participant_id = participant_id.trim();
+        let plan_id = plan_id.trim();
+        if amount_minor <= 0 {
+            return Err(ApiError::BadRequest(
+                "group buy amount must be greater than zero".to_string(),
+            ));
+        }
+        if participant_id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "group buy participant id is required".to_string(),
+            ));
+        }
+        if let Some(entry) = self.reference_entry(&LedgerEntryKind::GroupBuyDebit, participant_id) {
+            return Ok(entry);
+        }
+        self.ensure_available(user_id, amount_minor)?;
+
+        self.apply_available_delta(
+            user_id,
+            LedgerEntryKind::GroupBuyDebit,
+            amount_minor
+                .checked_neg()
+                .ok_or_else(|| ApiError::BadRequest("group buy amount is too large".to_string()))?,
+            Some(participant_id.to_string()),
+            format!("合买认购扣款：{plan_id}"),
+        )
+    }
+
     /// 处理 account 的具体内部流程。
     #[cfg(test)]
     fn account(&self, user_id: &str) -> ApiResult<&FinancialAccountSummary> {
@@ -1018,6 +1075,26 @@ mod tests {
             .expect_err("zero balance user cannot bet")
             .to_string()
             .contains("insufficient available balance"));
+    }
+
+    #[test]
+    /// 合买认购扣款会写入专用流水，并按参与记录保持幂等。
+    fn store_debits_group_buy_once() {
+        let mut store = FinanceStore::seeded();
+
+        let entry = store
+            .debit_group_buy("U10001", 1_000, "G202606050001-P001", "G202606050001")
+            .expect("group buy debit can be applied");
+        let repeated = store
+            .debit_group_buy("U10001", 1_000, "G202606050001-P001", "G202606050001")
+            .expect("group buy debit is idempotent");
+        let account = store.account("U10001").expect("account exists");
+
+        assert_eq!(entry.id, repeated.id);
+        assert_eq!(entry.kind, LedgerEntryKind::GroupBuyDebit);
+        assert_eq!(entry.amount_minor, -1_000);
+        assert_eq!(entry.reference_id.as_deref(), Some("G202606050001-P001"));
+        assert_eq!(account.available_balance_minor, 11_000);
     }
 
     #[test]

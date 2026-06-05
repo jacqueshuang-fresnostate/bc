@@ -1160,6 +1160,60 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/user/group-buy/plans",
+        "用户端合买",
+        "合买大厅列表",
+        "返回当前用户可查看的合买计划，支持按彩种和分组筛选。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/user/group-buy/plans",
+        "用户端合买",
+        "发起合买计划",
+        "当前用户按彩种、期号、玩法、投注内容和自购金额发起合买，并扣减自购金额。",
+        AuthMode::User,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "get",
+        "/user/group-buy/plans/{id}",
+        "用户端合买",
+        "合买计划详情",
+        "返回合买计划详情、进度和当前用户参与份额。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/user/group-buy/plans/{id}/participants",
+        "用户端合买",
+        "参与合买计划",
+        "当前用户按认购金额参与合买，并扣减可用余额。",
+        AuthMode::User,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "get",
+        "/user/group-buy/my",
+        "用户端合买",
+        "我的合买",
+        "返回当前用户发起或参与过的合买计划。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/user/group-buy/create-options",
+        "用户端合买",
+        "发起合买选项",
+        "返回可发起合买的彩种、当前可售期号、玩法和合买金额配置。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
         "/user/recharge/config",
         "用户端充值",
         "读取充值配置",
@@ -1532,6 +1586,7 @@ fn openapi_tags() -> Value {
         { "name": "订单与结算", "description": "投注订单、取消、计奖和派奖。" },
         { "name": "用户端内容", "description": "手机端公开内容接口。" },
         { "name": "用户端账户", "description": "用户注册登录、余额、流水和提现方式。" },
+        { "name": "用户端合买", "description": "手机端合买大厅、发起合买、参与合买和我的合买。" },
         { "name": "用户端充值", "description": "用户充值配置、充值下单和订单查询。" },
         { "name": "充值回调", "description": "第三方支付异步通知和同步返回入口。" },
         { "name": "用户端客服", "description": "用户自己的客服会话和消息发送接口。" }
@@ -1631,6 +1686,12 @@ mod tests {
         assert!(document["paths"]["/user/bet/page-config/{lottery_id}"]["get"].is_object());
         assert!(document["paths"]["/user/bet/orders"]["get"].is_object());
         assert!(document["paths"]["/user/bet/orders"]["post"].is_object());
+        assert!(document["paths"]["/user/group-buy/plans"]["get"].is_object());
+        assert!(document["paths"]["/user/group-buy/plans"]["post"].is_object());
+        assert!(document["paths"]["/user/group-buy/plans/{id}"]["get"].is_object());
+        assert!(document["paths"]["/user/group-buy/plans/{id}/participants"]["post"].is_object());
+        assert!(document["paths"]["/user/group-buy/my"]["get"].is_object());
+        assert!(document["paths"]["/user/group-buy/create-options"]["get"].is_object());
         assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
         assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());
         assert!(document["paths"]["/user/withdrawals"]["post"].is_object());

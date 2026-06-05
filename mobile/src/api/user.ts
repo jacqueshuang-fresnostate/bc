@@ -151,6 +151,8 @@ export type LedgerEntryKind =
   | 'withdrawalFreeze'
   | 'withdrawalPayout'
   | 'withdrawalReject'
+  | 'groupBuyDebit'
+  | 'groupBuyRefund'
 
 export type LedgerEntry = {
   id: string

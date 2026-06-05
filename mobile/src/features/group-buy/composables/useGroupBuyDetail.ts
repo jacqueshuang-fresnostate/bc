@@ -55,7 +55,7 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
   }
 
   /** 加载合买详情并忽略过期响应。 */
-  async function loadDetail(groupBuyId: number) {
+  async function loadDetail(groupBuyId: string) {
     const requestId = ++detailRequestSeq.value
     loadingDetail.value = true
     try {

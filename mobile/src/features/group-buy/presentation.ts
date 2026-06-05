@@ -86,7 +86,7 @@ export function formatPlayName(item: GroupBuyPlan) {
 export function statusText(status: string) {
   if (status === 'draft') return '草稿'
   if (status === 'open') return '可参与'
-  if (status === 'full') return '已满员'
+  if (status === 'full' || status === 'filled') return '已满员'
   if (status === 'settled') return '已结算'
   if (status === 'cancelled') return '已取消'
   if (status === 'expired') return '已流局'

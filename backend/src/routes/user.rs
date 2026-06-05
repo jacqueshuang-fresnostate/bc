@@ -16,7 +16,15 @@ use std::time::Duration;
 use crate::{
     app::AppState,
     domain::advertisement::MobileAdvertisement,
+    domain::draw::DrawIssueStatus,
     domain::finance::{FinancialAccountSummary, LedgerEntry},
+    domain::group_buy::{
+        AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyCreateOptions,
+        GroupBuyCreateSettings, GroupBuyParticipationSummary, GroupBuyPlan, GroupBuyPlanStatus,
+        GroupBuySelectOption, UserCreateGroupBuyPlanRequest, UserGroupBuyActionResponse,
+        UserGroupBuyPlan, UserGroupBuyPlanPage, UserJoinGroupBuyPlanRequest,
+    },
+    domain::lottery::LotteryKind,
     domain::mobile::{
         MobileBetPageConfig, MobileCreateBetOrderBatchRequest, MobileCreateBetOrderBatchResponse,
         MobileSiteConfig,
@@ -43,8 +51,10 @@ use crate::{
         support_ticket_for_recharge,
     },
     services::{
+        business_database::enum_to_string,
         mobile_bet::build_mobile_bet_page_config,
         order::validate_draw_issue_accepts_order,
+        play_rules::play_rule_summaries,
         realtime::{
             audience_matches, balance_changed_event, heartbeat_event, order_changed_event,
             recharge_changed_event, withdrawal_changed_event,
@@ -71,6 +81,20 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/bet/orders",
             get(list_user_bet_orders).post(create_user_bet_orders),
+        )
+        .route(
+            "/group-buy/plans",
+            get(list_user_group_buy_plans).post(create_user_group_buy_plan),
+        )
+        .route("/group-buy/plans/{id}", get(get_user_group_buy_plan))
+        .route(
+            "/group-buy/plans/{id}/participants",
+            post(join_user_group_buy_plan),
+        )
+        .route("/group-buy/my", get(list_my_group_buy_plans))
+        .route(
+            "/group-buy/create-options",
+            get(get_user_group_buy_create_options),
         )
         .route("/recharge/config", get(get_recharge_config))
         .route(
@@ -506,6 +530,485 @@ async fn create_user_bet_orders(
             orders: created_orders,
         },
     )))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UserGroupBuyListQuery {
+    #[serde(default, alias = "lottery_code")]
+    lottery_id: Option<String>,
+    #[serde(default, alias = "group_code")]
+    group_code: Option<String>,
+}
+
+async fn list_user_group_buy_plans(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Query(query): Query<UserGroupBuyListQuery>,
+) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlanPage>>> {
+    let lotteries = state.lotteries.list().await?;
+    let items = user_group_buy_plans(&state, &session.user.id, &lotteries, query).await?;
+
+    Ok(Json(ApiEnvelope::success(UserGroupBuyPlanPage { items })))
+}
+
+async fn get_user_group_buy_plan(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlan>>> {
+    let lotteries = state.lotteries.list().await?;
+    let plan = state.group_buys.get(&id).await?;
+    let plan = user_group_buy_plan(&plan, &lotteries, Some(&session.user.id))?;
+
+    Ok(Json(ApiEnvelope::success(plan)))
+}
+
+async fn list_my_group_buy_plans(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlanPage>>> {
+    let lotteries = state.lotteries.list().await?;
+    let items = state
+        .group_buys
+        .list_details()
+        .await?
+        .into_iter()
+        .filter(|plan| {
+            plan.participants
+                .iter()
+                .any(|participant| participant.user_id == session.user.id)
+        })
+        .map(|plan| user_group_buy_plan(&plan, &lotteries, Some(&session.user.id)))
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(Json(ApiEnvelope::success(UserGroupBuyPlanPage { items })))
+}
+
+async fn get_user_group_buy_create_options(
+    State(state): State<AppState>,
+    Query(query): Query<UserGroupBuyListQuery>,
+) -> ApiResult<Json<ApiEnvelope<GroupBuyCreateOptions>>> {
+    let lotteries = group_buy_enabled_lotteries(&state.lotteries.list().await?);
+    let selected_lottery_id = query
+        .lottery_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            lotteries
+                .first()
+                .map(|lottery| lottery.id.as_str())
+                .unwrap_or("")
+        });
+    let selected_lottery = lotteries
+        .iter()
+        .find(|lottery| lottery.id == selected_lottery_id)
+        .or_else(|| lotteries.first());
+    let Some(selected_lottery) = selected_lottery else {
+        return Ok(Json(ApiEnvelope::success(GroupBuyCreateOptions {
+            lotteries: Vec::new(),
+            issues: Vec::new(),
+            plays: Vec::new(),
+            settings: default_group_buy_create_settings(),
+        })));
+    };
+
+    let issues = state
+        .draws
+        .list_by_lottery_id(&selected_lottery.id)
+        .await?
+        .into_iter()
+        .filter(|issue| issue.status == DrawIssueStatus::Open)
+        .map(|issue| GroupBuySelectOption {
+            label: format!("第{}期", issue.issue),
+            value: issue.issue,
+        })
+        .collect();
+    let plays = enabled_group_buy_play_options(selected_lottery)?;
+
+    Ok(Json(ApiEnvelope::success(GroupBuyCreateOptions {
+        lotteries: lotteries
+            .iter()
+            .map(|lottery| GroupBuySelectOption {
+                label: lottery.name.clone(),
+                value: lottery.id.clone(),
+            })
+            .collect(),
+        issues,
+        plays,
+        settings: GroupBuyCreateSettings {
+            min_share_amount_minor: selected_lottery.group_buy.min_share_amount_minor,
+            initiator_min_percent: selected_lottery.group_buy.initiator_min_percent,
+            participant_min_amount_minor: selected_lottery.group_buy.participant_min_amount_minor,
+        },
+    })))
+}
+
+async fn create_user_group_buy_plan(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Json(payload): Json<UserCreateGroupBuyPlanRequest>,
+) -> ApiResult<Json<ApiEnvelope<UserGroupBuyActionResponse>>> {
+    let lottery = state.lotteries.get(&payload.lottery_id).await?;
+    validate_lottery_accepts_group_buy(&lottery)?;
+    validate_group_buy_issue_and_play(&state, &lottery, &payload.issue, &payload.rule_code).await?;
+    validate_group_buy_numbers(&payload.numbers)?;
+    state
+        .finance
+        .ensure_available(&session.user.id, payload.self_amount_minor)
+        .await?;
+
+    let plan_id = next_group_buy_plan_id();
+    let participant_id = format!("{plan_id}-P001");
+    let access = state.access.snapshot().await?;
+    let request = CreateGroupBuyPlanRequest {
+        id: plan_id.clone(),
+        lottery_id: lottery.id.clone(),
+        issue: payload.issue.trim().to_string(),
+        rule_code: payload.rule_code.trim().to_string(),
+        title: payload.title.trim().to_string(),
+        numbers: payload.numbers.trim().to_string(),
+        initiator_user_id: session.user.id.clone(),
+        total_amount_minor: payload.total_amount_minor,
+        initiator_amount_minor: payload.self_amount_minor,
+        note: "用户发起合买".to_string(),
+    };
+    let plan = state
+        .group_buys
+        .create(request, std::slice::from_ref(&lottery), &access.users)
+        .await?;
+
+    if let Err(error) = state
+        .finance
+        .debit_group_buy(
+            &session.user.id,
+            payload.self_amount_minor,
+            &participant_id,
+            &plan.id,
+        )
+        .await
+    {
+        if let Err(rollback_error) = state.group_buys.remove_unfunded_plan(&plan.id).await {
+            tracing::error!(
+                group_buy_plan_id = %plan.id,
+                error = %rollback_error.log_message(),
+                "合买发起扣款失败后移除计划失败"
+            );
+        }
+        return Err(error);
+    }
+
+    publish_user_balance_changed(
+        &state,
+        &session.user.id,
+        "group_buy_debit",
+        Some(&participant_id),
+    )
+    .await;
+    let account = state.finance.account_or_create(&session.user.id).await?;
+    let plan = user_group_buy_plan(&plan, &[lottery], Some(&session.user.id))?;
+
+    Ok(Json(ApiEnvelope::success(UserGroupBuyActionResponse {
+        plan,
+        available_balance_minor: account.available_balance_minor,
+    })))
+}
+
+async fn join_user_group_buy_plan(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Path(id): Path<String>,
+    Json(payload): Json<UserJoinGroupBuyPlanRequest>,
+) -> ApiResult<Json<ApiEnvelope<UserGroupBuyActionResponse>>> {
+    let existing = state.group_buys.get(&id).await?;
+    let participant_id = next_group_buy_participant_id(&existing);
+    state
+        .finance
+        .ensure_available(&session.user.id, payload.amount_minor)
+        .await?;
+    let access = state.access.snapshot().await?;
+    let updated = state
+        .group_buys
+        .add_participant(
+            &id,
+            AddGroupBuyParticipantRequest {
+                id: participant_id.clone(),
+                user_id: session.user.id.clone(),
+                amount_minor: payload.amount_minor,
+                note: "用户参与合买".to_string(),
+            },
+            &access.users,
+        )
+        .await?;
+
+    if let Err(error) = state
+        .finance
+        .debit_group_buy(&session.user.id, payload.amount_minor, &participant_id, &id)
+        .await
+    {
+        if let Err(rollback_error) = state
+            .group_buys
+            .remove_unfunded_participant(&id, &participant_id)
+            .await
+        {
+            tracing::error!(
+                group_buy_plan_id = %id,
+                group_buy_participant_id = %participant_id,
+                error = %rollback_error.log_message(),
+                "合买参与扣款失败后移除参与记录失败"
+            );
+        }
+        return Err(error);
+    }
+
+    publish_user_balance_changed(
+        &state,
+        &session.user.id,
+        "group_buy_debit",
+        Some(&participant_id),
+    )
+    .await;
+    let account = state.finance.account_or_create(&session.user.id).await?;
+    let lotteries = state.lotteries.list().await?;
+    let plan = user_group_buy_plan(&updated, &lotteries, Some(&session.user.id))?;
+
+    Ok(Json(ApiEnvelope::success(UserGroupBuyActionResponse {
+        plan,
+        available_balance_minor: account.available_balance_minor,
+    })))
+}
+
+async fn user_group_buy_plans(
+    state: &AppState,
+    user_id: &str,
+    lotteries: &[LotteryKind],
+    query: UserGroupBuyListQuery,
+) -> ApiResult<Vec<UserGroupBuyPlan>> {
+    let lottery_id = query
+        .lottery_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let group_code = query
+        .group_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    state
+        .group_buys
+        .list_details()
+        .await?
+        .into_iter()
+        .filter(|plan| {
+            if let Some(lottery_id) = lottery_id {
+                if plan.lottery_id != lottery_id {
+                    return false;
+                }
+            }
+            if let Some(group_code) = group_code {
+                let Some(lottery) = lotteries
+                    .iter()
+                    .find(|lottery| lottery.id == plan.lottery_id)
+                else {
+                    return false;
+                };
+                if lottery.category != group_code {
+                    return false;
+                }
+            }
+            matches!(
+                plan.status,
+                GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open | GroupBuyPlanStatus::Filled
+            )
+        })
+        .map(|plan| user_group_buy_plan(&plan, lotteries, Some(user_id)))
+        .collect()
+}
+
+fn user_group_buy_plan(
+    plan: &GroupBuyPlan,
+    lotteries: &[LotteryKind],
+    user_id: Option<&str>,
+) -> ApiResult<UserGroupBuyPlan> {
+    let lottery = lotteries
+        .iter()
+        .find(|lottery| lottery.id == plan.lottery_id);
+    let sold_shares = amount_to_share_count(plan.filled_amount_minor, plan.min_share_amount_minor)?;
+    let available_shares = plan.share_count.saturating_sub(sold_shares);
+    let progress_percent = if plan.total_amount_minor <= 0 {
+        0
+    } else {
+        ((plan.filled_amount_minor.saturating_mul(100)) / plan.total_amount_minor).clamp(0, 100)
+            as u32
+    };
+    let my_participation = user_id.and_then(|user_id| user_group_buy_participation(plan, user_id));
+    let play_name = play_rule_summaries()
+        .into_iter()
+        .find(|summary| enum_to_string(&summary.code).ok().as_deref() == Some(&plan.rule_code))
+        .map(|summary| summary.label)
+        .unwrap_or_else(|| plan.rule_code.clone());
+
+    Ok(UserGroupBuyPlan {
+        id: plan.id.clone(),
+        lottery_id: plan.lottery_id.clone(),
+        lottery_name: plan.lottery_name.clone(),
+        category: lottery.map(|lottery| lottery.category.clone()),
+        issue: plan.issue.clone(),
+        rule_code: plan.rule_code.clone(),
+        play_name,
+        title: if plan.title.trim().is_empty() {
+            format!("{} 第{}期合买", plan.lottery_name, plan.issue)
+        } else {
+            plan.title.clone()
+        },
+        numbers: plan.numbers.clone(),
+        total_amount_minor: plan.total_amount_minor,
+        share_count: plan.share_count,
+        share_amount_minor: plan.min_share_amount_minor,
+        filled_amount_minor: plan.filled_amount_minor,
+        sold_shares,
+        available_shares,
+        progress_percent,
+        status: plan.status.clone(),
+        participant_count: plan.participants.len(),
+        initiator_display: plan.initiator_username.clone(),
+        my_participation,
+        created_at: plan.created_at.clone(),
+        updated_at: plan.updated_at.clone(),
+    })
+}
+
+fn user_group_buy_participation(
+    plan: &GroupBuyPlan,
+    user_id: &str,
+) -> Option<GroupBuyParticipationSummary> {
+    let mut amount_minor = 0_i64;
+    let mut share_count = 0_u32;
+    for participant in plan
+        .participants
+        .iter()
+        .filter(|participant| participant.user_id == user_id)
+    {
+        amount_minor = amount_minor.saturating_add(participant.amount_minor);
+        share_count = share_count.saturating_add(participant.share_count);
+    }
+    (amount_minor > 0).then_some(GroupBuyParticipationSummary {
+        amount_minor,
+        share_count,
+    })
+}
+
+fn group_buy_enabled_lotteries(lotteries: &[LotteryKind]) -> Vec<LotteryKind> {
+    lotteries
+        .iter()
+        .filter(|lottery| lottery.sale_enabled && lottery.group_buy.enabled)
+        .cloned()
+        .collect()
+}
+
+fn default_group_buy_create_settings() -> GroupBuyCreateSettings {
+    GroupBuyCreateSettings {
+        min_share_amount_minor: 100,
+        initiator_min_percent: 10,
+        participant_min_amount_minor: 100,
+    }
+}
+
+fn enabled_group_buy_play_options(lottery: &LotteryKind) -> ApiResult<Vec<GroupBuySelectOption>> {
+    let summaries = play_rule_summaries()
+        .into_iter()
+        .map(|summary| {
+            let code = enum_to_string(&summary.code)?;
+            Ok((code, summary))
+        })
+        .collect::<ApiResult<HashMap<_, _>>>()?;
+    lottery
+        .play_configs
+        .iter()
+        .filter(|config| config.enabled)
+        .map(|config| {
+            let value = enum_to_string(&config.rule_code)?;
+            let label = summaries
+                .get(&value)
+                .map(|summary| summary.label.clone())
+                .unwrap_or_else(|| value.clone());
+            Ok(GroupBuySelectOption { label, value })
+        })
+        .collect()
+}
+
+fn validate_lottery_accepts_group_buy(lottery: &LotteryKind) -> ApiResult<()> {
+    if !lottery.sale_enabled {
+        return Err(ApiError::BadRequest("彩种已停售".to_string()));
+    }
+    if !lottery.group_buy.enabled {
+        return Err(ApiError::BadRequest("彩种未开启合买".to_string()));
+    }
+    Ok(())
+}
+
+async fn validate_group_buy_issue_and_play(
+    state: &AppState,
+    lottery: &LotteryKind,
+    issue: &str,
+    rule_code: &str,
+) -> ApiResult<()> {
+    let issue = issue.trim();
+    if issue.is_empty() {
+        return Err(ApiError::BadRequest("请选择合买期号".to_string()));
+    }
+    let draw_issue = state.draws.get_by_lottery_issue(&lottery.id, issue).await?;
+    if draw_issue.status != DrawIssueStatus::Open {
+        return Err(ApiError::BadRequest("合买期号已停止销售".to_string()));
+    }
+
+    let rule_code = rule_code.trim();
+    if rule_code.is_empty() {
+        return Err(ApiError::BadRequest("请选择合买玩法".to_string()));
+    }
+    let play_enabled = lottery
+        .play_configs
+        .iter()
+        .filter(|config| config.enabled)
+        .any(|config| enum_to_string(&config.rule_code).ok().as_deref() == Some(rule_code));
+    if !play_enabled {
+        return Err(ApiError::BadRequest("合买玩法未开启".to_string()));
+    }
+
+    Ok(())
+}
+
+fn validate_group_buy_numbers(numbers: &str) -> ApiResult<()> {
+    let numbers = numbers.trim();
+    if numbers.is_empty() {
+        return Err(ApiError::BadRequest("请输入合买投注内容".to_string()));
+    }
+    if numbers.chars().count() > 500 {
+        return Err(ApiError::BadRequest("合买投注内容过长".to_string()));
+    }
+    Ok(())
+}
+
+fn amount_to_share_count(amount_minor: i64, min_share_amount_minor: i64) -> ApiResult<u32> {
+    if min_share_amount_minor <= 0 {
+        return Ok(0);
+    }
+    u32::try_from(amount_minor / min_share_amount_minor)
+        .map_err(|_| ApiError::BadRequest("合买份数过大".to_string()))
+}
+
+fn next_group_buy_plan_id() -> String {
+    format!("G{}", chrono::Local::now().format("%Y%m%d%H%M%S%3f"))
+}
+
+fn next_group_buy_participant_id(plan: &GroupBuyPlan) -> String {
+    format!(
+        "{}-P{}",
+        plan.id,
+        chrono::Local::now().format("%Y%m%d%H%M%S%3f")
+    )
 }
 
 async fn get_recharge_config(
