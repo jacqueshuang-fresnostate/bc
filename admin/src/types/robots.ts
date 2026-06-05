@@ -1,7 +1,27 @@
 import type { RobotConfigSummary, RobotKind, RobotStatus } from './dashboard';
+import type { LedgerEntry } from './finance';
+import type { GroupBuyPlan } from './groupBuy';
+import type { OrderDetail } from './orders';
 
 export type { RobotConfigSummary, RobotKind, RobotStatus };
 
 export interface RobotStatusUpdateRequest {
   status: RobotStatus;
+}
+
+export interface GroupBuyRobotSkippedItem {
+  robotId: string;
+  robotName: string;
+  lotteryId: string;
+  issue: string | null;
+  reason: string;
+}
+
+export interface GroupBuyRobotRun {
+  now: string;
+  createdPlans: GroupBuyPlan[];
+  filledPlans: GroupBuyPlan[];
+  createdOrders: OrderDetail[];
+  ledgerEntries: LedgerEntry[];
+  skippedItems: GroupBuyRobotSkippedItem[];
 }

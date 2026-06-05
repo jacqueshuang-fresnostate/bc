@@ -41,7 +41,7 @@ use crate::{
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
         rebate::{InvitePolicySummary, InvitePolicyUpdateRequest},
         recharge::{ConfirmRechargeOrderRequest, RechargeOrderSummary},
-        robot::{RobotConfigSummary, RobotStatusRequest},
+        robot::{GroupBuyRobotRun, RobotConfigSummary, RobotStatusRequest},
         settlement::SettlementRun,
         support::{
             CreateSupportConversationRequest, SupportConversation, SupportReplyRequest,
@@ -64,6 +64,7 @@ use crate::{
             generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
         },
         group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
+        group_buy_robot::run_group_buy_robots,
         order::validate_draw_issue_accepts_order,
         play_rules::{evaluate_play_rule, play_rule_summaries},
         realtime::{
@@ -173,6 +174,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(get_invite_policy).put(update_invite_policy),
         )
         .route("/robots", get(list_robots).post(create_robot))
+        .route("/robots/run", post(run_group_buy_robots_request))
         .route(
             "/robots/{id}",
             get(get_robot).put(update_robot).delete(delete_robot),
@@ -1621,6 +1623,49 @@ async fn set_robot_status(
     let robot = state.robots.set_status(&id, payload.status).await?;
 
     Ok(Json(ApiEnvelope::success(robot)))
+}
+
+async fn run_group_buy_robots_request(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<GroupBuyRobotRun>>> {
+    let run = run_group_buy_robots(
+        &state.robots,
+        &state.draws,
+        &state.lotteries,
+        &state.orders,
+        &state.finance,
+        &state.group_buys,
+        &state.access,
+        current_timestamp(),
+    )
+    .await?;
+    publish_group_buy_robot_events(&state, &run).await;
+
+    Ok(Json(ApiEnvelope::success(run)))
+}
+
+/// 推送合买机器人执行产生的余额和订单变化事件。
+async fn publish_group_buy_robot_events(state: &AppState, run: &GroupBuyRobotRun) {
+    for entry in &run.ledger_entries {
+        publish_user_balance_changed(
+            state,
+            &entry.user_id,
+            "group_buy_robot",
+            entry.reference_id.as_deref(),
+        )
+        .await;
+    }
+    for order in &run.created_orders {
+        publish_user_order_changed(state, order, "created");
+    }
+}
+
+/// 返回后台手动任务使用的本地时间字符串。
+fn current_timestamp() -> String {
+    Local::now()
+        .naive_local()
+        .format(TIMESTAMP_FORMAT)
+        .to_string()
 }
 
 async fn get_finance_overview(

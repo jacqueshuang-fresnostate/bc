@@ -72,6 +72,7 @@ import type {
 import type { CreateOrderRequest, OrderDetail } from '../types/orders';
 import type { DrawSchedulerConfig, DrawSchedulerStatus } from '../types/scheduler';
 import type {
+  GroupBuyRobotRun,
   RobotConfigSummary,
   RobotStatusUpdateRequest,
 } from '../types/robots';
@@ -567,6 +568,12 @@ export function setRobotStatus(id: string, payload: RobotStatusUpdateRequest) {
       method: 'PATCH',
     },
   );
+}
+
+export function runGroupBuyRobots() {
+  return requestJson<GroupBuyRobotRun>('/api/admin/robots/run', {
+    method: 'POST',
+  });
 }
 
 export function fetchLotteries(signal?: AbortSignal) {

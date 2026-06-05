@@ -1586,7 +1586,7 @@ await previewDrawIssueGeneration({
 ### 1. 范围 / 触发条件
 
 - 触发条件：新增或修改服务启动后的常驻调度、自动补齐未来期号、自动封盘开奖结算循环、调度状态接口或管理后台调度可视化。
-- 范围：`app::router_from_env` 启动流程、调度服务、自动任务服务、期号生成服务、调度配置/运行历史数据库仓储、管理后台状态接口和结构化日志。
+- 范围：`app::router_from_env` 启动流程、调度服务、自动任务服务、期号生成服务、合买机器人执行服务、调度配置/运行历史数据库仓储、管理后台状态接口和结构化日志。
 
 ### 2. 签名
 
@@ -1603,8 +1603,8 @@ await previewDrawIssueGeneration({
 - `DrawSchedulerRepository::update_config(config)`
 - `DrawSchedulerRepository::record_success(trigger, started_at, finished_at, run)`
 - `DrawSchedulerRepository::record_failure(trigger, started_at, finished_at, now, error)`
-- `spawn_draw_scheduler(draws, lotteries, orders, finance, config, scheduler)`
-- `run_draw_scheduler_once(draws, lotteries, orders, finance, config, now)`
+- `spawn_draw_scheduler(access, draws, lotteries, orders, finance, group_buys, robots, realtime, config, scheduler)`
+- `run_draw_scheduler_once(draws, lotteries, orders, finance, group_buys, robots, access, config, now)`
 
 ### 3. 契约
 
@@ -1671,9 +1671,11 @@ await previewDrawIssueGeneration({
 6. 自动任务执行后，再扫描 `saleEnabled=true` 的彩种，确保每个彩种至少有 `config.futureIssueCount` 个未来可投注 `open` 期号。
 7. 未来期号判断只统计同彩种、状态为 `open`，并且 `scheduledAt > now` 的期号；`closed` 期号已经封盘，不能当作下一期缓冲，否则封盘后不会立即开盘下一期。
 8. 补期继续调用 `generate_draw_issue_batch`，不在调度服务里重新实现开奖计划算法。
-9. `saleEnabled=false` 彩种不会自动补期，会记录为跳过彩种。
-10. 调度周期成功或失败都要写入调度运行历史，页面通过状态接口读取历史，而不是解析日志。
-11. 调度周期成功或失败都使用 `tracing` 结构化日志记录，不暴露原始请求体或敏感信息。
+9. 补期完成后必须调用 `run_group_buy_robots` 执行已启用合买机器人；机器人执行不能放在补期前，否则刚补出的 open 期号无法被机器人使用。
+10. 机器人执行产生的 `ledgerEntries` 要计入本轮调度 `ledgerEntryCount`，并通过实时事件推送用户余额变化；机器人产生的订单要推送用户订单变化。
+11. `saleEnabled=false` 彩种不会自动补期，也不会被合买机器人发起计划，会记录为跳过彩种或机器人跳过项。
+12. 调度周期成功或失败都要写入调度运行历史，页面通过状态接口读取历史，而不是解析日志。
+13. 调度周期成功或失败都使用 `tracing` 结构化日志记录，不暴露原始请求体或敏感信息；成功日志中的统计字段必须使用中文键名，包括机器人新增合买、机器人满单、机器人生成订单和机器人跳过项。
 
 ### 4. 校验与错误矩阵
 
@@ -1698,9 +1700,11 @@ await previewDrawIssueGeneration({
 - Good：调度跑过一轮后，`GET /api/admin/draw-scheduler/status` 返回最新 `SCH...` 记录，管理后台“常驻调度”显示成功状态和运行摘要。
 - Good：已有到期开奖期号时，单轮调度先执行封盘/开奖/结算，再补齐下一期期号。
 - Good：已有期号刚到封盘时间但未到开奖时间时，单轮调度先把当前期转为 `closed`，再生成下一期 `open`，保证销售链路继续有可投注期号。
+- Good：销售中且开启合买的彩种在补出 open 期号后，同轮调度可以执行合买机器人并创建本期机器人合买。
 - Base：默认关闭适合本地开发和测试，不会让后台循环干扰手动 API 冒烟。
 - Bad：把 `closed` 期号算作未来缓冲；这会让当前期封盘后没有新的 `open` 期号可投注。
 - Bad：在调度服务里复制一套封盘、开奖、结算或开奖计划计算逻辑；这些必须继续复用 `run_draw_automation` 和 `generate_draw_issue_batch`。
+- Bad：调度器直接手写合买机器人发单逻辑；机器人执行必须在 `group_buy_robot` 服务中复用合买和订单服务。
 - Bad：管理后台为了显示调度状态去解析服务日志；页面必须调用 `GET /api/admin/draw-scheduler/status`。
 
 ### 6. 必要测试
@@ -1713,6 +1717,7 @@ await previewDrawIssueGeneration({
 - 后端需要覆盖到期期号先自动开奖，再补齐未来期号。
 - 后端需要覆盖当前期到封盘时间后会生成下一期 `open` 期号，不能因为当前期 `closed` 仍未开奖就跳过补期。
 - 后端需要覆盖调度历史成功记录、失败记录和最近 20 条保留上限。
+- 后端需要覆盖调度单轮会执行合买机器人，并把机器人资金流水计入调度成功记录。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 本地冒烟需要用短周期启用调度，确认 `/api/admin/draw-issues` 能看到自动补齐的 open 期号。
 - 本地冒烟需要请求 `/api/admin/draw-scheduler/status`，确认启用状态、配置和最近运行记录。
@@ -1736,6 +1741,13 @@ const status = parseSchedulerLogs(rawLogText);
 
 这个写法会让管理后台依赖日志格式，后续日志脱敏、截断或采集方式变化时页面会失真。
 
+```rust
+// 调度器里直接拼合买计划、参与记录和订单
+state.group_buys.create(request, lotteries, users).await?;
+```
+
+这个写法会把机器人发单逻辑散落到调度器，后续手动执行和定时执行容易不一致。
+
 #### 正确
 
 ```rust
@@ -1750,6 +1762,14 @@ await fetchDrawSchedulerStatus();
 ```
 
 管理后台通过明确的状态接口读取调度配置、最近运行和失败摘要。
+
+```rust
+let robot_run = run_group_buy_robots(
+    robots, draws, lotteries, orders, finance, group_buys, access, now,
+).await?;
+```
+
+调度器只负责编排执行顺序，合买机器人自身继续复用独立服务。
 
 ---
 
@@ -1948,8 +1968,8 @@ await createAdmin({
 
 ### 1. 范围 / 触发条件
 
-- 触发条件：新增或修改合买机器人、购彩机器人配置管理接口，或让 dashboard 读取机器人仓储。
-- 范围：后端机器人领域模型、内存机器人仓储、彩种绑定校验、管理后台 API、前端 API client、`useRobots` hook 和“机器人配置”页面。
+- 触发条件：新增或修改合买机器人、购彩机器人配置管理接口，或新增机器人执行能力、调度器机器人编排、dashboard 机器人摘要。
+- 范围：后端机器人领域模型、机器人仓储、彩种绑定校验、合买机器人执行服务、管理后台 API、前端 API client、`useRobots` hook 和“机器人配置”页面。
 
 ### 2. 签名
 
@@ -1959,6 +1979,7 @@ await createAdmin({
 - `PUT /api/admin/robots/{id}`
 - `DELETE /api/admin/robots/{id}`
 - `PATCH /api/admin/robots/{id}/status`
+- `POST /api/admin/robots/run`
 
 ### 3. 契约
 
@@ -1981,7 +2002,18 @@ await createAdmin({
 2. `status` 只允许 `enabled`、`paused`、`disabled`。
 3. `lotteryIds` 必须至少包含一个有效彩种 ID；后端保存时会去重并按稳定顺序返回。
 4. `DashboardSummary.robots` 必须从 `RobotRepository` 读取，不允许 dashboard 使用独立静态机器人函数。
-5. 本阶段只维护配置，不执行真实机器人任务，不自动创建合买计划，也不自动下投注单。
+5. `POST /api/admin/robots/run` 只执行已启用的 `groupBuy` 机器人，不执行 `purchase` 机器人。
+6. 合买机器人执行结果字段：
+   - `now`：本轮执行时间，格式为 `YYYY-MM-DD HH:mm:ss`。
+   - `createdPlans`：本轮新创建的合买计划。
+   - `filledPlans`：本轮补满并关联订单的合买计划。
+   - `createdOrders`：本轮由满单合买生成的真实投注订单。
+   - `ledgerEntries`：本轮机器人合买认购产生的资金流水。
+   - `skippedItems`：本轮跳过项，每项包含 `robotId`、`robotName`、`lotteryId`、`issue` 和 `reason`。
+7. 合买机器人计划 ID 必须按“机器人 ID + 彩种 ID + 期号”确定性生成，同一期重复执行不能重复创建计划。
+8. 合买机器人必须使用当前合买链路：校验彩种开售、合买开启、open 期号、封盘时间、启用玩法、注数报价、余额，再创建计划、补满、成单和写入 `groupBuyDebit`。
+9. 合买机器人使用系统账户 `U90001` 出资；余额不足时本轮返回跳过原因或业务错误，不允许透支。
+10. 合买机器人必须扫描同彩种当前期非机器人发起的 `draft/open` 未满单计划，并按剩余金额自动补满；`G-ROBOT-` 开头的机器人计划不得被其他机器人交叉补单。
 
 ### 4. 校验与错误矩阵
 
@@ -1995,23 +2027,34 @@ await createAdmin({
 | 创建重复机器人 ID | HTTP 409，返回重复机器人错误 |
 | 更新路径 ID 与机器人 ID 不一致 | HTTP 400，返回 `path id must match robot id` |
 | 查询、更新、删除不存在机器人 | HTTP 404，返回机器人不存在 |
+| 手动执行时系统机器人资金账户不存在 | HTTP 404，返回合买机器人资金账号不存在 |
+| 手动执行时彩种停售或未开启合买 | HTTP 200，进入 `skippedItems`，不创建计划 |
+| 手动执行时没有可销售 open 期号 | HTTP 200，进入 `skippedItems`，不创建计划 |
+| 手动执行时机器人余额不足 | HTTP 200 或业务错误明细记录为跳过/错误，不允许创建未扣款计划 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：创建 `purchase` 机器人并绑定 `fc3d`、`ssc60`，响应按标准字段返回，dashboard 同步显示该机器人。
 - Good：通过 `PATCH /api/admin/robots/{id}/status` 把机器人从 `paused` 改为 `enabled`，列表立即显示启用状态。
+- Good：`ssc60` 开售且开启合买、存在未封盘 open 期号时，`POST /api/admin/robots/run` 创建确定性机器人合买计划、写入两条 `groupBuyDebit`、补满计划并生成真实投注订单。
+- Good：用户或后台已经发起同彩种当前期未满单合买时，合买机器人会追加机器人参与记录，补足剩余金额并生成真实投注订单。
+- Good：同一期重复执行 `POST /api/admin/robots/run` 时返回“本期机器人合买计划已处理”等跳过原因，不重复创建计划。
 - Base：无数据库环境下使用内存机器人仓储，服务重启后恢复种子机器人配置。
 - Bad：机器人页面直接读取 dashboard 静态 `robots`，保存后列表与首页摘要会漂移。
 - Bad：机器人配置保存时不校验彩种存在，后续真实执行会对不存在彩种下单或发起合买。
+- Bad：机器人执行绕过 `group_buy_flow` 或订单报价服务，手写投注内容展开、注数和单注金额。
 
 ### 6. 必要测试
 
 - 后端需要覆盖机器人创建、状态变更和绑定彩种去重。
 - 后端需要覆盖无彩种拒绝保存。
 - 后端需要覆盖绑定不存在彩种拒绝保存。
+- 后端需要覆盖合买机器人创建、补满并生成真实订单。
+- 后端需要覆盖合买机器人可以补满非机器人发起的当前期未满单计划。
+- 后端需要覆盖同一期重复执行不会重复创建机器人合买计划。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`，确认机器人类型、状态和 API client 类型一致。
-- API 冒烟需要创建机器人、切换状态、验证不存在彩种错误，并确认 dashboard 同步返回。
+- API 冒烟需要创建机器人、切换状态、验证不存在彩种错误，手动执行合买机器人，并确认 dashboard 同步返回。
 - 浏览器验证需要进入“合买机器人”和“购彩机器人”入口，确认真实页面显示且控制台无错误。
 
 ### 7. Wrong vs Correct
@@ -2033,6 +2076,13 @@ robot_store.create(robot)?;
 
 如果保存时不传入彩种列表校验，后续机器人执行会绑定不存在彩种。
 
+```rust
+let plan_id = next_group_buy_plan_id();
+state.group_buys.create(request, lotteries, users).await?;
+```
+
+机器人执行如果使用随机计划 ID，常驻调度重复跑同一期会重复发起合买。
+
 #### 正确
 
 ```rust
@@ -2048,6 +2098,13 @@ state.robots.create(payload, &lotteries).await?;
 ```
 
 保存机器人前先校验绑定彩种存在。
+
+```rust
+let plan_id = robot_plan_id(robot, lottery, issue);
+run_group_buy_robots(...).await?;
+```
+
+机器人计划 ID 由机器人、彩种和期号确定，并且执行继续复用合买服务、订单报价和资金服务。
 
 ---
 

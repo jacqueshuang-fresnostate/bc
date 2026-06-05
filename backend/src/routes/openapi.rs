@@ -601,6 +601,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Json,
     ),
     doc(
+        "post",
+        "/admin/robots/run",
+        "机器人配置",
+        "执行合买机器人",
+        "立即执行已启用的合买机器人，返回创建合买、满单、订单、流水和跳过原因。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
         "get",
         "/admin/robots/{id}",
         "机器人配置",

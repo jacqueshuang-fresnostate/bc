@@ -4,17 +4,20 @@ import {
   deleteRobot,
   fetchLotteries,
   fetchRobots,
+  runGroupBuyRobots,
   setRobotStatus,
   updateRobot,
 } from '../api/client';
 import type { LotteryKind } from '../types/dashboard';
-import type { RobotConfigSummary, RobotStatus } from '../types/robots';
+import type { GroupBuyRobotRun, RobotConfigSummary, RobotStatus } from '../types/robots';
 
 export function useRobots() {
   const [lotteries, setLotteries] = useState<LotteryKind[]>([]);
   const [robots, setRobots] = useState<RobotConfigSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [lastGroupBuyRun, setLastGroupBuyRun] = useState<GroupBuyRobotRun | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -99,14 +102,33 @@ export function useRobots() {
     }
   }, []);
 
+  const executeGroupBuyRobots = useCallback(async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const run = await runGroupBuyRobots();
+      setLastGroupBuyRun(run);
+      refresh();
+      return run;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setRunning(false);
+    }
+  }, [refresh]);
+
   return {
     changeStatus,
     error,
+    executeGroupBuyRobots,
+    lastGroupBuyRun,
     loading,
     lotteries,
     refresh,
     remove,
     robots,
+    running,
     save,
     saving,
   };

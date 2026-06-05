@@ -152,11 +152,13 @@ pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
     let state = AppState::from_env_with_scheduler(scheduler).await?;
     let scheduler_config = state.scheduler.config()?;
     spawn_draw_scheduler(
+        state.access.clone(),
         state.draws.clone(),
         state.lotteries.clone(),
         state.orders.clone(),
         state.finance.clone(),
         state.group_buys.clone(),
+        state.robots.clone(),
         state.realtime.clone(),
         scheduler_config,
         state.scheduler.clone(),

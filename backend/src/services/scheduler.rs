@@ -18,9 +18,11 @@ use crate::{
             DrawIssueStatus, GenerateDrawIssuesRequest,
         },
         lottery::LotteryKind,
+        robot::GroupBuyRobotRun,
     },
     error::{ApiError, ApiResult},
     services::{
+        access::AccessRepository,
         automation::run_draw_automation,
         business_database::{
             enum_from_string, enum_to_string, from_json, to_json, BusinessDatabase,
@@ -29,12 +31,14 @@ use crate::{
         draw_generation::{generate_draw_issue_batch, DEFAULT_SALE_CLOSE_LEAD_SECONDS},
         finance::FinanceRepository,
         group_buy::GroupBuyRepository,
+        group_buy_robot::run_group_buy_robots,
         lottery::LotteryRepository,
         order::OrderRepository,
         realtime::{
             balance_changed_event, draw_result_event, issue_closed_event, issue_opened_event,
-            RealtimeHub,
+            order_changed_event, RealtimeHub,
         },
+        robot::RobotRepository,
     },
 };
 
@@ -66,6 +70,7 @@ pub struct DrawSchedulerRun {
     pub now: String,
     pub automation_run: DrawAutomationRun,
     pub generated_issues: Vec<DrawIssue>,
+    pub robot_run: GroupBuyRobotRun,
     pub skipped_lotteries: Vec<DrawSchedulerSkippedLottery>,
 }
 
@@ -515,7 +520,8 @@ impl DrawSchedulerStore {
             closed_issue_count: run.automation_run.closed_issues.len(),
             drawn_issue_count: run.automation_run.drawn_issues.len(),
             settlement_run_count: run.automation_run.settlement_runs.len(),
-            ledger_entry_count: run.automation_run.ledger_entries.len(),
+            ledger_entry_count: run.automation_run.ledger_entries.len()
+                + run.robot_run.ledger_entries.len(),
             generated_issue_count: run.generated_issues.len(),
             skipped_issue_count: run.automation_run.skipped_issues.len(),
             skipped_lottery_count: run.skipped_lotteries.len(),
@@ -597,11 +603,13 @@ impl DrawSchedulerConfig {
 
 /// 创建并启动异步开奖调度任务。
 pub fn spawn_draw_scheduler(
+    access: AccessRepository,
     draws: DrawRepository,
     lotteries: LotteryRepository,
     orders: OrderRepository,
     finance: FinanceRepository,
     group_buys: GroupBuyRepository,
+    robots: RobotRepository,
     realtime: RealtimeHub,
     config: DrawSchedulerConfig,
     scheduler: DrawSchedulerRepository,
@@ -638,6 +646,8 @@ pub fn spawn_draw_scheduler(
                 &orders,
                 &finance,
                 &group_buys,
+                &robots,
+                &access,
                 &current_config,
                 now.clone(),
             )
@@ -664,6 +674,10 @@ pub fn spawn_draw_scheduler(
                         "结算批次" = run.automation_run.settlement_runs.len(),
                         "入账笔数" = run.automation_run.ledger_entries.len(),
                         "新增期号" = run.generated_issues.len(),
+                        "机器人新增合买" = run.robot_run.created_plans.len(),
+                        "机器人满单" = run.robot_run.filled_plans.len(),
+                        "机器人生成订单" = run.robot_run.created_orders.len(),
+                        "机器人跳过项" = run.robot_run.skipped_items.len(),
                         "跳过彩种" = run.skipped_lotteries.len(),
                         "跳过期号" = run.automation_run.skipped_issues.len(),
                         "开奖调度器本轮执行完成"
@@ -727,6 +741,22 @@ async fn publish_scheduler_realtime_events(
             ),
         }
     }
+    for entry in &run.robot_run.ledger_entries {
+        match finance.account_or_create(&entry.user_id).await {
+            Ok(account) => realtime.publish_user(
+                &entry.user_id,
+                balance_changed_event(&account, "group_buy_robot", entry.reference_id.as_deref()),
+            ),
+            Err(error) => tracing::warn!(
+                user_id = %entry.user_id,
+                error = %error.log_message(),
+                "开奖调度器推送合买机器人余额变化时读取资金账户失败"
+            ),
+        }
+    }
+    for order in &run.robot_run.created_orders {
+        realtime.publish_user(&order.user_id, order_changed_event(order, "created"));
+    }
 }
 
 /// 执行一次完整开奖调度流程。
@@ -736,6 +766,8 @@ pub async fn run_draw_scheduler_once(
     orders: &OrderRepository,
     finance: &FinanceRepository,
     group_buys: &GroupBuyRepository,
+    robots: &RobotRepository,
+    access: &AccessRepository,
     config: &DrawSchedulerConfig,
     now: String,
 ) -> ApiResult<DrawSchedulerRun> {
@@ -758,11 +790,23 @@ pub async fn run_draw_scheduler_once(
     .await?;
     let (generated_issues, skipped_lotteries) =
         ensure_future_draw_issues(draws, lotteries, config, &now).await?;
+    let robot_run = run_group_buy_robots(
+        robots,
+        draws,
+        lotteries,
+        orders,
+        finance,
+        group_buys,
+        access,
+        now.clone(),
+    )
+    .await?;
 
     Ok(DrawSchedulerRun {
         now,
         automation_run,
         generated_issues,
+        robot_run,
         skipped_lotteries,
     })
 }
@@ -853,6 +897,7 @@ mod tests {
             lottery::DrawMode,
         },
         services::{
+            access::AccessRepository,
             draw::DrawRepository,
             draw_api::ApiDrawSourceRepository,
             finance::FinanceRepository,
@@ -860,6 +905,7 @@ mod tests {
             lottery::LotteryRepository,
             order::OrderRepository,
             realtime::RealtimeHub,
+            robot::RobotRepository,
             scheduler::{
                 run_draw_scheduler_once, spawn_draw_scheduler, DrawSchedulerConfig,
                 DrawSchedulerRepository, DrawSchedulerRunStatus, DrawSchedulerRunTrigger,
@@ -876,6 +922,8 @@ mod tests {
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
         let config = enabled_config(2);
 
         let run = run_draw_scheduler_once(
@@ -884,6 +932,8 @@ mod tests {
             &orders,
             &finance,
             &group_buys,
+            &robots,
+            &access,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )
@@ -916,6 +966,8 @@ mod tests {
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
         let config = enabled_config(1);
 
         let run = run_draw_scheduler_once(
@@ -924,6 +976,8 @@ mod tests {
             &orders,
             &finance,
             &group_buys,
+            &robots,
+            &access,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )
@@ -950,6 +1004,8 @@ mod tests {
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
         let config = enabled_config(1);
 
         run_draw_scheduler_once(
@@ -958,6 +1014,8 @@ mod tests {
             &orders,
             &finance,
             &group_buys,
+            &robots,
+            &access,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )
@@ -969,6 +1027,8 @@ mod tests {
             &orders,
             &finance,
             &group_buys,
+            &robots,
+            &access,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )
@@ -986,6 +1046,8 @@ mod tests {
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
         let config = enabled_config(1);
         let lottery = lotteries.get("ssc60").await.expect("lottery exists");
         let issue = draws
@@ -1007,6 +1069,8 @@ mod tests {
             &orders,
             &finance,
             &group_buys,
+            &robots,
+            &access,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )
@@ -1032,6 +1096,8 @@ mod tests {
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
         let config = enabled_config(1);
         let lottery = lotteries.get("ssc60").await.expect("lottery exists");
         let current_issue = draws
@@ -1053,6 +1119,8 @@ mod tests {
             &orders,
             &finance,
             &group_buys,
+            &robots,
+            &access,
             &config,
             "2026-06-02 20:00:30".to_string(),
         )
@@ -1072,11 +1140,13 @@ mod tests {
     #[tokio::test]
     async fn scheduler_spawn_starts_worker_even_when_disabled() {
         let handle = spawn_draw_scheduler(
+            AccessRepository::memory_seeded(),
             DrawRepository::memory(),
             LotteryRepository::memory_seeded(),
             OrderRepository::memory(),
             FinanceRepository::memory_seeded(),
             GroupBuyRepository::memory_seeded(),
+            RobotRepository::memory_seeded(),
             RealtimeHub::new(),
             DrawSchedulerConfig::default(),
             DrawSchedulerRepository::new(DrawSchedulerConfig::default()),
@@ -1093,13 +1163,17 @@ mod tests {
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
         let scheduler = DrawSchedulerRepository::new(DrawSchedulerConfig::default());
         let handle = spawn_draw_scheduler(
+            access,
             draws,
             lotteries,
             orders,
             finance,
             group_buys,
+            robots,
             RealtimeHub::new(),
             DrawSchedulerConfig::default(),
             scheduler.clone(),
@@ -1136,6 +1210,8 @@ mod tests {
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
         let config = enabled_config(1);
         let scheduler = DrawSchedulerRepository::new(config.clone());
         let run = run_draw_scheduler_once(
@@ -1144,6 +1220,8 @@ mod tests {
             &orders,
             &finance,
             &group_buys,
+            &robots,
+            &access,
             &config,
             "2026-06-02 20:00:00".to_string(),
         )

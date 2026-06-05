@@ -8,7 +8,7 @@ import {
   Spin,
   Tag,
 } from '@douyinfe/semi-ui';
-import { Bot, Plus, RefreshCcw, Save, Trash2 } from 'lucide-react';
+import { Bot, PlayCircle, Plus, RefreshCcw, Save, Trash2 } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -20,7 +20,13 @@ import {
 import { MetricCard } from '../components/MetricCard';
 import { useRobots } from '../hooks/useRobots';
 import type { LotteryKind } from '../types/dashboard';
-import type { RobotConfigSummary, RobotKind, RobotStatus } from '../types/robots';
+import type {
+  GroupBuyRobotRun,
+  RobotConfigSummary,
+  RobotKind,
+  RobotStatus,
+} from '../types/robots';
+import { formatMoney } from '../utils/format';
 
 interface RobotManagementPageProps {
   activeModuleKey: string;
@@ -43,11 +49,14 @@ export function RobotManagementPage({
   const {
     changeStatus,
     error,
+    executeGroupBuyRobots,
+    lastGroupBuyRun,
     loading,
     lotteries,
     refresh,
     remove,
     robots,
+    running,
     save,
     saving,
   } = useRobots();
@@ -126,6 +135,18 @@ export function RobotManagementPage({
           >
             新增配置
           </Button>
+          {filterKind === 'groupBuy' ? (
+            <Button
+              disabled={running}
+              icon={<PlayCircle size={16} />}
+              loading={running}
+              onClick={() =>
+                void executeGroupBuyRobots().then(onDashboardRefresh)
+              }
+            >
+              立即执行
+            </Button>
+          ) : null}
           <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
             刷新
           </Button>
@@ -133,6 +154,9 @@ export function RobotManagementPage({
       </section>
 
       {error ? <Banner type="danger" title="机器人接口错误" description={error} /> : null}
+      {filterKind === 'groupBuy' && lastGroupBuyRun ? (
+        <GroupBuyRobotRunSummary run={lastGroupBuyRun} lotteries={lotteries} />
+      ) : null}
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="机器人总数" trend="内存配置" value={`${robots.length}`} />
@@ -405,6 +429,74 @@ export function RobotManagementPage({
         </form>
       </SideSheet>
     </div>
+  );
+}
+
+function GroupBuyRobotRunSummary({
+  lotteries,
+  run,
+}: {
+  lotteries: LotteryKind[];
+  run: GroupBuyRobotRun;
+}) {
+  const totalDebitMinor = run.ledgerEntries
+    .filter((entry) => entry.amountMinor < 0)
+    .reduce((total, entry) => total + Math.abs(entry.amountMinor), 0);
+
+  return (
+    <section className="rounded-md border border-teal-100 bg-teal-50/70 p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-teal-900">
+            合买机器人执行结果
+          </h2>
+          <p className="mt-1 text-xs text-teal-700">执行时间：{run.now}</p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <Tag color="cyan">新增 {run.createdPlans.length}</Tag>
+          <Tag color="green">满单 {run.filledPlans.length}</Tag>
+          <Tag color="blue">订单 {run.createdOrders.length}</Tag>
+          <Tag color="orange">扣款 {formatMoney(totalDebitMinor)}</Tag>
+          <Tag color="grey">跳过 {run.skippedItems.length}</Tag>
+        </div>
+      </div>
+      {run.createdPlans.length > 0 ? (
+        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+          {run.createdPlans.slice(0, 4).map((plan) => (
+            <div
+              key={plan.id}
+              className="rounded border border-teal-100 bg-white/80 px-3 py-2 text-xs text-slate-600"
+            >
+              <div className="font-medium text-ink">
+                {lotteryName(plan.lotteryId, lotteries)} {plan.issue}
+              </div>
+              <div className="mt-1">
+                {plan.title}，金额 {formatMoney(plan.totalAmountMinor)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {run.skippedItems.length > 0 ? (
+        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+          {run.skippedItems.slice(0, 6).map((item, index) => (
+            <div
+              key={`${item.robotId}-${item.lotteryId}-${item.issue ?? 'none'}-${index}`}
+              className="rounded border border-amber-100 bg-white/80 px-3 py-2 text-xs text-slate-600"
+            >
+              <div className="font-medium text-ink">
+                {item.robotName}
+                {item.lotteryId
+                  ? ` · ${lotteryName(item.lotteryId, lotteries)}`
+                  : ''}
+                {item.issue ? ` · ${item.issue}` : ''}
+              </div>
+              <div className="mt-1">{item.reason}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
