@@ -29,7 +29,7 @@ const adminOnline = computed(() => Boolean(currentConversation.value?.assignedAd
 const canSend = computed(() => Boolean(currentConversation.value) && draft.value.trim().length > 0 && !sending.value)
 const supportStatusText = computed(() => {
   if (!currentConversation.value) return '请先从充值页发起客服直充'
-  return adminOnline.value ? `客服 ${currentConversation.value.assignedAdminName} 已接入` : '客服会在这里继续回复'
+  return adminOnline.value ? '客服已接入' : '客服会在这里继续回复'
 })
 const hasMessages = computed(() => messages.value.length > 0)
 const routeConversationId = computed(() => (
@@ -42,7 +42,7 @@ function formatTime(value: string) {
 
 function messageAuthorText(item: SupportMessage) {
   if (item.author === 'user') return '我'
-  if (item.author === 'admin') return item.authorName || '客服'
+  if (item.author === 'admin') return '客服'
   return '系统'
 }
 
