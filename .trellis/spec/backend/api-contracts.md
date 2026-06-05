@@ -2682,7 +2682,7 @@ await createInvitation({
 
 ### 2. 签名
 
-- `GET /api/admin/group-buy/plans`
+- `GET /api/admin/group-buy/plans?page=1&pageSize=20`
 - `GET /api/admin/group-buy/plans/{id}`
 - `POST /api/admin/group-buy/plans`
 - `PUT /api/admin/group-buy/plans/{id}`
@@ -2731,6 +2731,18 @@ await createInvitation({
   "note": "默认合买计划示例",
   "createdAt": "2026-06-02 09:00:00",
   "updatedAt": "2026-06-02 09:30:00"
+}
+```
+
+后台计划列表响应使用分页结构：
+
+```json
+{
+  "items": [],
+  "totalCount": 0,
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 0
 }
 ```
 
@@ -2808,6 +2820,7 @@ await createInvitation({
 11. 当 `filledAmountMinor == totalAmountMinor` 时，后端必须立即创建一张真实投注订单，并通过 `group_buy_plans.order_id` 关联；该真实订单不能再次执行普通订单扣款，合买参与扣款才是资金来源。
 12. 封盘时仍未满员的 `draft/open` 计划必须自动取消，并按参与记录写入幂等的 `groupBuyRefund` 资金流水。
 13. 开奖结算时，如果中奖订单属于合买计划，派奖必须按参与金额占计划总金额的比例拆给参与人；除最后一名参与人外向下取整，最后一名承接余数，随后把计划标记为 `settled`。
+14. 后台计划列表不传 `page/pageSize` 时允许返回全量列表，用于内部调试；管理后台页面必须显式传入分页参数。
 
 ### 4. 校验与错误矩阵
 
@@ -2839,6 +2852,9 @@ await createInvitation({
 | 计划不是 `draft` 或 `open` | HTTP 400，返回计划不可参与 |
 | 满员计划关联真实订单失败 | 回滚新建计划或新增参与记录，已创建的未入账订单必须移除 |
 | 后台取消已开奖或已取消的合买真实订单 | HTTP 400，返回已开奖或已取消的合买订单不能取消 |
+| 后台计划列表 `page <= 0` 或缺失 | 使用第 1 页 |
+| 后台计划列表 `pageSize <= 0` 或缺失 | 使用默认每页 20 条 |
+| 后台计划列表页码超过最大页 | 返回最后一页 |
 
 ### 5. Good / Base / Bad Cases
 
@@ -2847,6 +2863,7 @@ await createInvitation({
 - Good：追加 `U10001` 参与记录后，如果 `filledAmountMinor == totalAmountMinor`，后端自动把计划状态改为 `filled`，创建真实投注订单并在响应里返回 `orderId`。
 - Good：自动化封盘时取消未满员计划，按每条参与记录退回认购金额，重复执行不会重复退款。
 - Good：开奖结算时识别合买订单，中奖金额按参与金额比例拆给参与用户，普通订单仍按订单用户派奖。
+- Good：后台合买管理按 `page/pageSize` 请求计划列表，响应 `items` 只包含当前页，`totalCount` 返回全部计划数。
 - Base：无数据库环境下使用内存合买仓储，服务重启后恢复种子合买计划；数据库模式下使用 `group_buy_plans`、`group_buy_participants` 和 `ledger_entries` 持久化。
 - Bad：前端自行计算 `shareCount` 并提交给后端，后续会与彩种合买配置漂移。
 - Bad：直接把 dashboard 的 `groupBuyPlans` 写成静态函数，页面创建计划后首页摘要不会同步。
@@ -2864,6 +2881,7 @@ await createInvitation({
 - 后端需要覆盖满单创建真实订单并回写 `orderId`。
 - 后端需要覆盖封盘流单退款写入 `groupBuyRefund` 且幂等。
 - 后端需要覆盖合买中奖按参与人份额拆分派奖。
+- 后端需要覆盖后台合买计划分页响应的当前页切片、总数和总页数。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`，确认计划状态、请求字段和 API client 类型一致。
 - API 冒烟需要创建计划、更新状态、添加参与记录到满单、确认 `orderId` 已生成，并验证 dashboard `groupBuyPlans` 来自真实仓储。

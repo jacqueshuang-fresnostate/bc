@@ -11,6 +11,7 @@ import {
 } from '../api/client';
 import type { LotteryKind, UserSummary } from '../types/dashboard';
 import type { DrawIssue } from '../types/draws';
+import type { FinancePage, FinancePageQuery } from '../types/finance';
 import type {
   AddGroupBuyParticipantRequest,
   CreateGroupBuyPlanRequest,
@@ -19,9 +20,14 @@ import type {
   UpdateGroupBuyPlanRequest,
 } from '../types/groupBuy';
 
-export function useGroupBuyPlans() {
+interface UseGroupBuyPlansOptions {
+  planQuery: FinancePageQuery;
+}
+
+export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
   const [lotteries, setLotteries] = useState<LotteryKind[]>([]);
-  const [plans, setPlans] = useState<GroupBuyPlanSummary[]>([]);
+  const [planPage, setPlanPage] =
+    useState<FinancePage<GroupBuyPlanSummary>>(emptyPage);
   const [drawIssues, setDrawIssues] = useState<DrawIssue[]>([]);
   const [selectedPlan, setSelectedPlan] = useState<GroupBuyPlan | null>(null);
   const [users, setUsers] = useState<UserSummary[]>([]);
@@ -41,21 +47,24 @@ export function useGroupBuyPlans() {
     setError(null);
 
     Promise.all([
-      fetchGroupBuyPlans(controller.signal),
+      fetchGroupBuyPlans(controller.signal, planQuery),
       fetchLotteries(controller.signal),
       fetchUsers(controller.signal),
       fetchDrawIssues(controller.signal, { pageSize: 300 }),
     ])
-      .then(async ([nextPlans, nextLotteries, nextUsers, nextDrawIssuePage]) => {
+      .then(async ([nextPlanPage, nextLotteries, nextUsers, nextDrawIssuePage]) => {
         if (controller.signal.aborted) {
           return;
         }
-        setPlans(nextPlans);
+        const nextPlans = nextPlanPage.items;
+        setPlanPage(nextPlanPage);
         setLotteries(nextLotteries);
         setUsers(nextUsers);
         setDrawIssues(nextDrawIssuePage.items);
 
-        const selectedId = selectedPlan?.id ?? nextPlans[0]?.id;
+        const selectedId =
+          nextPlans.find((plan) => plan.id === selectedPlan?.id)?.id ??
+          nextPlans[0]?.id;
         if (!selectedId) {
           setSelectedPlan(null);
           return;
@@ -84,7 +93,7 @@ export function useGroupBuyPlans() {
     return () => {
       controller.abort();
     };
-  }, [refreshToken]);
+  }, [planQuery.page, planQuery.pageSize, refreshToken, selectedPlan?.id]);
 
   const loadPlan = useCallback(async (id: string) => {
     setSaving(true);
@@ -92,7 +101,7 @@ export function useGroupBuyPlans() {
     try {
       const detail = await fetchGroupBuyPlan(id);
       setSelectedPlan(detail);
-      setPlans((current) => upsertById(current, summaryFromPlan(detail)));
+      setPlanPage((current) => upsertPageItem(current, summaryFromPlan(detail)));
       return detail;
     } catch (requestError) {
       setError(errorMessage(requestError));
@@ -108,7 +117,9 @@ export function useGroupBuyPlans() {
     try {
       const created = await createGroupBuyPlan(payload);
       setSelectedPlan(created);
-      setPlans((current) => upsertById(current, summaryFromPlan(created)));
+      setPlanPage((current) =>
+        upsertPageItem(current, summaryFromPlan(created), true),
+      );
       return created;
     } catch (requestError) {
       setError(errorMessage(requestError));
@@ -125,7 +136,7 @@ export function useGroupBuyPlans() {
       try {
         const updated = await updateGroupBuyPlan(id, payload);
         setSelectedPlan(updated);
-        setPlans((current) => upsertById(current, summaryFromPlan(updated)));
+        setPlanPage((current) => upsertPageItem(current, summaryFromPlan(updated)));
         return updated;
       } catch (requestError) {
         setError(errorMessage(requestError));
@@ -144,7 +155,7 @@ export function useGroupBuyPlans() {
       try {
         const updated = await addGroupBuyParticipant(id, payload);
         setSelectedPlan(updated);
-        setPlans((current) => upsertById(current, summaryFromPlan(updated)));
+        setPlanPage((current) => upsertPageItem(current, summaryFromPlan(updated)));
         return updated;
       } catch (requestError) {
         setError(errorMessage(requestError));
@@ -164,7 +175,8 @@ export function useGroupBuyPlans() {
     loadPlan,
     loading,
     lotteries,
-    plans,
+    planPage,
+    plans: planPage.items,
     refresh,
     saving,
     selectedPlan,
@@ -172,6 +184,14 @@ export function useGroupBuyPlans() {
     users,
   };
 }
+
+const emptyPage: FinancePage<GroupBuyPlanSummary> = {
+  items: [],
+  page: 1,
+  pageSize: 20,
+  totalCount: 0,
+  totalPages: 0,
+};
 
 function summaryFromPlan(plan: GroupBuyPlan): GroupBuyPlanSummary {
   return {
@@ -195,6 +215,25 @@ function upsertById<T extends { id: string }>(items: T[], item: T) {
   return items.some((current) => current.id === item.id)
     ? items.map((current) => (current.id === item.id ? item : current))
     : [...items, item];
+}
+
+function upsertPageItem<T extends { id: string }>(
+  page: FinancePage<T>,
+  item: T,
+  countNewItem = false,
+): FinancePage<T> {
+  const exists = page.items.some((current) => current.id === item.id);
+  const items = upsertById(page.items, item);
+  const totalCount = exists || !countNewItem ? page.totalCount : page.totalCount + 1;
+  const totalPages =
+    page.pageSize <= 0 ? page.totalPages : Math.ceil(totalCount / page.pageSize);
+
+  return {
+    ...page,
+    items,
+    totalCount,
+    totalPages,
+  };
 }
 
 function errorMessage(error: unknown) {

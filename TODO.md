@@ -1989,3 +1989,10 @@
 - 解决问题：机器人账户余额不足时会导致合买计划创建或临近封盘补单失败；同时订单列表、资金账户、资金流水和财务总览默认混入机器人数据，会影响运营查看真实用户业务。
 - 实施内容：机器人发起合买计划和分阶段补单前先检查 `U90001` 可用余额，余额不足时写入正向 `manualAdjustment` 流水“机器人账户自动授信补余额”，再继续真实扣款；后台财务总览、资金账户、资金流水和订单列表新增 `includeRobotData` 查询口径，默认过滤机器人数据，前端通过 Semi UI `Switch` 控制是否显示。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`npm run build`（admin）和 `git diff --check` 均通过；后端全量 219 条测试成功，新增覆盖机器人账户自动授信和后台机器人数据默认过滤；本地接口烟测确认资金账户和订单默认不含 `U90001`，传入 `includeRobotData=true` 后包含机器人数据，财务总览金额随过滤口径变化。
+
+## 2026-06-05 21:45 HKT 后台合买计划列表分页
+
+- 完成任务：为后台合买计划列表新增分页能力。
+- 解决问题：合买管理页此前一次性请求全部合买计划，计划数量增加后会拖慢页面加载和运营扫描。
+- 实施内容：`GET /api/admin/group-buy/plans` 支持 `page/pageSize` 并返回 `items/totalCount/page/pageSize/totalPages`；后台 API client、`useGroupBuyPlans` 和合买管理页面接入分页参数；列表顶部增加每页条数、上一页和下一页控件。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`npm run build`（admin）和 `git diff --check` 均通过；后端全量 220 条测试成功，新增覆盖后台分页结构的当前页切片、总数和总页数。

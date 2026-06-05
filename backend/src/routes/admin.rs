@@ -929,10 +929,11 @@ async fn get_dashboard_summary(
 
 async fn list_group_buy_plans(
     State(state): State<AppState>,
-) -> ApiResult<Json<ApiEnvelope<Vec<GroupBuyPlanSummary>>>> {
+    Query(query): Query<FinancePageQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<GroupBuyPlanSummary>>>> {
     let plans = state.group_buys.list().await?;
 
-    Ok(Json(ApiEnvelope::success(plans)))
+    Ok(Json(ApiEnvelope::success(page_items(plans, query))))
 }
 
 async fn get_group_buy_plan(
@@ -2233,8 +2234,9 @@ struct SaleStatusRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        align_draw_issue_plan_after_sale_on, finance_overview_for_query, required_scope_for_path,
-        should_align_draw_issue_plan_after_sale_on, should_include_user_scoped_record,
+        align_draw_issue_plan_after_sale_on, finance_overview_for_query, page_items,
+        required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
+        should_include_user_scoped_record, FinancePageQuery,
     };
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
@@ -2317,6 +2319,29 @@ mod tests {
             ROBOT_GROUP_BUY_USER_ID
         ));
         assert!(should_include_user_scoped_record(false, "U10001"));
+    }
+
+    #[test]
+    /// 合买计划列表复用后台分页结构，按请求页码返回当前页切片和总数。
+    fn page_items_returns_requested_group_buy_page() {
+        let page = page_items(
+            vec![
+                "G-001".to_string(),
+                "G-002".to_string(),
+                "G-003".to_string(),
+            ],
+            FinancePageQuery {
+                include_robot_data: None,
+                page: Some(2),
+                page_size: Some(2),
+            },
+        );
+
+        assert_eq!(page.items, vec!["G-003".to_string()]);
+        assert_eq!(page.page, 2);
+        assert_eq!(page.page_size, 2);
+        assert_eq!(page.total_count, 3);
+        assert_eq!(page.total_pages, 2);
     }
 
     #[tokio::test]

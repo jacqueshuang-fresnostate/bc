@@ -443,7 +443,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/group-buy/plans",
         "合买管理",
         "合买计划列表",
-        "返回合买计划列表。",
+        "按 page/pageSize 分页返回后台合买计划列表。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),

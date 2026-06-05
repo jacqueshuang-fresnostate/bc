@@ -268,10 +268,11 @@ function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery)
   return queryString ? `${path}?${queryString}` : path;
 }
 
-export function fetchGroupBuyPlans(signal?: AbortSignal) {
-  return requestJson<GroupBuyPlanSummary[]>('/api/admin/group-buy/plans', {
-    signal,
-  });
+export function fetchGroupBuyPlans(signal?: AbortSignal, query?: FinancePageQuery) {
+  return requestJson<FinancePage<GroupBuyPlanSummary>>(
+    adminQueryPath('/api/admin/group-buy/plans', query),
+    { signal },
+  );
 }
 
 export function fetchGroupBuyPlan(id: string, signal?: AbortSignal) {
