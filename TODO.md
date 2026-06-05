@@ -1599,3 +1599,10 @@
 - 解决问题：资金流水条目底部此前会把后端 `referenceId` 渲染为“关联单号”，手机端用户不需要看到该内部关联编号；本次保留接口字段和数据类型，只在页面展示层隐藏。
 - 文档同步：更新架构说明和 TODO 中的资金流水展示范围，明确手机端展示余额、金额、描述、类型和时间，不展示关联单号。
 - 验证结果：`npm run build` 通过，`git diff --check` 通过；`npm test` 仍因 `mobile/package.json` 中列出的测试文件在 `mobile/` 目录下不存在或路径未配置正确而失败，本次未改动该既有测试脚本。
+
+## 2026-06-05 14:08 HKT 手机端首页统计卡片默认隐藏
+
+- 完成任务：把手机端首页接口的 `settings.statsEnabled` 默认值从开启调整为关闭。
+- 解决问题：手机端首页统计卡片由 `settings.statsEnabled` 控制，前端本地兜底已经是关闭，但后端首页聚合接口默认返回开启，导致首页默认展示“今日中奖人数”和“累计派奖金额”统计卡片；本次改为默认不显示。
+- 实施内容：更新 `build_mobile_lottery_home` 默认配置，新增单元测试断言 `stats_enabled=false`，并同步 API 契约说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml mobile_home -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过；后端全量 188 个测试通过，保留既有测试导入警告。

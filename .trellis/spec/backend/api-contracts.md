@@ -3629,7 +3629,7 @@ await createWithdrawalOrder({ methodId, amountMinor });
     "tickerEnabled": true,
     "featuredEnabled": true,
     "groupsEnabled": true,
-    "statsEnabled": true
+    "statsEnabled": false
   },
   "ticker": {
     "enabled": true,
@@ -3678,6 +3678,8 @@ await createWithdrawalOrder({ methodId, amountMinor });
 ```
 
 `groups` 必须只包含 `saleEnabled=true` 的彩种；停售彩种不能出现在首页推荐区、分组区或跑马灯中。分组顺序跟随后台彩种分类配置；分类下没有销售中彩种时不返回空组。若彩种引用了不存在的分类，必须进入以分类代码命名的兜底组。
+
+`settings.statsEnabled` 默认必须为 `false`，手机端首页默认不展示统计卡片；后续如果增加后台开关，也必须由后台显式开启后才返回 `true`。
 
 每个彩种卡片必须优先返回当前可售或封盘待开奖期号作为 `issue/nextDrawTime/saleStopTime/status`，并单独返回最近已开奖期号的 `latestResult/latestDraw`。首页倒计时由前端基于 `saleStopTime` 或 `nextDrawTime` 本地计算，不要后端返回剩余秒数。
 

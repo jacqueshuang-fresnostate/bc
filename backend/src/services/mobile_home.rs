@@ -49,7 +49,7 @@ pub fn build_mobile_lottery_home(
             ticker_enabled: !ticker_items.is_empty(),
             featured_enabled: !featured_lotteries.is_empty(),
             groups_enabled: !groups.is_empty(),
-            stats_enabled: true,
+            stats_enabled: false,
         },
         ticker: MobileLotteryTicker {
             enabled: !ticker_items.is_empty(),
@@ -445,6 +445,7 @@ mod tests {
             .flat_map(|group| group.lotteries.iter().map(|lottery| lottery.code.as_str()))
             .collect::<Vec<_>>();
         assert_eq!(all_codes, vec!["fc3d", "au5"]);
+        assert!(!response.settings.stats_enabled);
 
         let fc3d = response.groups[0].lotteries[0].clone();
         assert_eq!(fc3d.issue.as_deref(), Some("20260605002"));
