@@ -447,7 +447,9 @@ onBeforeUnmount(() => {
               @keyup.enter="normalizeMultipleInput"
             />
             <span class="mr-1 text-sm font-extrabold text-[#5a403e]">倍</span>
-            <button class="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#8c0a15] text-xl font-black text-white shadow-sm shadow-red-900/15 transition active:scale-95 disabled:cursor-not-allowed disabled:bg-[#d8d1cf] disabled:text-white/80 disabled:shadow-none" type="button" :disabled="!canIncreaseMultiple" aria-label="增加倍数" @click="adjustMultiple(1)">+</button>
+            <button class="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#8c0a15] text-xl font-black !text-white shadow-sm shadow-red-900/15 transition active:scale-95 disabled:cursor-not-allowed disabled:bg-[#d8d1cf] disabled:!text-white/80 disabled:shadow-none" type="button" :disabled="!canIncreaseMultiple" aria-label="增加倍数" @click="adjustMultiple(1)">
+              <span class="!text-white">+</span>
+            </button>
           </div>
         </div>
         <van-slider v-model="engine.multiple.value" class="mt-5" :min="engine.minMultiple.value" :max="multipleSliderMax" :step="1" active-color="#af2829" inactive-color="#eeeeee" />
