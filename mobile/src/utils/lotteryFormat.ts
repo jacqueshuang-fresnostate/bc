@@ -1,12 +1,14 @@
-const orderStatusTextMap: Record<string, string> = {
+const statusTextMap: Record<string, string> = {
   pending: '待开奖',
+  pendingDraw: '待开奖',
+  drawn: '已开奖',
   won: '已中奖',
   lost: '未中奖',
   cancelled: '已取消',
 }
 
 export function statusText(status?: string) {
-  return orderStatusTextMap[status || ''] || status || '-'
+  return statusTextMap[status || ''] || status || '-'
 }
 
 export function splitNumbers(value: unknown) {
