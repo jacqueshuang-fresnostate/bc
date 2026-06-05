@@ -53,6 +53,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端彩票卡片展示开奖号码时，不能按卡片变体写死 3 位；必须优先使用真实 `latestResult.length`，再结合后端 `resultCount` 决定展示数量，兼容 3 位和 5 位彩种。没有开奖结果时才按该数量用期号尾号或 `?` 补位。
 - 手机端首页“高频极速”推荐区的开奖号码必须使用固定正圆号码球，样式需要同时约束 `width`、`height`、`aspect-ratio: 1 / 1` 和 `border-radius: 9999px`，不要只依赖文字内容或内边距撑开形状。
 - 手机端充值页必须以 `GET /api/user/recharge/config` 返回的后台充值配置为准，只展示已开启的 `rainbowEpay` 和 `customerService` 渠道；彩虹易支付使用后端 `payTypes`，客服直充创建订单后跳转绑定的客服会话。不要再调用旧 `/payment/*` 接口，也不要在后端未配置时展示 USDT 或快捷充值模式。
+- 手机端充值页属于高频资金操作页，需要直接展示充值渠道卡片、余额摘要、快捷金额和底部固定提交栏；快捷金额必须按后台 `minAmountMinor/maxAmountMinor` 过滤，最近订单中可继续处理的彩虹易支付订单应提供“继续支付”，客服直充订单应提供“联系客服”。
 
 错误示例：
 

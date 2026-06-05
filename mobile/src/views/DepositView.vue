@@ -5,14 +5,18 @@ import { useRouter } from 'vue-router'
 import {
   createRechargeOrder,
   errorMessage,
+  fetchCurrentUserProfile,
   fetchRechargeConfig,
   fetchRechargeOrders,
+  type MobileUserProfile,
   type RechargeChannel,
   type RechargeChannelConfig,
   type RechargeConfig,
   type RechargeOrder,
   type RechargeOrderStatus,
 } from '../api/user'
+import LucideIcon from '../components/mobile/LucideIcon.vue'
+import { formatDateTime } from '../utils/lotteryFormat'
 
 const router = useRouter()
 const amount = ref('')
@@ -20,25 +24,42 @@ const selectedChannel = ref<RechargeChannel | ''>('')
 const selectedPayType = ref('')
 const config = ref<RechargeConfig | null>(null)
 const orders = ref<RechargeOrder[]>([])
+const profile = ref<MobileUserProfile | null>(null)
 const loadingConfig = ref(false)
 const loadingOrders = ref(false)
+const loadingProfile = ref(false)
 const submitting = ref(false)
-const showChannelPopup = ref(false)
 
 const enabledChannels = computed(() => (config.value?.channels || []).filter(channel => channel.enabled))
 const selectedChannelConfig = computed(() => enabledChannels.value.find(channel => channel.channel === selectedChannel.value))
 const isRainbowEpay = computed(() => selectedChannel.value === 'rainbowEpay')
 const isCustomerService = computed(() => selectedChannel.value === 'customerService')
 const currentPayTypes = computed(() => payTypesForChannel(selectedChannelConfig.value))
+const currentAmountMinor = computed(() => amountMinorFromYuan(amount.value))
 const recentOrders = computed(() => orders.value.slice(0, 5))
+const loadingInitial = computed(() => loadingConfig.value && !config.value)
+const balanceText = computed(() => profile.value?.balance || '0.00')
+const selectedAmountText = computed(() => {
+  const value = currentAmountMinor.value
+  return value && value > 0 ? formatMinorAmount(value) : '0.00'
+})
 const amountLimitText = computed(() => {
   const min = formatMinorAmount(config.value?.minAmountMinor || 0)
   const max = formatMinorAmount(config.value?.maxAmountMinor || 0)
   return `单笔限额 ¥${min} - ¥${max}`
 })
 const submitText = computed(() => (isCustomerService.value ? '发起客服直充' : '立即支付'))
+const submitHint = computed(() => {
+  if (isCustomerService.value) return '提交后将进入客服会话，请保留订单号方便核对。'
+  return '提交后会打开支付页面，支付完成后订单会自动入账。'
+})
 const selectedChannelTitle = computed(() => selectedChannelConfig.value?.name || '选择充值方式')
 const selectedChannelDescription = computed(() => selectedChannelConfig.value?.description || '请先选择可用充值方式')
+const selectedChannelTagText = computed(() => (selectedChannel.value ? channelTagText(selectedChannel.value) : '待选择'))
+const canSubmit = computed(() => Boolean(selectedChannel.value && currentAmountMinor.value && currentAmountMinor.value > 0 && !submitting.value))
+const pendingOrderCount = computed(() => orders.value.filter(order => order.status === 'pending' || order.status === 'waitingCustomerService').length)
+const paidOrderCount = computed(() => orders.value.filter(order => order.status === 'paid').length)
+const quickAmountOptions = computed(() => buildQuickAmountOptions(config.value))
 
 watch(enabledChannels, (channels) => {
   if (!channels.some(channel => channel.channel === selectedChannel.value)) {
@@ -74,13 +95,23 @@ async function loadRechargeOrders() {
   }
 }
 
+async function loadUserProfile() {
+  loadingProfile.value = true
+  try {
+    profile.value = await fetchCurrentUserProfile()
+  } catch {
+    profile.value = null
+  } finally {
+    loadingProfile.value = false
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([loadRechargeConfig(), loadRechargeOrders()])
+  await Promise.all([loadRechargeConfig(), loadRechargeOrders(), loadUserProfile()])
 })
 
 function selectChannel(channel: RechargeChannel) {
   selectedChannel.value = channel
-  showChannelPopup.value = false
 }
 
 function payTypesForChannel(channel?: RechargeChannelConfig) {
@@ -101,6 +132,14 @@ function payTypeText(type?: string | null) {
 
 function channelText(channel: RechargeChannel) {
   return channel === 'rainbowEpay' ? '彩虹易支付' : '客服直充'
+}
+
+function channelIcon(channel: RechargeChannel) {
+  return channel === 'customerService' ? 'support_agent' : 'payments'
+}
+
+function channelTagText(channel: RechargeChannel) {
+  return channel === 'customerService' ? '人工确认' : '在线支付'
 }
 
 function statusText(status: RechargeOrderStatus) {
@@ -124,6 +163,11 @@ function formatMinorAmount(value: number) {
   return (Number(value || 0) / 100).toFixed(2)
 }
 
+function formatInputAmount(value: number) {
+  const formatted = formatMinorAmount(value)
+  return formatted.endsWith('.00') ? formatted.slice(0, -3) : formatted
+}
+
 function amountMinorFromYuan(value: string) {
   const text = value.trim()
   if (!/^\d+(?:\.\d{0,2})?$/.test(text)) return null
@@ -134,8 +178,26 @@ function amountMinorFromYuan(value: string) {
   return Number.isSafeInteger(total) ? total : null
 }
 
+function buildQuickAmountOptions(value: RechargeConfig | null) {
+  const min = value?.minAmountMinor || 0
+  const max = value?.maxAmountMinor || Number.MAX_SAFE_INTEGER
+  const defaults = [5000, 10000, 20000, 50000, 100000, 300000, 500000]
+  const candidates = [
+    ...(min > 0 ? [min] : []),
+    ...defaults,
+    ...(max > 0 && max !== Number.MAX_SAFE_INTEGER ? [max] : []),
+  ]
+  return Array.from(new Set(candidates))
+    .filter(item => item > 0 && item >= min && item <= max)
+    .slice(0, 6)
+}
+
+function setQuickAmount(value: number) {
+  amount.value = formatInputAmount(value)
+}
+
 function validateAmount() {
-  const amountMinor = amountMinorFromYuan(amount.value)
+  const amountMinor = currentAmountMinor.value
   if (!amountMinor || amountMinor <= 0) {
     showToast('请输入正确的充值金额')
     return null
@@ -156,6 +218,38 @@ function openPaymentUrl(paymentUrl: string) {
   if (!opened) window.location.href = paymentUrl
 }
 
+function formatOrderTime(value?: string | null) {
+  return formatDateTime(value, '-')
+}
+
+function canOpenOrder(order: RechargeOrder) {
+  return Boolean(
+    (order.channel === 'rainbowEpay' && order.paymentUrl && order.status === 'pending')
+      || (order.channel === 'customerService' && order.supportConversationId),
+  )
+}
+
+function orderActionText(order: RechargeOrder) {
+  if (order.channel === 'rainbowEpay') return '继续支付'
+  return '联系客服'
+}
+
+function openOrder(order: RechargeOrder) {
+  if (order.channel === 'rainbowEpay' && order.paymentUrl) {
+    openPaymentUrl(order.paymentUrl)
+    return
+  }
+  if (order.supportConversationId) {
+    router.push({ path: '/support', query: { conversationId: order.supportConversationId } })
+    return
+  }
+  showToast('当前订单暂无可用操作')
+}
+
+async function refreshPageData() {
+  await Promise.all([loadRechargeOrders(), loadUserProfile()])
+}
+
 async function submitRecharge() {
   if (!selectedChannel.value) {
     showToast('请选择充值方式')
@@ -172,7 +266,7 @@ async function submitRecharge() {
       amountMinor,
       ...(isRainbowEpay.value && selectedPayType.value ? { payType: selectedPayType.value } : {}),
     })
-    await loadRechargeOrders()
+    await refreshPageData()
 
     if (isRainbowEpay.value) {
       if (response.paymentUrl) {
@@ -198,93 +292,185 @@ async function submitRecharge() {
 </script>
 
 <template>
-  <div class="deposit-page">
-    <van-nav-bar title="充值" left-arrow @click-left="router.back()" />
+  <div class="deposit-page min-h-screen bg-surface pb-32 text-on-surface font-body">
+    <header class="fixed top-0 left-0 z-50 w-full bg-white/85 shadow-sm shadow-red-900/5 backdrop-blur-md">
+      <div class="mx-auto flex h-16 w-full max-w-lg items-center justify-between px-5">
+        <button class="text-primary transition-opacity duration-200 active:scale-95 active:opacity-80" aria-label="返回" @click="router.back()">
+          <LucideIcon name="arrow_back" class="h-5 w-5" />
+        </button>
+        <div class="text-center">
+          <h1 class="font-headline text-lg font-black tracking-tight text-primary">充值</h1>
+          <p class="mt-0.5 text-[10px] font-semibold text-on-surface-variant">在线支付与客服直充</p>
+        </div>
+        <button class="text-primary transition-opacity duration-200 active:scale-95 active:opacity-80" aria-label="客服" @click="router.push('/support')">
+          <LucideIcon name="support_agent" class="h-5 w-5" />
+        </button>
+      </div>
+    </header>
 
-    <main class="deposit-content">
-      <div v-if="loadingConfig" class="deposit-state">
+    <main class="mx-auto flex w-full max-w-lg flex-col gap-5 px-4 pb-6 pt-20">
+      <section class="deposit-hero rounded-[28px] p-5 text-white shadow-[0_18px_45px_rgba(140,10,21,0.18)]">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-xs font-bold text-white/70">账户余额</p>
+            <div class="mt-2 flex items-baseline gap-2">
+              <span class="text-sm font-black text-white/70">¥</span>
+              <strong class="font-headline text-4xl font-black tracking-tight">{{ loadingProfile ? '...' : balanceText }}</strong>
+            </div>
+          </div>
+          <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15">
+            <LucideIcon name="payments" class="h-5 w-5" />
+          </div>
+        </div>
+        <div class="mt-5 grid grid-cols-3 gap-2">
+          <div class="rounded-2xl bg-white/12 px-3 py-2">
+            <p class="text-[10px] font-semibold text-white/65">可用渠道</p>
+            <p class="mt-1 font-headline text-lg font-black">{{ enabledChannels.length }}</p>
+          </div>
+          <div class="rounded-2xl bg-white/12 px-3 py-2">
+            <p class="text-[10px] font-semibold text-white/65">待处理</p>
+            <p class="mt-1 font-headline text-lg font-black">{{ pendingOrderCount }}</p>
+          </div>
+          <div class="rounded-2xl bg-white/12 px-3 py-2">
+            <p class="text-[10px] font-semibold text-white/65">已入账</p>
+            <p class="mt-1 font-headline text-lg font-black">{{ paidOrderCount }}</p>
+          </div>
+        </div>
+      </section>
+
+      <div v-if="loadingInitial" class="deposit-card flex min-h-40 items-center justify-center rounded-3xl p-6">
         <van-loading>正在加载充值配置...</van-loading>
       </div>
 
-      <van-empty v-else-if="enabledChannels.length === 0" description="暂无可用充值方式" />
+      <van-empty v-else-if="enabledChannels.length === 0" class="deposit-card rounded-3xl" description="暂无可用充值方式" />
 
       <template v-else>
-        <section class="deposit-method-card">
-          <span class="deposit-section-label">充值方式</span>
-          <button type="button" class="deposit-method-card__button" @click="showChannelPopup = true">
-            <span>
-              <strong>{{ selectedChannelTitle }}</strong>
-              <small>{{ selectedChannelDescription }}</small>
+        <section class="deposit-card rounded-3xl p-4">
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p class="text-xs font-black text-primary">充值方式</p>
+              <h2 class="mt-1 font-headline text-lg font-black text-on-surface">{{ selectedChannelTitle }}</h2>
+            </div>
+            <span class="rounded-full bg-red-50 px-3 py-1 text-[10px] font-black text-primary">
+              {{ selectedChannelTagText }}
             </span>
-            <span class="deposit-method-card__chevron">›</span>
-          </button>
+          </div>
+
+          <div class="grid gap-3">
+            <button
+              v-for="item in enabledChannels"
+              :key="item.channel"
+              type="button"
+              class="deposit-channel-option"
+              :class="{ 'deposit-channel-option--active': selectedChannel === item.channel }"
+              :aria-pressed="selectedChannel === item.channel"
+              @click="selectChannel(item.channel)"
+            >
+              <span class="deposit-channel-option__icon">
+                <LucideIcon :name="channelIcon(item.channel)" class="h-5 w-5" />
+              </span>
+              <span class="min-w-0 flex-1">
+                <strong>{{ item.name }}</strong>
+                <small>{{ item.description }}</small>
+              </span>
+              <span class="deposit-channel-option__check">✓</span>
+            </button>
+          </div>
         </section>
 
-        <section class="deposit-form-card">
-          <div class="deposit-form-card__header">
-            <span class="deposit-section-label">充值金额</span>
-            <small>{{ amountLimitText }}</small>
+        <section class="deposit-card rounded-3xl p-4">
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p class="text-xs font-black text-primary">充值金额</p>
+              <h2 class="mt-1 text-xs font-bold text-on-surface-variant">{{ amountLimitText }}</h2>
+            </div>
+            <button class="text-xs font-black text-primary active:opacity-70" type="button" @click="amount = ''">清空</button>
           </div>
-          <van-field
-            v-model="amount"
-            type="number"
-            input-align="right"
-            label="金额（元）"
-            placeholder="请输入充值金额"
-          />
 
-          <div v-if="isRainbowEpay" class="deposit-pay-types">
-            <span class="deposit-section-label">支付渠道</span>
-            <van-radio-group v-model="selectedPayType" direction="horizontal">
-              <van-radio
+          <label class="deposit-money-input">
+            <span>¥</span>
+            <input
+              v-model="amount"
+              inputmode="decimal"
+              min="0"
+              placeholder="0.00"
+              step="0.01"
+              type="number"
+            />
+          </label>
+
+          <div v-if="quickAmountOptions.length" class="mt-4 grid grid-cols-3 gap-2">
+            <button
+              v-for="item in quickAmountOptions"
+              :key="item"
+              type="button"
+              class="deposit-quick-amount"
+              :class="{ 'deposit-quick-amount--active': currentAmountMinor === item }"
+              @click="setQuickAmount(item)"
+            >
+              ¥{{ formatInputAmount(item) }}
+            </button>
+          </div>
+
+          <div v-if="isRainbowEpay" class="mt-5">
+            <p class="mb-2 text-xs font-black text-primary">支付渠道</p>
+            <div class="grid grid-cols-2 gap-2">
+              <button
                 v-for="type in currentPayTypes"
                 :key="type"
-                :name="type"
+                type="button"
+                class="deposit-pay-type"
+                :class="{ 'deposit-pay-type--active': selectedPayType === type }"
+                @click="selectedPayType = type"
               >
                 {{ payTypeText(type) }}
-              </van-radio>
-            </van-radio-group>
+              </button>
+            </div>
           </div>
 
-          <van-notice-bar
-            v-if="isCustomerService"
-            class="deposit-service-notice"
-            :text="selectedChannelDescription"
-            wrapable
-          />
-
-          <van-button
-            type="primary"
-            block
-            round
-            :loading="submitting"
-            @click="submitRecharge"
-          >
-            {{ submitText }}
-          </van-button>
+          <div v-if="isCustomerService" class="mt-5 rounded-2xl bg-amber-50 px-4 py-3 text-xs font-bold leading-5 text-amber-800">
+            {{ selectedChannelDescription }}
+          </div>
         </section>
 
-        <section class="deposit-orders">
-          <div class="deposit-orders__header">
-            <span class="deposit-section-label">最近充值</span>
-            <button type="button" @click="loadRechargeOrders">刷新</button>
+        <section class="deposit-card rounded-3xl p-4">
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p class="text-xs font-black text-primary">最近充值</p>
+              <h2 class="mt-1 text-xs font-bold text-on-surface-variant">查看订单状态和后续操作</h2>
+            </div>
+            <button class="flex items-center gap-1 text-xs font-black text-primary active:opacity-70" type="button" @click="refreshPageData">
+              <LucideIcon name="refresh" class="h-3.5 w-3.5" />
+              刷新
+            </button>
           </div>
-          <div v-if="loadingOrders" class="deposit-state deposit-state--compact">
+
+          <div v-if="loadingOrders" class="flex min-h-24 items-center justify-center rounded-2xl bg-surface-container-low">
             <van-loading>正在加载...</van-loading>
           </div>
           <van-empty v-else-if="recentOrders.length === 0" description="暂无充值记录" />
-          <div v-else class="deposit-order-list">
+          <div v-else class="flex flex-col gap-3">
             <article v-for="order in recentOrders" :key="order.id" class="deposit-order-card">
-              <div>
-                <h3>{{ channelText(order.channel) }}</h3>
-                <p>{{ order.id }} · {{ order.createdAt }}</p>
-                <small v-if="order.payType">{{ payTypeText(order.payType) }}</small>
-              </div>
-              <div class="deposit-order-card__side">
-                <strong>¥{{ formatMinorAmount(order.amountMinor) }}</strong>
-                <span :class="['deposit-order-status', statusClass(order.status)]">
-                  {{ statusText(order.status) }}
-                </span>
+              <div class="min-w-0 flex-1">
+                <div class="mb-2 flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <h3>{{ channelText(order.channel) }}</h3>
+                    <p>{{ formatOrderTime(order.createdAt) }}</p>
+                  </div>
+                  <span :class="['deposit-order-status', statusClass(order.status)]">
+                    {{ statusText(order.status) }}
+                  </span>
+                </div>
+                <div class="flex items-end justify-between gap-3">
+                  <div>
+                    <strong>¥{{ formatMinorAmount(order.amountMinor) }}</strong>
+                    <small v-if="order.payType">{{ payTypeText(order.payType) }}</small>
+                  </div>
+                  <button v-if="canOpenOrder(order)" type="button" @click="openOrder(order)">
+                    {{ orderActionText(order) }}
+                  </button>
+                </div>
+                <p class="mt-2 truncate text-[10px] font-semibold text-on-surface-variant">{{ order.id }}</p>
               </div>
             </article>
           </div>
@@ -292,193 +478,176 @@ async function submitRecharge() {
       </template>
     </main>
 
-    <van-popup v-model:show="showChannelPopup" position="bottom" round class="deposit-method-popup">
-      <section class="deposit-method-sheet">
-        <header class="deposit-method-sheet__header">
-          <div>
-            <p>充值方式</p>
-            <h2>选择充值模式</h2>
-          </div>
-          <button type="button" aria-label="关闭充值方式选择" @click="showChannelPopup = false">×</button>
-        </header>
-        <div class="deposit-method-list">
-          <button
-            v-for="item in enabledChannels"
-            :key="item.channel"
-            type="button"
-            class="deposit-method-option"
-            :class="{ 'deposit-method-option--active': selectedChannel === item.channel }"
-            @click="selectChannel(item.channel)"
-          >
-            <span>
-              <strong>{{ item.name }}</strong>
-              <small>{{ item.description }}</small>
-            </span>
-            <span class="deposit-method-option__mark">✓</span>
-          </button>
+    <footer v-if="enabledChannels.length > 0" class="fixed bottom-0 left-0 z-40 w-full bg-white/90 px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_35px_rgba(140,10,21,0.08)] backdrop-blur-md">
+      <div class="mx-auto flex w-full max-w-lg items-center gap-3">
+        <div class="min-w-0 flex-1">
+          <p class="truncate text-[10px] font-bold text-on-surface-variant">{{ submitHint }}</p>
+          <p class="mt-1 font-headline text-xl font-black text-primary">¥{{ selectedAmountText }}</p>
         </div>
-      </section>
-    </van-popup>
+        <button
+          type="button"
+          class="deposit-submit-button"
+          :disabled="!canSubmit"
+          @click="submitRecharge"
+        >
+          {{ submitText }}
+        </button>
+      </div>
+    </footer>
   </div>
 </template>
 
 <style scoped>
 .deposit-page {
-  min-height: 100vh;
-  background: linear-gradient(180deg, #fff8f5 0%, #f7eee9 100%);
-  color: #241f1d;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(254, 218, 177, 0.58), transparent 32%),
+    linear-gradient(180deg, #fff8f5 0%, #f8f1ee 46%, #f5efeb 100%);
 }
 
-.deposit-content {
-  display: grid;
-  gap: 14px;
-  max-width: 540px;
-  margin: 0 auto;
-  padding: 16px 16px 28px;
+.deposit-hero {
+  background:
+    radial-gradient(circle at 85% 8%, rgba(255, 238, 187, 0.38), transparent 28%),
+    linear-gradient(135deg, #3a0713 0%, #8f1320 54%, #c13d31 100%);
 }
 
-.deposit-state {
+.deposit-card {
+  border: 1px solid rgba(140, 10, 21, 0.08);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 12px 35px rgba(140, 10, 21, 0.06);
+}
+
+.deposit-channel-option {
   display: flex;
-  min-height: 180px;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(140, 10, 21, 0.09);
+  border-radius: 18px;
+  background: #fff9f7;
+  padding: 12px;
+  color: #463330;
+  text-align: left;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.deposit-channel-option:active,
+.deposit-quick-amount:active,
+.deposit-pay-type:active,
+.deposit-submit-button:active {
+  transform: scale(0.98);
+}
+
+.deposit-channel-option--active {
+  border-color: rgba(175, 40, 41, 0.7);
+  background: #fff4f0;
+  box-shadow: 0 8px 22px rgba(175, 40, 41, 0.1);
+}
+
+.deposit-channel-option__icon {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.76);
+  border-radius: 16px;
+  background: rgba(175, 40, 41, 0.09);
+  color: #af2829;
 }
 
-.deposit-state--compact {
-  min-height: 96px;
-}
-
-.deposit-section-label {
-  display: block;
-  color: #7c2d2d;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.deposit-method-card,
-.deposit-form-card,
-.deposit-orders {
-  border: 1px solid rgba(175, 40, 41, 0.1);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 10px 26px rgba(95, 10, 18, 0.07);
-}
-
-.deposit-method-card,
-.deposit-form-card {
-  padding: 14px;
-}
-
-.deposit-method-card__button,
-.deposit-method-option {
-  width: 100%;
-  border: 1px solid rgba(175, 40, 41, 0.12);
-  border-radius: 18px;
-  background: #fff8f6;
-  color: #7c2d2d;
-  padding: 12px 14px;
-  text-align: left;
-}
-
-.deposit-method-card__button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin-top: 8px;
-  box-shadow: 0 8px 22px rgba(175, 40, 41, 0.08);
-}
-
-.deposit-method-card__button strong,
-.deposit-method-option strong,
-.deposit-method-card__button small,
-.deposit-method-option small {
+.deposit-channel-option strong,
+.deposit-channel-option small {
   display: block;
 }
 
-.deposit-method-card__button strong,
-.deposit-method-option strong {
-  font-size: 15px;
+.deposit-channel-option strong {
+  font-size: 14px;
   font-weight: 900;
-  line-height: 1.25;
+  line-height: 1.2;
 }
 
-.deposit-method-card__button small,
-.deposit-method-option small {
+.deposit-channel-option small {
   margin-top: 4px;
+  color: #8d6b66;
   font-size: 11px;
   font-weight: 700;
   line-height: 1.35;
-  opacity: 0.72;
 }
 
-.deposit-method-card__chevron {
+.deposit-channel-option__check {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
   flex: 0 0 auto;
-  color: #af2829;
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.deposit-form-card {
-  display: grid;
-  gap: 14px;
-}
-
-.deposit-form-card__header,
-.deposit-orders__header {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.deposit-form-card__header small {
-  color: #8e706d;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.deposit-pay-types {
-  display: grid;
-  gap: 10px;
-}
-
-.deposit-service-notice {
-  border-radius: 14px;
-}
-
-.deposit-orders {
-  padding: 14px;
-}
-
-.deposit-orders__header {
-  margin-bottom: 12px;
-}
-
-.deposit-orders__header button {
-  border: 0;
-  color: #af2829;
-  background: transparent;
-  font-size: 12px;
+  justify-content: center;
+  border-radius: 999px;
+  background: #e9ddd9;
+  color: transparent;
+  font-size: 13px;
   font-weight: 900;
 }
 
-.deposit-order-list {
-  display: grid;
+.deposit-channel-option--active .deposit-channel-option__check {
+  background: #af2829;
+  color: #fff;
+}
+
+.deposit-money-input {
+  display: flex;
+  align-items: center;
   gap: 10px;
+  border-radius: 22px;
+  background: #fff7f3;
+  padding: 14px 16px;
+  box-shadow: inset 0 0 0 1px rgba(140, 10, 21, 0.08);
+}
+
+.deposit-money-input span {
+  color: #af2829;
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.deposit-money-input input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: #261b19;
+  font-size: 34px;
+  font-weight: 900;
+  line-height: 1.1;
+  outline: none;
+}
+
+.deposit-money-input input::placeholder {
+  color: #d7c3bd;
+}
+
+.deposit-quick-amount,
+.deposit-pay-type {
+  min-height: 42px;
+  border: 1px solid rgba(140, 10, 21, 0.09);
+  border-radius: 15px;
+  background: #fff9f7;
+  color: #7d4a45;
+  font-size: 13px;
+  font-weight: 900;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.deposit-quick-amount--active,
+.deposit-pay-type--active {
+  border-color: #af2829;
+  background: #af2829;
+  color: #fff;
 }
 
 .deposit-order-card {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  border-radius: 16px;
-  background: #fff8f6;
-  padding: 12px;
+  border-radius: 18px;
+  background: #fff8f5;
+  padding: 13px;
 }
 
 .deposit-order-card h3,
@@ -487,33 +656,45 @@ async function submitRecharge() {
 }
 
 .deposit-order-card h3 {
-  color: #241f1d;
+  overflow: hidden;
+  color: #261b19;
   font-size: 14px;
   font-weight: 900;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .deposit-order-card p,
 .deposit-order-card small {
-  color: #8e706d;
+  display: block;
+  color: #8d6b66;
   font-size: 10px;
   font-weight: 700;
 }
 
-.deposit-order-card__side {
-  display: grid;
-  justify-items: end;
-  gap: 6px;
-  flex: 0 0 auto;
+.deposit-order-card strong {
+  display: block;
+  color: #af2829;
+  font-size: 18px;
+  font-weight: 900;
 }
 
-.deposit-order-card__side strong {
-  color: #af2829;
-  font-size: 14px;
+.deposit-order-card button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  background: #af2829;
+  color: #fff;
+  padding: 7px 11px;
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .deposit-order-status {
+  flex: 0 0 auto;
   border-radius: 999px;
-  padding: 3px 8px;
+  padding: 4px 9px;
   font-size: 10px;
   font-weight: 900;
 }
@@ -538,89 +719,20 @@ async function submitRecharge() {
   color: #6b7280;
 }
 
-.deposit-method-popup {
-  overflow: hidden;
-  background: transparent;
-}
-
-.deposit-method-sheet {
-  border-radius: 28px 28px 0 0;
-  background: #f9f9f9;
-  padding: 22px 18px max(24px, env(safe-area-inset-bottom));
-}
-
-.deposit-method-sheet__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.deposit-method-sheet__header p,
-.deposit-method-sheet__header h2 {
-  margin: 0;
-}
-
-.deposit-method-sheet__header p {
-  margin-bottom: 4px;
-  color: #5a403e;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.deposit-method-sheet__header h2 {
-  color: #1a1c1c;
-  font-size: 20px;
-  font-weight: 900;
-}
-
-.deposit-method-sheet__header button {
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
+.deposit-submit-button {
+  min-width: 132px;
   border: 0;
-  border-radius: 999px;
-  color: #5a403e;
-  background: #eeeeee;
-  font-size: 22px;
-  line-height: 1;
-}
-
-.deposit-method-list {
-  display: grid;
-  gap: 10px;
-}
-
-.deposit-method-option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
-}
-
-.deposit-method-option:active {
-  transform: scale(0.98);
-}
-
-.deposit-method-option--active {
-  border-color: #af2829;
-  background: #af2829;
-  color: #fff7f4;
-  box-shadow: 0 10px 24px rgba(175, 40, 41, 0.2);
-}
-
-.deposit-method-option__mark {
-  flex: 0 0 auto;
-  opacity: 0;
-  font-size: 18px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #af2829, #d94a32);
+  color: #fff;
+  padding: 14px 18px;
+  font-size: 15px;
   font-weight: 900;
+  box-shadow: 0 12px 24px rgba(175, 40, 41, 0.2);
+  transition: transform 0.16s ease, opacity 0.16s ease;
 }
 
-.deposit-method-option--active .deposit-method-option__mark {
-  opacity: 1;
+.deposit-submit-button:disabled {
+  opacity: 0.48;
 }
 </style>
