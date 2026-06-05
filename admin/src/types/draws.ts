@@ -44,9 +44,14 @@ export interface DrawIssueResultRequest {
   drawNumber?: string;
 }
 
+export type DrawControlTargetScope = 'lottery' | 'issue' | 'order';
+
 export interface SaveLotteryDrawControlRequest {
   enabled: boolean;
   drawNumber?: string | null;
+  targetScope?: DrawControlTargetScope;
+  targetIssue?: string | null;
+  targetOrderId?: string | null;
 }
 
 export interface LotteryDrawControl {
@@ -55,6 +60,9 @@ export interface LotteryDrawControl {
   numberType: LotteryNumberType;
   enabled: boolean;
   drawNumber: string | null;
+  targetScope: DrawControlTargetScope;
+  targetIssue: string | null;
+  targetOrderId: string | null;
   updatedAt: string | null;
 }
 

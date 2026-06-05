@@ -12,8 +12,8 @@ use sqlx::Row;
 use crate::{
     domain::{
         draw::{
-            CreateDrawIssueRequest, DrawIssue, DrawIssueResultRequest, DrawIssueStatus,
-            LotteryDrawControl, SaveLotteryDrawControlRequest,
+            CreateDrawIssueRequest, DrawControlTargetScope, DrawIssue, DrawIssueResultRequest,
+            DrawIssueStatus, LotteryDrawControl, SaveLotteryDrawControlRequest,
         },
         lottery::{DrawMode, DrawSource, LotteryKind, LotteryNumberType, SaveDrawSourceRequest},
     },
@@ -201,6 +201,7 @@ impl DrawRepository {
         payload: SaveLotteryDrawControlRequest,
     ) -> ApiResult<LotteryDrawControl> {
         let draw_number = normalize_control_draw_number(lottery, &payload)?;
+        let (target_scope, target_issue, target_order_id) = normalize_control_target(&payload)?;
         let (result, snapshot) = {
             let mut store = self
                 .controls
@@ -211,6 +212,9 @@ impl DrawRepository {
                 lottery_id: lottery.id.clone(),
                 enabled: payload.enabled,
                 draw_number,
+                target_scope,
+                target_issue,
+                target_order_id,
                 updated_at: current_timestamp_label(),
             });
             (store.get(lottery)?, store.clone())
@@ -244,11 +248,11 @@ impl DrawRepository {
     }
 
     /// 判断指定彩种是否开启手工开奖控制。
-    pub async fn has_active_draw_control(&self, lottery_id: &str) -> ApiResult<bool> {
+    pub async fn has_active_draw_control(&self, issue: &DrawIssue) -> ApiResult<bool> {
         self.controls
             .read()
             .map_err(|_| ApiError::Internal("draw control store lock poisoned".to_string()))
-            .map(|store| store.active_draw_number(lottery_id).is_some())
+            .map(|store| store.active_draw_number(issue).is_some())
     }
 
     /// 读取指定彩种外部 API 的最新期号信息。
@@ -266,7 +270,7 @@ impl DrawRepository {
     ) -> ApiResult<(DrawIssueResultRequest, bool)> {
         let issue = self.get(id).await?;
 
-        if let Some(draw_number) = self.active_draw_control_number(&issue.lottery_id).await? {
+        if let Some(draw_number) = self.active_draw_control_number(&issue).await? {
             return Ok((
                 DrawIssueResultRequest {
                     draw_number: Some(draw_number),
@@ -291,11 +295,11 @@ impl DrawRepository {
         Ok((DrawIssueResultRequest::default(), false))
     }
 
-    async fn active_draw_control_number(&self, lottery_id: &str) -> ApiResult<Option<String>> {
+    async fn active_draw_control_number(&self, issue: &DrawIssue) -> ApiResult<Option<String>> {
         self.controls
             .read()
             .map_err(|_| ApiError::Internal("draw control store lock poisoned".to_string()))
-            .map(|store| store.active_draw_number(lottery_id))
+            .map(|store| store.active_draw_number(issue))
     }
 
     async fn persist_draws(&self, store: &DrawStore) -> ApiResult<()> {
@@ -381,10 +385,13 @@ async fn load_draw_store(database: &BusinessDatabase) -> ApiResult<(DrawStore, D
     }
 
     let mut controls = BTreeMap::new();
-    for row in sqlx::query("SELECT lottery_id, enabled, draw_number, updated_at FROM draw_controls")
-        .fetch_all(database.pool())
-        .await
-        .map_err(|_| ApiError::Internal("开奖控制数据读取失败".to_string()))?
+    for row in sqlx::query(
+        "SELECT lottery_id, enabled, draw_number, target_scope, target_issue, target_order_id, updated_at
+         FROM draw_controls",
+    )
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖控制数据读取失败".to_string()))?
     {
         let lottery_id: String = row
             .try_get("lottery_id")
@@ -399,6 +406,16 @@ async fn load_draw_store(database: &BusinessDatabase) -> ApiResult<(DrawStore, D
                 draw_number: row
                     .try_get("draw_number")
                     .map_err(|_| ApiError::Internal("开奖控制数据读取失败".to_string()))?,
+                target_scope: enum_from_string(
+                    row.try_get("target_scope")
+                        .map_err(|_| ApiError::Internal("开奖控制范围数据读取失败".to_string()))?,
+                )?,
+                target_issue: row
+                    .try_get("target_issue")
+                    .map_err(|_| ApiError::Internal("开奖控制期号数据读取失败".to_string()))?,
+                target_order_id: row
+                    .try_get("target_order_id")
+                    .map_err(|_| ApiError::Internal("开奖控制订单数据读取失败".to_string()))?,
                 updated_at: row
                     .try_get("updated_at")
                     .map_err(|_| ApiError::Internal("开奖控制数据读取失败".to_string()))?,
@@ -471,12 +488,16 @@ async fn save_draw_controls(
 
     for control in store.controls.values() {
         sqlx::query(
-            "INSERT INTO draw_controls (lottery_id, enabled, draw_number, updated_at)
-             VALUES ($1, $2, $3, $4)",
+            "INSERT INTO draw_controls
+             (lottery_id, enabled, draw_number, target_scope, target_issue, target_order_id, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&control.lottery_id)
         .bind(control.enabled)
         .bind(&control.draw_number)
+        .bind(enum_to_string(&control.target_scope)?)
+        .bind(&control.target_issue)
+        .bind(&control.target_order_id)
         .bind(&control.updated_at)
         .execute(&mut *tx)
         .await
@@ -678,6 +699,9 @@ struct DrawControlConfig {
     lottery_id: String,
     enabled: bool,
     draw_number: Option<String>,
+    target_scope: DrawControlTargetScope,
+    target_issue: Option<String>,
+    target_order_id: Option<String>,
     updated_at: String,
 }
 
@@ -698,9 +722,9 @@ impl DrawControlStore {
     }
 
     /// 处理 active_draw_number 的具体内部流程。
-    fn active_draw_number(&self, lottery_id: &str) -> Option<String> {
-        self.controls.get(lottery_id).and_then(|config| {
-            if config.enabled {
+    fn active_draw_number(&self, issue: &DrawIssue) -> Option<String> {
+        self.controls.get(&issue.lottery_id).and_then(|config| {
+            if config.enabled && config.matches_issue(issue) {
                 config.draw_number.clone()
             } else {
                 None
@@ -717,7 +741,29 @@ impl DrawControlStore {
             number_type: lottery.number_type.clone(),
             enabled: config.is_some_and(|value| value.enabled),
             draw_number: config.and_then(|value| value.draw_number.clone()),
+            target_scope: config
+                .map(|value| value.target_scope.clone())
+                .unwrap_or_default(),
+            target_issue: config.and_then(|value| value.target_issue.clone()),
+            target_order_id: config.and_then(|value| value.target_order_id.clone()),
             updated_at: config.map(|value| value.updated_at.clone()),
+        }
+    }
+}
+
+impl DrawControlConfig {
+    /// 判断当前控制配置是否应该作用在传入期号上。
+    fn matches_issue(&self, issue: &DrawIssue) -> bool {
+        if self.lottery_id != issue.lottery_id {
+            return false;
+        }
+
+        match self.target_scope {
+            DrawControlTargetScope::Lottery => true,
+            DrawControlTargetScope::Issue | DrawControlTargetScope::Order => self
+                .target_issue
+                .as_deref()
+                .is_some_and(|target_issue| target_issue == issue.issue),
         }
     }
 }
@@ -771,6 +817,36 @@ fn normalize_control_draw_number(
     draw_number
         .map(|value| normalize_draw_number(value, &lottery.number_type))
         .transpose()
+}
+
+/// 标准化开奖控制范围，关闭控制时清空目标以避免误读历史配置。
+fn normalize_control_target(
+    payload: &SaveLotteryDrawControlRequest,
+) -> ApiResult<(DrawControlTargetScope, Option<String>, Option<String>)> {
+    if !payload.enabled {
+        return Ok((DrawControlTargetScope::Lottery, None, None));
+    }
+
+    match payload.target_scope {
+        DrawControlTargetScope::Lottery => Ok((DrawControlTargetScope::Lottery, None, None)),
+        DrawControlTargetScope::Issue => {
+            let issue = required_control_target(payload.target_issue.as_deref(), "控制期号")?;
+            Ok((DrawControlTargetScope::Issue, Some(issue), None))
+        }
+        DrawControlTargetScope::Order => {
+            let issue = required_control_target(payload.target_issue.as_deref(), "目标订单期号")?;
+            let order_id = required_control_target(payload.target_order_id.as_deref(), "目标订单")?;
+            Ok((DrawControlTargetScope::Order, Some(issue), Some(order_id)))
+        }
+    }
+}
+
+/// 读取并修剪控制目标字段，确保启用控制时不会保存空目标。
+fn required_control_target(value: Option<&str>, label: &str) -> ApiResult<String> {
+    let value = value.map(str::trim).filter(|value| !value.is_empty());
+    value
+        .map(ToString::to_string)
+        .ok_or_else(|| ApiError::BadRequest(format!("{label}不能为空")))
 }
 
 /// 标准化输入并返回规范值。
@@ -959,8 +1035,8 @@ mod tests {
     use crate::{
         domain::{
             draw::{
-                CreateDrawIssueRequest, DrawIssueResultRequest, DrawIssueStatus,
-                SaveLotteryDrawControlRequest,
+                CreateDrawIssueRequest, DrawControlTargetScope, DrawIssueResultRequest,
+                DrawIssueStatus, SaveLotteryDrawControlRequest,
             },
             lottery::{DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType},
         },
@@ -1134,6 +1210,9 @@ mod tests {
                 SaveLotteryDrawControlRequest {
                     enabled: true,
                     draw_number: Some("2,4,7".to_string()),
+                    target_scope: DrawControlTargetScope::Lottery,
+                    target_issue: None,
+                    target_order_id: None,
                 },
             )
             .await
@@ -1153,6 +1232,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn repository_issue_scoped_control_only_matches_target_issue() {
+        let lottery = lottery(DrawMode::Platform, LotteryNumberType::ThreeDigit);
+        let repository = DrawRepository::memory();
+        repository
+            .save_draw_control(
+                &lottery,
+                SaveLotteryDrawControlRequest {
+                    enabled: true,
+                    draw_number: Some("2,4,7".to_string()),
+                    target_scope: DrawControlTargetScope::Issue,
+                    target_issue: Some("2026143".to_string()),
+                    target_order_id: None,
+                },
+            )
+            .await
+            .expect("issue control can be saved");
+        let target_issue = repository
+            .create(&lottery, create_request("2026143"))
+            .await
+            .expect("target issue can be created");
+        let other_issue = repository
+            .create(&lottery, create_request("2026144"))
+            .await
+            .expect("other issue can be created");
+
+        let target_drawn = repository
+            .draw(&target_issue.id, DrawIssueResultRequest::default())
+            .await
+            .expect("target issue can use control number");
+        let other_drawn = repository
+            .draw(&other_issue.id, DrawIssueResultRequest::default())
+            .await
+            .expect("other issue should use platform generated number");
+
+        assert_eq!(target_drawn.draw_number.as_deref(), Some("2,4,7"));
+        assert_ne!(other_drawn.draw_number.as_deref(), Some("2,4,7"));
+    }
+
+    #[tokio::test]
+    async fn repository_order_scoped_control_matches_order_issue() {
+        let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
+        let repository = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        repository
+            .save_draw_control(
+                &lottery,
+                SaveLotteryDrawControlRequest {
+                    enabled: true,
+                    draw_number: Some("2,4,7".to_string()),
+                    target_scope: DrawControlTargetScope::Order,
+                    target_issue: Some("2026143".to_string()),
+                    target_order_id: Some("O000000000001".to_string()),
+                },
+            )
+            .await
+            .expect("order control can be saved");
+        let issue = repository
+            .create(&lottery, create_request("2026143"))
+            .await
+            .expect("issue can be created");
+
+        let drawn = repository
+            .draw(&issue.id, DrawIssueResultRequest::default())
+            .await
+            .expect("order scoped control can override api draw");
+
+        assert_eq!(drawn.draw_number.as_deref(), Some("2,4,7"));
+    }
+
+    #[tokio::test]
     async fn repository_save_draw_control_validates_number_type() {
         let lottery = lottery(DrawMode::Platform, LotteryNumberType::FiveDigit);
         let repository = DrawRepository::memory();
@@ -1163,6 +1313,9 @@ mod tests {
                 SaveLotteryDrawControlRequest {
                     enabled: true,
                     draw_number: Some("2,4,7".to_string()),
+                    target_scope: DrawControlTargetScope::Lottery,
+                    target_issue: None,
+                    target_order_id: None,
                 },
             )
             .await
@@ -1171,6 +1324,28 @@ mod tests {
         assert!(error
             .to_string()
             .contains("draw number must contain 5 numbers"));
+    }
+
+    #[tokio::test]
+    async fn repository_save_draw_control_rejects_missing_target_issue() {
+        let lottery = lottery(DrawMode::Platform, LotteryNumberType::ThreeDigit);
+        let repository = DrawRepository::memory();
+
+        let error = repository
+            .save_draw_control(
+                &lottery,
+                SaveLotteryDrawControlRequest {
+                    enabled: true,
+                    draw_number: Some("2,4,7".to_string()),
+                    target_scope: DrawControlTargetScope::Issue,
+                    target_issue: None,
+                    target_order_id: None,
+                },
+            )
+            .await
+            .expect_err("issue scoped control requires target issue");
+
+        assert!(error.to_string().contains("控制期号不能为空"));
     }
 
     #[test]

@@ -396,6 +396,16 @@ let store = load_access_store(&database).await?;
 
 所有运行时业务模块已经迁移为业务表。订单、资金流水、开奖期号、结算批次、管理员权限和高风险开奖控制后续增强时，必须继续补事务一致性、索引、审计字段、分页查询、备份恢复和从历史 `state_documents` 迁移数据的说明。
 
+### 9. 开奖控制目标字段
+
+`draw_controls` 除彩种 ID、启用状态、控制号码和更新时间外，还需要保存控制范围字段：
+
+- `target_scope`：控制范围，只允许 `lottery`、`issue`、`order`，默认 `lottery`。
+- `target_issue`：指定期号或目标订单所在期号。
+- `target_order_id`：后台选择“控制此单”时记录的目标订单 ID。
+
+`target_scope=lottery` 时必须清空 `target_issue` 和 `target_order_id`；`target_scope=issue` 时必须保存 `target_issue`；`target_scope=order` 时必须同时保存 `target_issue` 和 `target_order_id`。数据库迁移需要为这些字段补齐中文 `COMMENT ON COLUMN`，并用 check constraint 限制 `target_scope` 可选值。
+
 ---
 
 ## 场景：充值订单数据库持久化

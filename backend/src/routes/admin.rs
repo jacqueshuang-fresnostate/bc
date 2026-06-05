@@ -20,10 +20,10 @@ use crate::{
         advertisement::{AdvertisementSummary, SaveAdvertisementRequest},
         auth::{AdminAuthSession, AdminLoginRequest, AdminLogoutResponse, CurrentAdminProfile},
         draw::{
-            CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest, DrawIssue,
-            DrawIssueGenerationPreview, DrawIssuePage, DrawIssueResultRequest, DrawIssueStatus,
-            GenerateDrawIssueRequest, GenerateDrawIssuesRequest, LotteryDrawControl,
-            SaveLotteryDrawControlRequest,
+            CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest,
+            DrawControlTargetScope, DrawIssue, DrawIssueGenerationPreview, DrawIssuePage,
+            DrawIssueResultRequest, DrawIssueStatus, GenerateDrawIssueRequest,
+            GenerateDrawIssuesRequest, LotteryDrawControl, SaveLotteryDrawControlRequest,
         },
         finance::{
             AdminFinancialAccountSummary, FinanceOverview, FinancePage, FinancialAccountSummary,
@@ -554,12 +554,80 @@ async fn get_lottery_draw_control(
 async fn save_lottery_draw_control(
     State(state): State<AppState>,
     Path(lottery_id): Path<String>,
-    Json(payload): Json<SaveLotteryDrawControlRequest>,
+    Json(mut payload): Json<SaveLotteryDrawControlRequest>,
 ) -> ApiResult<Json<ApiEnvelope<LotteryDrawControl>>> {
     let lottery = state.lotteries.get(&lottery_id).await?;
+    normalize_admin_draw_control_target(&state, &lottery, &mut payload).await?;
     let control = state.draws.save_draw_control(&lottery, payload).await?;
 
     Ok(Json(ApiEnvelope::success(control)))
+}
+
+/// 校验后台开奖控制目标，并在选择订单时把目标期号补齐到请求中。
+async fn normalize_admin_draw_control_target(
+    state: &AppState,
+    lottery: &LotteryKind,
+    payload: &mut SaveLotteryDrawControlRequest,
+) -> ApiResult<()> {
+    if !payload.enabled {
+        payload.target_scope = DrawControlTargetScope::Lottery;
+        payload.target_issue = None;
+        payload.target_order_id = None;
+        return Ok(());
+    }
+
+    match payload.target_scope {
+        DrawControlTargetScope::Lottery => {
+            payload.target_issue = None;
+            payload.target_order_id = None;
+            Ok(())
+        }
+        DrawControlTargetScope::Issue => {
+            let issue = required_admin_control_value(payload.target_issue.as_deref(), "控制期号")?;
+            state
+                .draws
+                .get_by_lottery_issue(&lottery.id, &issue)
+                .await?;
+            payload.target_issue = Some(issue);
+            payload.target_order_id = None;
+            Ok(())
+        }
+        DrawControlTargetScope::Order => {
+            let order_id =
+                required_admin_control_value(payload.target_order_id.as_deref(), "目标订单")?;
+            let order = state.orders.get(&order_id).await?;
+            if order.lottery_id != lottery.id {
+                return Err(ApiError::BadRequest("目标订单不属于当前彩种".to_string()));
+            }
+            if order.status != OrderStatus::PendingDraw {
+                return Err(ApiError::BadRequest("只能控制待开奖订单".to_string()));
+            }
+            if let Some(target_issue) = payload
+                .target_issue
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if target_issue != order.issue {
+                    return Err(ApiError::BadRequest(
+                        "目标订单期号与控制期号不一致".to_string(),
+                    ));
+                }
+            }
+            payload.target_issue = Some(order.issue);
+            payload.target_order_id = Some(order.id);
+            Ok(())
+        }
+    }
+}
+
+/// 读取后台开奖控制目标字段，启用对应范围时不能为空。
+fn required_admin_control_value(value: Option<&str>, label: &str) -> ApiResult<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| ApiError::BadRequest(format!("{label}不能为空")))
 }
 
 async fn list_draw_issues(
@@ -2234,14 +2302,21 @@ struct SaleStatusRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        align_draw_issue_plan_after_sale_on, finance_overview_for_query, page_items,
-        required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
-        should_include_user_scoped_record, FinancePageQuery,
+        align_draw_issue_plan_after_sale_on, finance_overview_for_query,
+        normalize_admin_draw_control_target, page_items, required_scope_for_path,
+        should_align_draw_issue_plan_after_sale_on, should_include_user_scoped_record,
+        FinancePageQuery,
     };
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
         app::AppState,
-        domain::{draw::DrawIssueStatus, lottery::DrawMode, permission::PermissionScope},
+        domain::{
+            draw::{DrawControlTargetScope, DrawIssueStatus, SaveLotteryDrawControlRequest},
+            lottery::DrawMode,
+            order::CreateOrderRequest,
+            permission::PermissionScope,
+            play::{PlayRuleCode, PlaySelection},
+        },
         services::{
             access::AccessRepository,
             advertisement::AdvertisementRepository,
@@ -2389,6 +2464,46 @@ mod tests {
         assert_eq!(issues[0].lottery_id, "ssc60");
         assert_eq!(issues[0].draw_mode, DrawMode::Platform);
         assert_eq!(issues[0].status, DrawIssueStatus::Open);
+    }
+
+    #[tokio::test]
+    /// 目标订单控制会校验订单归属，并把控制期号绑定为该订单期号。
+    async fn draw_control_order_target_binds_order_issue() {
+        let state = test_state();
+        let mut lottery = state.lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.sale_enabled = true;
+        let order = state
+            .orders
+            .create(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10001".to_string(),
+                    lottery_id: lottery.id.clone(),
+                    issue: "202606052200".to_string(),
+                    rule_code: PlayRuleCode::FiveFrontDirect,
+                    selection: PlaySelection {
+                        positions: vec![vec![1], vec![2], vec![3]],
+                        ..PlaySelection::default()
+                    },
+                    unit_amount_minor: 200,
+                },
+            )
+            .await
+            .expect("order can be created");
+        let mut payload = SaveLotteryDrawControlRequest {
+            enabled: true,
+            draw_number: Some("1,2,3,4,5".to_string()),
+            target_scope: DrawControlTargetScope::Order,
+            target_issue: None,
+            target_order_id: Some(order.id.clone()),
+        };
+
+        normalize_admin_draw_control_target(&state, &lottery, &mut payload)
+            .await
+            .expect("order target can be normalized");
+
+        assert_eq!(payload.target_issue.as_deref(), Some("202606052200"));
+        assert_eq!(payload.target_order_id.as_deref(), Some(order.id.as_str()));
     }
 
     fn test_state() -> AppState {

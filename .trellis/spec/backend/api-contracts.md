@@ -3571,9 +3571,9 @@ if !has_scope(scopes, &PermissionScope::Finance) {
 
 ### 1. 范围 / 触发条件
 
-- 触发条件：新增或修改彩种控制台的开奖号码控制、开奖服务控制优先级、自动开奖控制逻辑。
-- 范围：后端开奖控制配置 API、开奖服务读取控制号码、自动开奖手动彩种跳过规则、前端控制台类型和 SideSheet 表单。
-- 本阶段控制配置为内存仓储；后续接入 PostgreSQL 时接口契约不应变化。
+- 触发条件：新增或修改彩种控制台的开奖号码控制、控制范围、开奖服务控制优先级、自动开奖控制逻辑。
+- 范围：后端开奖控制配置 API、开奖服务读取控制号码、自动开奖手动彩种跳过规则、后台订单信息查看、前端控制台类型和 SideSheet 表单。
+- 控制配置支持内存模式和 PostgreSQL 业务表模式；接口契约不随持久化模式变化。
 
 ### 2. 签名
 
@@ -3595,6 +3595,9 @@ if !has_scope(scopes, &PermissionScope::Finance) {
     "numberType": "threeDigit",
     "enabled": false,
     "drawNumber": null,
+    "targetScope": "lottery",
+    "targetIssue": null,
+    "targetOrderId": null,
     "updatedAt": null
   }
 ]
@@ -3605,7 +3608,10 @@ if !has_scope(scopes, &PermissionScope::Finance) {
 ```json
 {
   "enabled": true,
-  "drawNumber": "2,4,7"
+  "drawNumber": "2,4,7",
+  "targetScope": "issue",
+  "targetIssue": "202606052200",
+  "targetOrderId": null
 }
 ```
 
@@ -3618,18 +3624,31 @@ if !has_scope(scopes, &PermissionScope::Finance) {
   "numberType": "threeDigit",
   "enabled": true,
   "drawNumber": "2,4,7",
+  "targetScope": "issue",
+  "targetIssue": "202606052200",
+  "targetOrderId": null,
   "updatedAt": "unix:1780475520"
 }
 ```
 
 开奖号码继续使用英文逗号分隔格式。后端保存时会规范化号码，例如 `247` 保存为 `2,4,7`；中文逗号输入也会被规范化为英文逗号。
 
+控制范围：
+
+- `targetScope=lottery`：控制整个彩种后续开奖，保存时清空 `targetIssue` 和 `targetOrderId`。
+- `targetScope=issue`：只控制指定期号，`targetIssue` 必填，且后台保存前必须确认该期号属于当前彩种。
+- `targetScope=order`：按目标订单绑定控制期号，`targetOrderId` 必填；后台保存前必须确认订单属于当前彩种且状态为 `pendingDraw`，并把 `targetIssue` 自动补齐为该订单期号。
+- 订单范围不是“只给单个订单单独结算不同号码”，因为一期只有一个开奖号码；它表示控制号码只在该订单所在期号开奖时生效，并在控制台记录目标订单便于运营审计。
+- 关闭控制时，后端必须清空控制目标，避免历史目标字段被误读。
+
 开奖优先级：
 
-1. 如果彩种控制配置 `enabled=true` 且有合法 `drawNumber`，手动触发开奖和自动开奖都优先使用控制号码。
+1. 如果彩种控制配置 `enabled=true`、有合法 `drawNumber`，且控制范围命中当前开奖期号，手动触发开奖和自动开奖都优先使用控制号码。
 2. 如果控制关闭，`platform` 彩种使用平台生成器。
 3. 如果控制关闭，`api` 彩种使用已绑定的 API 开奖源。
 4. 如果控制关闭，`manual` 彩种自动任务缺少管理员号码时继续跳过。
+
+彩种控制台可以复用 `GET /api/admin/orders` 查看用户下单信息，默认不包含机器人订单；SideSheet 中展示当前彩种近期订单、当前期订单，并允许对待开奖订单一键选择为控制目标。
 
 ### 4. 校验与错误矩阵
 
@@ -3637,6 +3656,11 @@ if !has_scope(scopes, &PermissionScope::Finance) {
 |------|----------|
 | `lotteryId` 不存在 | HTTP 404，返回彩种不存在 |
 | `enabled=true` 且 `drawNumber` 为空 | HTTP 400，返回控制开奖号码必填 |
+| `targetScope=issue` 且 `targetIssue` 为空 | HTTP 400，返回控制期号不能为空 |
+| `targetScope=issue` 且期号不属于当前彩种 | HTTP 404 或 400，返回期号校验错误 |
+| `targetScope=order` 且 `targetOrderId` 为空 | HTTP 400，返回目标订单不能为空 |
+| `targetScope=order` 且订单不属于当前彩种 | HTTP 400，返回目标订单不属于当前彩种 |
+| `targetScope=order` 且订单不是 `pendingDraw` | HTTP 400，返回只能控制待开奖订单 |
 | 3 位彩种号码不是 3 个数字 | HTTP 400，返回号码长度错误 |
 | 5 位彩种号码不是 5 个数字 | HTTP 400，返回号码长度错误 |
 | PK10、11 选 5、快 3、快乐 8/幸运 20 控制号码不符合长度、范围或去重规则 | HTTP 400，返回号码校验错误 |
@@ -3649,17 +3673,23 @@ if !has_scope(scopes, &PermissionScope::Finance) {
 
 - Good：`fc3d` 开启控制号码 `2,4,7`，期号到期后自动开奖保存 `drawNumber=2,4,7`，随后结算使用该号码。
 - Good：`au5` 开启控制号码 `7,8,9,4,2`，即使 API68 返回其它结果，本次开奖仍使用控制号码。
+- Good：运营在控制台选择某个待开奖订单作为目标，后端自动绑定该订单期号，控制号码只在该期开奖时生效。
+- Good：运营只想控制下一期时选择 `targetScope=issue`，该期完成后其它期号继续走平台或 API 开奖源。
 - Base：控制关闭时，现有平台生成器和 API68 来源行为保持不变。
 - Bad：只在前端保存控制状态，不让后端开奖服务读取；这会导致页面看起来控制成功但自动开奖仍按原来源开奖。
 - Bad：前端直接绕过后端校验写入不符合彩种号码类型的号码。
+- Bad：订单范围控制时只保存订单号、不保存订单期号；开奖服务无法判断当前期是否命中控制范围。
+- Bad：把订单范围理解为同一期不同订单使用不同开奖号码，这会破坏一期一个开奖结果的核心规则。
 
 ### 6. 必要测试
 
 - 后端需要覆盖平台开奖使用控制号码。
 - 后端需要覆盖 API 开奖源被控制号码覆盖。
 - 后端需要覆盖控制号码按号码类型校验。
+- 后端需要覆盖期号范围控制只命中目标期号。
+- 后端需要覆盖订单范围控制会绑定目标订单期号，并拒绝非待开奖订单。
 - 后端需要覆盖手动彩种自动任务在控制号码启用时不跳过并完成开奖。
-- 前端需要运行 `npm run build`，确认 `LotteryDrawControl` 和保存请求类型与接口字段一致。
+- 前端需要运行 `npm run build`，确认 `LotteryDrawControl`、保存请求类型、订单信息展示和控制范围表单与接口字段一致。
 - 跨层联调需要在“彩种控制台”保存控制号码，再执行或等待对应期号开奖，确认期号列表和控制台回显的开奖号码一致。
 
 ### 7. Wrong vs Correct
@@ -3678,6 +3708,8 @@ setLocalControl(lotteryId, drawNumber);
 await saveLotteryDrawControl(lotteryId, {
   enabled: true,
   drawNumber: "2,4,7",
+  targetScope: "issue",
+  targetIssue: "202606052200",
 });
 ```
 
@@ -3694,7 +3726,7 @@ let draw_number = api_source.draw_number_for(issue).await?;
 #### 正确
 
 ```rust
-if let Some(draw_number) = active_draw_control_number(&issue.lottery_id)? {
+if let Some(draw_number) = active_draw_control_number(&issue)? {
     return Ok(DrawIssueResultRequest { draw_number: Some(draw_number) });
 }
 ```

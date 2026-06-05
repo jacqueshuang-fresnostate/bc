@@ -1,7 +1,8 @@
-import { Input, Banner, Button, Card, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
 import {
   Activity,
   Clock3,
+  ClipboardList,
   Hash,
   Radio,
   RefreshCcw,
@@ -13,8 +14,15 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
 import { useLotteryConsole } from '../hooks/useLotteryConsole';
 import type { DrawMode, LotteryKind } from '../types/dashboard';
-import type { DrawIssue, DrawIssueStatus, LotteryDrawControl } from '../types/draws';
+import type {
+  DrawControlTargetScope,
+  DrawIssue,
+  DrawIssueStatus,
+  LotteryDrawControl,
+} from '../types/draws';
+import type { OrderDetail, OrderStatus } from '../types/orders';
 import type { DrawSchedulerStatus } from '../types/scheduler';
+import { formatMoney } from '../utils/format';
 import {
   drawNumberInputMeta,
   lotteryNumberTypeText as numberTypeText,
@@ -27,7 +35,10 @@ interface LotteryConsolePageProps {
 interface LotteryConsoleItem {
   lottery: LotteryKind;
   currentIssue: DrawIssue | null;
+  currentIssueOrders: OrderDetail[];
   drawControl: LotteryDrawControl | null;
+  issues: DrawIssue[];
+  orders: OrderDetail[];
   recentDrawnIssue: DrawIssue | null;
   issueCount: number;
   waitingIssue: DrawIssue | null;
@@ -37,6 +48,9 @@ interface LotteryConsoleItem {
 interface LotteryDrawControlFormState {
   enabled: boolean;
   drawNumber: string;
+  targetIssue: string;
+  targetOrderId: string;
+  targetScope: DrawControlTargetScope;
 }
 
 type LotteryConsoleStatusFilter =
@@ -63,6 +77,7 @@ export function LotteryConsolePage({
     issues,
     loading,
     lotteries,
+    orders,
     refresh,
     schedulerStatus,
     saveDrawControl,
@@ -99,10 +114,11 @@ export function LotteryConsolePage({
         lotteryConsoleItem(
           lottery,
           issues,
+          orders,
           drawControlByLotteryId.get(lottery.id) ?? null,
         ),
       ),
-    [drawControlByLotteryId, issues, lotteries],
+    [drawControlByLotteryId, issues, lotteries, orders],
   );
   const statusFilterOptions = useMemo(
     () => lotteryConsoleStatusFilterOptions(items, now),
@@ -179,6 +195,9 @@ export function LotteryConsolePage({
       await saveDrawControl(selectedControlItem.lottery.id, {
         enabled: controlForm.enabled,
         drawNumber: controlForm.enabled ? trimmedDrawNumber || null : null,
+        targetIssue: controlForm.enabled ? controlForm.targetIssue.trim() || null : null,
+        targetOrderId: controlForm.enabled ? controlForm.targetOrderId.trim() || null : null,
+        targetScope: controlForm.targetScope,
       });
       closeControlSheet();
       refresh();
@@ -346,6 +365,10 @@ function LotteryConsoleCard({
   const drawNumber = currentIssueDrawNumber ?? recentDrawnIssue?.drawNumber ?? null;
   const drawNumberLabel = currentIssueDrawNumber ? '本期开奖' : '最近开奖';
   const controlEnabled = Boolean(drawControl?.enabled);
+  const currentOrderAmountMinor = item.currentIssueOrders.reduce(
+    (total, order) => total + order.amountMinor,
+    0,
+  );
 
   return (
     <Card
@@ -416,6 +439,13 @@ function LotteryConsoleCard({
           value={drawNumber ?? '待开奖'}
           valueClassName={drawNumber ? 'font-mono text-sm text-ink' : 'text-sm text-slate-400'}
         />
+        <CompactInfoRow
+          icon={<ClipboardList size={13} />}
+          label="本期下注"
+          meta={`最近 ${item.orders.length} 单`}
+          value={`${item.currentIssueOrders.length} 单 / ${formatMoney(currentOrderAmountMinor)}`}
+          valueClassName="text-sm text-ink"
+        />
       </div>
 
       <div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded border border-slate-100 bg-slate-50 px-2.5 py-2">
@@ -434,7 +464,7 @@ function LotteryConsoleCard({
           </div>
           {drawControl?.updatedAt ? (
             <div className="mt-0.5 truncate text-[11px] text-slate-500">
-              更新 {formatTimePoint(drawControl.updatedAt)}
+              {controlTargetText(drawControl)} · 更新 {formatTimePoint(drawControl.updatedAt)}
             </div>
           ) : null}
         </div>
@@ -515,7 +545,14 @@ function DrawControlSideSheet({
 }) {
   const lottery = item?.lottery ?? null;
   const inputMeta = lottery ? drawNumberInputMeta(lottery.numberType) : null;
-  const saveDisabled = saving || (form.enabled && !form.drawNumber.trim());
+  const controlOrders = item ? controlCandidateOrders(item) : [];
+  const visibleOrders = item ? visibleConsoleOrders(item, form) : [];
+  const saveDisabled =
+    saving ||
+    (form.enabled &&
+      (!form.drawNumber.trim() ||
+        (form.targetScope === 'issue' && !form.targetIssue.trim()) ||
+        (form.targetScope === 'order' && !form.targetOrderId.trim())));
 
   return (
     <SideSheet
@@ -569,6 +606,142 @@ function DrawControlSideSheet({
               }
             />
           </Field>
+
+          <Field label="控制范围">
+            <Select
+              className="w-full"
+              disabled={!form.enabled}
+              value={form.targetScope}
+              onChange={(value) =>
+                onChange(controlFormWithScope(item, form, String(value) as DrawControlTargetScope))
+              }
+            >
+              <Select.Option value="lottery">整个彩种后续开奖</Select.Option>
+              <Select.Option value="issue">指定期号</Select.Option>
+              <Select.Option value="order">指定订单所在期号</Select.Option>
+            </Select>
+          </Field>
+
+          {form.targetScope === 'issue' ? (
+            <Field label="控制期号">
+              <Select
+                className="w-full"
+                disabled={!form.enabled}
+                placeholder="请选择要控制的期号"
+                value={form.targetIssue || undefined}
+                onChange={(value) =>
+                  onChange({
+                    ...form,
+                    targetIssue: String(value ?? ''),
+                    targetOrderId: '',
+                  })
+                }
+              >
+                {(item?.issues ?? []).map((issue) => (
+                  <Select.Option key={issue.id} value={issue.issue}>
+                    {issue.issue} · {statusText(issue.status)} · 开 {formatTimePoint(issue.scheduledAt)}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Field>
+          ) : null}
+
+          {form.targetScope === 'order' ? (
+            <Field label="目标订单">
+              <Select
+                className="w-full"
+                disabled={!form.enabled}
+                placeholder="请选择要控制的订单"
+                value={form.targetOrderId || undefined}
+                onChange={(value) => {
+                  const order = controlOrders.find(
+                    (item) => item.id === String(value ?? ''),
+                  );
+                  onChange({
+                    ...form,
+                    targetIssue: order?.issue ?? '',
+                    targetOrderId: order?.id ?? '',
+                  });
+                }}
+              >
+                {controlOrders.map((order) => (
+                  <Select.Option key={order.id} value={order.id}>
+                    {order.id} · 用户 {order.userId} · 第 {order.issue} 期 · {formatMoney(order.amountMinor)}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Field>
+          ) : null}
+
+          <section className="rounded-md border border-line p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-ink">用户下单信息</h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  默认显示当前控制范围相关订单，订单控制只匹配该订单所在期号。
+                </p>
+              </div>
+              <Tag color="cyan">{visibleOrders.length} 单</Tag>
+            </div>
+            {visibleOrders.length > 0 ? (
+              <div className="mt-3 max-h-[320px] overflow-auto">
+                <table className="w-full min-w-[760px] text-left text-xs">
+                  <thead className="border-b border-line text-slate-500">
+                    <tr>
+                      <th className="py-2 pr-3 font-medium">订单</th>
+                      <th className="py-2 pr-3 font-medium">用户</th>
+                      <th className="py-2 pr-3 font-medium">期号</th>
+                      <th className="py-2 pr-3 font-medium">玩法</th>
+                      <th className="py-2 pr-3 font-medium">金额</th>
+                      <th className="py-2 pr-3 font-medium">状态</th>
+                      <th className="py-2 pr-3 font-medium">控制</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleOrders.map((order) => (
+                      <tr key={order.id} className="border-b border-slate-100">
+                        <td className="py-2 pr-3 font-mono font-semibold text-ink">
+                          {order.id}
+                        </td>
+                        <td className="py-2 pr-3 text-slate-600">{order.userId}</td>
+                        <td className="py-2 pr-3 text-slate-600">{order.issue}</td>
+                        <td className="py-2 pr-3 text-slate-600">{order.ruleCode}</td>
+                        <td className="py-2 pr-3 text-slate-600">
+                          {formatMoney(order.amountMinor)}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <Tag color={orderStatusColor(order.status)}>
+                            {orderStatusText(order.status)}
+                          </Tag>
+                        </td>
+                        <td className="py-2 pr-3">
+                          <Button
+                            disabled={order.status !== 'pendingDraw'}
+                            size="small"
+                            onClick={() =>
+                              onChange({
+                                ...form,
+                                enabled: true,
+                                targetIssue: order.issue,
+                                targetOrderId: order.id,
+                                targetScope: 'order',
+                              })
+                            }
+                          >
+                            控制此单
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="mt-3 rounded border border-dashed border-line p-4 text-sm text-slate-500">
+                当前范围暂无用户下注订单。
+              </div>
+            )}
+          </section>
 
           <div className="flex flex-wrap gap-2">
             <Button
@@ -706,9 +879,13 @@ function lotteryConsoleItemIsWaitingDraw(item: LotteryConsoleItem, now: Date) {
 function lotteryConsoleItem(
   lottery: LotteryKind,
   allIssues: DrawIssue[],
+  allOrders: OrderDetail[],
   drawControl: LotteryDrawControl | null,
 ): LotteryConsoleItem {
   const issues = allIssues.filter((issue) => issue.lotteryId === lottery.id);
+  const orders = allOrders
+    .filter((order) => order.lotteryId === lottery.id)
+    .sort((left, right) => orderTimeValue(right) - orderTimeValue(left));
   const issuesByStatus = (status: DrawIssueStatus) =>
     issues.filter((issue) => issue.status === status);
   const openIssue =
@@ -731,9 +908,14 @@ function lotteryConsoleItem(
 
   return {
     currentIssue,
+    currentIssueOrders: currentIssue
+      ? orders.filter((order) => order.issue === currentIssue.issue)
+      : [],
     drawControl,
+    issues,
     issueCount: issues.length,
     lottery,
+    orders,
     recentDrawnIssue,
     waitingIssue,
     waitingIssueCount: waitingIssues.length,
@@ -748,6 +930,9 @@ function emptyDrawControlForm(): LotteryDrawControlFormState {
   return {
     enabled: false,
     drawNumber: '',
+    targetIssue: '',
+    targetOrderId: '',
+    targetScope: 'lottery',
   };
 }
 
@@ -757,7 +942,66 @@ function drawControlFormFromControl(
   return {
     enabled: control?.enabled ?? false,
     drawNumber: control?.drawNumber ?? '',
+    targetIssue: control?.targetIssue ?? '',
+    targetOrderId: control?.targetOrderId ?? '',
+    targetScope: control?.targetScope ?? 'lottery',
   };
+}
+
+function controlFormWithScope(
+  item: LotteryConsoleItem | null,
+  form: LotteryDrawControlFormState,
+  targetScope: DrawControlTargetScope,
+): LotteryDrawControlFormState {
+  if (targetScope === 'lottery') {
+    return {
+      ...form,
+      targetIssue: '',
+      targetOrderId: '',
+      targetScope,
+    };
+  }
+  if (targetScope === 'issue') {
+    return {
+      ...form,
+      targetIssue: form.targetIssue || item?.currentIssue?.issue || item?.issues[0]?.issue || '',
+      targetOrderId: '',
+      targetScope,
+    };
+  }
+
+  const order =
+    item?.orders.find((order) => order.id === form.targetOrderId) ??
+    controlCandidateOrders(item).find((order) => order.issue === item?.currentIssue?.issue) ??
+    controlCandidateOrders(item)[0] ??
+    null;
+
+  return {
+    ...form,
+    targetIssue: order?.issue ?? '',
+    targetOrderId: order?.id ?? '',
+    targetScope,
+  };
+}
+
+function controlCandidateOrders(item: LotteryConsoleItem | null) {
+  return (item?.orders ?? []).filter((order) => order.status === 'pendingDraw');
+}
+
+function visibleConsoleOrders(
+  item: LotteryConsoleItem,
+  form: LotteryDrawControlFormState,
+) {
+  if (form.targetScope === 'order' && form.targetOrderId.trim()) {
+    return item.orders.filter((order) => order.id === form.targetOrderId.trim());
+  }
+  if (form.targetScope === 'issue' && form.targetIssue.trim()) {
+    return item.orders.filter((order) => order.issue === form.targetIssue.trim());
+  }
+  if (item.currentIssueOrders.length > 0) {
+    return item.currentIssueOrders;
+  }
+  return item.orders.slice(0, 12);
 }
 
 function countdownText(
@@ -826,6 +1070,23 @@ function latestIssueTimeValue(issue: DrawIssue) {
     parseTimeLabel(issue.createdAt) ??
     0
   );
+}
+
+function orderTimeValue(order: OrderDetail) {
+  return parseTimeLabel(order.createdAt) ?? 0;
+}
+
+function controlTargetText(control: LotteryDrawControl) {
+  if (!control.enabled) {
+    return '未启用';
+  }
+  if (control.targetScope === 'issue') {
+    return control.targetIssue ? `期号 ${control.targetIssue}` : '指定期号';
+  }
+  if (control.targetScope === 'order') {
+    return control.targetOrderId ? `订单 ${control.targetOrderId}` : '指定订单';
+  }
+  return '整彩种';
 }
 
 function parseTimeLabel(value: string | null | undefined) {
@@ -897,6 +1158,26 @@ function statusColor(status: DrawIssueStatus) {
     return 'green';
   }
   return 'blue';
+}
+
+function orderStatusText(status: OrderStatus) {
+  const labels: Record<OrderStatus, string> = {
+    cancelled: '已取消',
+    lost: '未中奖',
+    pendingDraw: '待开奖',
+    won: '已中奖',
+  };
+  return labels[status];
+}
+
+function orderStatusColor(status: OrderStatus) {
+  const colors: Record<OrderStatus, 'blue' | 'green' | 'grey' | 'red'> = {
+    cancelled: 'grey',
+    lost: 'red',
+    pendingDraw: 'blue',
+    won: 'green',
+  };
+  return colors[status];
 }
 
 function scheduleText(lottery: LotteryKind) {

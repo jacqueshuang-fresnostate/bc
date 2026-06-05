@@ -8,7 +8,7 @@ use crate::domain::{
     settlement::SettlementRun,
 };
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum DrawIssueStatus {
     Open,
@@ -66,10 +66,31 @@ pub struct DrawIssueResultRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum DrawControlTargetScope {
+    Lottery,
+    Issue,
+    Order,
+}
+
+impl Default for DrawControlTargetScope {
+    /// 默认沿用旧版本按彩种整体生效的控制范围。
+    fn default() -> Self {
+        Self::Lottery
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveLotteryDrawControlRequest {
     pub enabled: bool,
     #[serde(default)]
     pub draw_number: Option<String>,
+    #[serde(default)]
+    pub target_scope: DrawControlTargetScope,
+    #[serde(default)]
+    pub target_issue: Option<String>,
+    #[serde(default)]
+    pub target_order_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -80,6 +101,9 @@ pub struct LotteryDrawControl {
     pub number_type: LotteryNumberType,
     pub enabled: bool,
     pub draw_number: Option<String>,
+    pub target_scope: DrawControlTargetScope,
+    pub target_issue: Option<String>,
+    pub target_order_id: Option<String>,
     pub updated_at: Option<String>,
 }
 

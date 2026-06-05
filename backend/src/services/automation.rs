@@ -80,9 +80,7 @@ pub async fn run_draw_automation(
         if !should_draw(&issue, &now) {
             continue;
         }
-        if issue.draw_mode == DrawMode::Manual
-            && !draws.has_active_draw_control(&issue.lottery_id).await?
-        {
+        if issue.draw_mode == DrawMode::Manual && !draws.has_active_draw_control(&issue).await? {
             run.skipped_issues
                 .push(skipped_issue(&issue, "手动开奖需要管理员录入开奖号码"));
             continue;
@@ -203,8 +201,8 @@ mod tests {
     use crate::{
         domain::{
             draw::{
-                CreateDrawIssueRequest, DrawAutomationRunRequest, DrawIssueStatus,
-                SaveLotteryDrawControlRequest,
+                CreateDrawIssueRequest, DrawAutomationRunRequest, DrawControlTargetScope,
+                DrawIssueStatus, SaveLotteryDrawControlRequest,
             },
             finance::LedgerEntryKind,
             group_buy::{CreateGroupBuyPlanRequest, GroupBuyPlanStatus},
@@ -382,6 +380,9 @@ mod tests {
                 SaveLotteryDrawControlRequest {
                     enabled: true,
                     draw_number: Some("2,4,7".to_string()),
+                    target_scope: DrawControlTargetScope::Lottery,
+                    target_issue: None,
+                    target_order_id: None,
                 },
             )
             .await

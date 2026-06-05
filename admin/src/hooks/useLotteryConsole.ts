@@ -4,6 +4,7 @@ import {
   fetchDrawSchedulerStatus,
   fetchLotteries,
   fetchLotteryDrawControls,
+  fetchOrders,
   saveLotteryDrawControl,
 } from '../api/client';
 import type { LotteryKind } from '../types/dashboard';
@@ -12,11 +13,13 @@ import type {
   LotteryDrawControl,
   SaveLotteryDrawControlRequest,
 } from '../types/draws';
+import type { OrderDetail } from '../types/orders';
 import type { DrawSchedulerStatus } from '../types/scheduler';
 
 export function useLotteryConsole(pollIntervalMs = 10_000) {
   const [lotteries, setLotteries] = useState<LotteryKind[]>([]);
   const [issues, setIssues] = useState<DrawIssue[]>([]);
+  const [orders, setOrders] = useState<OrderDetail[]>([]);
   const [drawControls, setDrawControls] = useState<LotteryDrawControl[]>([]);
   const [schedulerStatus, setSchedulerStatus] =
     useState<DrawSchedulerStatus | null>(null);
@@ -39,12 +42,14 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
       fetchDrawIssues(controller.signal),
       fetchLotteryDrawControls(controller.signal),
       fetchDrawSchedulerStatus(controller.signal),
+      fetchOrders(controller.signal),
     ])
-      .then(([lotteryList, drawIssuePage, controls, scheduler]) => {
+      .then(([lotteryList, drawIssuePage, controls, scheduler, orderList]) => {
         setLotteries(lotteryList);
         setIssues(drawIssuePage.items);
         setDrawControls(controls);
         setSchedulerStatus(scheduler);
+        setOrders(orderList);
       })
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) {
@@ -115,6 +120,7 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
     issues,
     loading,
     lotteries,
+    orders,
     refresh,
     schedulerStatus,
     saveDrawControl,
