@@ -1968,3 +1968,10 @@
 - 解决问题：此前大小单双订单的 `numbers` 文本会被普通投注号码逻辑拆分，详情页可能显示为“十位:大”“小”这类普通号码球，位置和属性关系不清晰；本次新增投注内容格式化逻辑，把 `big/small/odd/even` 翻译成“大/小/单/双”，并按位置展示。
 - 实施内容：新增订单投注内容文本和分组格式化方法；注单列表显示“十位：大、小；个位：单、双”；注单详情对大小单双使用属性标签，不再使用普通号码球。
 - 验证结果：`npm run build` 和 `git diff --check` 通过；`npm test` 仍因 `mobile/package.json` 中列出的测试文件在 `mobile/` 目录下不存在或路径未配置正确而失败，本次未改动该既有测试脚本。
+
+## 2026-06-05 20:00 HKT 手机端邀请中心接入新后台
+
+- 完成任务：为用户端新增 `GET /api/user/invitations/summary` 邀请中心汇总接口，并把手机端 `InvitationCenterView.vue` 从旧 `/auth/invitations/summary` 切换到当前后台接口。
+- 解决问题：旧页面仍使用 snake_case 字段和旧接口，无法读取当前系统的代理邀请码、邀请策略、注册代理关系和资金流水；通过邀请码注册的直属用户也可能因为没有后台邀请记录而不显示。
+- 实施内容：后端邀请中心合并后台邀请记录与用户 `agentId` 代理关系，普通用户返回 `canInvite=false`，代理用户按返利策略判断是否可复制邀请码；直属充值按 `rechargeCredit` 正向资金流水汇总；手机端展示返利模式、默认返利比例、直属人数、有效下级、直属充值、已付返利和直属用户状态。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`npm run build` 和 `git diff --check` 均已通过；本地内存后端 `GET /api/user/invitations/summary` 真实请求验证通过，代理 `agent_alpha` 可邀请并返回 2 个直属用户，普通用户 `demo_user` 返回 `canInvite=false` 且直属列表为空；浏览器烟测确认 `/invitation-center` 路由可加载且无控制台错误。

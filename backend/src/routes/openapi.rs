@@ -1151,6 +1151,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/user/invitations/summary",
+        "用户端账户",
+        "邀请中心汇总",
+        "返回当前用户邀请码、邀请权限、直属用户、直属充值汇总和当前返利策略摘要。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
         "/user/bet/page-config/{lottery_id}",
         "用户端投注",
         "下注页配置",
@@ -1711,6 +1720,7 @@ mod tests {
         assert!(document["paths"]["/user/mobile/advertisements"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/site-config"]["get"].is_object());
         assert!(document["paths"]["/user/register-options"]["get"].is_object());
+        assert!(document["paths"]["/user/invitations/summary"]["get"].is_object());
         assert!(document["paths"]["/user/bet/page-config/{lottery_id}"]["get"].is_object());
         assert!(document["paths"]["/user/bet/orders"]["get"].is_object());
         assert!(document["paths"]["/user/bet/orders"]["post"].is_object());

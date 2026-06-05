@@ -21,6 +21,31 @@ export type UserSummary = {
   inviteCode: string
 }
 
+export type InviteStatus = 'pending' | 'active' | 'disabled'
+export type RebateMode = 'immediate' | 'rechargeTiered'
+
+export type UserInvitationDirectUser = {
+  id: string
+  username: string
+  status: UserStatus
+  inviteStatus: InviteStatus
+  rebateEnabled: boolean
+  totalDepositMinor: number
+  createdAt: string
+}
+
+export type UserInvitationSummary = {
+  canInvite: boolean
+  invitationCode: string
+  directCount: number
+  activeDirectCount: number
+  totalDirectDepositMinor: number
+  totalPaidCommissionMinor: number
+  rebateMode: RebateMode
+  defaultRechargeRebateBasisPoints: number
+  directUsers: UserInvitationDirectUser[]
+}
+
 export type UserAuthSession = {
   token: string
   user: UserSummary
@@ -331,6 +356,10 @@ export async function fetchRechargeOrders() {
 
 export async function fetchUserLedgerEntries() {
   return unwrapApiData<LedgerEntry[]>(await http.get('/user/ledger-entries'))
+}
+
+export async function fetchInvitationSummary() {
+  return unwrapApiData<UserInvitationSummary>(await http.get('/user/invitations/summary'))
 }
 
 export async function createRechargeOrder(payload: CreateRechargeOrderPayload) {

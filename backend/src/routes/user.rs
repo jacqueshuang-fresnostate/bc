@@ -10,20 +10,21 @@ use axum::{
     Extension, Json, Router,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use crate::{
     app::AppState,
     domain::advertisement::MobileAdvertisement,
     domain::draw::DrawIssueStatus,
-    domain::finance::{FinancialAccountSummary, LedgerEntry},
+    domain::finance::{FinancialAccountSummary, LedgerEntry, LedgerEntryKind},
     domain::group_buy::{
         AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyCreateOptions,
         GroupBuyCreateSettings, GroupBuyParticipationSummary, GroupBuyPlan, GroupBuyPlanStatus,
         GroupBuySelectOption, UserCreateGroupBuyPlanRequest, UserGroupBuyActionResponse,
         UserGroupBuyPlan, UserGroupBuyPlanPage, UserJoinGroupBuyPlanRequest,
     },
+    domain::invite::{InviteRecord, InviteStatus},
     domain::lottery::LotteryKind,
     domain::mobile::{
         MobileBetPageConfig, MobileCreateBetOrderBatchRequest, MobileCreateBetOrderBatchResponse,
@@ -31,6 +32,7 @@ use crate::{
     },
     domain::order::{CreateOrderRequest, OrderDetail},
     domain::permission::SystemSetting,
+    domain::rebate::InvitePolicySummary,
     domain::recharge::{
         CreateRechargeOrderRequest, CreateRechargeOrderResponse, RechargeConfigResponse,
         RechargeOrderSummary,
@@ -40,8 +42,9 @@ use crate::{
     domain::user::{
         RegistrationConfig, UserAuthSession, UserBalanceResponse, UserBindEmailRequest,
         UserChangePasswordRequest, UserForgotPasswordRequest, UserForgotPasswordResponse,
-        UserLoginRequest, UserLogoutResponse, UserProfileResponse, UserRegisterRequest,
-        UserResetPasswordRequest, UserResetPasswordResponse, UserSummary, WithdrawalMethodRequest,
+        UserInvitationDirectUser, UserInvitationSummaryResponse, UserKind, UserLoginRequest,
+        UserLogoutResponse, UserProfileResponse, UserRegisterRequest, UserResetPasswordRequest,
+        UserResetPasswordResponse, UserStatus, UserSummary, WithdrawalMethodRequest,
     },
     domain::withdrawal::{CreateWithdrawalOrderRequest, WithdrawalOrderSummary},
     error::{ApiError, ApiResult},
@@ -94,6 +97,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/password/change", post(change_password))
         .route("/balance", get(get_balance))
         .route("/ledger-entries", get(list_ledger_entries))
+        .route("/invitations/summary", get(get_user_invitation_summary))
         .route(
             "/bet/page-config/{lottery_id}",
             get(get_user_bet_page_config),
@@ -453,6 +457,148 @@ async fn list_ledger_entries(
     let entries = state.finance.user_ledger_entries(&session.user.id).await?;
 
     Ok(Json(ApiEnvelope::success(entries)))
+}
+
+/// 汇总当前用户的邀请中心信息，供手机端展示邀请码、直属用户和充值统计。
+async fn get_user_invitation_summary(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<UserInvitationSummaryResponse>>> {
+    let policy = state.rebates.get().await?;
+    let can_invite = user_can_invite(&session.user, &policy);
+    let direct_users = if matches!(session.user.kind, UserKind::Agent) {
+        let access = state.access.snapshot().await?;
+        let invite_records = state.invites.list().await?;
+        let candidates = collect_direct_invitation_candidates(
+            &session.user.id,
+            &access.users,
+            &invite_records,
+            can_invite,
+        );
+        let mut direct_users = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            direct_users.push(UserInvitationDirectUser {
+                id: candidate.user.id.clone(),
+                username: candidate.user.username.clone(),
+                status: candidate.user.status.clone(),
+                invite_status: candidate.invite_status,
+                rebate_enabled: candidate.rebate_enabled,
+                total_deposit_minor: direct_user_recharge_minor(&state, &candidate.user.id).await?,
+                created_at: candidate.created_at,
+            });
+        }
+        direct_users
+    } else {
+        Vec::new()
+    };
+    let total_direct_deposit_minor = sum_direct_deposit_minor(&direct_users)?;
+    let active_direct_count = direct_users
+        .iter()
+        .filter(|user| {
+            matches!(user.invite_status, InviteStatus::Active)
+                && matches!(user.status, UserStatus::Active)
+        })
+        .count();
+
+    Ok(Json(ApiEnvelope::success(UserInvitationSummaryResponse {
+        can_invite,
+        invitation_code: session.user.invite_code,
+        direct_count: direct_users.len(),
+        active_direct_count,
+        total_direct_deposit_minor,
+        total_paid_commission_minor: 0,
+        rebate_mode: policy.rebate_mode,
+        default_recharge_rebate_basis_points: policy.default_recharge_rebate_basis_points,
+        direct_users,
+    })))
+}
+
+/// 邀请中心内部直属用户候选项，统一承载来源用户、关系状态和创建时间。
+#[derive(Clone)]
+struct DirectInvitationCandidate {
+    user: UserSummary,
+    invite_status: InviteStatus,
+    rebate_enabled: bool,
+    created_at: String,
+}
+
+/// 判断当前用户是否拥有可对外使用的邀请码权限。
+fn user_can_invite(user: &UserSummary, policy: &InvitePolicySummary) -> bool {
+    matches!(user.kind, UserKind::Agent) && policy.agents_can_invite
+}
+
+/// 合并后台邀请记录和注册时绑定的代理关系，形成手机端邀请中心直属用户列表。
+fn collect_direct_invitation_candidates(
+    current_user_id: &str,
+    users: &[UserSummary],
+    invite_records: &[InviteRecord],
+    default_rebate_enabled: bool,
+) -> Vec<DirectInvitationCandidate> {
+    let users_by_id: HashMap<&str, &UserSummary> =
+        users.iter().map(|user| (user.id.as_str(), user)).collect();
+    let mut candidates: BTreeMap<String, DirectInvitationCandidate> = BTreeMap::new();
+
+    for record in invite_records
+        .iter()
+        .filter(|record| record.inviter_user_id == current_user_id)
+    {
+        if let Some(user) = users_by_id.get(record.invitee_user_id.as_str()) {
+            candidates.insert(
+                user.id.clone(),
+                DirectInvitationCandidate {
+                    user: (*user).to_owned(),
+                    invite_status: record.status.clone(),
+                    rebate_enabled: record.rebate_enabled,
+                    created_at: record.created_at.clone(),
+                },
+            );
+        }
+    }
+
+    for user in users
+        .iter()
+        .filter(|user| user.agent_id.as_deref() == Some(current_user_id))
+    {
+        candidates
+            .entry(user.id.clone())
+            .or_insert_with(|| DirectInvitationCandidate {
+                user: user.clone(),
+                invite_status: InviteStatus::Active,
+                rebate_enabled: default_rebate_enabled,
+                created_at: String::new(),
+            });
+    }
+
+    candidates.into_values().collect()
+}
+
+/// 统计直属用户充值入账流水，金额统一使用最小货币单位。
+async fn direct_user_recharge_minor(state: &AppState, user_id: &str) -> ApiResult<i64> {
+    let entries = state.finance.user_ledger_entries(user_id).await?;
+    sum_recharge_credits_minor(&entries)
+}
+
+/// 汇总充值入账流水，忽略非充值流水和异常的负数充值记录。
+fn sum_recharge_credits_minor(entries: &[LedgerEntry]) -> ApiResult<i64> {
+    entries
+        .iter()
+        .filter(|entry| {
+            matches!(entry.kind, LedgerEntryKind::RechargeCredit) && entry.amount_minor > 0
+        })
+        .try_fold(0_i64, |total, entry| {
+            total
+                .checked_add(entry.amount_minor)
+                .ok_or_else(|| ApiError::Internal("直属用户充值汇总金额溢出".to_string()))
+        })
+}
+
+/// 汇总邀请中心直属充值金额，避免金额字段溢出后继续返回错误数据。
+fn sum_direct_deposit_minor(direct_users: &[UserInvitationDirectUser]) -> ApiResult<i64> {
+    direct_users.iter().try_fold(0_i64, |total, user| {
+        total
+            .checked_add(user.total_deposit_minor)
+            .ok_or_else(|| ApiError::Internal("邀请中心直属充值汇总金额溢出".to_string()))
+    })
 }
 
 async fn get_user_bet_page_config(
@@ -1444,7 +1590,91 @@ mod tests {
     use crate::domain::{
         group_buy::GroupBuyParticipant,
         lottery::{DrawMode, DrawSchedule, GroupBuyConfig, LotteryNumberType, PlayCategory},
+        rebate::RebateMode,
     };
+
+    #[test]
+    /// 验证用户端邀请中心只允许代理在策略开启时使用邀请码。
+    fn user_invitation_permission_requires_agent_and_enabled_policy() {
+        let policy = test_invite_policy(true);
+        let regular = test_invitation_user("U90010", "regular", UserKind::Regular, None);
+        let agent = test_invitation_user("U90011", "agent", UserKind::Agent, None);
+
+        assert!(!user_can_invite(&regular, &policy));
+        assert!(user_can_invite(&agent, &policy));
+        assert!(!user_can_invite(&agent, &test_invite_policy(false)));
+    }
+
+    #[test]
+    /// 验证邀请中心会合并后台邀请记录和注册时绑定的代理关系。
+    fn user_invitation_candidates_merge_records_and_agent_links() {
+        let agent = test_invitation_user("U90011", "agent", UserKind::Agent, None);
+        let record_user = test_invitation_user(
+            "U90012",
+            "record_user",
+            UserKind::Regular,
+            Some(agent.id.clone()),
+        );
+        let linked_user = test_invitation_user(
+            "U90013",
+            "linked_user",
+            UserKind::Regular,
+            Some(agent.id.clone()),
+        );
+        let users = vec![agent.clone(), record_user.clone(), linked_user.clone()];
+        let records = vec![InviteRecord {
+            id: "INV-90012".to_string(),
+            inviter_user_id: agent.id.clone(),
+            inviter_username: agent.username.clone(),
+            invitee_user_id: record_user.id.clone(),
+            invitee_username: record_user.username.clone(),
+            invite_code: agent.invite_code.clone(),
+            status: InviteStatus::Pending,
+            rebate_enabled: false,
+            note: String::new(),
+            created_at: "2026-06-05 19:00:00".to_string(),
+            updated_at: "2026-06-05 19:00:00".to_string(),
+        }];
+
+        let candidates = collect_direct_invitation_candidates(&agent.id, &users, &records, true);
+
+        assert_eq!(candidates.len(), 2);
+        let record_candidate = candidates
+            .iter()
+            .find(|candidate| candidate.user.id == record_user.id)
+            .expect("后台邀请记录用户应进入直属列表");
+        assert!(matches!(
+            record_candidate.invite_status,
+            InviteStatus::Pending
+        ));
+        assert!(!record_candidate.rebate_enabled);
+        assert_eq!(record_candidate.created_at, "2026-06-05 19:00:00");
+        let linked_candidate = candidates
+            .iter()
+            .find(|candidate| candidate.user.id == linked_user.id)
+            .expect("注册绑定代理用户应进入直属列表");
+        assert!(matches!(
+            linked_candidate.invite_status,
+            InviteStatus::Active
+        ));
+        assert!(linked_candidate.rebate_enabled);
+        assert!(linked_candidate.created_at.is_empty());
+    }
+
+    #[test]
+    /// 验证邀请中心直属充值汇总只统计正向充值入账流水。
+    fn user_invitation_recharge_sum_counts_only_positive_recharge_credit() {
+        let entries = vec![
+            test_ledger_entry("L-001", LedgerEntryKind::RechargeCredit, 10_000),
+            test_ledger_entry("L-002", LedgerEntryKind::OrderDebit, -2_000),
+            test_ledger_entry("L-003", LedgerEntryKind::RechargeCredit, -1_000),
+            test_ledger_entry("L-004", LedgerEntryKind::RechargeCredit, 5_000),
+        ];
+
+        let amount = sum_recharge_credits_minor(&entries).expect("充值汇总不应失败");
+
+        assert_eq!(amount, 15_000);
+    }
 
     #[test]
     /// 验证手机端公开配置会隐藏未配置占位，并保留站点介绍。
@@ -1598,6 +1828,47 @@ mod tests {
             note: String::new(),
             created_at: "2026-06-05 20:00:00".to_string(),
             updated_at: "2026-06-05 20:00:00".to_string(),
+        }
+    }
+
+    fn test_invitation_user(
+        id: &str,
+        username: &str,
+        kind: UserKind,
+        agent_id: Option<String>,
+    ) -> UserSummary {
+        UserSummary {
+            id: id.to_string(),
+            username: username.to_string(),
+            email: None,
+            kind,
+            status: UserStatus::Active,
+            balance_minor: 0,
+            agent_id,
+            invite_code: "ABCDEFGH".to_string(),
+        }
+    }
+
+    fn test_invite_policy(agents_can_invite: bool) -> InvitePolicySummary {
+        InvitePolicySummary {
+            agents_can_invite,
+            regular_users_can_invite: false,
+            rebate_mode: RebateMode::Immediate,
+            supported_rebate_modes: vec![RebateMode::Immediate, RebateMode::RechargeTiered],
+            default_recharge_rebate_basis_points: 300,
+        }
+    }
+
+    fn test_ledger_entry(id: &str, kind: LedgerEntryKind, amount_minor: i64) -> LedgerEntry {
+        LedgerEntry {
+            id: id.to_string(),
+            user_id: "U90012".to_string(),
+            kind,
+            amount_minor,
+            balance_after_minor: amount_minor.max(0),
+            reference_id: None,
+            description: "测试流水".to_string(),
+            created_at: "2026-06-05 19:00:00".to_string(),
         }
     }
 }

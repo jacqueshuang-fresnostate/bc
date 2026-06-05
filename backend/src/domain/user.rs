@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::finance::FinancialAccountSummary;
+use crate::domain::{finance::FinancialAccountSummary, invite::InviteStatus, rebate::RebateMode};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -149,6 +149,32 @@ pub struct UserForgotPasswordResponse {
 #[serde(rename_all = "camelCase")]
 pub struct UserProfileResponse {
     pub user: UserSummary,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UserInvitationDirectUser {
+    pub id: String,
+    pub username: String,
+    pub status: UserStatus,
+    pub invite_status: InviteStatus,
+    pub rebate_enabled: bool,
+    pub total_deposit_minor: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UserInvitationSummaryResponse {
+    pub can_invite: bool,
+    pub invitation_code: String,
+    pub direct_count: usize,
+    pub active_direct_count: usize,
+    pub total_direct_deposit_minor: i64,
+    pub total_paid_commission_minor: i64,
+    pub rebate_mode: RebateMode,
+    pub default_recharge_rebate_basis_points: u16,
+    pub direct_users: Vec<UserInvitationDirectUser>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

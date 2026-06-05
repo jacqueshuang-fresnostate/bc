@@ -4265,3 +4265,84 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 - 后端需要覆盖提现通过、提现驳回和反向审核拒绝。
 - OpenAPI 测试需要覆盖财务总览、提现申请列表和提现审核路径。
 - 管理后台需要运行 `npm run build`，确认分页响应、用户名字段和提现状态枚举类型一致。
+
+---
+
+## 场景：手机端邀请中心汇总接口
+
+### 1. 范围 / 触发条件
+
+- 触发条件：手机端打开 `invitation-center` 页面，或用户复制邀请码、查看直属用户与返利摘要。
+- 范围：`GET /api/user/invitations/summary`、`AccessRepository` 用户代理关系、`InviteRepository` 邀请记录、`FinanceRepository` 资金流水、手机端 `mobile/src/api/user.ts`。
+
+### 2. 签名
+
+- `GET /api/user/invitations/summary`
+- 认证方式：用户 Bearer Token。
+- 请求体：无。
+
+### 3. 契约
+
+接口返回统一信封，`data` 字段使用 `camelCase`：
+
+```json
+{
+  "canInvite": true,
+  "invitationCode": "ABCDEFGH",
+  "directCount": 2,
+  "activeDirectCount": 1,
+  "totalDirectDepositMinor": 15000,
+  "totalPaidCommissionMinor": 0,
+  "rebateMode": "immediate",
+  "defaultRechargeRebateBasisPoints": 300,
+  "directUsers": []
+}
+```
+
+直属用户项：
+
+```json
+{
+  "id": "U90012",
+  "username": "demo_user",
+  "status": "active",
+  "inviteStatus": "active",
+  "rebateEnabled": true,
+  "totalDepositMinor": 10000,
+  "createdAt": "2026-06-05 19:00:00"
+}
+```
+
+规则：
+
+- 每个用户都有 `invitationCode`，但普通用户 `canInvite=false`，普通用户邀请码不能作为有效邀请来源。
+- 只有 `UserKind::Agent` 且邀请策略 `agentsCanInvite=true` 时，`canInvite=true`。
+- 直属用户必须合并两类来源：后台邀请记录里的 `inviterUserId`，以及注册时写入用户表的 `agentId`。
+- 同一直属用户同时存在两类来源时，后台邀请记录优先，因为它包含人工维护的 `inviteStatus`、`rebateEnabled` 和 `createdAt`。
+- `totalDirectDepositMinor` 和直属用户 `totalDepositMinor` 只统计正向 `rechargeCredit` 资金流水。
+- 当前没有真实返利入账流水类型时，`totalPaidCommissionMinor` 固定返回 `0`，不能伪造返利金额。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 未登录访问 | HTTP 401 |
+| 普通用户访问 | 返回自己的邀请码，`canInvite=false`，直属列表为空 |
+| 代理用户访问且策略开启 | `canInvite=true`，可返回直属用户统计 |
+| 代理用户访问且策略关闭 | `canInvite=false`，仍可查看已有直属统计 |
+| 直属用户没有充值流水 | `totalDepositMinor=0` |
+| 金额汇总溢出 | HTTP 500，并返回中文业务错误 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：用户通过代理邀请码注册，只写入 `agentId`，邀请中心仍能展示到代理的直属下级。
+- Good：管理员手动维护邀请记录后，邀请中心使用记录里的邀请状态和返利开关。
+- Base：普通用户看到邀请码但复制时提示无可用邀请权限。
+- Bad：手机端继续请求旧 `/auth/invitations/summary` 或继续消费 `can_invite/direct_users` 这类 snake_case 字段。
+- Bad：前端自行读取资金流水并计算直属充值；统计口径必须由后端统一。
+
+### 6. 必要测试
+
+- 后端需要覆盖代理权限判断、邀请记录与 `agentId` 合并、充值流水汇总。
+- OpenAPI 核心路径测试需要包含 `/user/invitations/summary`。
+- 手机端需要运行 `npm run build`，确认 TypeScript 类型与 `camelCase` 字段一致。
