@@ -1172,7 +1172,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/user/bet/orders",
         "用户端投注",
         "用户注单列表",
-        "返回当前用户自己的投注订单记录。",
+        "返回当前用户自己的独立投注订单，以及当前用户参与且已满单成单的合买投注订单。",
         AuthMode::User,
         RequestBodyKind::None,
     ),

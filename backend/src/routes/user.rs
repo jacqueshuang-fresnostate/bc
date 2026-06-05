@@ -10,7 +10,7 @@ use axum::{
     Extension, Json, Router,
 };
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
 use crate::{
@@ -30,7 +30,7 @@ use crate::{
         MobileBetPageConfig, MobileCreateBetOrderBatchRequest, MobileCreateBetOrderBatchResponse,
         MobileSiteConfig,
     },
-    domain::order::{CreateOrderRequest, OrderDetail},
+    domain::order::{CreateOrderRequest, OrderDetail, OrderSource},
     domain::permission::SystemSetting,
     domain::rebate::InvitePolicySummary,
     domain::recharge::{
@@ -619,15 +619,38 @@ async fn list_user_bet_orders(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<OrderDetail>>>> {
-    let orders = state
-        .orders
-        .list()
-        .await?
-        .into_iter()
-        .filter(|order| order.user_id == session.user.id)
-        .collect();
+    let orders = state.orders.list().await?;
+    let group_buy_plans = state.group_buys.list_details().await?;
+    let orders = user_visible_bet_orders(&session.user.id, orders, &group_buy_plans);
 
     Ok(Json(ApiEnvelope::success(orders)))
+}
+
+/// 合并本人独立下注订单，以及本人参与且已经成单的合买投注订单。
+fn user_visible_bet_orders(
+    user_id: &str,
+    orders: Vec<OrderDetail>,
+    group_buy_plans: &[GroupBuyPlan],
+) -> Vec<OrderDetail> {
+    let participated_group_buy_order_ids = group_buy_plans
+        .iter()
+        .filter(|plan| {
+            plan.participants
+                .iter()
+                .any(|participant| participant.user_id == user_id)
+        })
+        .filter_map(|plan| plan.order_id.as_ref())
+        .cloned()
+        .collect::<HashSet<_>>();
+
+    orders
+        .into_iter()
+        .filter(|order| {
+            order.user_id == user_id
+                || (order.order_source == OrderSource::GroupBuy
+                    && participated_group_buy_order_ids.contains(&order.id))
+        })
+        .collect()
 }
 
 async fn create_user_bet_orders(
@@ -1590,6 +1613,8 @@ mod tests {
     use crate::domain::{
         group_buy::GroupBuyParticipant,
         lottery::{DrawMode, DrawSchedule, GroupBuyConfig, LotteryNumberType, PlayCategory},
+        order::{OrderSource, OrderStatus},
+        play::{PlayRuleCode, PlaySelection},
         rebate::RebateMode,
     };
 
@@ -1770,6 +1795,53 @@ mod tests {
         assert_eq!(view.title, "用户发起合买");
     }
 
+    #[test]
+    /// 验证用户端注单列表会包含本人参与且已经满单生成的合买订单。
+    fn user_visible_bet_orders_include_participated_group_buy_order() {
+        let direct_order = test_order("O000000000001", "U20002", OrderSource::Direct);
+        let participated_group_order = test_order("O000000000002", "U10001", OrderSource::GroupBuy);
+        let unrelated_group_order = test_order("O000000000003", "U10001", OrderSource::GroupBuy);
+        let unrelated_direct_order = test_order("O000000000004", "U10001", OrderSource::Direct);
+        let plans = vec![
+            test_group_buy_plan_with_order(
+                "G-USER-ORDER-001",
+                "O000000000002",
+                vec![
+                    test_group_buy_participant("G-USER-ORDER-001-P001", "U10001"),
+                    test_group_buy_participant("G-USER-ORDER-001-P002", "U20002"),
+                ],
+            ),
+            test_group_buy_plan_with_order(
+                "G-USER-ORDER-002",
+                "O000000000003",
+                vec![test_group_buy_participant(
+                    "G-USER-ORDER-002-P001",
+                    "U10003",
+                )],
+            ),
+        ];
+
+        let visible = user_visible_bet_orders(
+            "U20002",
+            vec![
+                unrelated_direct_order,
+                unrelated_group_order,
+                participated_group_order,
+                direct_order,
+            ],
+            &plans,
+        );
+        let visible_ids = visible
+            .iter()
+            .map(|order| order.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(visible_ids, vec!["O000000000002", "O000000000001"]);
+        assert!(visible
+            .iter()
+            .any(|order| order.order_source == OrderSource::GroupBuy));
+    }
+
     fn test_group_buy_lottery() -> LotteryKind {
         LotteryKind {
             id: "ssc60".to_string(),
@@ -1828,6 +1900,59 @@ mod tests {
             note: String::new(),
             created_at: "2026-06-05 20:00:00".to_string(),
             updated_at: "2026-06-05 20:00:00".to_string(),
+        }
+    }
+
+    fn test_group_buy_plan_with_order(
+        id: &str,
+        order_id: &str,
+        participants: Vec<GroupBuyParticipant>,
+    ) -> GroupBuyPlan {
+        let mut plan = test_group_buy_plan(id, "20260605200000", "regular_user", "用户发起合买");
+        plan.order_id = Some(order_id.to_string());
+        plan.status = GroupBuyPlanStatus::Filled;
+        plan.filled_amount_minor = plan.total_amount_minor;
+        plan.participants = participants;
+        plan
+    }
+
+    fn test_group_buy_participant(id: &str, user_id: &str) -> GroupBuyParticipant {
+        GroupBuyParticipant {
+            id: id.to_string(),
+            user_id: user_id.to_string(),
+            username: format!("{user_id}_name"),
+            amount_minor: 1_000,
+            share_count: 1,
+            note: "测试认购".to_string(),
+            created_at: "2026-06-05 20:00:00".to_string(),
+        }
+    }
+
+    fn test_order(id: &str, user_id: &str, order_source: OrderSource) -> OrderDetail {
+        OrderDetail {
+            id: id.to_string(),
+            order_source,
+            user_id: user_id.to_string(),
+            lottery_id: "ssc60".to_string(),
+            lottery_name: "测试彩".to_string(),
+            issue: "20260605200000".to_string(),
+            rule_code: PlayRuleCode::FiveFrontDirect,
+            number_type: LotteryNumberType::FiveDigit,
+            selection: PlaySelection {
+                positions: vec![vec![1], vec![2], vec![3]],
+                ..PlaySelection::default()
+            },
+            stake_count: 1,
+            unit_amount_minor: 200,
+            amount_minor: 200,
+            odds_basis_points: 95_000,
+            expanded_bets: vec!["123".to_string()],
+            draw_number: None,
+            matched_bets: Vec::new(),
+            payout_minor: 0,
+            status: OrderStatus::PendingDraw,
+            settled_at: None,
+            created_at: "2026-06-05 20:00:00".to_string(),
         }
     }
 

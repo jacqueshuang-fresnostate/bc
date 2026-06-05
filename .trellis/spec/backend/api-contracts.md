@@ -823,7 +823,7 @@ await createOrder({
 ### 2. 签名
 
 - `GET /api/user/bet/page-config/{lottery_id}`：读取当前销售彩种的下注页配置。
-- `GET /api/user/bet/orders`：读取当前登录用户自己的投注订单。
+- `GET /api/user/bet/orders`：读取当前登录用户自己的投注订单，以及当前用户参与且已满单成单的合买投注订单。
 - `POST /api/user/bet/orders`：批量创建当前登录用户的投注订单。
 
 ### 3. 契约
@@ -891,6 +891,13 @@ await createOrder({
 - `direct`：用户独立下单。
 - `groupBuy`：合买满单后生成的真实投注订单。
 
+用户注单列表的归属口径必须同时覆盖两类数据：
+
+- `order.userId` 等于当前登录用户的独立投注订单。
+- 当前登录用户出现在合买计划 `participants` 中，且该计划已经通过 `orderId` 关联真实投注订单时，对应 `orderSource=groupBuy` 的订单。
+
+未满单、未生成真实投注订单的合买计划不进入注单列表，应继续通过“我的合买”接口展示。
+
 手机端注单记录必须按该字段展示“独立下单”或“合买下单”，不能只用订单号、资金流水或旧系统 `source_name` 猜测。
 
 下注页“加入购彩篮”是把当前草稿加入本地待提交购物篮，不是跨彩种组合投注。前端加入和提交时都必须校验购彩篮内所有单据属于同一个彩种和同一期号。
@@ -910,13 +917,15 @@ await createOrder({
 | 玩法、号码类型、选号或赔率无效 | HTTP 400，沿用订单和玩法规则引擎错误 |
 | 当前用户余额不足 | HTTP 400/409，沿用财务账户余额校验错误 |
 | 扣款失败 | 回滚本次未入账订单，返回财务错误 |
+| 用户参与合买且计划已成单 | `GET /api/user/bet/orders` 返回对应 `orderSource=groupBuy` 注单 |
+| 用户参与合买但计划未满单 | 不返回注单，继续由“我的合买”展示计划进度 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：进入销售中的 `txffc` 下注页，读取到 `round.status=selling`、最近开奖和所有已启用玩法赔率。
 - Good：前端提交 `positions`、`numbers`、`bankerNumbers/dragNumbers` 或 `bigSmallOddEven`，后端复用订单规则计算注数和扣款。
 - Good：直选组合前端使用 `positionGridKind=direct_combination` 多选数字，并按排列数显示注数；后端仍以 `selection.numbers` 展开排列投注。
-- Good：用户独立下注后注单记录展示 `orderSource=direct` 和“独立下单”；合买满单成单后注单记录展示 `orderSource=groupBuy` 和“合买下单”。
+- Good：用户独立下注后注单记录展示 `orderSource=direct` 和“独立下单”；用户作为参与人认购的合买满单成单后，即使真实订单 `userId` 是发起人，注单记录也展示 `orderSource=groupBuy` 和“合买下单”。
 - Good：用户切换彩种或期号变化后，购彩篮不能继续提交旧彩种或旧期号单据。
 - Base：没有 open 期号时，下注页返回 `round.status=opening`，手机端轮询下一期，不允许提交。
 - Bad：手机端继续把 `play_code/numbers/amount` 发到旧 `/bet/place-batch`；该接口不是当前系统契约。
@@ -927,6 +936,7 @@ await createOrder({
 - 后端运行 `cargo check --manifest-path backend/Cargo.toml`。
 - 后端测试 `cargo test --manifest-path backend/Cargo.toml mobile_bet -- --nocapture`，覆盖当前期、最近开奖、已启用玩法和直选组合配置。
 - 后端测试需要覆盖普通订单来源为 `direct`，合买满单生成订单来源为 `groupBuy`。
+- 后端测试需要覆盖用户参与别人发起的合买计划后，满单生成的真实投注订单会出现在该用户注单列表。
 - OpenAPI 测试必须包含 `/user/bet/page-config/{lottery_id}` 和 `/user/bet/orders`。
 - 手机端运行 `cd mobile && npm run build`，确认下注页 API 客户端、动态配置归一化和批量提交类型通过。
 

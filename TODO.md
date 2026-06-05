@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-05 21:53 HKT 手机端我的注单显示合买订单
+
+- 完成任务：修正用户端 `GET /api/user/bet/orders` 的注单归属口径，让“我的注单”能显示当前用户参与且已经满单成单的合买订单。
+- 解决问题：合买满单生成的真实投注订单归属发起人，原接口只按 `order.userId == 当前用户` 过滤，导致普通参与人无法在“我的注单”看到自己的合买下单记录。
+- 实施内容：后端注单列表合并本人独立下注订单，以及本人在合买 `participants` 中且计划 `orderId` 指向真实投注订单的 `orderSource=groupBuy` 订单；未满单的合买计划仍由“我的合买”展示，不混入注单列表。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`cd mobile && npm run build` 和 `git diff --check` 均通过；后端全量 221 条测试成功，新增覆盖合买参与人也能看到已成单合买注单。
+
 ## 2026-06-05 19:51 HKT 手机端首页高频极速模块视觉优化
 
 - 完成任务：优化手机端首页“高频极速”模块的主推卡、二级卡和区块标题展示。
