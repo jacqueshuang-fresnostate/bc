@@ -164,9 +164,6 @@ function createEmojiPicker(
     i18n,
     locale: 'zh',
     navPosition: 'bottom',
-    onClickOutside: () => {
-      emojiPickerVisible.value = false
-    },
     onEmojiSelect: insertEmoji,
     previewPosition: 'none',
     searchPosition: 'top',

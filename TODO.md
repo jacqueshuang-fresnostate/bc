@@ -2175,3 +2175,10 @@
 - 解决问题：此前 Semi UI `Popover` 和 `emoji-mart` Picker 同时处理外部点击关闭；Picker 内部监听在弹窗关闭后可能影响下一次按钮点击，导致第二次打开瞬间又关闭。
 - 实施内容：后台客服表情弹窗改为由 Popover 统一处理外部点击关闭，设置 `keepDOM` 复用 Picker 实例，并移除 Picker 的 `onClickOutside`；同步更新前端组件规范和架构说明。
 - 验证结果：管理后台 `npm run build` 和 `git diff --check` 通过；本地 dev server 配合临时 mock 后端完成后台登录、进入在线客服、第一次打开表情弹窗、关闭、第二次再次打开的浏览器烟测，关闭后弹窗尺寸归零，第二次打开后 Picker 和 Popover 尺寸恢复正常，浏览器控制台无错误。
+
+## 2026-06-06 23:06 HKT 手机端客服表情弹窗重复打开修复
+
+- 完成任务：修复手机端 `/support` 表情弹窗第一次打开后，关闭再点击“表情”无法再次正常打开的问题。
+- 解决问题：此前手机端虽然已经把 `emoji-mart` 原生 Picker 放到 `Teleport` 面板里，但仍给 Picker 传入 `onClickOutside`；Picker 内部监听与 Vue 遮罩关闭逻辑叠加，可能导致第二次点击按钮时刚打开就被关掉。
+- 实施内容：移除手机端原生 Picker 的 `onClickOutside`，外部点击关闭统一由 Vue `Teleport` 遮罩处理，选中表情后仍由 `insertEmoji` 插入并关闭弹窗；同步更新前端组件规范和架构说明。
+- 验证结果：手机端 `npm run build`、`npm test` 和 `git diff --check` 通过；本地 dev server 配合临时 mock 后端完成登录、进入 `/support`、第一次打开表情弹窗、点击遮罩关闭、第二次再次打开的浏览器烟测，关闭后 Picker 尺寸归零，第二次打开后 Picker 和遮罩尺寸恢复正常，浏览器控制台无错误。
