@@ -2140,3 +2140,10 @@
 - 实施内容：`OrderRepository` 新增 `create_with_debit/create_many_with_debit/cancel_with_refund/settle_with_payouts`；用户端批量下注和后台订单创建、取消、结算切换到事务入口；`RechargeRepository` 确认入账与 `FinanceStore::credit_recharge` 同事务保存；`WithdrawalRepository` 提现申请、通过、驳回与资金冻结/打款/解冻同事务保存；各仓储抽出 `save_*_store_in_transaction` 内部函数。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml` 和 `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 均通过；后端全量 234 条测试成功，新增覆盖批量下注失败不产生部分订单和扣款、订单取消退款、开奖结算派奖。
 - 后续动作：合买发起、合买认购、后台追加合买参与人和机器人补单仍需要继续收敛到统一事务协调入口，当前保留既有补偿删除逻辑。
+
+## 2026-06-06 15:17 HKT 后台支付方式开关配置
+
+- 完成任务：在后台系统设置的“充值设置”Tab 新增“支付方式开关”面板，可独立配置彩虹易支付、客服直充以及彩虹易支付下的支付宝/微信充值方式。
+- 解决问题：此前支付方式只能在普通配置项里维护，运营不容易看出哪些充值方式实际开启；如果彩虹易支付总开关开启但支付方式为空，用户端还可能回退到默认支付宝，导致后台开关和实际下单入口不一致。
+- 实施内容：管理后台隐藏被面板接管的 `recharge_rainbow_epay_enabled`、`recharge_customer_service_enabled`、`recharge_rainbow_epay_pay_types` 普通项，改用清晰的开关和多选控件维护；后端在充值配置返回和下单校验中要求彩虹易支付必须至少开启一个支付方式；手机端充值页只展示真正可用的充值渠道，不再为缺失 `payTypes` 的彩虹易支付默认补支付宝。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、管理后台 `npm run build`、手机端 `npm run build` 和 `git diff --check` 均通过；后端全量 236 条测试成功，新增覆盖彩虹易支付开启但支付方式为空时用户端配置不可用、下单返回错误；后台 dev server 浏览器烟测通过，页面标题正常且无控制台错误。

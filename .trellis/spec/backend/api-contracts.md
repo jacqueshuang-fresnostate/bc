@@ -3893,7 +3893,7 @@ if let Some(draw_number) = active_draw_control_number(&issue)? {
 }
 ```
 
-`channel` 只能是 `rainbowEpay` 或 `customerService`。金额继续使用最小货币单位。彩虹易支付返回 `paymentUrl`，客服直充返回 `supportConversationId` 并同步创建客服会话。
+`channel` 只能是 `rainbowEpay` 或 `customerService`。金额继续使用最小货币单位。彩虹易支付返回 `paymentUrl`，客服直充返回 `supportConversationId` 并同步创建客服会话。后台系统设置的“支付方式开关”负责维护 `recharge_rainbow_epay_enabled`、`recharge_customer_service_enabled` 和 `recharge_rainbow_epay_pay_types`；当彩虹易支付总开关开启但 `payTypes` 为空时，用户端配置必须把 `rainbowEpay.enabled` 返回为 `false`，创建彩虹易支付订单也必须返回 HTTP 400。
 
 彩虹易支付通知接口不返回统一信封；验签和入账成功后必须返回裸文本 `success`，以便第三方支付平台确认通知已处理。用户端客服消息请求体为：
 
@@ -3931,6 +3931,7 @@ if let Some(draw_number) = active_draw_control_number(&issue)? {
 | 充值金额低于 `recharge_min_amount_minor` | HTTP 400 |
 | 充值金额高于 `recharge_max_amount_minor` | HTTP 400 |
 | 彩虹易支付未开启 | HTTP 400 |
+| 彩虹易支付开启但未配置任何 `payTypes` | HTTP 400，用户端充值配置中 `rainbowEpay.enabled=false` |
 | 彩虹易支付网关、商户号或密钥仍为占位值 | HTTP 400 |
 | `payType` 不在后台配置列表中 | HTTP 400 |
 | 客服直充未开启 | HTTP 400 |

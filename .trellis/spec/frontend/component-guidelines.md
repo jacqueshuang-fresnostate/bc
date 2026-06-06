@@ -58,7 +58,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端首页所有彩种卡片都不展示合买标签、合买按钮或合买大厅入口；合买功能只在合买大厅、下注页合买模式和我的合买等专用页面展示。
 - 手机端首页倒计时到达开奖时间后必须触发静默刷新，且需要消费 `issue_opened` / `issue_closed` 实时事件更新当前期号和封盘状态，避免长期停留在“开奖中”。
 - 手机端开奖历史和注单状态展示必须通过中文状态映射处理，不能把 `drawn`、`pendingDraw` 等接口状态值直接渲染给用户。
-- 手机端充值页必须以 `GET /api/user/recharge/config` 返回的后台充值配置为准，只展示已开启的 `rainbowEpay` 和 `customerService` 渠道；彩虹易支付使用后端 `payTypes`，客服直充创建订单后跳转绑定的客服会话。不要再调用旧 `/payment/*` 接口，也不要在后端未配置时展示 USDT 或快捷充值模式。
+- 手机端充值页必须以 `GET /api/user/recharge/config` 返回的后台充值配置为准，只展示已开启且真正可用的 `rainbowEpay` 和 `customerService` 渠道；彩虹易支付必须使用后端 `payTypes`，当 `payTypes` 为空时不能展示在线支付入口，也不能默认补 `alipay`。客服直充创建订单后跳转绑定的客服会话。不要再调用旧 `/payment/*` 接口，也不要在后端未配置时展示 USDT 或快捷充值模式。
 - 手机端充值页属于高频资金操作页，需要直接展示充值渠道卡片、余额摘要、快捷金额和底部固定提交栏；快捷金额必须按后台 `minAmountMinor/maxAmountMinor` 过滤，最近订单中可继续处理的彩虹易支付订单应提供“继续支付”，客服直充订单应提供“联系客服”。
 - 手机端充值页金额输入属于浏览器原生 `type="number"` 输入，运行时可能返回字符串或数字；金额解析函数不能直接调用 `value.trim()`，必须先用 `String(value ?? '').trim()` 归一化，再按两位小数转换为最小货币单位。
 - 手机端“我的账户”资金流水必须使用当前系统的 `GET /api/user/ledger-entries` 当前用户接口，只展示登录用户自己的流水；页面不得调用后台全量资金流水接口，也不需要为旧系统字段做兼容。流水条目不展示后端 `referenceId` 关联单号，避免把内部关联编号暴露给普通用户。

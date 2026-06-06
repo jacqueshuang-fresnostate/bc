@@ -32,7 +32,10 @@ const loadingOrders = ref(false)
 const loadingProfile = ref(false)
 const submitting = ref(false)
 
-const enabledChannels = computed(() => (config.value?.channels || []).filter(channel => channel.enabled))
+const enabledChannels = computed(() => (config.value?.channels || []).filter(channel => {
+  if (!channel.enabled) return false
+  return channel.channel !== 'rainbowEpay' || channel.payTypes.length > 0
+}))
 const selectedChannelConfig = computed(() => enabledChannels.value.find(channel => channel.channel === selectedChannel.value))
 const isRainbowEpay = computed(() => selectedChannel.value === 'rainbowEpay')
 const isCustomerService = computed(() => selectedChannel.value === 'customerService')
@@ -58,7 +61,13 @@ const submitHint = computed(() => {
 const selectedChannelTitle = computed(() => selectedChannelConfig.value?.name || '选择充值方式')
 const selectedChannelDescription = computed(() => selectedChannelConfig.value?.description || '请先选择可用充值方式')
 const selectedChannelTagText = computed(() => (selectedChannel.value ? channelTagText(selectedChannel.value) : '待选择'))
-const canSubmit = computed(() => Boolean(selectedChannel.value && currentAmountMinor.value && currentAmountMinor.value > 0 && !submitting.value))
+const canSubmit = computed(() => Boolean(
+  selectedChannel.value
+    && currentAmountMinor.value
+    && currentAmountMinor.value > 0
+    && (!isRainbowEpay.value || selectedPayType.value)
+    && !submitting.value,
+))
 const pendingOrderCount = computed(() => orders.value.filter(order => order.status === 'pending' || order.status === 'waitingCustomerService').length)
 const paidOrderCount = computed(() => orders.value.filter(order => order.status === 'paid').length)
 const quickAmountOptions = computed(() => buildQuickAmountOptions(config.value))
@@ -127,7 +136,7 @@ function selectChannel(channel: RechargeChannel) {
 
 function payTypesForChannel(channel?: RechargeChannelConfig) {
   if (channel?.channel !== 'rainbowEpay') return []
-  return channel.payTypes.length ? channel.payTypes : ['alipay']
+  return channel.payTypes
 }
 
 function payTypeText(type?: string | null) {

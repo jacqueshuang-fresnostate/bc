@@ -288,6 +288,11 @@ impl RechargeStore {
         match request.channel {
             RechargeChannel::RainbowEpay => {
                 validate_rainbow_settings(settings)?;
+                if settings.rainbow_pay_types.is_empty() {
+                    return Err(ApiError::BadRequest(
+                        "彩虹易支付未开启任何支付方式".to_string(),
+                    ));
+                }
                 let pay_type = request
                     .pay_type
                     .map(|value| value.trim().to_string())
@@ -297,7 +302,7 @@ impl RechargeStore {
                             .rainbow_pay_types
                             .first()
                             .cloned()
-                            .unwrap_or_else(|| "alipay".to_string())
+                            .unwrap_or_default()
                     });
                 if !settings.rainbow_pay_types.is_empty()
                     && !settings.rainbow_pay_types.contains(&pay_type)
@@ -478,7 +483,7 @@ pub fn recharge_config_response(settings: &RechargeSettings) -> RechargeConfigRe
             RechargeChannelConfig {
                 channel: RechargeChannel::RainbowEpay,
                 name: "彩虹易支付".to_string(),
-                enabled: settings.rainbow_enabled,
+                enabled: settings.rainbow_enabled && !settings.rainbow_pay_types.is_empty(),
                 description: "跳转到彩虹易支付完成在线充值".to_string(),
                 pay_types: settings.rainbow_pay_types.clone(),
             },
@@ -903,6 +908,66 @@ mod tests {
         assert!(payment_url.starts_with("https://pay.example.test/submit.php?"));
         assert!(payment_url.contains("money=12.34"));
         assert!(payment_url.contains("sign_type=MD5"));
+    }
+
+    #[test]
+    fn recharge_config_disables_rainbow_when_pay_types_are_empty() {
+        let settings = RechargeSettings {
+            rainbow_enabled: true,
+            rainbow_gateway_url: "https://pay.example.test".to_string(),
+            rainbow_pid: "1001".to_string(),
+            rainbow_key: "secret".to_string(),
+            rainbow_notify_url: String::new(),
+            rainbow_return_url: String::new(),
+            rainbow_pay_types: Vec::new(),
+            customer_service_enabled: true,
+            customer_service_message: "联系客服充值".to_string(),
+            min_amount_minor: 100,
+            max_amount_minor: 10_000,
+        };
+
+        let response = recharge_config_response(&settings);
+        let rainbow = response
+            .channels
+            .iter()
+            .find(|channel| channel.channel == RechargeChannel::RainbowEpay)
+            .expect("rainbow channel exists");
+
+        assert!(!rainbow.enabled);
+        assert!(rainbow.pay_types.is_empty());
+    }
+
+    #[test]
+    fn recharge_store_rejects_rainbow_when_pay_types_are_empty() {
+        let mut store = RechargeStore::default();
+        let user = user();
+        let settings = RechargeSettings {
+            rainbow_enabled: true,
+            rainbow_gateway_url: "https://pay.example.test".to_string(),
+            rainbow_pid: "1001".to_string(),
+            rainbow_key: "secret".to_string(),
+            rainbow_notify_url: "https://example.test/notify".to_string(),
+            rainbow_return_url: "https://example.test/return".to_string(),
+            rainbow_pay_types: Vec::new(),
+            customer_service_enabled: false,
+            customer_service_message: String::new(),
+            min_amount_minor: 100,
+            max_amount_minor: 10_000,
+        };
+
+        let result = store.create_order(
+            &user,
+            CreateRechargeOrderRequest {
+                channel: RechargeChannel::RainbowEpay,
+                amount_minor: 1234,
+                pay_type: None,
+            },
+            &settings,
+        );
+
+        assert!(
+            matches!(result, Err(ApiError::BadRequest(message)) if message == "彩虹易支付未开启任何支付方式")
+        );
     }
 
     #[tokio::test]

@@ -11,6 +11,7 @@ import {
 } from '@douyinfe/semi-ui';
 import {
   Image as ImageIcon,
+  CreditCard,
   RefreshCcw,
   Save,
   Settings,
@@ -101,6 +102,10 @@ const MOBILE_INTRO_SETTING_KEY = 'mobile_site_intro';
 const MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY = 'mobile_home_featured_enabled';
 const MOBILE_HOME_FEATURED_TITLE_SETTING_KEY = 'mobile_home_featured_title';
 const MOBILE_HOME_FEATURED_LOTTERY_CODES_SETTING_KEY = 'mobile_home_featured_lottery_codes';
+const RECHARGE_RAINBOW_ENABLED_SETTING_KEY = 'recharge_rainbow_epay_enabled';
+const RECHARGE_RAINBOW_PAY_TYPES_SETTING_KEY = 'recharge_rainbow_epay_pay_types';
+const RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY =
+  'recharge_customer_service_enabled';
 const UNCONFIGURED_SETTING_VALUE = '未配置';
 const MOBILE_CUSTOM_SETTING_KEYS = new Set([
   MOBILE_PLATFORM_NAME_SETTING_KEY,
@@ -110,6 +115,15 @@ const MOBILE_CUSTOM_SETTING_KEYS = new Set([
   MOBILE_HOME_FEATURED_TITLE_SETTING_KEY,
   MOBILE_HOME_FEATURED_LOTTERY_CODES_SETTING_KEY,
 ]);
+const RECHARGE_PAYMENT_SETTING_KEYS = new Set([
+  RECHARGE_RAINBOW_ENABLED_SETTING_KEY,
+  RECHARGE_RAINBOW_PAY_TYPES_SETTING_KEY,
+  RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY,
+]);
+const RECHARGE_PAY_TYPE_OPTIONS: SettingSelectOption[] = [
+  { label: '支付宝充值', value: 'alipay' },
+  { label: '微信充值', value: 'wxpay' },
+];
 
 const PERMISSION_SCOPE_OPTIONS: Array<{ label: string; value: PermissionScope }> = [
   { label: '用户', value: 'users' },
@@ -1104,6 +1118,11 @@ function SettingsSection({
                   ? items.filter(
                       (setting) => !MOBILE_CUSTOM_SETTING_KEYS.has(setting.key),
                     )
+                  : groupName === '充值设置'
+                    ? items.filter(
+                        (setting) =>
+                          !RECHARGE_PAYMENT_SETTING_KEYS.has(setting.key),
+                      )
                   : items;
 
               return (
@@ -1134,6 +1153,16 @@ function SettingsSection({
                         imageBedMissingConfigs={imageBedMissingConfigs}
                         imageBedUploadField={imageBedUploadField}
                         lotteries={lotteries}
+                        saving={saving}
+                        settings={settings}
+                        onDraftChange={onDraftChange}
+                        onSaveSetting={onSaveSetting}
+                      />
+                    ) : null}
+
+                    {groupName === '充值设置' ? (
+                      <RechargePaymentPanel
+                        drafts={drafts}
                         saving={saving}
                         settings={settings}
                         onDraftChange={onDraftChange}
@@ -1246,6 +1275,168 @@ function SettingFields({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function RechargePaymentPanel({
+  drafts,
+  onDraftChange,
+  onSaveSetting,
+  saving,
+  settings,
+}: {
+  drafts: Record<string, string>;
+  onDraftChange: (key: string, value: string) => void;
+  onSaveSetting: (key: string) => void;
+  saving: boolean;
+  settings: SystemSettingItem[];
+}) {
+  const rainbowEnabledValue =
+    draftSettingValue(settings, drafts, RECHARGE_RAINBOW_ENABLED_SETTING_KEY) ||
+    'false';
+  const customerServiceEnabledValue =
+    draftSettingValue(
+      settings,
+      drafts,
+      RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY,
+    ) || 'false';
+  const payTypesValue = draftSettingValue(
+    settings,
+    drafts,
+    RECHARGE_RAINBOW_PAY_TYPES_SETTING_KEY,
+  );
+  const selectedPayTypes = settingListValue(payTypesValue);
+  const rainbowReady =
+    rainbowEnabledValue === 'true' && selectedPayTypes.length > 0;
+
+  return (
+    <div className="rounded border border-slate-200 bg-slate-50 p-3">
+      <PanelTitle icon={<CreditCard size={18} />} title="支付方式开关" />
+      <div className="grid gap-3 xl:grid-cols-3">
+        <div className="rounded border border-slate-200 bg-white p-3">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-ink">彩虹易支付</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                开启后用户端展示在线充值入口，仍需要下方至少开启一种支付方式。
+              </p>
+            </div>
+            <Tag color={rainbowReady ? 'green' : 'grey'}>
+              {rainbowReady ? '可用' : '不可用'}
+            </Tag>
+          </div>
+          <Select
+            className="form-input"
+            value={rainbowEnabledValue}
+            onChange={(value) =>
+              onDraftChange(
+                RECHARGE_RAINBOW_ENABLED_SETTING_KEY,
+                String(value ?? 'false'),
+              )
+            }
+          >
+            <Select.Option value="true">开启彩虹易支付</Select.Option>
+            <Select.Option value="false">关闭彩虹易支付</Select.Option>
+          </Select>
+          <div className="mt-3 flex justify-end">
+            <Button
+              disabled={saving}
+              icon={<Save size={16} />}
+              size="small"
+              onClick={() => onSaveSetting(RECHARGE_RAINBOW_ENABLED_SETTING_KEY)}
+            >
+              保存开关
+            </Button>
+          </div>
+        </div>
+
+        <div className="rounded border border-slate-200 bg-white p-3">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-ink">客服直充</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                开启后用户可以提交直充申请，并进入客服会话继续沟通。
+              </p>
+            </div>
+            <Tag color={customerServiceEnabledValue === 'true' ? 'green' : 'grey'}>
+              {customerServiceEnabledValue === 'true' ? '已开启' : '已关闭'}
+            </Tag>
+          </div>
+          <Select
+            className="form-input"
+            value={customerServiceEnabledValue}
+            onChange={(value) =>
+              onDraftChange(
+                RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY,
+                String(value ?? 'false'),
+              )
+            }
+          >
+            <Select.Option value="true">开启客服直充</Select.Option>
+            <Select.Option value="false">关闭客服直充</Select.Option>
+          </Select>
+          <div className="mt-3 flex justify-end">
+            <Button
+              disabled={saving}
+              icon={<Save size={16} />}
+              size="small"
+              onClick={() =>
+                onSaveSetting(RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY)
+              }
+            >
+              保存开关
+            </Button>
+          </div>
+        </div>
+
+        <div className="rounded border border-slate-200 bg-white p-3">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-ink">在线支付方式</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                支付宝和微信会写入彩虹易支付 `payTypes`，用户端只展示已选方式。
+              </p>
+            </div>
+            <Tag color={selectedPayTypes.length > 0 ? 'blue' : 'orange'}>
+              {selectedPayTypes.length > 0
+                ? `${selectedPayTypes.length} 个方式`
+                : '未开启'}
+            </Tag>
+          </div>
+          <Select
+            className="form-input"
+            multiple
+            placeholder="选择要开启的支付方式"
+            value={selectedPayTypes}
+            onChange={(value) =>
+              onDraftChange(
+                RECHARGE_RAINBOW_PAY_TYPES_SETTING_KEY,
+                settingListText(value),
+              )
+            }
+          >
+            {RECHARGE_PAY_TYPE_OPTIONS.map((option) => (
+              <Select.Option key={option.value} value={option.value}>
+                {option.label}
+              </Select.Option>
+            ))}
+          </Select>
+          <p className="mt-2 text-xs leading-5 text-slate-500">
+            如果不选择任何支付方式，用户端不会展示彩虹易支付入口。
+          </p>
+          <div className="mt-3 flex justify-end">
+            <Button
+              disabled={saving}
+              icon={<Save size={16} />}
+              size="small"
+              onClick={() => onSaveSetting(RECHARGE_RAINBOW_PAY_TYPES_SETTING_KEY)}
+            >
+              保存方式
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
