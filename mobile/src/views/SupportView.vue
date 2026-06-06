@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { showToast } from 'vant'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -20,9 +20,15 @@ const route = useRoute()
 const draft = ref('')
 const loading = ref(false)
 const sending = ref(false)
+const emojiPickerVisible = ref(false)
+const emojiPickerLoading = ref(false)
+const emojiPickerError = ref('')
 const conversations = ref<SupportConversation[]>([])
 const activeConversationId = ref('')
 const currentConversation = ref<SupportConversation | null>(null)
+const messageInputRef = ref<HTMLInputElement | null>(null)
+const emojiPickerHostRef = ref<HTMLElement | null>(null)
+let emojiPickerElement: HTMLElement | null = null
 
 const messages = computed(() => currentConversation.value?.messages || [])
 const adminOnline = computed(() => Boolean(currentConversation.value?.assignedAdminName))
@@ -35,6 +41,13 @@ const hasMessages = computed(() => messages.value.length > 0)
 const routeConversationId = computed(() => (
   typeof route.query.conversationId === 'string' ? route.query.conversationId : ''
 ))
+
+type EmojiPickerConstructor = typeof import('emoji-mart').Picker
+
+interface EmojiSelection {
+  native?: unknown
+  skins?: unknown
+}
 
 function formatTime(value: string) {
   return formatDateTime(value)
@@ -86,6 +99,7 @@ async function sendMessage() {
     const updatedConversation = await replySupportConversation(currentConversation.value.id, content)
     currentConversation.value = updatedConversation
     draft.value = ''
+    emojiPickerVisible.value = false
     conversations.value = conversations.value.map(conversation => (
       conversation.id === updatedConversation.id ? updatedConversation : conversation
     ))
@@ -96,10 +110,110 @@ async function sendMessage() {
   }
 }
 
+async function toggleEmojiPicker() {
+  if (!currentConversation.value) {
+    showToast('请先从充值页发起客服直充')
+    return
+  }
+  emojiPickerVisible.value = !emojiPickerVisible.value
+  if (emojiPickerVisible.value) {
+    await mountEmojiPicker()
+  }
+}
+
+async function mountEmojiPicker() {
+  await nextTick()
+  if (!emojiPickerHostRef.value) return
+  if (!emojiPickerElement) {
+    emojiPickerLoading.value = true
+    emojiPickerError.value = ''
+    try {
+      const [{ Picker }, dataModule, i18nModule] = await Promise.all([
+        import('emoji-mart'),
+        import('@emoji-mart/data'),
+        import('@emoji-mart/data/i18n/zh.json'),
+      ])
+      emojiPickerElement = createEmojiPicker(
+        Picker,
+        dataModule.default,
+        i18nModule.default,
+      )
+    } catch {
+      emojiPickerError.value = '表情面板加载失败，请稍后重试'
+    } finally {
+      emojiPickerLoading.value = false
+    }
+  }
+
+  if (emojiPickerElement && emojiPickerHostRef.value) {
+    emojiPickerHostRef.value.replaceChildren(emojiPickerElement)
+  }
+}
+
+function createEmojiPicker(
+  Picker: EmojiPickerConstructor,
+  data: unknown,
+  i18n: unknown,
+) {
+  return new Picker({
+    data,
+    i18n,
+    locale: 'zh',
+    navPosition: 'bottom',
+    onClickOutside: () => {
+      emojiPickerVisible.value = false
+    },
+    onEmojiSelect: insertEmoji,
+    previewPosition: 'none',
+    searchPosition: 'top',
+    set: 'native',
+    skinTonePosition: 'none',
+    theme: 'light',
+  }) as unknown as HTMLElement
+}
+
+function insertEmoji(selection: unknown) {
+  const emoji = nativeEmojiFromSelection(selection)
+  if (!emoji) return
+
+  const input = messageInputRef.value
+  const selectionStart = input?.selectionStart ?? draft.value.length
+  const selectionEnd = input?.selectionEnd ?? selectionStart
+  draft.value = `${draft.value.slice(0, selectionStart)}${emoji}${draft.value.slice(selectionEnd)}`
+  const nextCursor = selectionStart + emoji.length
+  emojiPickerVisible.value = false
+
+  void nextTick(() => {
+    messageInputRef.value?.focus()
+    messageInputRef.value?.setSelectionRange(nextCursor, nextCursor)
+  })
+}
+
+function nativeEmojiFromSelection(selection: unknown) {
+  if (!isRecord(selection)) return ''
+  const emoji = selection as EmojiSelection
+  if (typeof emoji.native === 'string') {
+    return emoji.native
+  }
+  if (Array.isArray(emoji.skins)) {
+    for (const skin of emoji.skins) {
+      if (isRecord(skin) && typeof skin.native === 'string') {
+        return skin.native
+      }
+    }
+  }
+  return ''
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
 async function selectConversation(id: string) {
   try {
     activeConversationId.value = id
     currentConversation.value = await fetchSupportConversation(id)
+    emojiPickerVisible.value = false
   } catch (error) {
     showToast(errorMessage(error, '加载客服会话失败'))
   }
@@ -127,6 +241,11 @@ watch(() => props.wsMessage, (message) => {
 
 onMounted(() => {
   void loadSupportData(routeConversationId.value)
+})
+
+onBeforeUnmount(() => {
+  emojiPickerElement?.remove()
+  emojiPickerElement = null
 })
 </script>
 
@@ -198,7 +317,25 @@ onMounted(() => {
     </main>
 
     <div class="support-input-bar">
+      <div v-if="emojiPickerVisible" class="support-emoji-panel">
+        <div ref="emojiPickerHostRef" class="support-emoji-panel__host">
+          <div v-if="emojiPickerLoading || emojiPickerError" class="support-emoji-panel__state">
+            {{ emojiPickerLoading ? '正在加载表情面板...' : emojiPickerError }}
+          </div>
+        </div>
+      </div>
+      <button
+        class="support-input-bar__emoji"
+        type="button"
+        :disabled="!currentConversation || sending"
+        :aria-pressed="emojiPickerVisible"
+        aria-label="选择表情"
+        @click="toggleEmojiPicker"
+      >
+        <LucideIcon name="mood" />
+      </button>
       <input
+        ref="messageInputRef"
         v-model="draft"
         class="support-input-bar__field"
         maxlength="2000"
@@ -243,6 +380,7 @@ onMounted(() => {
 .support-chat__icon-button,
 .support-chat__agent-icon,
 .support-input-bar__attach,
+.support-input-bar__emoji,
 .support-input-bar__send {
   border: 0;
   appearance: none;
@@ -278,12 +416,14 @@ onMounted(() => {
 
 .support-chat__icon-button,
 .support-input-bar__attach,
+.support-input-bar__emoji,
 .support-input-bar__send {
   transition: transform 0.18s ease, opacity 0.18s ease, box-shadow 0.18s ease;
 }
 
 .support-chat__icon-button:focus-visible,
 .support-input-bar__attach:focus-visible,
+.support-input-bar__emoji:focus-visible,
 .support-input-bar__send:focus-visible,
 .support-input-bar__field:focus-visible {
   outline: 2px solid rgba(175, 40, 41, 0.28);
@@ -292,6 +432,7 @@ onMounted(() => {
 
 .support-chat__icon-button:active,
 .support-input-bar__attach:active,
+.support-input-bar__emoji:active,
 .support-input-bar__send:active {
   transform: scale(0.96);
 }
@@ -556,9 +697,55 @@ onMounted(() => {
   background: #f5e6e2;
 }
 
+.support-input-bar__emoji {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  color: #af2829;
+  background: #f5e6e2;
+}
+
+.support-input-bar__emoji[aria-pressed='true'] {
+  background: #af2829;
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(175, 40, 41, 0.2);
+}
+
 .support-input-bar__attach:disabled,
+.support-input-bar__emoji:disabled,
 .support-input-bar__send:disabled {
   opacity: 0.5;
+}
+
+.support-emoji-panel {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 10px);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.support-emoji-panel__host {
+  width: min(352px, calc(100vw - 24px));
+  min-height: 300px;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(95, 10, 18, 0.18);
+  pointer-events: auto;
+}
+
+.support-emoji-panel__state {
+  display: grid;
+  min-height: 300px;
+  place-items: center;
+  padding: 18px;
+  color: #8e706d;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .support-input-bar__field {

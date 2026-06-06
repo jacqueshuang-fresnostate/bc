@@ -2154,3 +2154,10 @@
 - 解决问题：此前后台客服回复只能输入纯文本，无法从聊天界面直接选择表情；如果静态导入完整表情数据，也会把后台主包撑大。
 - 实施内容：后台新增 emoji-mart 依赖；`SupportManagementPage` 增加“表情”按钮和 Semi UI `Popover` 弹层；点击表情后按当前光标位置插入原生 emoji，并恢复输入焦点；表情选择器、表情数据和中文语言包都通过动态 `import()` 懒加载，保持首屏主包相对轻量。
 - 验证结果：管理后台 `npm run build` 通过，构建输出中 emoji-mart 相关代码已拆为独立异步 chunk；`git diff --check` 通过；后台 dev server 浏览器烟测通过，页面标题正常且无控制台错误。
+
+## 2026-06-06 15:58 HKT 手机端客服聊天表情面板
+
+- 完成任务：为手机端在线客服输入栏增加表情按钮和 emoji-mart 表情面板，让用户也可以在客服会话中发送表情。
+- 解决问题：此前只有后台客服侧支持表情，用户手机端仍只能输入纯文本，客服直充聊天体验不对称；同时手机端是 Vue，不能直接使用 React 版 `@emoji-mart/react`。
+- 实施内容：手机端新增 `emoji-mart` 和 `@emoji-mart/data` 依赖，并生成 `pnpm-lock.yaml` 记录当前 pnpm 依赖树；`SupportView.vue` 通过动态 `import()` 加载原生 `Picker`、表情数据和中文语言包；表情面板挂在输入栏上方，选中后按当前输入框光标位置插入原生 emoji；`LucideIcon` 新增 `mood` 图标映射。
+- 验证结果：手机端 `npm run build` 通过，构建输出中 `emoji-mart` 与表情数据已拆为独立异步 chunk；`git diff --check` 通过；手机端 dev server 浏览器烟测通过，未登录访问 `/support` 正常跳转登录页且无浏览器控制台错误；烟测时因本地后端未启动出现 Vite 代理日志，与本次表情面板改动无关。
