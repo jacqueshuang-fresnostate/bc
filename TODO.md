@@ -2147,3 +2147,10 @@
 - 解决问题：此前支付方式只能在普通配置项里维护，运营不容易看出哪些充值方式实际开启；如果彩虹易支付总开关开启但支付方式为空，用户端还可能回退到默认支付宝，导致后台开关和实际下单入口不一致。
 - 实施内容：管理后台隐藏被面板接管的 `recharge_rainbow_epay_enabled`、`recharge_customer_service_enabled`、`recharge_rainbow_epay_pay_types` 普通项，改用清晰的开关和多选控件维护；后端在充值配置返回和下单校验中要求彩虹易支付必须至少开启一个支付方式；手机端充值页只展示真正可用的充值渠道，不再为缺失 `payTypes` 的彩虹易支付默认补支付宝。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、管理后台 `npm run build`、手机端 `npm run build` 和 `git diff --check` 均通过；后端全量 236 条测试成功，新增覆盖彩虹易支付开启但支付方式为空时用户端配置不可用、下单返回错误；后台 dev server 浏览器烟测通过，页面标题正常且无控制台错误。
+
+## 2026-06-06 15:46 HKT 后台客服聊天表情面板
+
+- 完成任务：为后台在线客服回复区接入 `@emoji-mart/react` 和 `@emoji-mart/data`，客服可以打开表情面板并把表情插入回复内容。
+- 解决问题：此前后台客服回复只能输入纯文本，无法从聊天界面直接选择表情；如果静态导入完整表情数据，也会把后台主包撑大。
+- 实施内容：后台新增 emoji-mart 依赖；`SupportManagementPage` 增加“表情”按钮和 Semi UI `Popover` 弹层；点击表情后按当前光标位置插入原生 emoji，并恢复输入焦点；表情选择器、表情数据和中文语言包都通过动态 `import()` 懒加载，保持首屏主包相对轻量。
+- 验证结果：管理后台 `npm run build` 通过，构建输出中 emoji-mart 相关代码已拆为独立异步 chunk；`git diff --check` 通过；后台 dev server 浏览器烟测通过，页面标题正常且无控制台错误。

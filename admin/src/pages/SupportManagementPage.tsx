@@ -4,12 +4,20 @@ import {
   Button,
   Card,
   Chat,
+  Popover,
   Select,
   Spin,
   Tag,
 } from '@douyinfe/semi-ui';
-import { MessageCircle, RefreshCcw, Save, Send } from 'lucide-react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { MessageCircle, RefreshCcw, Save, Send, Smile } from 'lucide-react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from 'react';
 import { MetricCard } from '../components/MetricCard';
 import { useSupportConversations } from '../hooks/useSupportConversations';
 import type {
@@ -44,6 +52,26 @@ interface SupportChatMessage {
   status: 'complete';
 }
 
+interface EmojiMartPickerProps {
+  data: unknown;
+  i18n: unknown;
+  locale: string;
+  navPosition: string;
+  onClickOutside: () => void;
+  onEmojiSelect: (emoji: unknown) => void;
+  previewPosition: string;
+  searchPosition: string;
+  set: string;
+  skinTonePosition: string;
+  theme: string;
+}
+
+interface EmojiPickerRuntime {
+  Picker: ComponentType<EmojiMartPickerProps>;
+  data: unknown;
+  i18n: unknown;
+}
+
 export function SupportManagementPage({
   onDashboardRefresh,
 }: SupportManagementPageProps) {
@@ -59,6 +87,12 @@ export function SupportManagementPage({
   } = useSupportConversations();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [replyContent, setReplyContent] = useState('');
+  const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
+  const [emojiPickerLoading, setEmojiPickerLoading] = useState(false);
+  const [emojiPickerError, setEmojiPickerError] = useState('');
+  const [emojiPickerRuntime, setEmojiPickerRuntime] =
+    useState<EmojiPickerRuntime | null>(null);
+  const replyTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const [updateForm, setUpdateForm] = useState<UpdateFormState>(() =>
     emptyUpdateForm(),
   );
@@ -77,7 +111,6 @@ export function SupportManagementPage({
         : [],
     [selectedConversation],
   );
-
   useEffect(() => {
     if (selectedConversation && selectedConversation.id !== selectedId) {
       setSelectedId(selectedConversation.id);
@@ -89,6 +122,46 @@ export function SupportManagementPage({
       setUpdateForm(formFromConversation(selectedConversation));
     }
   }, [selectedConversation]);
+
+  useEffect(() => {
+    if (!emojiPickerVisible || emojiPickerRuntime) {
+      return;
+    }
+
+    let cancelled = false;
+    setEmojiPickerLoading(true);
+    setEmojiPickerError('');
+
+    Promise.all([
+      import('@emoji-mart/react'),
+      import('@emoji-mart/data'),
+      import('@emoji-mart/data/i18n/zh.json'),
+    ])
+      .then(([pickerModule, dataModule, i18nModule]) => {
+        if (cancelled) {
+          return;
+        }
+        setEmojiPickerRuntime({
+          Picker: pickerModule.default as ComponentType<EmojiMartPickerProps>,
+          data: dataModule.default,
+          i18n: i18nModule.default,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEmojiPickerError('表情面板加载失败，请稍后重试。');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setEmojiPickerLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [emojiPickerRuntime, emojiPickerVisible]);
 
   const refreshAll = () => {
     refresh();
@@ -115,7 +188,32 @@ export function SupportManagementPage({
     });
     setSelectedId(updated.id);
     setReplyContent('');
+    setEmojiPickerVisible(false);
     onDashboardRefresh();
+  };
+
+  const insertEmoji = (emoji: unknown) => {
+    const nativeEmoji = nativeEmojiFromSelection(emoji);
+    if (!nativeEmoji) {
+      return;
+    }
+
+    setReplyContent((current) => {
+      const textarea = replyTextAreaRef.current;
+      const selectionStart = textarea?.selectionStart ?? current.length;
+      const selectionEnd = textarea?.selectionEnd ?? selectionStart;
+      const nextContent = `${current.slice(0, selectionStart)}${nativeEmoji}${current.slice(selectionEnd)}`;
+      const nextCursor = selectionStart + nativeEmoji.length;
+
+      window.requestAnimationFrame(() => {
+        const nextTextarea = replyTextAreaRef.current;
+        nextTextarea?.focus();
+        nextTextarea?.setSelectionRange(nextCursor, nextCursor);
+      });
+
+      return nextContent;
+    });
+    setEmojiPickerVisible(false);
   };
 
   return (
@@ -348,12 +446,54 @@ export function SupportManagementPage({
                 <div className="border-t border-line pt-4">
                   <Field label="后台回复">
                     <textarea
+                      ref={replyTextAreaRef}
                       className="min-h-28 w-full rounded-md border border-line px-3 py-2 text-sm outline-none focus:border-teal-500"
                       value={replyContent}
                       onChange={(event) => setReplyContent(event.target.value)}
                     />
                   </Field>
-                  <div className="mt-3">
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Popover
+                      content={
+                        <div className="max-w-[min(352px,calc(100vw-48px))] overflow-hidden rounded-md bg-white">
+                          {emojiPickerRuntime ? (
+                            <emojiPickerRuntime.Picker
+                              data={emojiPickerRuntime.data}
+                              i18n={emojiPickerRuntime.i18n}
+                              locale="zh"
+                              navPosition="bottom"
+                              onClickOutside={() => setEmojiPickerVisible(false)}
+                              onEmojiSelect={insertEmoji}
+                              previewPosition="none"
+                              searchPosition="top"
+                              set="native"
+                              skinTonePosition="none"
+                              theme="light"
+                            />
+                          ) : (
+                            <div className="grid h-[300px] w-[320px] place-items-center px-4 text-sm text-slate-500">
+                              {emojiPickerLoading
+                                ? '正在加载表情面板...'
+                                : emojiPickerError || '打开后加载表情面板'}
+                            </div>
+                          )}
+                        </div>
+                      }
+                      position="topLeft"
+                      showArrow
+                      trigger="custom"
+                      visible={emojiPickerVisible}
+                      onVisibleChange={setEmojiPickerVisible}
+                    >
+                      <Button
+                        aria-label="选择表情"
+                        disabled={saving || !selectedConversation}
+                        icon={<Smile size={16} />}
+                        onClick={() => setEmojiPickerVisible((visible) => !visible)}
+                      >
+                        表情
+                      </Button>
+                    </Popover>
                     <Button
                       disabled={saving || !selectedConversation || !replyContent.trim()}
                       icon={<Send size={16} />}
@@ -376,6 +516,11 @@ export function SupportManagementPage({
       )}
     </div>
   );
+}
+
+interface EmojiSelection {
+  native?: unknown;
+  skins?: unknown;
 }
 
 interface FieldProps {
@@ -517,6 +662,28 @@ function authorText(author: SupportMessageAuthor) {
     return '系统';
   }
   return '用户';
+}
+
+function nativeEmojiFromSelection(selection: unknown) {
+  if (!isRecord(selection)) {
+    return '';
+  }
+  const emoji = selection as EmojiSelection;
+  if (typeof emoji.native === 'string') {
+    return emoji.native;
+  }
+  if (Array.isArray(emoji.skins)) {
+    for (const skin of emoji.skins) {
+      if (isRecord(skin) && typeof skin.native === 'string') {
+        return skin.native;
+      }
+    }
+  }
+  return '';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function setUpdateFormValue<K extends keyof UpdateFormState>(
