@@ -1454,21 +1454,22 @@ let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
 订单创建资金流：
 
 1. 后端按玩法规则计算订单金额。
-2. 资金仓储检查 `availableBalanceMinor >= amountMinor`。
-3. 订单创建成功后写入 `orderDebit` 流水。
-4. 扣款失败时移除刚创建且仍待开奖的未入资订单。
+2. 订单服务必须通过 `OrderRepository::create_with_debit` 或 `create_many_with_debit` 同时创建订单和写入 `orderDebit` 流水。
+3. PostgreSQL 模式下订单表、订单运行序号、资金账户和资金流水必须使用同一个 SQLx 事务保存。
+4. 批量下注任一订单校验或扣款失败时，整批订单都不创建、不扣款，不能留下部分生效订单。
 
 订单取消资金流：
 
-1. 取消前确认订单存在 `orderDebit` 流水。
-2. 订单状态成功改为 `cancelled` 后写入 `orderRefund` 流水。
+1. 取消订单必须通过 `OrderRepository::cancel_with_refund` 同时校验 `orderDebit`、标记订单 `cancelled` 并写入 `orderRefund` 流水。
+2. PostgreSQL 模式下订单状态和退款流水必须使用同一个 SQLx 事务保存。
 3. 同一订单重复退款必须拒绝或保持幂等，不能重复加钱。
 
 结算派奖资金流：
 
-1. 订单结算服务生成结算批次。
+1. 开奖结算必须通过 `OrderRepository::settle_with_payouts` 同时生成结算批次、回写订单状态、写入 `payoutCredit` 并标记合买计划结算状态。
 2. 资金仓储只对 `isWinning=true` 且 `payoutMinor > 0` 的订单写入 `payoutCredit`。
 3. `payoutCredit` 的 `referenceId` 使用结算批次和订单组合，避免重复入账。
+4. PostgreSQL 模式下订单、资金和合买计划结算状态必须使用同一个 SQLx 事务保存。
 
 ### 4. 校验与错误矩阵
 
@@ -1482,6 +1483,7 @@ let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
 | 调账或扣款导致可用余额为负 | HTTP 400，返回余额不足或余额不能为负 |
 | 订单创建用户资金账户不存在 | HTTP 404，返回资金账户不存在 |
 | 订单创建可用余额不足 | HTTP 400，返回 `insufficient available balance`，不创建订单 |
+| 批量下注中后续订单余额不足 | HTTP 400，整批订单不创建、不扣款 |
 | 取消订单缺少扣款流水 | HTTP 400，返回 `order debit ledger entry is required before refund` |
 | 同一订单重复退款 | HTTP 409 或幂等返回已有退款流水，不能新增第二笔退款 |
 | 同一结算订单重复派奖入账 | 返回已有派奖流水或跳过新增，不能重复加钱 |
@@ -2390,6 +2392,7 @@ run_group_buy_robots(...).await?;
 3. `supportedRebateModes` 是后端只读能力列表，前端更新时不能提交该字段。
 4. `DashboardSummary.invitePolicy` 必须从 `RebateRepository` 读取，不允许 dashboard 内部返回静态返利摘要。
 5. 充值成功后会按 `defaultRechargeRebateBasisPoints` 给符合条件的上级代理写入 `rechargeRebateCredit` 流水；`rechargeTiered` 尚未维护独立阶梯表时沿用默认比例发放。
+6. 同一充值订单的 `rechargeRebateCredit` 只能发放一次，幂等引用固定为 `recharge-rebate:{充值单号}`；后续邀请关系或上级代理变更不能让同一充值单再次给新代理返利。
 
 ### 4. 校验与错误矩阵
 
@@ -3935,6 +3938,7 @@ if let Some(draw_number) = active_draw_control_number(&issue)? {
 | 客服消息内容为空 | HTTP 400 |
 | 支付通知签名无效或金额不匹配 | HTTP 400 |
 | 重复支付通知 | 保持幂等，不重复生成 `rechargeCredit` 流水 |
+| 重复支付通知且上级代理关系已变化 | 保持幂等，不重复生成 `rechargeRebateCredit` 流水，也不改派给新代理 |
 | 后台确认非客服直充订单 | HTTP 400 |
 | 后台重复确认已入账客服直充订单 | 保持幂等，不重复生成 `rechargeCredit` 流水 |
 | WebSocket 断线或错过客服消息 | 前端通过 HTTP 重新拉取会话详情恢复完整历史 |
@@ -4491,6 +4495,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 - 同一直属用户同时存在两类来源时，后台邀请记录优先，因为它包含人工维护的 `inviteStatus`、`rebateEnabled` 和 `createdAt`。
 - `totalDirectDepositMinor` 和直属用户 `totalDepositMinor` 只统计正向 `rechargeCredit` 资金流水。
 - `totalPaidCommissionMinor` 只统计当前代理自己的正向 `rechargeRebateCredit` 资金流水，不能用直属充值金额推算或伪造返利金额。
+- 充值返利的幂等引用只绑定充值单号，不绑定代理 ID；后台调整邀请关系后，同一充值单不能在邀请中心形成第二笔返利。
 
 ### 4. 校验与错误矩阵
 

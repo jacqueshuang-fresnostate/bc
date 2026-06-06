@@ -7,11 +7,12 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{PgConnection, Row};
 
 use crate::{
     domain::{
         draw::{DrawIssue, DrawIssueStatus},
+        finance::LedgerEntry,
         lottery::LotteryKind,
         order::{
             CreateOrderRequest, OrderDetail, OrderQuote, OrderSource, OrderStatus, OrderSummary,
@@ -20,7 +21,11 @@ use crate::{
         settlement::{OrderSettlement, SettlementRun},
     },
     error::{ApiError, ApiResult},
-    services::play_rules::{evaluate_play_rule, expanded_bets_for_rule, number_type_for_rule},
+    services::{
+        finance::{save_finance_store_in_transaction, FinanceRepository},
+        group_buy::{save_group_buy_store_in_transaction, GroupBuyRepository},
+        play_rules::{evaluate_play_rule, expanded_bets_for_rule, number_type_for_rule},
+    },
 };
 
 use super::business_database::{
@@ -61,8 +66,8 @@ pub fn validate_draw_issue_accepts_order(
 
 #[derive(Clone)]
 pub struct OrderRepository {
-    inner: Arc<RwLock<OrderStore>>,
-    persistence: Option<BusinessDatabase>,
+    pub(crate) inner: Arc<RwLock<OrderStore>>,
+    pub(crate) persistence: Option<BusinessDatabase>,
 }
 
 impl OrderRepository {
@@ -99,7 +104,8 @@ impl OrderRepository {
             .get(id)
     }
 
-    /// 校验入参并创建一条新记录。
+    #[cfg(test)]
+    /// 测试辅助：仅在测试中允许创建未扣款订单，运行时订单创建必须走事务扣款入口。
     pub async fn create(
         &self,
         lottery: &LotteryKind,
@@ -136,6 +142,59 @@ impl OrderRepository {
         Ok(result)
     }
 
+    /// 在同一个业务事务中创建订单并扣减用户余额。
+    pub async fn create_with_debit(
+        &self,
+        finance: &FinanceRepository,
+        lottery: &LotteryKind,
+        payload: CreateOrderRequest,
+        order_source: OrderSource,
+    ) -> ApiResult<OrderDetail> {
+        let orders = self
+            .create_many_with_debit(finance, vec![(lottery.clone(), payload)], order_source)
+            .await?;
+        orders
+            .into_iter()
+            .next()
+            .ok_or_else(|| ApiError::Internal("订单事务没有返回创建结果".to_string()))
+    }
+
+    /// 在同一个业务事务中批量创建订单并逐笔扣款，任一失败都不会提交部分订单。
+    pub async fn create_many_with_debit(
+        &self,
+        finance: &FinanceRepository,
+        requests: Vec<(LotteryKind, CreateOrderRequest)>,
+        order_source: OrderSource,
+    ) -> ApiResult<Vec<OrderDetail>> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut order_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .clone();
+        let mut finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .clone();
+
+        let mut orders = Vec::with_capacity(requests.len());
+        for (lottery, payload) in requests {
+            let order = order_store.create_with_source(&lottery, payload, order_source.clone())?;
+            finance_store.debit_order(&order)?;
+            orders.push(order);
+        }
+
+        persist_order_finance_stores(self, finance, &order_store, &finance_store).await?;
+        self.replace_store(order_store)?;
+        finance.replace_store(finance_store)?;
+
+        Ok(orders)
+    }
+
     /// 按当前彩种规则计算订单注数和应付金额。
     pub async fn quote(
         &self,
@@ -161,6 +220,33 @@ impl OrderRepository {
         };
         self.persist(&snapshot).await?;
         Ok(result)
+    }
+
+    /// 在同一个业务事务中取消订单并退回订单扣款。
+    pub async fn cancel_with_refund(
+        &self,
+        finance: &FinanceRepository,
+        id: &str,
+    ) -> ApiResult<OrderDetail> {
+        let mut order_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .clone();
+        let mut finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .clone();
+
+        let order = order_store.cancel(id)?;
+        finance_store.refund_order(&order)?;
+
+        persist_order_finance_stores(self, finance, &order_store, &finance_store).await?;
+        self.replace_store(order_store)?;
+        finance.replace_store(finance_store)?;
+
+        Ok(order)
     }
 
     /// 清理未支付订单。
@@ -215,6 +301,56 @@ impl OrderRepository {
         Ok(result)
     }
 
+    /// 在同一个业务事务中完成订单结算、派奖入账和合买计划结算状态回写。
+    pub async fn settle_with_payouts(
+        &self,
+        finance: &FinanceRepository,
+        group_buys: &GroupBuyRepository,
+        draw_issue: &DrawIssue,
+    ) -> ApiResult<(SettlementRun, Vec<LedgerEntry>)> {
+        let mut order_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .clone();
+        let mut finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .clone();
+        let mut group_buy_store = group_buys
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
+            .clone();
+
+        let settlement = order_store.settle_draw_issue(draw_issue)?;
+        let order_ids = settlement
+            .orders
+            .iter()
+            .map(|order| order.order_id.clone())
+            .collect::<Vec<_>>();
+        let group_buy_plans = group_buy_store.plans_for_order_ids(&order_ids);
+        let ledger_entries =
+            finance_store.credit_settlement_with_group_buys(&settlement, &group_buy_plans)?;
+        group_buy_store.mark_settled_by_order_ids(&order_ids);
+
+        persist_order_finance_group_buy_stores(
+            self,
+            finance,
+            group_buys,
+            &order_store,
+            &finance_store,
+            &group_buy_store,
+        )
+        .await?;
+        self.replace_store(order_store)?;
+        finance.replace_store(finance_store)?;
+        group_buys.replace_store(group_buy_store)?;
+
+        Ok((settlement, ledger_entries))
+    }
+
     async fn persist(&self, store: &OrderStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_order_store(persistence, store).await?;
@@ -222,10 +358,18 @@ impl OrderRepository {
 
         Ok(())
     }
+
+    pub(crate) fn replace_store(&self, store: OrderStore) -> ApiResult<()> {
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))? = store;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct OrderStore {
+pub(crate) struct OrderStore {
     next_sequence: u64,
     next_settlement_sequence: u64,
     orders: BTreeMap<String, OrderDetail>,
@@ -470,6 +614,17 @@ async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> Ap
         .await
         .map_err(|_| ApiError::Internal("订单事务开启失败".to_string()))?;
 
+    save_order_store_in_transaction(&mut *tx, store).await?;
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("订单事务提交失败".to_string()))
+}
+
+pub(crate) async fn save_order_store_in_transaction(
+    connection: &mut PgConnection,
+    store: &OrderStore,
+) -> ApiResult<()> {
     for table in [
         "order_settlements",
         "order_settlement_runs",
@@ -477,7 +632,7 @@ async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> Ap
         "order_runtime",
     ] {
         sqlx::query(&format!("DELETE FROM {table}"))
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await
             .map_err(|_| ApiError::Internal("订单数据清理失败".to_string()))?;
     }
@@ -512,7 +667,7 @@ async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> Ap
         .bind(enum_to_string(&order.status)?)
         .bind(&order.settled_at)
         .bind(&order.created_at)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|_| ApiError::Internal("订单数据保存失败".to_string()))?;
     }
@@ -541,7 +696,7 @@ async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> Ap
         .bind(run.total_stake_amount_minor)
         .bind(run.total_payout_minor)
         .bind(&run.created_at)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|_| ApiError::Internal("结算批次数据保存失败".to_string()))?;
 
@@ -566,7 +721,7 @@ async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> Ap
             .bind(order.odds_basis_points)
             .bind(order.payout_minor)
             .bind(enum_to_string(&order.status)?)
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await
             .map_err(|_| ApiError::Internal("结算订单数据保存失败".to_string()))?;
         }
@@ -582,14 +737,71 @@ async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> Ap
                 i64::try_from(value)
                     .map_err(|_| ApiError::Internal("订单运行序号过大".to_string()))?,
             )
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await
             .map_err(|_| ApiError::Internal("订单运行数据保存失败".to_string()))?;
     }
 
-    tx.commit()
-        .await
-        .map_err(|_| ApiError::Internal("订单事务提交失败".to_string()))
+    Ok(())
+}
+
+/// 在同一个数据库事务中保存订单和资金快照，确保投注扣款、取消退款不会只落一边。
+async fn persist_order_finance_stores(
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    order_store: &OrderStore,
+    finance_store: &super::finance::FinanceStore,
+) -> ApiResult<()> {
+    match (&orders.persistence, &finance.persistence) {
+        (Some(database), Some(_)) => {
+            let mut tx = database
+                .pool()
+                .begin()
+                .await
+                .map_err(|_| ApiError::Internal("订单资金事务开启失败".to_string()))?;
+            save_order_store_in_transaction(&mut *tx, order_store).await?;
+            save_finance_store_in_transaction(&mut *tx, finance_store).await?;
+            tx.commit()
+                .await
+                .map_err(|_| ApiError::Internal("订单资金事务提交失败".to_string()))
+        }
+        (None, None) => Ok(()),
+        _ => Err(ApiError::Internal("订单和资金持久化配置不一致".to_string())),
+    }
+}
+
+/// 在同一个数据库事务中保存订单、资金和合买快照，确保结算派奖状态一致。
+async fn persist_order_finance_group_buy_stores(
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    order_store: &OrderStore,
+    finance_store: &super::finance::FinanceStore,
+    group_buy_store: &super::group_buy::GroupBuyStore,
+) -> ApiResult<()> {
+    match (
+        &orders.persistence,
+        &finance.persistence,
+        &group_buys.persistence,
+    ) {
+        (Some(database), Some(_), Some(_)) => {
+            let mut tx = database
+                .pool()
+                .begin()
+                .await
+                .map_err(|_| ApiError::Internal("订单资金合买事务开启失败".to_string()))?;
+            save_order_store_in_transaction(&mut *tx, order_store).await?;
+            save_finance_store_in_transaction(&mut *tx, finance_store).await?;
+            save_group_buy_store_in_transaction(&mut *tx, group_buy_store).await?;
+            tx.commit()
+                .await
+                .map_err(|_| ApiError::Internal("订单资金合买事务提交失败".to_string()))
+        }
+        (None, None, None) => Ok(()),
+        _ => Err(ApiError::Internal(
+            "订单、资金和合买持久化配置不一致".to_string(),
+        )),
+    }
 }
 
 /// 计算并返回序列号最大值。
@@ -606,6 +818,16 @@ impl OrderStore {
         self.orders.values().rev().cloned().collect()
     }
 
+    #[cfg(test)]
+    /// 测试中使用的默认来源订单创建辅助方法。
+    fn create(
+        &mut self,
+        lottery: &LotteryKind,
+        payload: CreateOrderRequest,
+    ) -> ApiResult<OrderDetail> {
+        self.create_with_source(lottery, payload, OrderSource::Direct)
+    }
+
     /// 按标识查询并返回单条记录。
     fn get(&self, id: &str) -> ApiResult<OrderDetail> {
         self.orders
@@ -615,16 +837,8 @@ impl OrderStore {
     }
 
     /// 校验入参并创建新记录。
-    fn create(
-        &mut self,
-        lottery: &LotteryKind,
-        payload: CreateOrderRequest,
-    ) -> ApiResult<OrderDetail> {
-        self.create_with_source(lottery, payload, OrderSource::Direct)
-    }
-
     /// 校验入参并按来源创建新记录。
-    fn create_with_source(
+    pub(crate) fn create_with_source(
         &mut self,
         lottery: &LotteryKind,
         payload: CreateOrderRequest,
@@ -661,7 +875,7 @@ impl OrderStore {
     }
 
     /// 处理 cancel 的具体内部流程。
-    fn cancel(&mut self, id: &str) -> ApiResult<OrderDetail> {
+    pub(crate) fn cancel(&mut self, id: &str) -> ApiResult<OrderDetail> {
         let order = self
             .orders
             .get_mut(id)
@@ -678,7 +892,7 @@ impl OrderStore {
     }
 
     /// 处理 remove_unfunded 的具体内部流程。
-    fn remove_unfunded(&mut self, id: &str) -> ApiResult<OrderDetail> {
+    pub(crate) fn remove_unfunded(&mut self, id: &str) -> ApiResult<OrderDetail> {
         let order = self
             .orders
             .get(id)
@@ -719,7 +933,7 @@ impl OrderStore {
     }
 
     /// 处理 settle_draw_issue 的具体内部流程。
-    fn settle_draw_issue(&mut self, draw_issue: &DrawIssue) -> ApiResult<SettlementRun> {
+    pub(crate) fn settle_draw_issue(&mut self, draw_issue: &DrawIssue) -> ApiResult<SettlementRun> {
         if draw_issue.status != DrawIssueStatus::Drawn {
             return Err(ApiError::BadRequest(
                 "only drawn issues can be settled".to_string(),
@@ -947,6 +1161,7 @@ mod tests {
     use crate::{
         domain::{
             draw::{DrawIssue, DrawIssueStatus},
+            finance::LedgerEntryKind,
             lottery::{
                 DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
                 LotteryPlayConfig, PlayCategory,
@@ -954,7 +1169,11 @@ mod tests {
             order::{CreateOrderRequest, OrderSource, OrderStatus},
             play::{PlayRuleCode, PlaySelection},
         },
-        services::order::OrderStore,
+        services::{
+            finance::FinanceRepository,
+            group_buy::GroupBuyRepository,
+            order::{OrderRepository, OrderStore},
+        },
     };
 
     #[test]
@@ -990,6 +1209,122 @@ mod tests {
         assert!(order.matched_bets.is_empty());
         assert_eq!(order.payout_minor, 0);
         assert_eq!(order.settled_at, None);
+    }
+
+    #[tokio::test]
+    /// 批量下注任一扣款失败时不会提交前面已经在快照中生成的订单和扣款。
+    async fn repository_batch_create_with_debit_is_atomic_on_later_failure() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let first = direct_order_request("U10002", "2026155", 30_000);
+        let second = direct_order_request("U10002", "2026155", 30_000);
+
+        let error = orders
+            .create_many_with_debit(
+                &finance,
+                vec![(lottery.clone(), first), (lottery, second)],
+                OrderSource::Direct,
+            )
+            .await
+            .expect_err("second debit should fail");
+
+        assert!(error.to_string().contains("insufficient available balance"));
+        assert!(orders.list().await.expect("orders can list").is_empty());
+        let account = finance
+            .accounts()
+            .await
+            .expect("accounts can list")
+            .into_iter()
+            .find(|account| account.user_id == "U10002")
+            .expect("seed account exists");
+        assert_eq!(account.available_balance_minor, 50_000);
+        assert!(finance
+            .ledger_entries()
+            .await
+            .expect("ledger can list")
+            .into_iter()
+            .all(|entry| entry.kind != LedgerEntryKind::OrderDebit));
+    }
+
+    #[tokio::test]
+    /// 订单取消事务会同时回写订单状态和退款流水。
+    async fn repository_cancel_with_refund_updates_order_and_balance() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let order = orders
+            .create_with_debit(
+                &finance,
+                &lottery,
+                direct_order_request("U10001", "2026155", 200),
+                OrderSource::Direct,
+            )
+            .await
+            .expect("order can be created with debit");
+
+        let cancelled = orders
+            .cancel_with_refund(&finance, &order.id)
+            .await
+            .expect("order can be cancelled with refund");
+        let account = finance
+            .accounts()
+            .await
+            .expect("accounts can list")
+            .into_iter()
+            .find(|account| account.user_id == "U10001")
+            .expect("seed account exists");
+        let refund_count = finance
+            .ledger_entries()
+            .await
+            .expect("ledger can list")
+            .into_iter()
+            .filter(|entry| entry.kind == LedgerEntryKind::OrderRefund)
+            .count();
+
+        assert_eq!(cancelled.status, OrderStatus::Cancelled);
+        assert_eq!(account.available_balance_minor, 12_000);
+        assert_eq!(refund_count, 1);
+    }
+
+    #[tokio::test]
+    /// 开奖结算事务会同时回写订单状态和中奖派奖流水。
+    async fn repository_settle_with_payouts_updates_order_and_balance() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let order = orders
+            .create_with_debit(
+                &finance,
+                &lottery,
+                direct_order_request("U10001", "2026156", 200),
+                OrderSource::Direct,
+            )
+            .await
+            .expect("order can be created with debit");
+
+        let (settlement, entries) = orders
+            .settle_with_payouts(
+                &finance,
+                &group_buys,
+                &draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")),
+            )
+            .await
+            .expect("drawn issue can settle with payout");
+        let settled = orders.get(&order.id).await.expect("order exists");
+        let account = finance
+            .accounts()
+            .await
+            .expect("accounts can list")
+            .into_iter()
+            .find(|account| account.user_id == "U10001")
+            .expect("seed account exists");
+
+        assert_eq!(settlement.winning_order_count, 1);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(settled.status, OrderStatus::Won);
+        assert_eq!(account.available_balance_minor, 13_800);
     }
 
     #[test]
@@ -1250,6 +1585,25 @@ mod tests {
         assert!(error
             .to_string()
             .contains("draw issue number does not match order issue"));
+    }
+
+    /// 构造三位直选订单请求，供仓储事务测试复用。
+    fn direct_order_request(
+        user_id: &str,
+        issue: &str,
+        unit_amount_minor: i64,
+    ) -> CreateOrderRequest {
+        CreateOrderRequest {
+            user_id: user_id.to_string(),
+            lottery_id: "fc3d".to_string(),
+            issue: issue.to_string(),
+            rule_code: PlayRuleCode::ThreeDirect,
+            selection: PlaySelection {
+                positions: vec![vec![2], vec![4], vec![7]],
+                ..PlaySelection::default()
+            },
+            unit_amount_minor,
+        }
     }
 
     /// 处理 lottery_with_categories 的具体内部流程。

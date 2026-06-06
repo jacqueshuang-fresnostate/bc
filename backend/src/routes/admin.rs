@@ -37,7 +37,7 @@ use crate::{
         lottery::{
             DrawMode, DrawSource, LotteryCategoryConfig, LotteryKind, SaveDrawSourceRequest,
         },
-        order::{CreateOrderRequest, OrderDetail, OrderStatus},
+        order::{CreateOrderRequest, OrderDetail, OrderSource, OrderStatus},
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
         rebate::{InvitePolicySummary, InvitePolicyUpdateRequest},
@@ -852,20 +852,9 @@ async fn settle_draw_issue_orders(
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<SettlementRun>>> {
     let draw_issue = state.draws.get(&id).await?;
-    let settlement = state.orders.settle_draw_issue(&draw_issue).await?;
-    let order_ids = settlement
+    let (settlement, entries) = state
         .orders
-        .iter()
-        .map(|order| order.order_id.clone())
-        .collect::<Vec<_>>();
-    let group_buy_plans = state.group_buys.plans_for_order_ids(&order_ids).await?;
-    let entries = state
-        .finance
-        .credit_settlement_with_group_buys(&settlement, &group_buy_plans)
-        .await?;
-    state
-        .group_buys
-        .mark_settled_by_order_ids(&order_ids)
+        .settle_with_payouts(&state.finance, &state.group_buys, &draw_issue)
         .await?;
     publish_settlement_balance_events(&state, &entries).await;
 
@@ -2118,22 +2107,10 @@ async fn create_order(
         .get_by_lottery_issue(&payload.lottery_id, &payload.issue)
         .await?;
     validate_draw_issue_accepts_order(&draw_issue, &lottery, &payload.issue)?;
-    let quote = state.orders.quote(&lottery, &payload).await?;
-    state
-        .finance
-        .ensure_available(&payload.user_id, quote.amount_minor)
+    let order = state
+        .orders
+        .create_with_debit(&state.finance, &lottery, payload, OrderSource::Direct)
         .await?;
-    let order = state.orders.create(&lottery, payload).await?;
-    if let Err(error) = state.finance.debit_order(&order).await {
-        if let Err(rollback_error) = state.orders.remove_unfunded(&order.id).await {
-            tracing::error!(
-                order_id = %order.id,
-                error = %rollback_error.log_message(),
-                "扣款失败后移除未入账订单失败"
-            );
-        }
-        return Err(error);
-    }
     publish_user_order_changed(&state, &order, "created");
     publish_user_balance_changed(&state, &order.user_id, "order_debit", Some(&order.id)).await;
 
@@ -2144,10 +2121,7 @@ async fn cancel_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<OrderDetail>>> {
-    let existing = state.orders.get(&id).await?;
-    state.finance.ensure_order_can_refund(&existing).await?;
-    let order = state.orders.cancel(&id).await?;
-    state.finance.refund_order(&order).await?;
+    let order = state.orders.cancel_with_refund(&state.finance, &id).await?;
     publish_user_order_changed(&state, &order, "cancelled");
     publish_user_balance_changed(&state, &order.user_id, "order_refund", Some(&order.id)).await;
 

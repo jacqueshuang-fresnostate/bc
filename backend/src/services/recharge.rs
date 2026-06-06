@@ -7,7 +7,7 @@ use std::{
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{PgConnection, Row};
 use urlencoding::encode;
 
 use crate::{
@@ -21,7 +21,10 @@ use crate::{
         user::UserSummary,
     },
     error::{ApiError, ApiResult},
-    services::{business_database::BusinessDatabase, finance::FinanceRepository},
+    services::{
+        business_database::BusinessDatabase,
+        finance::{save_finance_store_in_transaction, FinanceRepository},
+    },
 };
 
 use super::business_database::{enum_from_string, enum_to_string};
@@ -34,8 +37,8 @@ const DEFAULT_MAX_AMOUNT_MINOR: i64 = 10_000_000;
 
 #[derive(Clone)]
 pub struct RechargeRepository {
-    inner: Arc<RwLock<RechargeStore>>,
-    persistence: Option<BusinessDatabase>,
+    pub(crate) inner: Arc<RwLock<RechargeStore>>,
+    pub(crate) persistence: Option<BusinessDatabase>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,19 +162,23 @@ impl RechargeRepository {
             .ok_or_else(|| ApiError::BadRequest("彩虹易支付通知缺少金额".to_string()))?;
         let paid_amount_minor = money_to_minor(money_text)?;
 
-        let (order, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?;
-            let order = store.mark_paid(order_id, paid_amount_minor, trade_no)?;
-            (order, store.clone())
-        };
+        let mut recharge_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?
+            .clone();
+        let mut finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .clone();
 
-        finance
-            .credit_recharge(&order.user_id, order.amount_minor, &order.id)
-            .await?;
-        self.persist(&snapshot).await?;
+        let order = recharge_store.mark_paid(order_id, paid_amount_minor, trade_no)?;
+        finance_store.credit_recharge(&order.user_id, order.amount_minor, &order.id)?;
+
+        persist_recharge_finance_stores(self, finance, &recharge_store, &finance_store).await?;
+        self.replace_store(recharge_store)?;
+        finance.replace_store(finance_store)?;
         Ok(order)
     }
 
@@ -182,19 +189,23 @@ impl RechargeRepository {
         request: ConfirmRechargeOrderRequest,
         finance: &FinanceRepository,
     ) -> ApiResult<RechargeOrderSummary> {
-        let (order, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?;
-            let order = store.confirm_customer_service_order(order_id, request)?;
-            (order, store.clone())
-        };
+        let mut recharge_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?
+            .clone();
+        let mut finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .clone();
 
-        finance
-            .credit_recharge(&order.user_id, order.amount_minor, &order.id)
-            .await?;
-        self.persist(&snapshot).await?;
+        let order = recharge_store.confirm_customer_service_order(order_id, request)?;
+        finance_store.credit_recharge(&order.user_id, order.amount_minor, &order.id)?;
+
+        persist_recharge_finance_stores(self, finance, &recharge_store, &finance_store).await?;
+        self.replace_store(recharge_store)?;
+        finance.replace_store(finance_store)?;
         Ok(order)
     }
 
@@ -204,10 +215,43 @@ impl RechargeRepository {
         }
         Ok(())
     }
+
+    pub(crate) fn replace_store(&self, store: RechargeStore) -> ApiResult<()> {
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))? = store;
+        Ok(())
+    }
+}
+
+/// 在同一个数据库事务中保存充值和资金快照，确保入账订单与余额流水一致。
+async fn persist_recharge_finance_stores(
+    recharges: &RechargeRepository,
+    finance: &FinanceRepository,
+    recharge_store: &RechargeStore,
+    finance_store: &super::finance::FinanceStore,
+) -> ApiResult<()> {
+    match (&recharges.persistence, &finance.persistence) {
+        (Some(database), Some(_)) => {
+            let mut tx = database
+                .pool()
+                .begin()
+                .await
+                .map_err(|_| ApiError::Internal("充值资金事务开启失败".to_string()))?;
+            save_recharge_store_in_transaction(&mut *tx, recharge_store).await?;
+            save_finance_store_in_transaction(&mut *tx, finance_store).await?;
+            tx.commit()
+                .await
+                .map_err(|_| ApiError::Internal("充值资金事务提交失败".to_string()))
+        }
+        (None, None) => Ok(()),
+        _ => Err(ApiError::Internal("充值和资金持久化配置不一致".to_string())),
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct RechargeStore {
+pub(crate) struct RechargeStore {
     orders: BTreeMap<String, RechargeOrderSummary>,
     next_sequence: u64,
 }
@@ -335,7 +379,7 @@ impl RechargeStore {
     }
 
     /// 将充值订单标记为已支付，并校验通知金额和订单状态。
-    fn mark_paid(
+    pub(crate) fn mark_paid(
         &mut self,
         order_id: &str,
         amount_minor: i64,
@@ -366,7 +410,7 @@ impl RechargeStore {
     }
 
     /// 后台确认客服直充订单收款成功。
-    fn confirm_customer_service_order(
+    pub(crate) fn confirm_customer_service_order(
         &mut self,
         order_id: &str,
         request: ConfirmRechargeOrderRequest,
@@ -545,9 +589,20 @@ async fn save_recharge_store(database: &BusinessDatabase, store: &RechargeStore)
         .await
         .map_err(|_| ApiError::Internal("充值事务开启失败".to_string()))?;
 
+    save_recharge_store_in_transaction(&mut *tx, store).await?;
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("充值事务提交失败".to_string()))
+}
+
+pub(crate) async fn save_recharge_store_in_transaction(
+    connection: &mut PgConnection,
+    store: &RechargeStore,
+) -> ApiResult<()> {
     for table in ["recharge_orders", "recharge_runtime"] {
         sqlx::query(&format!("DELETE FROM {table}"))
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await
             .map_err(|_| ApiError::Internal("充值数据清理失败".to_string()))?;
     }
@@ -571,7 +626,7 @@ async fn save_recharge_store(database: &BusinessDatabase, store: &RechargeStore)
         .bind(&order.support_conversation_id)
         .bind(&order.created_at)
         .bind(&order.paid_at)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|_| ApiError::Internal("充值订单数据保存失败".to_string()))?;
     }
@@ -580,13 +635,11 @@ async fn save_recharge_store(database: &BusinessDatabase, store: &RechargeStore)
         .map_err(|_| ApiError::Internal("充值序号过大".to_string()))?;
     sqlx::query("INSERT INTO recharge_runtime (key, value) VALUES ('next_sequence', $1)")
         .bind(next_sequence)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|_| ApiError::Internal("充值运行数据保存失败".to_string()))?;
 
-    tx.commit()
-        .await
-        .map_err(|_| ApiError::Internal("充值事务提交失败".to_string()))
+    Ok(())
 }
 
 fn validate_amount(amount_minor: i64, settings: &RechargeSettings) -> ApiResult<()> {

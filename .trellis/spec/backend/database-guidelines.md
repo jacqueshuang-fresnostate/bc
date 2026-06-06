@@ -18,6 +18,8 @@
 
 - SQL 放在仓储或查询模块中，不放在路由处理函数中。
 - 任何会改变余额、订单、派奖、返利或机器人购彩记录的操作必须使用事务。
+- 跨仓储写操作必须先在仓储快照上完成业务校验和变更，PostgreSQL 模式下复用同一个 SQLx 事务保存所有相关业务表，提交成功后再替换运行时内存快照。
+- 运行路径不能直接调用“只创建订单不扣款”“只改充值状态不入账”“只改提现状态不处理冻结余额”的单仓储入口；这些入口只能作为测试辅助或事务协调内部步骤。
 - 使用类型清晰的 ID，或至少使用命名明确的 `String` ID；避免跨层传递匿名元组。
 - 接口只查询自己需要的字段。
 - 持久化列表接口从第一版开始就需要分页。
@@ -37,6 +39,82 @@ YYYYMMDDHHMMSS_describe_change.sql
 ```
 
 如果使用 SQLx 标准模式，每个迁移只需要前向 SQL。若后续选择其他迁移工具，需要先更新本规范。
+
+## 场景：跨仓储事务协调
+
+### 1. 范围 / 触发条件
+
+- 触发条件：一个业务操作同时修改订单、资金、充值、提现、合买、返利或机器人购彩中的两个及以上仓储。
+- 范围：`OrderRepository`、`FinanceRepository`、`RechargeRepository`、`WithdrawalRepository`、`GroupBuyRepository` 以及调用它们的后台和用户端路由。
+
+### 2. 签名
+
+- 直接下注：`OrderRepository::create_with_debit(finance, lottery, payload, order_source)`
+- 批量下注：`OrderRepository::create_many_with_debit(finance, requests, order_source)`
+- 取消退款：`OrderRepository::cancel_with_refund(finance, order_id)`
+- 开奖结算派奖：`OrderRepository::settle_with_payouts(finance, group_buys, draw_issue)`
+- 充值入账：`RechargeRepository::confirm_rainbow_notify(...)`、`RechargeRepository::confirm_customer_service_order(...)`
+- 提现冻结/审核：`WithdrawalRepository::create_order(...)`、`approve_order(...)`、`reject_order(...)`
+- 事务内保存：`save_*_store_in_transaction(connection, store)`
+
+### 3. 契约
+
+跨仓储写操作必须按以下顺序执行：
+
+1. 从相关仓储读取并克隆当前内存快照。
+2. 在快照上完成全部业务校验和状态变更。
+3. 未配置 `DATABASE_URL` 时跳过数据库保存，直接替换内存快照。
+4. 配置 PostgreSQL 时用同一个 SQLx 事务保存所有相关业务表。
+5. 数据库事务提交成功后再替换运行时内存快照。
+
+运行路径不得直接调用单仓储的“只创建订单不扣款”“只确认充值不入账”“只审核提现不处理冻结余额”入口。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 任一快照业务校验失败 | 不保存数据库，不替换任何内存快照 |
+| PostgreSQL 事务开启失败 | 返回内部错误，不替换任何内存快照 |
+| 任一仓储保存失败 | 回滚同一个 SQLx 事务，不替换任何内存快照 |
+| 相关仓储持久化配置不一致 | 返回中文内部错误，不做半边保存 |
+| 批量下注中某一单扣款失败 | 整批订单不创建、不扣款 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：批量下注第二单余额不足时，第一单也不会出现在订单列表，资金流水也没有 `orderDebit`。
+- Good：客服直充确认成功后，充值订单状态和 `rechargeCredit` 同时可见。
+- Good：提现申请成功后，提现单和 `withdrawalFreeze` 同时可见。
+- Base：无数据库内存模式仍按同一事务协调入口替换内存快照，支持本地演示。
+- Bad：路由先调用 `orders.create()` 再调用 `finance.debit_order()`；这会在中途失败时留下半边状态。
+
+### 6. 必要测试
+
+- 后端需要覆盖批量下注失败不产生部分订单和扣款。
+- 后端需要覆盖取消订单后订单状态和退款流水同时变化。
+- 后端需要覆盖开奖结算后订单状态和派奖流水同时变化。
+- 充值、提现链路变更后需要覆盖重复确认/重复审核的幂等行为。
+- PostgreSQL 集成测试只能在显式配置 `BC_TEST_DATABASE_URL` 时运行，避免误写生产数据库。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let order = orders.create(&lottery, payload).await?;
+finance.debit_order(&order).await?;
+```
+
+这个写法会先保存订单，再单独保存资金；第二步失败时订单已经存在。
+
+#### Correct
+
+```rust
+let order = orders
+    .create_with_debit(&finance, &lottery, payload, OrderSource::Direct)
+    .await?;
+```
+
+事务协调入口负责订单和资金快照、同一 SQLx 事务和提交后的运行时快照替换。
 
 ## 安全字段存储
 
@@ -465,6 +543,7 @@ let store = load_access_store(&database).await?;
 | 数据库中充值表为空 | 不写种子充值单，返回空订单列表 |
 | 数据库已有充值订单 | 启动时恢复订单和 `next_sequence`，不覆盖已有订单 |
 | 支付通知重复 | `FinanceRepository::credit_recharge` 按充值单 ID 幂等返回既有流水 |
+| 充值返利重复触发 | `FinanceRepository::credit_recharge_rebate` 按充值单 ID 幂等返回既有流水，不能把代理 ID 等可变关系字段放入唯一业务引用 |
 
 ### 5. Good / Base / Bad Cases
 

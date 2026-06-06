@@ -7,7 +7,7 @@ use std::{
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{PgConnection, Row};
 
 use crate::{
     domain::{
@@ -25,8 +25,8 @@ use super::business_database::{enum_from_string, enum_to_string, BusinessDatabas
 
 #[derive(Clone)]
 pub struct GroupBuyRepository {
-    inner: Arc<RwLock<GroupBuyStore>>,
-    persistence: Option<BusinessDatabase>,
+    pub(crate) inner: Arc<RwLock<GroupBuyStore>>,
+    pub(crate) persistence: Option<BusinessDatabase>,
 }
 
 impl GroupBuyRepository {
@@ -224,10 +224,18 @@ impl GroupBuyRepository {
 
         Ok(())
     }
+
+    pub(crate) fn replace_store(&self, store: GroupBuyStore) -> ApiResult<()> {
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))? = store;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct GroupBuyStore {
+pub(crate) struct GroupBuyStore {
     plans: BTreeMap<String, GroupBuyPlan>,
 }
 
@@ -373,9 +381,20 @@ async fn save_group_buy_store(database: &BusinessDatabase, store: &GroupBuyStore
         .await
         .map_err(|_| ApiError::Internal("合买事务开启失败".to_string()))?;
 
+    save_group_buy_store_in_transaction(&mut *tx, store).await?;
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("合买事务提交失败".to_string()))
+}
+
+pub(crate) async fn save_group_buy_store_in_transaction(
+    connection: &mut PgConnection,
+    store: &GroupBuyStore,
+) -> ApiResult<()> {
     for table in ["group_buy_participants", "group_buy_plans"] {
         sqlx::query(&format!("DELETE FROM {table}"))
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await
             .map_err(|_| ApiError::Internal("合买数据清理失败".to_string()))?;
     }
@@ -411,7 +430,7 @@ async fn save_group_buy_store(database: &BusinessDatabase, store: &GroupBuyStore
         .bind(&plan.note)
         .bind(&plan.created_at)
         .bind(&plan.updated_at)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|_| ApiError::Internal("合买计划数据保存失败".to_string()))?;
 
@@ -432,15 +451,13 @@ async fn save_group_buy_store(database: &BusinessDatabase, store: &GroupBuyStore
             )
             .bind(&participant.note)
             .bind(&participant.created_at)
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await
             .map_err(|_| ApiError::Internal("合买参与人数据保存失败".to_string()))?;
         }
     }
 
-    tx.commit()
-        .await
-        .map_err(|_| ApiError::Internal("合买事务提交失败".to_string()))
+    Ok(())
 }
 
 impl GroupBuyStore {
@@ -465,7 +482,7 @@ impl GroupBuyStore {
     }
 
     /// 按订单 ID 查找已经成单的合买计划。
-    fn plans_for_order_ids(&self, order_ids: &[String]) -> Vec<GroupBuyPlan> {
+    pub(crate) fn plans_for_order_ids(&self, order_ids: &[String]) -> Vec<GroupBuyPlan> {
         self.plans
             .values()
             .filter(|plan| {
@@ -486,7 +503,7 @@ impl GroupBuyStore {
     }
 
     /// 校验入参并创建新记录。
-    fn create(
+    pub(crate) fn create(
         &mut self,
         request: CreateGroupBuyPlanRequest,
         lotteries: &[LotteryKind],
@@ -627,7 +644,7 @@ impl GroupBuyStore {
     }
 
     /// 关联真实投注订单号，避免同一合买重复成单。
-    fn attach_order(&mut self, id: &str, order_id: &str) -> ApiResult<GroupBuyPlan> {
+    pub(crate) fn attach_order(&mut self, id: &str, order_id: &str) -> ApiResult<GroupBuyPlan> {
         let plan = self
             .plans
             .get_mut(id)
@@ -653,7 +670,7 @@ impl GroupBuyStore {
     }
 
     /// 按订单 ID 将已结算合买计划标记为已结算。
-    fn mark_settled_by_order_ids(&mut self, order_ids: &[String]) -> Vec<GroupBuyPlan> {
+    pub(crate) fn mark_settled_by_order_ids(&mut self, order_ids: &[String]) -> Vec<GroupBuyPlan> {
         let mut settled = Vec::new();
         for plan in self.plans.values_mut() {
             let matches_order = plan
@@ -675,7 +692,11 @@ impl GroupBuyStore {
     }
 
     /// 封盘时取消仍未满单的合买计划。
-    fn cancel_unfilled_for_issue(&mut self, lottery_id: &str, issue: &str) -> Vec<GroupBuyPlan> {
+    pub(crate) fn cancel_unfilled_for_issue(
+        &mut self,
+        lottery_id: &str,
+        issue: &str,
+    ) -> Vec<GroupBuyPlan> {
         let lottery_id = lottery_id.trim();
         let issue = issue.trim();
         let mut cancelled = Vec::new();
@@ -697,7 +718,7 @@ impl GroupBuyStore {
     }
 
     /// 处理 add_participant 的具体内部流程。
-    fn add_participant(
+    pub(crate) fn add_participant(
         &mut self,
         id: &str,
         request: AddGroupBuyParticipantRequest,
@@ -773,7 +794,7 @@ impl GroupBuyStore {
     }
 
     /// 移除指定合买计划。
-    fn remove_plan(&mut self, id: &str) -> ApiResult<()> {
+    pub(crate) fn remove_plan(&mut self, id: &str) -> ApiResult<()> {
         self.plans
             .remove(id)
             .map(|_| ())
@@ -781,7 +802,11 @@ impl GroupBuyStore {
     }
 
     /// 移除指定参与记录，并回退进度和状态。
-    fn remove_participant(&mut self, id: &str, participant_id: &str) -> ApiResult<GroupBuyPlan> {
+    pub(crate) fn remove_participant(
+        &mut self,
+        id: &str,
+        participant_id: &str,
+    ) -> ApiResult<GroupBuyPlan> {
         let plan = self
             .plans
             .get_mut(id)

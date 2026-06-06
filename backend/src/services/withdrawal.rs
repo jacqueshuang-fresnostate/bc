@@ -7,7 +7,7 @@ use std::{
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{PgConnection, Row};
 
 use crate::{
     domain::{
@@ -15,15 +15,18 @@ use crate::{
         withdrawal::{CreateWithdrawalOrderRequest, WithdrawalOrderStatus, WithdrawalOrderSummary},
     },
     error::{ApiError, ApiResult},
-    services::{business_database::BusinessDatabase, finance::FinanceRepository},
+    services::{
+        business_database::BusinessDatabase,
+        finance::{save_finance_store_in_transaction, FinanceRepository},
+    },
 };
 
 use super::business_database::{enum_from_string, enum_to_string};
 
 #[derive(Clone)]
 pub struct WithdrawalRepository {
-    inner: Arc<RwLock<WithdrawalStore>>,
-    persistence: Option<BusinessDatabase>,
+    pub(crate) inner: Arc<RwLock<WithdrawalStore>>,
+    pub(crate) persistence: Option<BusinessDatabase>,
 }
 
 impl WithdrawalRepository {
@@ -70,27 +73,24 @@ impl WithdrawalRepository {
         request: CreateWithdrawalOrderRequest,
         finance: &FinanceRepository,
     ) -> ApiResult<WithdrawalOrderSummary> {
-        let order = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
-            store.draft_order(user, method, request)?
-        };
+        let mut withdrawal_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?
+            .clone();
+        let mut finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .clone();
 
-        finance
-            .freeze_withdrawal(&order.user_id, order.amount_minor, &order.id)
-            .await?;
+        let order = withdrawal_store.draft_order(user, method, request)?;
+        finance_store.freeze_withdrawal(&order.user_id, order.amount_minor, &order.id)?;
+        let result = withdrawal_store.insert_order(order)?;
 
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
-            let result = store.insert_order(order)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
+        persist_withdrawal_finance_stores(self, finance, &withdrawal_store, &finance_store).await?;
+        self.replace_store(withdrawal_store)?;
+        finance.replace_store(finance_store)?;
         Ok(result)
     }
 
@@ -100,27 +100,24 @@ impl WithdrawalRepository {
         id: &str,
         finance: &FinanceRepository,
     ) -> ApiResult<WithdrawalOrderSummary> {
-        let order = {
-            let store = self
-                .inner
-                .read()
-                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
-            store.reviewable_order(id, WithdrawalOrderStatus::Approved)?
-        };
+        let mut withdrawal_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?
+            .clone();
+        let mut finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .clone();
 
-        finance
-            .approve_withdrawal(&order.user_id, order.amount_minor, &order.id)
-            .await?;
+        let order = withdrawal_store.reviewable_order(id, WithdrawalOrderStatus::Approved)?;
+        finance_store.approve_withdrawal(&order.user_id, order.amount_minor, &order.id)?;
+        let result = withdrawal_store.mark_reviewed(id, WithdrawalOrderStatus::Approved)?;
 
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
-            let result = store.mark_reviewed(id, WithdrawalOrderStatus::Approved)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
+        persist_withdrawal_finance_stores(self, finance, &withdrawal_store, &finance_store).await?;
+        self.replace_store(withdrawal_store)?;
+        finance.replace_store(finance_store)?;
         Ok(result)
     }
 
@@ -130,40 +127,63 @@ impl WithdrawalRepository {
         id: &str,
         finance: &FinanceRepository,
     ) -> ApiResult<WithdrawalOrderSummary> {
-        let order = {
-            let store = self
-                .inner
-                .read()
-                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
-            store.reviewable_order(id, WithdrawalOrderStatus::Rejected)?
-        };
+        let mut withdrawal_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?
+            .clone();
+        let mut finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .clone();
 
-        finance
-            .reject_withdrawal(&order.user_id, order.amount_minor, &order.id)
-            .await?;
+        let order = withdrawal_store.reviewable_order(id, WithdrawalOrderStatus::Rejected)?;
+        finance_store.reject_withdrawal(&order.user_id, order.amount_minor, &order.id)?;
+        let result = withdrawal_store.mark_reviewed(id, WithdrawalOrderStatus::Rejected)?;
 
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
-            let result = store.mark_reviewed(id, WithdrawalOrderStatus::Rejected)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
+        persist_withdrawal_finance_stores(self, finance, &withdrawal_store, &finance_store).await?;
+        self.replace_store(withdrawal_store)?;
+        finance.replace_store(finance_store)?;
         Ok(result)
     }
 
-    async fn persist(&self, store: &WithdrawalStore) -> ApiResult<()> {
-        if let Some(persistence) = &self.persistence {
-            save_withdrawal_store(persistence, store).await?;
-        }
+    pub(crate) fn replace_store(&self, store: WithdrawalStore) -> ApiResult<()> {
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))? = store;
         Ok(())
     }
 }
 
+/// 在同一个数据库事务中保存提现和资金快照，确保冻结、打款和解冻不会只落一边。
+async fn persist_withdrawal_finance_stores(
+    withdrawals: &WithdrawalRepository,
+    finance: &FinanceRepository,
+    withdrawal_store: &WithdrawalStore,
+    finance_store: &super::finance::FinanceStore,
+) -> ApiResult<()> {
+    match (&withdrawals.persistence, &finance.persistence) {
+        (Some(database), Some(_)) => {
+            let mut tx = database
+                .pool()
+                .begin()
+                .await
+                .map_err(|_| ApiError::Internal("提现资金事务开启失败".to_string()))?;
+            save_withdrawal_store_in_transaction(&mut *tx, withdrawal_store).await?;
+            save_finance_store_in_transaction(&mut *tx, finance_store).await?;
+            tx.commit()
+                .await
+                .map_err(|_| ApiError::Internal("提现资金事务提交失败".to_string()))
+        }
+        (None, None) => Ok(()),
+        _ => Err(ApiError::Internal("提现和资金持久化配置不一致".to_string())),
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct WithdrawalStore {
+pub(crate) struct WithdrawalStore {
     orders: BTreeMap<String, WithdrawalOrderSummary>,
     next_sequence: u64,
 }
@@ -185,7 +205,7 @@ impl WithdrawalStore {
     }
 
     /// 校验提现参数并生成尚未入库的提现申请。
-    fn draft_order(
+    pub(crate) fn draft_order(
         &mut self,
         user: &UserSummary,
         method: &WithdrawalMethod,
@@ -218,7 +238,10 @@ impl WithdrawalStore {
     }
 
     /// 保存提现申请到内存集合，重复订单 ID 直接拒绝。
-    fn insert_order(&mut self, order: WithdrawalOrderSummary) -> ApiResult<WithdrawalOrderSummary> {
+    pub(crate) fn insert_order(
+        &mut self,
+        order: WithdrawalOrderSummary,
+    ) -> ApiResult<WithdrawalOrderSummary> {
         if self.orders.contains_key(&order.id) {
             return Err(ApiError::Conflict(format!(
                 "withdrawal order `{}` already exists",
@@ -230,7 +253,7 @@ impl WithdrawalStore {
     }
 
     /// 返回可审核的提现申请；重复点击同一审核结果视为幂等。
-    fn reviewable_order(
+    pub(crate) fn reviewable_order(
         &self,
         id: &str,
         target_status: WithdrawalOrderStatus,
@@ -259,7 +282,7 @@ impl WithdrawalStore {
     }
 
     /// 把提现申请标记为目标审核状态，并记录审核时间。
-    fn mark_reviewed(
+    pub(crate) fn mark_reviewed(
         &mut self,
         id: &str,
         target_status: WithdrawalOrderStatus,
@@ -355,19 +378,13 @@ async fn load_withdrawal_store(database: &BusinessDatabase) -> ApiResult<Withdra
     })
 }
 
-async fn save_withdrawal_store(
-    database: &BusinessDatabase,
+pub(crate) async fn save_withdrawal_store_in_transaction(
+    connection: &mut PgConnection,
     store: &WithdrawalStore,
 ) -> ApiResult<()> {
-    let mut tx = database
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::Internal("提现事务开启失败".to_string()))?;
-
     for table in ["withdrawal_orders", "withdrawal_runtime"] {
         sqlx::query(&format!("DELETE FROM {table}"))
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await
             .map_err(|_| ApiError::Internal("提现数据清理失败".to_string()))?;
     }
@@ -391,7 +408,7 @@ async fn save_withdrawal_store(
         .bind(enum_to_string(&order.status)?)
         .bind(&order.created_at)
         .bind(&order.reviewed_at)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|_| ApiError::Internal("提现申请数据保存失败".to_string()))?;
     }
@@ -400,13 +417,11 @@ async fn save_withdrawal_store(
         .map_err(|_| ApiError::Internal("提现序号过大".to_string()))?;
     sqlx::query("INSERT INTO withdrawal_runtime (key, value) VALUES ('next_sequence', $1)")
         .bind(next_sequence)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|_| ApiError::Internal("提现运行数据保存失败".to_string()))?;
 
-    tx.commit()
-        .await
-        .map_err(|_| ApiError::Internal("提现事务提交失败".to_string()))
+    Ok(())
 }
 
 fn required_trimmed(value: impl Into<String>, label: &str) -> ApiResult<String> {

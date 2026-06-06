@@ -689,7 +689,6 @@ async fn create_user_bet_orders(
     }
 
     let mut checked_orders = Vec::with_capacity(payload.orders.len());
-    let mut total_amount_minor = 0_i64;
     for item in payload.orders {
         let order_payload = CreateOrderRequest {
             user_id: session.user.id.clone(),
@@ -706,33 +705,19 @@ async fn create_user_bet_orders(
             .await?;
         validate_draw_issue_accepts_order(&draw_issue, &lottery, &order_payload.issue)?;
         let quote = state.orders.quote(&lottery, &order_payload).await?;
-        total_amount_minor = total_amount_minor
-            .checked_add(quote.amount_minor)
-            .ok_or_else(|| ApiError::BadRequest("投注总金额过大".to_string()))?;
+        if quote.amount_minor <= 0 {
+            return Err(ApiError::BadRequest("投注金额必须大于 0".to_string()));
+        }
         checked_orders.push((lottery, order_payload));
     }
 
-    state
-        .finance
-        .ensure_available(&session.user.id, total_amount_minor)
+    let created_orders = state
+        .orders
+        .create_many_with_debit(&state.finance, checked_orders, OrderSource::Direct)
         .await?;
-
-    let mut created_orders = Vec::with_capacity(checked_orders.len());
-    for (lottery, order_payload) in checked_orders {
-        let order = state.orders.create(&lottery, order_payload).await?;
-        if let Err(error) = state.finance.debit_order(&order).await {
-            if let Err(rollback_error) = state.orders.remove_unfunded(&order.id).await {
-                tracing::error!(
-                    order_id = %order.id,
-                    error = %rollback_error.log_message(),
-                    "扣款失败后移除用户下注订单失败"
-                );
-            }
-            return Err(error);
-        }
+    for order in &created_orders {
         publish_user_order_changed(&state, &order, "created");
         publish_user_balance_changed(&state, &order.user_id, "order_debit", Some(&order.id)).await;
-        created_orders.push(order);
     }
 
     Ok(Json(ApiEnvelope::success(

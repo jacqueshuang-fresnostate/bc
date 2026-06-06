@@ -2125,3 +2125,18 @@
 - 解决问题：此前系统只有返利策略配置、邀请关系和邀请中心摘要，充值确认只给充值用户写 `rechargeCredit`，没有给上级代理写返利流水，导致“充值返利给上级代理”看起来完全没有作用；本次按后台邀请记录或注册 `agentId` 解析上级代理，并用 `recharge-rebate:{充值单号}:{代理用户 ID}` 幂等引用避免重复回调重复发放。
 - 实施内容：后端新增返利发放服务逻辑，优先使用 `status=active` 且 `rebateEnabled=true` 的人工邀请记录；被邀请人已有人工邀请记录但记录禁用时不回退 `agentId`；无人工记录时使用注册代理关系；返利接收方必须是有效代理用户。邀请中心 `totalPaidCommissionMinor` 改为统计真实正向 `rechargeRebateCredit` 流水；后台和手机端资金流水补充“充值返利”展示；数据库迁移更新 `ledger_entries.kind` 中文注释；同步更新架构说明和 API 契约。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、管理后台 `npm run build`、手机端 `npm run build` 和 `git diff --check` 均通过；后端全量 230 条测试成功。使用本地 PostgreSQL 连接启动后端烟测时迁移和仓储初始化未出现版本错误，随后立即停止服务；期间仅出现已有腾讯分分彩历史期号开奖源缺期警告，与本次返利修复无关。
+
+## 2026-06-06 13:09 HKT 系统逻辑漏洞审查与充值返利幂等修复
+
+- 完成任务：审查资金、充值返利、提现、批量下注、合买机器人、后台权限和实时事件等关键流程，并修复充值返利幂等引用规则。
+- 解决问题：此前 `rechargeRebateCredit` 使用 `recharge-rebate:{充值单号}:{代理用户 ID}` 作为幂等引用；如果同一充值单首次返利后，后台邀请关系或注册代理关系发生变化，后续支付通知或人工确认再次触发时可能给新代理再发一笔返利。本次改为 `recharge-rebate:{充值单号}`，确保同一充值订单无论代理关系如何变化都只能生成一笔返利流水。
+- 实施内容：更新 `FinanceRepository::credit_recharge_rebate` 和 `FinanceStore::credit_recharge_rebate` 注释与引用生成逻辑，新增“代理变化后重复触发不重复发放”的后端单元测试；同步更新 `架构设计.md`、`.trellis/spec/backend/api-contracts.md` 和 `.trellis/spec/backend/database-guidelines.md` 的资金幂等约定。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml` 和 `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 均通过；后端全量 231 条测试成功。审查中仍发现跨仓储事务、批量下注失败补偿、后台高危操作权限和合买机器人身份隐藏等后续风险，需要下一阶段继续修复。
+
+## 2026-06-06 13:42 HKT 资金与订单跨仓储事务修复
+
+- 完成任务：为直接下注、批量下注、订单取消退款、开奖结算派奖、充值入账和提现冻结/审核新增跨仓储事务协调。
+- 解决问题：此前订单、资金、充值、提现和合买结算按仓储分步保存，可能出现订单已创建但扣款失败、批量下注返回失败但部分订单已生效、提现冻结成功但提现单未保存、结算订单已标记中奖但派奖流水未入账等状态漂移。本次改为先在仓储快照上完成业务变更，PostgreSQL 模式下使用同一个 SQLx 事务保存相关业务表，提交成功后再替换运行时内存快照。
+- 实施内容：`OrderRepository` 新增 `create_with_debit/create_many_with_debit/cancel_with_refund/settle_with_payouts`；用户端批量下注和后台订单创建、取消、结算切换到事务入口；`RechargeRepository` 确认入账与 `FinanceStore::credit_recharge` 同事务保存；`WithdrawalRepository` 提现申请、通过、驳回与资金冻结/打款/解冻同事务保存；各仓储抽出 `save_*_store_in_transaction` 内部函数。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml` 和 `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 均通过；后端全量 234 条测试成功，新增覆盖批量下注失败不产生部分订单和扣款、订单取消退款、开奖结算派奖。
+- 后续动作：合买发起、合买认购、后台追加合买参与人和机器人补单仍需要继续收敛到统一事务协调入口，当前保留既有补偿删除逻辑。

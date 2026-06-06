@@ -7,7 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{PgConnection, Row};
 
 use crate::{
     domain::{
@@ -26,8 +26,8 @@ use super::business_database::{enum_from_string, enum_to_string, BusinessDatabas
 
 #[derive(Clone)]
 pub struct FinanceRepository {
-    inner: Arc<RwLock<FinanceStore>>,
-    persistence: Option<BusinessDatabase>,
+    pub(crate) inner: Arc<RwLock<FinanceStore>>,
+    pub(crate) persistence: Option<BusinessDatabase>,
 }
 
 impl FinanceRepository {
@@ -109,14 +109,6 @@ impl FinanceRepository {
         Ok(result)
     }
 
-    /// 校验订单是否满足退款条件。
-    pub async fn ensure_order_can_refund(&self, order: &OrderDetail) -> ApiResult<()> {
-        self.inner
-            .read()
-            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
-            .ensure_order_can_refund(order)
-    }
-
     /// 执行财务手工增减并记录流水。
     pub async fn manual_adjust(
         &self,
@@ -128,34 +120,6 @@ impl FinanceRepository {
                 .write()
                 .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
             let result = store.manual_adjust(payload)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
-    }
-
-    /// 按订单扣减用户资金。
-    pub async fn debit_order(&self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let result = store.debit_order(order)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
-    }
-
-    /// 按订单执行退款并回写流水。
-    pub async fn refund_order(&self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let result = store.refund_order(order)?;
             (result, store.clone())
         };
         self.persist(&snapshot).await?;
@@ -180,26 +144,7 @@ impl FinanceRepository {
         Ok(result)
     }
 
-    /// 按充值订单给用户入账；同一个充值单重复通知保持幂等。
-    pub async fn credit_recharge(
-        &self,
-        user_id: &str,
-        amount_minor: i64,
-        recharge_order_id: &str,
-    ) -> ApiResult<LedgerEntry> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let result = store.credit_recharge(user_id, amount_minor, recharge_order_id)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
-    }
-
-    /// 按充值订单给上级代理发放返利；同一个充值单和代理组合重复触发保持幂等。
+    /// 按充值订单给上级代理发放返利；同一个充值单重复触发只会发放一次。
     pub async fn credit_recharge_rebate(
         &self,
         agent_user_id: &str,
@@ -218,63 +163,6 @@ impl FinanceRepository {
                 rebate_amount_minor,
                 recharge_order_id,
             )?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
-    }
-
-    /// 提交提现申请时冻结用户可用余额，并按提现单号保持幂等。
-    pub async fn freeze_withdrawal(
-        &self,
-        user_id: &str,
-        amount_minor: i64,
-        withdrawal_order_id: &str,
-    ) -> ApiResult<LedgerEntry> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let result = store.freeze_withdrawal(user_id, amount_minor, withdrawal_order_id)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
-    }
-
-    /// 审核通过提现申请时扣减冻结余额，并按提现单号保持幂等。
-    pub async fn approve_withdrawal(
-        &self,
-        user_id: &str,
-        amount_minor: i64,
-        withdrawal_order_id: &str,
-    ) -> ApiResult<LedgerEntry> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let result = store.approve_withdrawal(user_id, amount_minor, withdrawal_order_id)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
-    }
-
-    /// 驳回提现申请时把冻结余额退回可用余额，并按提现单号保持幂等。
-    pub async fn reject_withdrawal(
-        &self,
-        user_id: &str,
-        amount_minor: i64,
-        withdrawal_order_id: &str,
-    ) -> ApiResult<LedgerEntry> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let result = store.reject_withdrawal(user_id, amount_minor, withdrawal_order_id)?;
             (result, store.clone())
         };
         self.persist(&snapshot).await?;
@@ -326,10 +214,18 @@ impl FinanceRepository {
 
         Ok(())
     }
+
+    pub(crate) fn replace_store(&self, store: FinanceStore) -> ApiResult<()> {
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))? = store;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct FinanceStore {
+pub(crate) struct FinanceStore {
     accounts: BTreeMap<String, FinancialAccountSummary>,
     ledger_entries: Vec<LedgerEntry>,
     next_sequence: u64,
@@ -461,9 +357,20 @@ async fn save_finance_store(database: &BusinessDatabase, store: &FinanceStore) -
         .await
         .map_err(|_| ApiError::Internal("资金事务开启失败".to_string()))?;
 
+    save_finance_store_in_transaction(&mut *tx, store).await?;
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("资金事务提交失败".to_string()))
+}
+
+pub(crate) async fn save_finance_store_in_transaction(
+    connection: &mut PgConnection,
+    store: &FinanceStore,
+) -> ApiResult<()> {
     for table in ["ledger_entries", "financial_accounts", "finance_runtime"] {
         sqlx::query(&format!("DELETE FROM {table}"))
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await
             .map_err(|_| ApiError::Internal("资金数据清理失败".to_string()))?;
     }
@@ -477,7 +384,7 @@ async fn save_finance_store(database: &BusinessDatabase, store: &FinanceStore) -
         .bind(&account.user_id)
         .bind(account.available_balance_minor)
         .bind(account.frozen_balance_minor)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|_| ApiError::Internal("资金账户数据保存失败".to_string()))?;
     }
@@ -496,7 +403,7 @@ async fn save_finance_store(database: &BusinessDatabase, store: &FinanceStore) -
         .bind(&entry.reference_id)
         .bind(&entry.description)
         .bind(&entry.created_at)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|_| ApiError::Internal("资金流水数据保存失败".to_string()))?;
     }
@@ -505,13 +412,11 @@ async fn save_finance_store(database: &BusinessDatabase, store: &FinanceStore) -
         .map_err(|_| ApiError::Internal("资金流水序号过大".to_string()))?;
     sqlx::query("INSERT INTO finance_runtime (key, value) VALUES ('next_sequence', $1)")
         .bind(next_sequence)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|_| ApiError::Internal("资金运行数据保存失败".to_string()))?;
 
-    tx.commit()
-        .await
-        .map_err(|_| ApiError::Internal("资金事务提交失败".to_string()))
+    Ok(())
 }
 
 impl FinanceStore {
@@ -605,7 +510,7 @@ impl FinanceStore {
     }
 
     /// 处理 ensure_available 的具体内部流程。
-    fn ensure_available(&self, user_id: &str, amount_minor: i64) -> ApiResult<()> {
+    pub(crate) fn ensure_available(&self, user_id: &str, amount_minor: i64) -> ApiResult<()> {
         let user_id = user_id.trim();
         if user_id.is_empty() {
             return Err(ApiError::BadRequest("user id is required".to_string()));
@@ -652,7 +557,7 @@ impl FinanceStore {
     }
 
     /// 处理 ensure_order_can_refund 的具体内部流程。
-    fn ensure_order_can_refund(&self, order: &OrderDetail) -> ApiResult<()> {
+    pub(crate) fn ensure_order_can_refund(&self, order: &OrderDetail) -> ApiResult<()> {
         if !self.has_reference(&LedgerEntryKind::OrderDebit, &order.id) {
             return Err(ApiError::BadRequest(
                 "order debit ledger entry is required before refund".to_string(),
@@ -697,7 +602,7 @@ impl FinanceStore {
     }
 
     /// 处理 debit_order 的具体内部流程。
-    fn debit_order(&mut self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
+    pub(crate) fn debit_order(&mut self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
         if self.has_reference(&LedgerEntryKind::OrderDebit, &order.id) {
             return Err(ApiError::Conflict(format!(
                 "order `{}` has already been debited",
@@ -719,7 +624,7 @@ impl FinanceStore {
     }
 
     /// 处理 refund_order 的具体内部流程。
-    fn refund_order(&mut self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
+    pub(crate) fn refund_order(&mut self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
         if let Some(entry) = self.reference_entry(&LedgerEntryKind::OrderRefund, &order.id) {
             return Ok(entry);
         }
@@ -751,7 +656,7 @@ impl FinanceStore {
     }
 
     /// 结算派奖时识别合买总单，并把奖金拆给参与人。
-    fn credit_settlement_with_group_buys(
+    pub(crate) fn credit_settlement_with_group_buys(
         &mut self,
         settlement: &SettlementRun,
         group_buy_plans: &[GroupBuyPlan],
@@ -860,7 +765,7 @@ impl FinanceStore {
     }
 
     /// 处理充值入账，避免同一个充值订单重复生成流水。
-    fn credit_recharge(
+    pub(crate) fn credit_recharge(
         &mut self,
         user_id: &str,
         amount_minor: i64,
@@ -894,8 +799,8 @@ impl FinanceStore {
         )
     }
 
-    /// 处理上级代理充值返利，引用 ID 使用充值单和代理 ID 保证幂等。
-    fn credit_recharge_rebate(
+    /// 处理上级代理充值返利，引用 ID 只绑定充值单，避免代理关系变更后重复发放。
+    pub(crate) fn credit_recharge_rebate(
         &mut self,
         agent_user_id: &str,
         invitee_user_id: &str,
@@ -923,7 +828,7 @@ impl FinanceStore {
             return Err(ApiError::BadRequest("充值订单 ID 不能为空".to_string()));
         }
 
-        let reference_id = recharge_rebate_reference_id(recharge_order_id, agent_user_id);
+        let reference_id = recharge_rebate_reference_id(recharge_order_id);
         if let Some(entry) =
             self.reference_entry(&LedgerEntryKind::RechargeRebateCredit, &reference_id)
         {
@@ -941,7 +846,7 @@ impl FinanceStore {
     }
 
     /// 提交提现申请时把可用余额转入冻结余额，并生成提现冻结流水。
-    fn freeze_withdrawal(
+    pub(crate) fn freeze_withdrawal(
         &mut self,
         user_id: &str,
         amount_minor: i64,
@@ -1002,7 +907,7 @@ impl FinanceStore {
     }
 
     /// 提现审核通过时扣减冻结余额，表示平台已经完成打款。
-    fn approve_withdrawal(
+    pub(crate) fn approve_withdrawal(
         &mut self,
         user_id: &str,
         amount_minor: i64,
@@ -1022,7 +927,7 @@ impl FinanceStore {
     }
 
     /// 提现审核驳回时解冻余额，恢复到用户可用余额。
-    fn reject_withdrawal(
+    pub(crate) fn reject_withdrawal(
         &mut self,
         user_id: &str,
         amount_minor: i64,
@@ -1040,7 +945,7 @@ impl FinanceStore {
     }
 
     /// 合买认购扣款，重复参与记录不会重复扣款。
-    fn debit_group_buy(
+    pub(crate) fn debit_group_buy(
         &mut self,
         user_id: &str,
         amount_minor: i64,
@@ -1077,7 +982,7 @@ impl FinanceStore {
     }
 
     /// 合买取消或流单时按参与记录退还认购金额。
-    fn refund_group_buy_plan(
+    pub(crate) fn refund_group_buy_plan(
         &mut self,
         plan: &GroupBuyPlan,
         reason: &str,
@@ -1270,8 +1175,8 @@ fn proportional_amount(total_minor: i64, part_minor: i64, base_minor: i64) -> Ap
 }
 
 /// 生成充值返利流水的业务引用 ID，用于支付回调、后台确认重复触发时识别同一笔返利。
-fn recharge_rebate_reference_id(recharge_order_id: &str, agent_user_id: &str) -> String {
-    format!("recharge-rebate:{recharge_order_id}:{agent_user_id}")
+fn recharge_rebate_reference_id(recharge_order_id: &str) -> String {
+    format!("recharge-rebate:{recharge_order_id}")
 }
 
 /// 处理 current_timestamp_label 的具体内部流程。
@@ -1498,7 +1403,7 @@ mod tests {
     }
 
     #[test]
-    /// 充值返利会入账给上级代理，并按充值单和代理组合保持幂等。
+    /// 充值返利会入账给上级代理，并按充值单保持幂等。
     fn store_credits_recharge_rebate_once() {
         let mut store = FinanceStore::seeded();
 
@@ -1515,9 +1420,29 @@ mod tests {
         assert_eq!(entry.amount_minor, 350);
         assert_eq!(
             entry.reference_id.as_deref(),
-            Some("recharge-rebate:R000000000001:U90001")
+            Some("recharge-rebate:R000000000001")
         );
         assert_eq!(account.available_balance_minor, 520_350);
+    }
+
+    #[test]
+    /// 同一充值单的返利如果再次触发，即使传入了不同代理，也不会产生第二笔返利。
+    fn store_recharge_rebate_idempotency_ignores_changed_agent() {
+        let mut store = FinanceStore::seeded();
+
+        let entry = store
+            .credit_recharge_rebate("U90001", "U10001", 350, "R000000000001")
+            .expect("recharge rebate can be credited");
+        let repeated = store
+            .credit_recharge_rebate("U10002", "U10001", 350, "R000000000001")
+            .expect("changed agent repeat keeps idempotency");
+        let original_agent = store.account("U90001").expect("original agent exists");
+        let changed_agent = store.account("U10002").expect("changed agent exists");
+
+        assert_eq!(entry.id, repeated.id);
+        assert_eq!(repeated.user_id, "U90001");
+        assert_eq!(original_agent.available_balance_minor, 520_350);
+        assert_eq!(changed_agent.available_balance_minor, 50_000);
     }
 
     #[test]
