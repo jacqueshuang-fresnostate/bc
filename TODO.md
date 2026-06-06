@@ -2161,3 +2161,10 @@
 - 解决问题：此前只有后台客服侧支持表情，用户手机端仍只能输入纯文本，客服直充聊天体验不对称；同时手机端是 Vue，不能直接使用 React 版 `@emoji-mart/react`。
 - 实施内容：手机端新增 `emoji-mart` 和 `@emoji-mart/data` 依赖，并生成 `pnpm-lock.yaml` 记录当前 pnpm 依赖树；`SupportView.vue` 通过动态 `import()` 加载原生 `Picker`、表情数据和中文语言包；表情面板挂在输入栏上方，选中后按当前输入框光标位置插入原生 emoji；`LucideIcon` 新增 `mood` 图标映射。
 - 验证结果：手机端 `npm run build` 通过，构建输出中 `emoji-mart` 与表情数据已拆为独立异步 chunk；`git diff --check` 通过；手机端 dev server 浏览器烟测通过，未登录访问 `/support` 正常跳转登录页且无浏览器控制台错误；烟测时因本地后端未启动出现 Vite 代理日志，与本次表情面板改动无关。
+
+## 2026-06-06 16:25 HKT 手机端客服表情面板重渲染错误修复
+
+- 完成任务：修复手机端在线客服在收到 WebSocket 实时消息后可能触发的 `Cannot read properties of null (reading 'emitsOptions')` 运行时错误。
+- 解决问题：此前 `emoji-mart` 原生 `Picker` 被 `replaceChildren` 注入到 Vue 模板管理的 DOM 子树里；实时消息更新 `LayoutView` 的 `router-view` props 后会让客服页重渲染，手动改过的子节点可能破坏 Vue patch 状态。
+- 实施内容：表情面板改用 `Teleport` 渲染到 `body`，原生 `Picker` 只挂载到无 Vue 子节点的空宿主容器，并在父节点不一致时复用 `appendChild`；同步更新前端组件规范和架构说明。
+- 验证结果：手机端 `npm run build` 和 `git diff --check` 通过；本地 dev server 配合临时 mock 后端完成登录、客服会话加载、WebSocket 推送客服消息和打开表情面板烟测，浏览器控制台无 `emitsOptions` 或空对象读取错误。

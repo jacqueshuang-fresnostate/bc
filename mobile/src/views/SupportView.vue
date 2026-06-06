@@ -145,8 +145,12 @@ async function mountEmojiPicker() {
     }
   }
 
-  if (emojiPickerElement && emojiPickerHostRef.value) {
-    emojiPickerHostRef.value.replaceChildren(emojiPickerElement)
+  if (
+    emojiPickerElement
+    && emojiPickerHostRef.value
+    && emojiPickerElement.parentElement !== emojiPickerHostRef.value
+  ) {
+    emojiPickerHostRef.value.appendChild(emojiPickerElement)
   }
 }
 
@@ -316,14 +320,26 @@ onBeforeUnmount(() => {
       </div>
     </main>
 
-    <div class="support-input-bar">
-      <div v-if="emojiPickerVisible" class="support-emoji-panel">
-        <div ref="emojiPickerHostRef" class="support-emoji-panel__host">
+    <Teleport to="body">
+      <div
+        v-show="emojiPickerVisible"
+        class="support-emoji-panel"
+        @click.self="emojiPickerVisible = false"
+      >
+        <div class="support-emoji-panel__shell">
           <div v-if="emojiPickerLoading || emojiPickerError" class="support-emoji-panel__state">
             {{ emojiPickerLoading ? '正在加载表情面板...' : emojiPickerError }}
           </div>
+          <div
+            ref="emojiPickerHostRef"
+            v-show="!emojiPickerLoading && !emojiPickerError"
+            class="support-emoji-panel__host"
+          ></div>
         </div>
       </div>
+    </Teleport>
+
+    <div class="support-input-bar">
       <button
         class="support-input-bar__emoji"
         type="button"
@@ -719,23 +735,27 @@ onBeforeUnmount(() => {
 }
 
 .support-emoji-panel {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: calc(100% + 10px);
+  position: fixed;
+  inset: 0;
+  z-index: 60;
   display: flex;
+  align-items: flex-end;
   justify-content: center;
-  pointer-events: none;
+  padding: 0 12px calc(74px + env(safe-area-inset-bottom));
+  pointer-events: auto;
 }
 
-.support-emoji-panel__host {
+.support-emoji-panel__shell {
   width: min(352px, calc(100vw - 24px));
   min-height: 300px;
   overflow: hidden;
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 18px 50px rgba(95, 10, 18, 0.18);
-  pointer-events: auto;
+}
+
+.support-emoji-panel__host {
+  min-height: 300px;
 }
 
 .support-emoji-panel__state {
