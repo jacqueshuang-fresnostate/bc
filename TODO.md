@@ -2182,3 +2182,10 @@
 - 解决问题：此前手机端虽然已经把 `emoji-mart` 原生 Picker 放到 `Teleport` 面板里，但仍给 Picker 传入 `onClickOutside`；Picker 内部监听与 Vue 遮罩关闭逻辑叠加，可能导致第二次点击按钮时刚打开就被关掉。
 - 实施内容：移除手机端原生 Picker 的 `onClickOutside`，外部点击关闭统一由 Vue `Teleport` 遮罩处理，选中表情后仍由 `insertEmoji` 插入并关闭弹窗；同步更新前端组件规范和架构说明。
 - 验证结果：手机端 `npm run build`、`npm test` 和 `git diff --check` 通过；本地 dev server 配合临时 mock 后端完成登录、进入 `/support`、第一次打开表情弹窗、点击遮罩关闭、第二次再次打开的浏览器烟测，关闭后 Picker 尺寸归零，第二次打开后 Picker 和遮罩尺寸恢复正常，浏览器控制台无错误。
+
+## 2026-06-07 01:09 HKT 手机端公共聊天大厅
+
+- 完成任务：新增手机端公共聊天大厅，所有登录用户都可以进入同一大厅发送和查看消息。
+- 解决问题：此前手机端只有一对一客服会话，缺少面向所有会员的公共聊天场景；如果复用客服会话会把客服工单和公共聊天混在一起，也无法把消息广播给所有在线用户。
+- 实施内容：后端新增 `chat_hall_messages` 数据表、领域模型、仓储、`GET/POST /api/user/chat-hall/messages` 接口和 `chat_hall.message_created` 公开实时事件；手机端新增聊天大厅 API 类型、实时事件归一化、`/chat-hall` 页面和“我的账户”入口；架构说明和 Trellis 规范同步记录接口契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml realtime -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；本地内存后端配合手机端 dev server 完成浏览器烟测，`demo_user` 登录后进入 `/chat-hall` 可发送消息，`agent_alpha` 通过接口发送的大厅消息可通过 WebSocket 实时追加，浏览器控制台无错误。

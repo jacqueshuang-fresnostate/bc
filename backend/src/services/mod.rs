@@ -4,6 +4,7 @@ pub mod access;
 pub mod advertisement;
 pub mod automation;
 pub mod business_database;
+pub mod chat_hall;
 pub mod dashboard;
 pub mod draw;
 pub mod draw_api;

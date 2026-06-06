@@ -3,6 +3,7 @@ export type MobileRealtimeEvent =
   | MobileIssueEvent
   | MobileUserRealtimeEvent
   | MobileSupportRealtimeEvent
+  | MobileChatHallRealtimeEvent
   | MobileHeartbeatEvent
 
 export type MobileDrawResultEvent = {
@@ -42,6 +43,22 @@ export type MobileSupportRealtimeEvent = {
   event: 'support_message_created' | 'support_conversation_updated'
   sourceEvent: 'support.message_created' | 'support.conversation_updated'
   conversationId: string
+  data: Record<string, unknown>
+  occurredAt: string
+}
+
+export type MobileChatHallMessage = {
+  id: string
+  userId: string
+  username: string
+  content: string
+  createdAt: string
+}
+
+export type MobileChatHallRealtimeEvent = {
+  event: 'chat_hall_message_created'
+  sourceEvent: 'chat_hall.message_created'
+  message: MobileChatHallMessage
   data: Record<string, unknown>
   occurredAt: string
 }
@@ -124,6 +141,17 @@ export function normalizeRealtimeEvent(raw: unknown): MobileRealtimeEvent | null
       occurredAt,
     }
   }
+  if (event === 'chat_hall.message_created') {
+    const message = normalizeChatHallMessage(data.message)
+    if (!message) return null
+    return {
+      event: 'chat_hall_message_created',
+      sourceEvent: event,
+      message,
+      data,
+      occurredAt,
+    }
+  }
 
   return null
 }
@@ -150,4 +178,22 @@ function normalizeResultNumbers(resultNumbers: unknown, drawNumber: unknown) {
   if (!text) return []
   if (/^\d+$/.test(text)) return text.split('')
   return text.split(/[\s,，]+/).map(item => item.trim()).filter(Boolean)
+}
+
+function normalizeChatHallMessage(value: unknown): MobileChatHallMessage | null {
+  if (!isPlainObject(value)) return null
+  const id = stringValue(value.id)
+  const userId = stringValue(value.userId)
+  const username = stringValue(value.username)
+  const content = stringValue(value.content)
+  const createdAt = stringValue(value.createdAt)
+  if (!id || !userId || !content) return null
+
+  return {
+    id,
+    userId,
+    username: username || '会员',
+    content,
+    createdAt,
+  }
 }

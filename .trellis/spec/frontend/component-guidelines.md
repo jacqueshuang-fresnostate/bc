@@ -66,7 +66,8 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端下注页必须使用 `/api/user/bet/page-config/{lottery_id}`、`POST /api/user/bet/orders` 和 `GET /api/user/bet/orders`，不再调用旧 `/api/bet/*`。提交时前端只负责把位置宫格、胆拖、直选组合和大小单双转换成后端 `selection`，订单金额仍由后端按玩法展开注数和单注金额计算。
 - 手机端下注页普通投注或发起合买成功后必须清空本地购彩篮，并用 `router.replace({ name: 'Home' })` 自动返回首页；接口失败时才停留在下注页并刷新余额、期号状态，方便用户继续处理。
 - 手机端下注页用户直接点击“立即投注”“提交购彩篮”或“发起合买”时，如果页面内部需要先把当前草稿加入购彩篮，该内部入篮动作必须静默执行，不显示“已加入购彩篮”；只有用户主动点击“加入购彩篮”按钮时才显示入篮成功提示，最终提交成功只保留下注或合买成功提示。
-- 手机端实时事件必须通过 `GET /api/user/realtime` WebSocket 接口接入，不再使用旧 `/ws/lottery`；页面组件不得直接依赖后端原始事件信封，必须先通过 `mobile/src/types/realtime.ts` 归一化为 `draw_result`、`issue_opened`、`balance_changed` 等本地事件后再消费。
+- 手机端实时事件必须通过 `GET /api/user/realtime` WebSocket 接口接入，不再使用旧 `/ws/lottery`；页面组件不得直接依赖后端原始事件信封，必须先通过 `mobile/src/types/realtime.ts` 归一化为 `draw_result`、`issue_opened`、`balance_changed`、`chat_hall_message_created` 等本地事件后再消费。
+- 手机端公共聊天大厅必须使用当前系统 `GET/POST /api/user/chat-hall/messages` 和 `chat_hall_message_created` 实时事件；大厅是所有登录用户的公共聊天流，不得复用或写入客服会话接口，断线重连后通过 HTTP 拉取最近历史并在 WS 事件到达时按消息 ID 去重追加。
 - 手机端客服聊天属于用户可见前台页面，不能直接展示后台管理员账号名；客服接入状态统一显示“客服已接入”，后台消息气泡作者统一显示“客服”。手机端是 Vue，客服输入栏接入表情时使用 `emoji-mart` 原生 `Picker` 与 `@emoji-mart/data`，不要使用 `@emoji-mart/react`；选择器、表情数据和中文语言包必须动态加载，选中后插入到当前输入框光标位置。原生 `Picker` 必须挂载到 Vue 不管理子节点的空容器中，优先放入 `Teleport` 面板；不要在 Vue 模板子树里对宿主节点调用 `replaceChildren`，否则 WebSocket 消息触发页面重渲染时可能破坏 Vue patch 状态并出现 `emitsOptions` 运行时错误。手机端表情面板的外部点击关闭由 Vue `Teleport` 遮罩负责，不要给原生 Picker 传 `onClickOutside`，避免 Picker 内部监听在弹窗关闭后影响第二次点击“表情”打开。
 - 手机端下注页的投注倍数输入应使用“减少按钮 + 数字输入 + 增加按钮”的步进控件，并保留滑块联动；输入框只接收数字，失焦或回车时必须夹到当前玩法允许的最小/最大倍数范围。
 - 手机端下注页开启合买模式时，自购份数需要按方案总额、固定每份金额和发起人最低自购比例自动填入最适配份数：有最低比例时填最低所需份数，无最低比例时至少填 1 份；用户手动填更高份数时保留，但低于最低份数或超过总份数时必须自动校正。

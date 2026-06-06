@@ -11,6 +11,7 @@ use crate::{
         access::AccessRepository,
         advertisement::AdvertisementRepository,
         business_database::BusinessDatabase,
+        chat_hall::ChatHallRepository,
         draw::DrawRepository,
         draw_api::ApiDrawSourceRepository,
         finance::FinanceRepository,
@@ -32,6 +33,7 @@ use crate::{
 pub struct AppState {
     pub access: AccessRepository,
     pub advertisements: AdvertisementRepository,
+    pub chat_hall: ChatHallRepository,
     pub draws: DrawRepository,
     pub finance: FinanceRepository,
     pub group_buys: GroupBuyRepository,
@@ -53,6 +55,7 @@ impl AppState {
         Self {
             access: AccessRepository::memory_seeded(),
             advertisements: AdvertisementRepository::memory(),
+            chat_hall: ChatHallRepository::memory(),
             draws: default_draw_repository(),
             finance: FinanceRepository::memory_seeded(),
             group_buys: GroupBuyRepository::memory_seeded(),
@@ -90,6 +93,7 @@ impl AppState {
         Ok(Self {
             access: AccessRepository::persistent(business_database.clone()).await?,
             advertisements: AdvertisementRepository::persistent(business_database.clone()).await?,
+            chat_hall: ChatHallRepository::persistent(business_database.clone()).await?,
             draws: DrawRepository::persistent_with_api_sources(
                 api_sources,
                 business_database.clone(),

@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
 use crate::domain::{
+    chat_hall::ChatHallMessage,
     draw::DrawIssue,
     finance::FinancialAccountSummary,
     order::OrderDetail,
@@ -228,6 +229,17 @@ pub fn support_conversation_updated_event(conversation: &SupportConversation) ->
     )
 }
 
+/// 封装公共聊天大厅消息事件，所有在线手机端连接都可以收到。
+pub fn chat_hall_message_created_event(message: &ChatHallMessage) -> Value {
+    realtime_envelope(
+        "chat_hall.message_created",
+        "public",
+        json!({
+            "message": message,
+        }),
+    )
+}
+
 /// 统一构造实时事件信封，保证客户端只解析一种结构。
 fn realtime_envelope(event: &str, scope: &str, data: Value) -> Value {
     json!({
@@ -403,5 +415,24 @@ mod tests {
         assert_eq!(event["scope"], "support");
         assert_eq!(event["data"]["conversationId"], "CS-R000000000001");
         assert_eq!(event["data"]["conversation"]["assignedAdminName"], "admin");
+    }
+
+    #[test]
+    /// 验证聊天大厅消息事件是公开事件并携带完整消息。
+    fn chat_hall_message_created_event_is_public() {
+        let message = ChatHallMessage {
+            id: "CHM-000000000001".to_string(),
+            user_id: "U10001".to_string(),
+            username: "demo_user".to_string(),
+            content: "大家晚上好。".to_string(),
+            created_at: "2026-06-07 20:00:00".to_string(),
+        };
+
+        let event = chat_hall_message_created_event(&message);
+
+        assert_eq!(event["event"], "chat_hall.message_created");
+        assert_eq!(event["scope"], "public");
+        assert_eq!(event["data"]["message"]["id"], "CHM-000000000001");
+        assert_eq!(event["data"]["message"]["content"], "大家晚上好。");
     }
 }

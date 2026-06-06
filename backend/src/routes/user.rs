@@ -16,6 +16,7 @@ use std::time::Duration;
 use crate::{
     app::AppState,
     domain::advertisement::MobileAdvertisement,
+    domain::chat_hall::{ChatHallMessage, CreateChatHallMessageRequest},
     domain::draw::DrawIssueStatus,
     domain::finance::{FinancialAccountSummary, LedgerEntry, LedgerEntryKind},
     domain::group_buy::{
@@ -60,8 +61,9 @@ use crate::{
         order::validate_draw_issue_accepts_order,
         play_rules::play_rule_summaries,
         realtime::{
-            audience_matches, balance_changed_event, heartbeat_event, order_changed_event,
-            recharge_changed_event, support_message_created_event, withdrawal_changed_event,
+            audience_matches, balance_changed_event, chat_hall_message_created_event,
+            heartbeat_event, order_changed_event, recharge_changed_event,
+            support_message_created_event, withdrawal_changed_event,
         },
         rebate::credit_recharge_rebate_for_order,
     },
@@ -125,6 +127,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/recharge/orders",
             get(list_recharge_orders).post(create_recharge_order),
+        )
+        .route(
+            "/chat-hall/messages",
+            get(list_chat_hall_messages).post(send_chat_hall_message),
         )
         .route(
             "/support/conversations",
@@ -1456,6 +1462,29 @@ async fn rainbow_epay_return_query(
     Query(params): Query<HashMap<String, String>>,
 ) -> ApiResult<Json<ApiEnvelope<HashMap<String, String>>>> {
     Ok(Json(ApiEnvelope::success(params)))
+}
+
+/// 返回公共聊天大厅最近消息，所有登录用户都可查看。
+async fn list_chat_hall_messages(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<Vec<ChatHallMessage>>>> {
+    let messages = state.chat_hall.list().await?;
+
+    Ok(Json(ApiEnvelope::success(messages)))
+}
+
+/// 当前用户发送一条大厅消息，保存成功后推送给所有在线手机端连接。
+async fn send_chat_hall_message(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Json(payload): Json<CreateChatHallMessageRequest>,
+) -> ApiResult<Json<ApiEnvelope<ChatHallMessage>>> {
+    let message = state.chat_hall.send(&session.user, payload).await?;
+    state
+        .realtime
+        .publish_public(chat_hall_message_created_event(&message));
+
+    Ok(Json(ApiEnvelope::success(message)))
 }
 
 async fn list_user_support_conversations(

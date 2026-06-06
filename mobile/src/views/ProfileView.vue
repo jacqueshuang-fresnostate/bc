@@ -33,6 +33,7 @@ const accountItems = computed(() => [
 ])
 
 const supportItems = [
+  { key: 'chatHall', label: '聊天大厅', icon: 'chat', value: '会员交流' },
   { key: 'support', label: '在线客服', icon: 'support_agent', value: '24h 在线' },
   { key: 'help', label: '帮助中心', icon: 'help', hint: '查看常见问题' },
 ]
@@ -69,6 +70,7 @@ function onAccountItem(item: { key: string }) {
 }
 
 function onSupportItem(item: { key: string }) {
+  if (item.key === 'chatHall') router.push('/chat-hall')
   if (item.key === 'support') router.push('/support')
   if (item.key === 'help') showToast('帮助中心建设中')
 }

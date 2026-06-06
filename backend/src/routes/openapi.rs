@@ -1244,9 +1244,27 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/user/realtime",
         "用户端实时",
         "用户实时事件",
-        "用户端通过 WebSocket 接收开奖、余额、订单、充值、提现和客服消息事件。",
+        "用户端通过 WebSocket 接收开奖、余额、订单、充值、提现、客服消息和聊天大厅消息事件。",
         AuthMode::User,
         RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/user/chat-hall/messages",
+        "用户端聊天大厅",
+        "聊天大厅消息列表",
+        "返回手机端公共聊天大厅最近消息，所有登录用户都可以查看。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/user/chat-hall/messages",
+        "用户端聊天大厅",
+        "发送聊天大厅消息",
+        "当前登录用户向公共聊天大厅发送消息，成功后通过实时事件广播给所有在线手机端。",
+        AuthMode::User,
+        RequestBodyKind::Json,
     ),
     doc(
         "get",
@@ -1731,6 +1749,8 @@ mod tests {
         assert!(document["paths"]["/user/group-buy/my"]["get"].is_object());
         assert!(document["paths"]["/user/group-buy/create-options"]["get"].is_object());
         assert!(document["paths"]["/user/realtime"]["get"].is_object());
+        assert!(document["paths"]["/user/chat-hall/messages"]["get"].is_object());
+        assert!(document["paths"]["/user/chat-hall/messages"]["post"].is_object());
         assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
         assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());
         assert!(document["paths"]["/user/withdrawals"]["post"].is_object());

@@ -2315,6 +2315,7 @@ mod tests {
         services::{
             access::AccessRepository,
             advertisement::AdvertisementRepository,
+            chat_hall::ChatHallRepository,
             draw::DrawRepository,
             finance::FinanceRepository,
             group_buy::GroupBuyRepository,
@@ -2505,6 +2506,7 @@ mod tests {
         AppState {
             access: AccessRepository::memory_seeded(),
             advertisements: AdvertisementRepository::memory(),
+            chat_hall: ChatHallRepository::memory(),
             draws: DrawRepository::memory(),
             finance: FinanceRepository::memory_seeded(),
             group_buys: GroupBuyRepository::memory_seeded(),

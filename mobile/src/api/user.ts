@@ -221,6 +221,18 @@ export type SupportConversation = {
   messages: SupportMessage[]
 }
 
+export type ChatHallMessage = {
+  id: string
+  userId: string
+  username: string
+  content: string
+  createdAt: string
+}
+
+export type CreateChatHallMessagePayload = {
+  content: string
+}
+
 type LoginPayload = {
   loginKey: string
   password: string
@@ -367,6 +379,15 @@ export async function createRechargeOrder(payload: CreateRechargeOrderPayload) {
   return unwrapApiData<CreateRechargeOrderResponse>(
     await http.post('/user/recharge/orders', payload),
   )
+}
+
+export async function fetchChatHallMessages() {
+  return unwrapApiData<ChatHallMessage[]>(await http.get('/user/chat-hall/messages'))
+}
+
+export async function sendChatHallMessage(content: string) {
+  const payload: CreateChatHallMessagePayload = { content }
+  return unwrapApiData<ChatHallMessage>(await http.post('/user/chat-hall/messages', payload))
 }
 
 export async function fetchSupportConversations() {

@@ -2,6 +2,7 @@
 
 pub mod advertisement;
 pub mod auth;
+pub mod chat_hall;
 pub mod draw;
 pub mod finance;
 pub mod group_buy;

@@ -19,6 +19,7 @@ const router = createRouter({
         { path: 'orders', name: 'Orders', component: () => import('../views/HistoryView.vue') },
         { path: 'deposit', name: 'Deposit', component: () => import('../views/DepositView.vue') },
         { path: 'support', name: 'Support', component: () => import('../views/SupportView.vue') },
+        { path: 'chat-hall', name: 'ChatHall', component: () => import('../views/ChatHallView.vue') },
         { path: 'withdraw', name: 'Withdraw', component: () => import('../views/WithdrawView.vue') },
         { path: 'withdrawal-methods', name: 'WithdrawalMethods', component: () => import('../views/WithdrawalMethodsView.vue') },
         { path: 'ledger', name: 'AccountLedger', component: () => import('../views/AccountLedgerView.vue') },
