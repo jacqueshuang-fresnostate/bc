@@ -57,7 +57,6 @@ interface EmojiMartPickerProps {
   i18n: unknown;
   locale: string;
   navPosition: string;
-  onClickOutside: () => void;
   onEmojiSelect: (emoji: unknown) => void;
   previewPosition: string;
   searchPosition: string;
@@ -462,7 +461,6 @@ export function SupportManagementPage({
                               i18n={emojiPickerRuntime.i18n}
                               locale="zh"
                               navPosition="bottom"
-                              onClickOutside={() => setEmojiPickerVisible(false)}
                               onEmojiSelect={insertEmoji}
                               previewPosition="none"
                               searchPosition="top"
@@ -483,6 +481,8 @@ export function SupportManagementPage({
                       showArrow
                       trigger="custom"
                       visible={emojiPickerVisible}
+                      keepDOM
+                      onClickOutSide={() => setEmojiPickerVisible(false)}
                       onVisibleChange={setEmojiPickerVisible}
                     >
                       <Button

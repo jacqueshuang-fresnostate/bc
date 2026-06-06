@@ -50,7 +50,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 后台列表页的创建/编辑维护表单如不需要常驻对照，应使用 Semi UI `SideSheet` 打开；主页面保留列表、筛选、统计和“新建/编辑”入口，避免右侧表单长期占用列表扫描空间。
 - `SideSheet` 表单保存、删除成功后应关闭抽屉，并沿用页面原有 hook 或 API 刷新链路；切换模块时应关闭已打开的维护抽屉，防止不同模块的编辑状态残留。
 - 后台订单、财务等运营列表如果支持“显示机器人数据”开关，默认必须关闭；开关文案使用“显示机器人数据”，打开后才把 `includeRobotData=true` 传给后端。
-- 客服会话消息流应使用 Semi UI `Chat` 组件承载，不手写消息气泡列表；当后台页面只需要展示历史消息、回复输入由业务表单承担时，需要设置 `renderInputArea={() => null}` 和 `enableUpload={false}`，避免出现重复输入区或默认上传控件警告。后台客服回复区如接入表情，使用 `@emoji-mart/react` 与 `@emoji-mart/data`，并通过动态 `import()` 懒加载选择器、数据和中文语言包；选中后插入到当前 `textarea` 光标位置，不能把完整表情数据静态打进后台首屏主包。
+- 客服会话消息流应使用 Semi UI `Chat` 组件承载，不手写消息气泡列表；当后台页面只需要展示历史消息、回复输入由业务表单承担时，需要设置 `renderInputArea={() => null}` 和 `enableUpload={false}`，避免出现重复输入区或默认上传控件警告。后台客服回复区如接入表情，使用 `@emoji-mart/react` 与 `@emoji-mart/data`，并通过动态 `import()` 懒加载选择器、数据和中文语言包；选中后插入到当前 `textarea` 光标位置，不能把完整表情数据静态打进后台首屏主包。表情面板由 Semi UI `Popover` 负责显示与外部点击关闭，`Popover` 需要设置 `keepDOM` 复用 `emoji-mart` Picker 实例，并通过 `onClickOutSide` 关闭；不要同时给 Picker 传 `onClickOutside`，避免 Picker 内部监听在弹窗关闭后残留，导致第二次点击“表情”刚打开就被关掉。
 - 手机端彩票卡片展示开奖号码时，不能按卡片变体写死 3 位；必须优先使用真实 `latestResult.length`，再结合后端 `resultCount` 决定展示数量，兼容 3 位和 5 位彩种。没有开奖结果时才按该数量用期号尾号或 `?` 补位。
 - 手机端首页“高频极速”推荐区的开奖号码必须使用固定正圆号码球，样式需要同时约束 `width`、`height`、`aspect-ratio: 1 / 1` 和 `border-radius: 9999px`，不要只依赖文字内容或内边距撑开形状。
 - 手机端首页“高频极速”推荐区默认由后台 `mobile_home_featured_enabled` 关闭；开启后只展示 `mobile_home_featured_lottery_codes` 配置的销售中彩种，不能按开奖周期自动兜底展示。

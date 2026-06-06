@@ -2168,3 +2168,10 @@
 - 解决问题：此前 `emoji-mart` 原生 `Picker` 被 `replaceChildren` 注入到 Vue 模板管理的 DOM 子树里；实时消息更新 `LayoutView` 的 `router-view` props 后会让客服页重渲染，手动改过的子节点可能破坏 Vue patch 状态。
 - 实施内容：表情面板改用 `Teleport` 渲染到 `body`，原生 `Picker` 只挂载到无 Vue 子节点的空宿主容器，并在父节点不一致时复用 `appendChild`；同步更新前端组件规范和架构说明。
 - 验证结果：手机端 `npm run build` 和 `git diff --check` 通过；本地 dev server 配合临时 mock 后端完成登录、客服会话加载、WebSocket 推送客服消息和打开表情面板烟测，浏览器控制台无 `emitsOptions` 或空对象读取错误。
+
+## 2026-06-06 16:32 HKT 后台客服表情弹窗重复打开修复
+
+- 完成任务：修复后台在线客服表情弹窗第一次打开后，关闭再点击“表情”无法再次正常打开的问题。
+- 解决问题：此前 Semi UI `Popover` 和 `emoji-mart` Picker 同时处理外部点击关闭；Picker 内部监听在弹窗关闭后可能影响下一次按钮点击，导致第二次打开瞬间又关闭。
+- 实施内容：后台客服表情弹窗改为由 Popover 统一处理外部点击关闭，设置 `keepDOM` 复用 Picker 实例，并移除 Picker 的 `onClickOutside`；同步更新前端组件规范和架构说明。
+- 验证结果：管理后台 `npm run build` 和 `git diff --check` 通过；本地 dev server 配合临时 mock 后端完成后台登录、进入在线客服、第一次打开表情弹窗、关闭、第二次再次打开的浏览器烟测，关闭后弹窗尺寸归零，第二次打开后 Picker 和 Popover 尺寸恢复正常，浏览器控制台无错误。
