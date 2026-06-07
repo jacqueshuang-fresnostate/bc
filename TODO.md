@@ -2224,3 +2224,10 @@
 - 解决问题：用户要求聊天大厅不再展示顶部副标题，顶部区域需要更简洁。
 - 实施内容：`ChatHallView.vue` 移除副标题节点和对应样式，并收紧顶部栏高度与消息列表顶部留白；同步更新架构说明和前端组件规范，记录聊天大厅顶部只保留标题。
 - 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；全局搜索确认原副标题文案已不再出现在页面代码、架构说明和前端规范中。
+
+## 2026-06-07 17:55 HKT 资金流水保存失败修复
+
+- 完成任务：修复用户端出现 `internal error: 资金流水数据保存失败` 时资金快照并发保存不稳定的问题。
+- 解决问题：资金仓储使用快照式保存，多个请求同时保存 `ledger_entries` 时可能在删除和重插之间互相冲突；历史数据库如果 `finance_runtime.next_sequence` 落后，也可能生成重复流水编号。
+- 实施内容：`save_finance_store_in_transaction` 保存前锁定 `ledger_entries`、`financial_accounts`、`finance_runtime` 三张资金表，并在资金流水插入失败时记录具体数据库错误和流水上下文；启动加载资金仓储时按已有 `L...` 流水编号校正 `next_sequence`；新增迁移补充红包资金流水类型的中文字段注释；同步更新架构说明和数据库规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml finance -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过；数据库只读检查确认当前 `finance_runtime.next_sequence` 与现有最大资金流水编号一致，且已存在红包扣款和红包入账流水类型。

@@ -116,6 +116,83 @@ let order = orders
 
 事务协调入口负责订单和资金快照、同一 SQLx 事务和提交后的运行时快照替换。
 
+## 场景：资金快照保存并发保护与流水序号恢复
+
+### 1. 范围 / 触发条件
+
+- 触发条件：任意业务操作会保存 `FinanceStore`，包括投注扣款、派奖、充值、提现、合买、聊天大厅红包和后台手动调账。
+- 范围：`save_finance_store_in_transaction`、`ledger_entries`、`financial_accounts`、`finance_runtime`、资金流水编号 `L...`。
+
+### 2. 签名
+
+- 事务内保存函数：`save_finance_store_in_transaction(connection, store)`
+- 资金表：
+  - `ledger_entries`
+  - `financial_accounts`
+  - `finance_runtime`
+- 锁表 SQL：`LOCK TABLE ledger_entries, financial_accounts, finance_runtime IN ACCESS EXCLUSIVE MODE`
+- 运行序号：`finance_runtime(key='next_sequence')`
+- 流水编号格式：`L000000000001`
+
+### 3. 契约
+
+资金仓储当前使用快照式保存：先清空资金表，再写入当前内存快照。为了避免两个请求同时保存时出现“一个事务删除旧行，另一个事务插入同一批旧流水”的主键冲突，所有资金快照保存必须先在同一事务内锁定三张资金表。
+
+启动加载资金仓储时，`next_sequence` 不能只相信 `finance_runtime`。后端必须同时扫描已有 `ledger_entries.id` 中符合 `L...` 格式的最大序号，并取 `max(finance_runtime.next_sequence, max_ledger_entry_sequence)` 作为下一笔流水的基准。如果发生校正，需要把校正后的运行序号持久化回数据库。
+
+资金流水保存失败的后端日志必须保留具体数据库错误、流水 ID、用户 ID、流水类型和业务引用 ID；API 响应仍只返回中文内部错误，不能把 SQL、连接串或密钥返回给客户端。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 并发保存资金快照 | 后进入的事务等待资金表锁，不产生重复主键插入 |
+| `finance_runtime.next_sequence` 小于已有最大流水编号 | 启动时按已有流水编号校正并持久化 |
+| 已有流水 ID 不符合 `L...` 格式 | 跳过该 ID，不影响合法流水序号恢复 |
+| 锁表失败 | 返回 `资金表锁定失败`，不继续删除或插入 |
+| 流水插入失败 | 日志记录具体数据库错误和流水上下文，API 返回 `资金流水数据保存失败` |
+| `next_sequence` 超过 `i64` 可保存范围 | 返回 `资金流水序号过大` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：用户同时领取红包和提交提现，两个资金保存事务串行执行，最终流水表没有主键冲突。
+- Good：历史库已有 `L0000000002810`，但 `finance_runtime.next_sequence=100`，服务启动后下一笔流水从 `2811` 开始。
+- Base：没有历史流水时，运行序号按 `finance_runtime` 或 0 启动。
+- Bad：资金保存时直接 `DELETE FROM ledger_entries`，没有先锁三张资金表；并发请求可能在重插旧流水时冲突。
+- Bad：只记录“资金流水数据保存失败”，不记录具体数据库错误；后续无法判断是主键冲突、字段约束还是连接问题。
+
+### 6. 必要测试
+
+- 后端需要覆盖从已有 `L...` 流水 ID 恢复最大序号。
+- 后端需要运行 `cargo fmt --manifest-path backend/Cargo.toml --check`。
+- 后端需要运行 `cargo check --manifest-path backend/Cargo.toml`。
+- 后端需要运行 `cargo test --manifest-path backend/Cargo.toml finance -- --nocapture`。
+- 若修改资金事务保存顺序，需要补 PostgreSQL 冒烟，确认迁移执行后资金表可保存。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+for table in ["ledger_entries", "financial_accounts", "finance_runtime"] {
+    sqlx::query(&format!("DELETE FROM {table}")).execute(connection).await?;
+}
+```
+
+这个写法没有锁表，并发资金保存时可能让两个事务同时重插同一批历史流水。
+
+#### 正确
+
+```rust
+sqlx::query(
+    "LOCK TABLE ledger_entries, financial_accounts, finance_runtime IN ACCESS EXCLUSIVE MODE",
+)
+.execute(connection)
+.await?;
+```
+
+先锁定资金表，再做快照清理和重插，确保同一时间只有一个资金快照保存事务进入关键区。
+
 ## 安全字段存储
 
 - `admin_sessions.token` 和 `user_sessions.token` 只能保存登录 Bearer token 的 `sha256:` 摘要，不能保存原始 token。

@@ -299,7 +299,7 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
         });
     }
 
-    let next_sequence = sqlx::query_scalar::<_, i64>(
+    let runtime_next_sequence = sqlx::query_scalar::<_, i64>(
         "SELECT value FROM finance_runtime WHERE key = 'next_sequence'",
     )
     .fetch_optional(pool)
@@ -337,13 +337,18 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
         return Ok(seeded);
     }
 
+    let runtime_next_sequence = u64::try_from(runtime_next_sequence).unwrap_or_default();
+    let next_sequence =
+        runtime_next_sequence.max(next_sequence_from_ledger_entries(&ledger_entries));
+    let reconciled_next_sequence = next_sequence != runtime_next_sequence;
+
     let store = FinanceStore {
         accounts,
         ledger_entries,
-        next_sequence: u64::try_from(next_sequence).unwrap_or_default(),
+        next_sequence,
     };
 
-    if reconciled_missing_accounts {
+    if reconciled_missing_accounts || reconciled_next_sequence {
         save_finance_store(database, &store).await?;
     }
 
@@ -368,11 +373,24 @@ pub(crate) async fn save_finance_store_in_transaction(
     connection: &mut PgConnection,
     store: &FinanceStore,
 ) -> ApiResult<()> {
+    sqlx::query(
+        "LOCK TABLE ledger_entries, financial_accounts, finance_runtime IN ACCESS EXCLUSIVE MODE",
+    )
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "资金表锁定失败");
+        ApiError::Internal("资金表锁定失败".to_string())
+    })?;
+
     for table in ["ledger_entries", "financial_accounts", "finance_runtime"] {
         sqlx::query(&format!("DELETE FROM {table}"))
             .execute(&mut *connection)
             .await
-            .map_err(|_| ApiError::Internal("资金数据清理失败".to_string()))?;
+            .map_err(|error| {
+                tracing::error!(%error, table, "资金数据清理失败");
+                ApiError::Internal("资金数据清理失败".to_string())
+            })?;
     }
 
     for account in store.accounts.values() {
@@ -386,10 +404,18 @@ pub(crate) async fn save_finance_store_in_transaction(
         .bind(account.frozen_balance_minor)
         .execute(&mut *connection)
         .await
-        .map_err(|_| ApiError::Internal("资金账户数据保存失败".to_string()))?;
+        .map_err(|error| {
+            tracing::error!(
+                %error,
+                user_id = account.user_id.as_str(),
+                "资金账户数据保存失败"
+            );
+            ApiError::Internal("资金账户数据保存失败".to_string())
+        })?;
     }
 
     for entry in &store.ledger_entries {
+        let kind = enum_to_string(&entry.kind)?;
         sqlx::query(
             "INSERT INTO ledger_entries
              (id, user_id, kind, amount_minor, balance_after_minor, reference_id, description, created_at)
@@ -397,7 +423,7 @@ pub(crate) async fn save_finance_store_in_transaction(
         )
         .bind(&entry.id)
         .bind(&entry.user_id)
-        .bind(enum_to_string(&entry.kind)?)
+        .bind(&kind)
         .bind(entry.amount_minor)
         .bind(entry.balance_after_minor)
         .bind(&entry.reference_id)
@@ -405,7 +431,17 @@ pub(crate) async fn save_finance_store_in_transaction(
         .bind(&entry.created_at)
         .execute(&mut *connection)
         .await
-        .map_err(|_| ApiError::Internal("资金流水数据保存失败".to_string()))?;
+        .map_err(|error| {
+            tracing::error!(
+                %error,
+                entry_id = entry.id.as_str(),
+                user_id = entry.user_id.as_str(),
+                kind = kind.as_str(),
+                reference_id = entry.reference_id.as_deref().unwrap_or("无"),
+                "资金流水数据保存失败"
+            );
+            ApiError::Internal("资金流水数据保存失败".to_string())
+        })?;
     }
 
     let next_sequence = i64::try_from(store.next_sequence)
@@ -414,7 +450,10 @@ pub(crate) async fn save_finance_store_in_transaction(
         .bind(next_sequence)
         .execute(&mut *connection)
         .await
-        .map_err(|_| ApiError::Internal("资金运行数据保存失败".to_string()))?;
+        .map_err(|error| {
+            tracing::error!(%error, "资金运行数据保存失败");
+            ApiError::Internal("资金运行数据保存失败".to_string())
+        })?;
 
     Ok(())
 }
@@ -1244,6 +1283,20 @@ fn recharge_rebate_reference_id(recharge_order_id: &str) -> String {
     format!("recharge-rebate:{recharge_order_id}")
 }
 
+/// 从已有资金流水编号恢复最大序号，避免运行时序号落后导致新流水主键重复。
+fn next_sequence_from_ledger_entries(entries: &[LedgerEntry]) -> u64 {
+    entries
+        .iter()
+        .filter_map(|entry| sequence_from_ledger_entry_id(&entry.id))
+        .max()
+        .unwrap_or_default()
+}
+
+/// 解析 `L000000000001` 这类资金流水编号中的数字部分。
+fn sequence_from_ledger_entry_id(id: &str) -> Option<u64> {
+    id.strip_prefix('L')?.parse().ok()
+}
+
 /// 处理 current_timestamp_label 的具体内部流程。
 fn current_timestamp_label() -> String {
     let seconds = SystemTime::now()
@@ -1257,7 +1310,7 @@ fn current_timestamp_label() -> String {
 mod tests {
     use crate::{
         domain::{
-            finance::{LedgerEntryKind, ManualBalanceAdjustmentRequest},
+            finance::{LedgerEntry, LedgerEntryKind, ManualBalanceAdjustmentRequest},
             group_buy::{GroupBuyParticipant, GroupBuyPlan, GroupBuyPlanStatus},
             lottery::LotteryNumberType,
             order::OrderSource,
@@ -1342,6 +1395,23 @@ mod tests {
         assert_eq!(account.user_id, "U-NEW");
         assert_eq!(account.available_balance_minor, 0);
         assert_eq!(account.frozen_balance_minor, 0);
+    }
+
+    #[test]
+    /// 历史数据库如果运行序号落后，启动加载必须按已有流水编号恢复最大序号。
+    fn finance_sequence_recovers_from_existing_ledger_ids() {
+        let entries = vec![
+            ledger_entry("L000000000009"),
+            ledger_entry("legacy-entry"),
+            ledger_entry("L000000000012"),
+        ];
+
+        assert_eq!(super::next_sequence_from_ledger_entries(&entries), 12);
+        assert_eq!(
+            super::sequence_from_ledger_entry_id("L000000000013"),
+            Some(13)
+        );
+        assert_eq!(super::sequence_from_ledger_entry_id("BAD0001"), None);
     }
 
     #[test]
@@ -1622,6 +1692,20 @@ mod tests {
             payout_minor,
             status: OrderStatus::PendingDraw,
             settled_at: None,
+            created_at: "unix:1780388800".to_string(),
+        }
+    }
+
+    /// 构造资金流水，用于校验历史流水序号恢复。
+    fn ledger_entry(id: &str) -> LedgerEntry {
+        LedgerEntry {
+            id: id.to_string(),
+            user_id: "U10001".to_string(),
+            kind: LedgerEntryKind::ManualAdjustment,
+            amount_minor: 0,
+            balance_after_minor: 0,
+            reference_id: None,
+            description: "测试流水".to_string(),
             created_at: "unix:1780388800".to_string(),
         }
     }
