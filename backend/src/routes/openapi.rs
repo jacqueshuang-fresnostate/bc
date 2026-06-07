@@ -1267,6 +1267,33 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Json,
     ),
     doc(
+        "post",
+        "/user/chat-hall/red-packets",
+        "用户端聊天大厅",
+        "发送聊天大厅红包",
+        "当前登录用户发送聊天大厅红包，后端扣减余额、写入资金流水，并广播红包卡片消息。",
+        AuthMode::User,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "post",
+        "/user/chat-hall/red-packets/{id}/claim",
+        "用户端聊天大厅",
+        "领取聊天大厅红包",
+        "当前登录用户领取指定红包，后端入账、写入资金流水，并广播更新后的红包卡片。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/user/chat-hall/group-buy-plans",
+        "用户端聊天大厅",
+        "分享合买计划",
+        "当前登录用户把自己发起或参与过的合买计划分享到聊天大厅。",
+        AuthMode::User,
+        RequestBodyKind::Json,
+    ),
+    doc(
         "get",
         "/user/recharge/config",
         "用户端充值",
@@ -1751,6 +1778,9 @@ mod tests {
         assert!(document["paths"]["/user/realtime"]["get"].is_object());
         assert!(document["paths"]["/user/chat-hall/messages"]["get"].is_object());
         assert!(document["paths"]["/user/chat-hall/messages"]["post"].is_object());
+        assert!(document["paths"]["/user/chat-hall/red-packets"]["post"].is_object());
+        assert!(document["paths"]["/user/chat-hall/red-packets/{id}/claim"]["post"].is_object());
+        assert!(document["paths"]["/user/chat-hall/group-buy-plans"]["post"].is_object());
         assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
         assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());
         assert!(document["paths"]["/user/withdrawals"]["post"].is_object());

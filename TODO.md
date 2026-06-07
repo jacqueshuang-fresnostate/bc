@@ -2210,3 +2210,10 @@
 - 解决问题：用户要求聊天大厅不再展示 `chat-hall__icon-button` 返回和刷新入口，顶部保留更简洁的标题说明即可。
 - 实施内容：`ChatHallView.vue` 删除返回/刷新按钮、清理不再使用的 `useRouter`、按钮样式和刷新旋转动画，并把标题栏改为居中标题布局；架构说明和前端组件规范同步记录聊天大厅顶部展示规则。
 - 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；代码检查确认聊天大厅已无 `chat-hall__icon-button`、`useRouter` 和刷新旋转动画残留。
+
+## 2026-06-07 17:33 HKT 聊天大厅红包与合买分享
+
+- 完成任务：优化手机端聊天大厅底部输入区和底部导航的视觉关系，并新增发送红包、领取红包、发送自己的合买计划能力。
+- 解决问题：截图中输入栏和底部导航像两个割裂浮层，聊天室只能发送文本，不能承载红包和合买计划分享。
+- 实施内容：后端聊天消息新增 `messageType/payload`，新增红包表、红包领取表、红包扣款/入账流水类型和三个用户端接口；红包发送和领取与资金快照同事务保存；合买分享只允许分享当前用户发起或参与过的计划。手机端聊天大厅新增“+”附件菜单、红包弹窗、合买计划选择弹窗、红包卡片、合买进度卡片，并把同 ID 实时消息改成替换更新；合买大厅支持通过 `plan_id` 自动打开计划详情。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml realtime -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过。浏览器烟测尝试打开本地手机端页面时内置浏览器连接超时，未完成截图验证。

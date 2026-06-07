@@ -16,7 +16,11 @@ use std::time::Duration;
 use crate::{
     app::AppState,
     domain::advertisement::MobileAdvertisement,
-    domain::chat_hall::{ChatHallMessage, CreateChatHallMessageRequest},
+    domain::chat_hall::{
+        ChatHallGroupBuyPlanPayload, ChatHallMessage, ClaimChatHallRedPacketResponse,
+        CreateChatHallMessageRequest, CreateChatHallRedPacketRequest,
+        ShareChatHallGroupBuyPlanRequest,
+    },
     domain::draw::DrawIssueStatus,
     domain::finance::{FinancialAccountSummary, LedgerEntry, LedgerEntryKind},
     domain::group_buy::{
@@ -131,6 +135,15 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/chat-hall/messages",
             get(list_chat_hall_messages).post(send_chat_hall_message),
+        )
+        .route("/chat-hall/red-packets", post(send_chat_hall_red_packet))
+        .route(
+            "/chat-hall/red-packets/{id}/claim",
+            post(claim_chat_hall_red_packet),
+        )
+        .route(
+            "/chat-hall/group-buy-plans",
+            post(share_chat_hall_group_buy_plan),
         )
         .route(
             "/support/conversations",
@@ -1485,6 +1498,114 @@ async fn send_chat_hall_message(
         .publish_public(chat_hall_message_created_event(&message));
 
     Ok(Json(ApiEnvelope::success(message)))
+}
+
+/// 当前用户发送聊天大厅红包，扣款成功后把红包卡片广播给所有在线用户。
+async fn send_chat_hall_red_packet(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Json(payload): Json<CreateChatHallRedPacketRequest>,
+) -> ApiResult<Json<ApiEnvelope<ChatHallMessage>>> {
+    let message = state
+        .chat_hall
+        .send_red_packet(&state.finance, &session.user, payload)
+        .await?;
+    state
+        .realtime
+        .publish_public(chat_hall_message_created_event(&message));
+
+    let reference_id = chat_hall_message_payload_string(&message, "redPacketId")
+        .unwrap_or_else(|| message.id.clone());
+    publish_user_balance_changed(
+        &state,
+        &session.user.id,
+        "red_packet_debit",
+        Some(&reference_id),
+    )
+    .await;
+
+    Ok(Json(ApiEnvelope::success(message)))
+}
+
+/// 当前用户领取聊天大厅红包，入账成功后广播更新后的红包卡片。
+async fn claim_chat_hall_red_packet(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<ClaimChatHallRedPacketResponse>>> {
+    let response = state
+        .chat_hall
+        .claim_red_packet(&state.finance, &session.user, &id)
+        .await?;
+    state
+        .realtime
+        .publish_public(chat_hall_message_created_event(&response.message));
+
+    publish_user_balance_changed(
+        &state,
+        &session.user.id,
+        "red_packet_credit",
+        Some(&response.claim.id),
+    )
+    .await;
+
+    Ok(Json(ApiEnvelope::success(response)))
+}
+
+/// 当前用户把自己发起或参与过的合买计划分享到聊天大厅。
+async fn share_chat_hall_group_buy_plan(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Json(payload): Json<ShareChatHallGroupBuyPlanRequest>,
+) -> ApiResult<Json<ApiEnvelope<ChatHallMessage>>> {
+    let plan_id = payload.plan_id.trim();
+    if plan_id.is_empty() {
+        return Err(ApiError::BadRequest("请选择要分享的合买计划".to_string()));
+    }
+    let plan = state.group_buys.get(plan_id).await?;
+    let belongs_to_user = plan
+        .participants
+        .iter()
+        .any(|participant| participant.user_id == session.user.id);
+    if !belongs_to_user {
+        return Err(ApiError::BadRequest("只能分享自己的合买计划".to_string()));
+    }
+    let lotteries = state.lotteries.list().await?;
+    let plan_summary = user_group_buy_plan(&plan, &lotteries, Some(&session.user.id))?;
+    let message = state
+        .chat_hall
+        .share_group_buy_plan(
+            &session.user,
+            ChatHallGroupBuyPlanPayload {
+                plan_id: plan_summary.id,
+                lottery_id: plan_summary.lottery_id,
+                lottery_name: plan_summary.lottery_name,
+                issue: plan_summary.issue,
+                play_name: plan_summary.play_name,
+                title: plan_summary.title,
+                total_amount_minor: plan_summary.total_amount_minor,
+                share_amount_minor: plan_summary.share_amount_minor,
+                sold_shares: plan_summary.sold_shares,
+                available_shares: plan_summary.available_shares,
+                progress_percent: plan_summary.progress_percent,
+                status: enum_to_string(&plan_summary.status)?,
+            },
+        )
+        .await?;
+    state
+        .realtime
+        .publish_public(chat_hall_message_created_event(&message));
+
+    Ok(Json(ApiEnvelope::success(message)))
+}
+
+fn chat_hall_message_payload_string(message: &ChatHallMessage, key: &str) -> Option<String> {
+    message
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get(key))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
 }
 
 async fn list_user_support_conversations(

@@ -52,6 +52,8 @@ pub enum LedgerEntryKind {
     WithdrawalReject,
     GroupBuyDebit,
     GroupBuyRefund,
+    RedPacketDebit,
+    RedPacketCredit,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

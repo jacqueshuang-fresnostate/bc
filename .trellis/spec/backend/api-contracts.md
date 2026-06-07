@@ -4538,3 +4538,122 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 - 后端需要覆盖代理权限判断、邀请记录与 `agentId` 合并、充值流水汇总。
 - OpenAPI 核心路径测试需要包含 `/user/invitations/summary`。
 - 手机端需要运行 `npm run build`，确认 TypeScript 类型与 `camelCase` 字段一致。
+
+---
+
+## 场景：聊天大厅红包与合买分享
+
+### 1. 范围 / 触发条件
+
+- 触发条件：手机端公共聊天大厅需要发送普通文本、红包消息，或把本人参与的合买计划分享给所有在线会员。
+- 范围：`/api/user/chat-hall/messages`、`/api/user/chat-hall/red-packets`、`/api/user/chat-hall/group-buy-plans`、聊天大厅数据库表、资金账户流水、手机端 WebSocket 消息归一化。
+- 聊天大厅是公开大厅，不属于客服会话；红包收发是资金业务，必须与聊天消息持久化在同一事务内完成。
+
+### 2. 签名
+
+- 拉取大厅消息：`GET /api/user/chat-hall/messages`
+- 发送文本消息：`POST /api/user/chat-hall/messages`
+- 发送红包：`POST /api/user/chat-hall/red-packets`
+- 领取红包：`POST /api/user/chat-hall/red-packets/{id}/claim`
+- 分享合买计划：`POST /api/user/chat-hall/group-buy-plans`
+- 实时事件：`chat_hall.message_created`
+- 数据表：`chat_hall_messages`、`chat_hall_red_packets`、`chat_hall_red_packet_claims`
+- 资金流水类型：`redPacketDebit`、`redPacketCredit`
+
+### 3. 契约
+
+聊天大厅消息必须包含 `messageType` 和 `payload`：
+
+```json
+{
+  "id": "chat-000001",
+  "userId": "U90001",
+  "username": "demo",
+  "content": "恭喜发财，大吉大利",
+  "messageType": "redPacket",
+  "payload": {},
+  "createdAt": "2026-06-07 17:20:00"
+}
+```
+
+`messageType` 只允许：
+
+- `text`：普通文本，`payload=null`。
+- `redPacket`：红包卡片，`payload` 包含 `redPacketId`、`amountMinor`、`claimCount`、`claimedCount`、`remainingAmountMinor`、`greeting`、`claims`。
+- `groupBuyPlan`：合买计划卡片，`payload` 包含 `planId`、`lotteryId`、`lotteryName`、`issue`、`playName`、`totalShares`、`soldShares`、`progressPercent`、`initiatorName`、`status`。
+
+发送红包请求体：
+
+```json
+{
+  "amountMinor": 1000,
+  "claimCount": 5,
+  "greeting": "恭喜发财，大吉大利"
+}
+```
+
+分享合买计划请求体：
+
+```json
+{
+  "planId": "GBP000001"
+}
+```
+
+后端必须校验当前用户属于该合买计划的参与用户列表，不能分享别人完全无关的合买计划。红包扣款、红包记录、聊天消息和资金流水必须在同一 PostgreSQL 事务里保存；如果使用内存仓储测试，也必须保持同样的业务顺序。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 未登录发送、领取或分享 | HTTP 401 |
+| 红包金额小于等于 0 | 返回业务错误，不扣款、不保存消息 |
+| 红包数量小于 1 或大于 100 | 返回业务错误，不扣款、不保存消息 |
+| 红包金额小于红包数量 | 返回业务错误，保证每份至少 1 分 |
+| 红包祝福语超过 60 字 | 返回业务错误 |
+| 用户余额不足 | 返回资金业务错误，不保存红包消息 |
+| 发包人领取自己的红包 | 返回业务错误，不入账 |
+| 同一用户重复领取同一红包 | 返回业务错误，不重复入账 |
+| 红包已领完 | 返回业务错误，不入账 |
+| 分享不存在的合买计划 | 返回业务错误 |
+| 分享非本人参与的合买计划 | 返回业务错误 |
+| 领取红包成功 | 增加 `redPacketCredit` 流水，广播更新后的同 ID 红包消息 |
+| 发送红包成功 | 增加 `redPacketDebit` 流水，广播红包消息 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：用户发送 10 元 5 个红包，后端扣减余额、写入红包和聊天消息，并向所有在线会员广播 `redPacket` 消息。
+- Good：用户领取红包后，手机端收到同一个消息 ID 的 `chat_hall.message_created`，用新 payload 替换旧消息，红包领取进度实时刷新。
+- Good：用户把自己发起或参与的合买计划分享到大厅，其他用户看到卡片后可以进入合买大厅查看计划。
+- Base：普通文本仍走 `messageType=text`，不需要 payload。
+- Bad：把红包内容拼成纯文本，例如“红包:10元”，这会让手机端无法展示领取状态，也无法做资金幂等。
+- Bad：红包扣款和聊天消息分两次保存且没有事务，失败时会出现扣款成功但消息不存在，或消息存在但未扣款。
+- Bad：分享合买计划时只校验计划存在，不校验当前用户是否参与。
+
+### 6. 必要测试
+
+- 后端需要覆盖聊天文本消息、红包发送、红包领取、重复领取、发包人领取、合买计划分享。
+- 后端需要运行 `cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`。
+- OpenAPI 核心路径测试需要包含红包发送、红包领取和合买计划分享接口。
+- 实时事件测试需要确认 `chat_hall.message_created` 仍是公开事件，并能携带 `messageType` 与 `payload`。
+- 手机端需要运行 `npm run build`，确认聊天大厅红包卡片、合买计划卡片、WebSocket 归一化类型可编译。
+- 修改数据库结构时，需要给新增表和字段添加中文注释。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```rust
+let message = chat_hall.send_message(user, "红包 10 元".to_string())?;
+finance.debit(user.id.clone(), 1000)?;
+```
+
+这个写法把资金变动和聊天消息拆开处理，并且让手机端只能看到普通文本，无法展示红包状态。
+
+#### 正确
+
+```rust
+let message = chat_hall.send_red_packet(&finance, user, request)?;
+```
+
+服务层用专门的红包接口统一校验、扣款、写入红包 payload、保存资金流水，并发布可被手机端识别的结构化消息。

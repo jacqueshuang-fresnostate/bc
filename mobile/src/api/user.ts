@@ -226,11 +226,60 @@ export type ChatHallMessage = {
   userId: string
   username: string
   content: string
+  messageType?: 'text' | 'redPacket' | 'groupBuyPlan'
+  payload?: ChatHallMessagePayload | null
   createdAt: string
 }
 
 export type CreateChatHallMessagePayload = {
   content: string
+}
+
+export type ChatHallRedPacketPayload = {
+  redPacketId: string
+  greeting: string
+  totalAmountMinor: number
+  remainingAmountMinor: number
+  claimCount: number
+  claimedCount: number
+}
+
+export type ChatHallGroupBuyPlanPayload = {
+  planId: string
+  lotteryId: string
+  lotteryName: string
+  issue: string
+  playName: string
+  title: string
+  totalAmountMinor: number
+  shareAmountMinor: number
+  soldShares: number
+  availableShares: number
+  progressPercent: number
+  status: string
+}
+
+export type ChatHallMessagePayload = ChatHallRedPacketPayload | ChatHallGroupBuyPlanPayload | Record<string, unknown>
+
+export type CreateChatHallRedPacketPayload = {
+  amountMinor: number
+  claimCount: number
+  greeting: string
+}
+
+export type ChatHallRedPacketClaim = {
+  id: string
+  redPacketId: string
+  userId: string
+  username: string
+  amountMinor: number
+  createdAt: string
+}
+
+export type ClaimChatHallRedPacketResponse = {
+  message: ChatHallMessage
+  claim: ChatHallRedPacketClaim
+  availableBalanceMinor: number
 }
 
 type LoginPayload = {
@@ -388,6 +437,22 @@ export async function fetchChatHallMessages() {
 export async function sendChatHallMessage(content: string) {
   const payload: CreateChatHallMessagePayload = { content }
   return unwrapApiData<ChatHallMessage>(await http.post('/user/chat-hall/messages', payload))
+}
+
+export async function sendChatHallRedPacket(payload: CreateChatHallRedPacketPayload) {
+  return unwrapApiData<ChatHallMessage>(await http.post('/user/chat-hall/red-packets', payload))
+}
+
+export async function claimChatHallRedPacket(redPacketId: string) {
+  return unwrapApiData<ClaimChatHallRedPacketResponse>(
+    await http.post(`/user/chat-hall/red-packets/${encodeURIComponent(redPacketId)}/claim`),
+  )
+}
+
+export async function shareChatHallGroupBuyPlan(planId: string) {
+  return unwrapApiData<ChatHallMessage>(
+    await http.post('/user/chat-hall/group-buy-plans', { planId }),
+  )
 }
 
 export async function fetchSupportConversations() {

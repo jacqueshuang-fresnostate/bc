@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useRoute } from 'vue-router'
 import { useBrandingStore } from '../stores/branding'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import { fetchGroupBuyDetail } from '../features/group-buy/api'
 import { useGroupBuyHall } from '../features/group-buy/composables/useGroupBuyHall'
 import { useGroupBuyDetail } from '../features/group-buy/composables/useGroupBuyDetail'
 import { useGroupBuyCreate } from '../features/group-buy/composables/useGroupBuyCreate'
@@ -92,11 +93,32 @@ async function createGroupBuy() {
   selectedGroupBuy.value = createdPlan || selectedGroupBuy.value
 }
 
+async function openPlanFromQuery() {
+  const planId = String(route.query.plan_id || '').trim()
+  if (!planId) return
+  const localPlan = displayedHallItems.value.find(item => item.id === planId)
+    || myGroupBuys.value.find(item => item.id === planId)
+  if (localPlan) {
+    openDetail(localPlan)
+    return
+  }
+  try {
+    const result = await fetchGroupBuyDetail(planId)
+    if (result.data?.id) openDetail(result.data)
+  } catch {
+    // 查询参数只用于聊天大厅跳转定位，详情加载失败时保留大厅默认列表。
+  }
+}
+
 watch(() => route.query.lottery_code, (value) => {
   lotteryCode.value = String(value || '')
   createForm.value.lottery_code = lotteryCode.value
   loadCreateOptions()
   loadHall()
+})
+
+watch(() => route.query.plan_id, () => {
+  void openPlanFromQuery()
 })
 
 watch(activeFilter, () => {
@@ -117,6 +139,7 @@ watch(joinAmountInput, (value) => {
 onMounted(async () => {
   await Promise.all([loadBalance(), loadHallGroups(), loadCreateOptions(), loadHall()])
   if (activeTab.value === 'my') await loadMyGroupBuys()
+  await openPlanFromQuery()
 })
 </script>
 

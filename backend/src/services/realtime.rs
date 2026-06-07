@@ -420,11 +420,15 @@ mod tests {
     #[test]
     /// 验证聊天大厅消息事件是公开事件并携带完整消息。
     fn chat_hall_message_created_event_is_public() {
+        use crate::domain::chat_hall::ChatHallMessageType;
+
         let message = ChatHallMessage {
             id: "CHM-000000000001".to_string(),
             user_id: "U10001".to_string(),
             username: "demo_user".to_string(),
             content: "大家晚上好。".to_string(),
+            message_type: ChatHallMessageType::Text,
+            payload: None,
             created_at: "2026-06-07 20:00:00".to_string(),
         };
 

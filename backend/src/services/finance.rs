@@ -536,7 +536,10 @@ impl FinanceStore {
     }
 
     /// 处理 account_or_create 的具体内部流程。
-    fn account_or_create(&mut self, user_id: &str) -> ApiResult<FinancialAccountSummary> {
+    pub(crate) fn account_or_create(
+        &mut self,
+        user_id: &str,
+    ) -> ApiResult<FinancialAccountSummary> {
         let user_id = user_id.trim();
         if user_id.is_empty() {
             return Err(ApiError::BadRequest("user id is required".to_string()));
@@ -1023,6 +1026,68 @@ impl FinanceStore {
             participant.amount_minor,
             Some(participant.id.clone()),
             format!("合买退款：{} {reason}", plan.id),
+        )
+    }
+
+    /// 聊天大厅发送红包时扣减发送人的可用余额，并按红包 ID 保持幂等。
+    pub(crate) fn debit_chat_red_packet(
+        &mut self,
+        user_id: &str,
+        amount_minor: i64,
+        red_packet_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let user_id = user_id.trim();
+        let red_packet_id = red_packet_id.trim();
+        if red_packet_id.is_empty() {
+            return Err(ApiError::BadRequest("红包编号不能为空".to_string()));
+        }
+        if amount_minor <= 0 {
+            return Err(ApiError::BadRequest("红包金额必须大于 0".to_string()));
+        }
+        if let Some(entry) = self.reference_entry(&LedgerEntryKind::RedPacketDebit, red_packet_id) {
+            return Ok(entry);
+        }
+        self.ensure_available(user_id, amount_minor)?;
+
+        self.apply_available_delta(
+            user_id,
+            LedgerEntryKind::RedPacketDebit,
+            amount_minor
+                .checked_neg()
+                .ok_or_else(|| ApiError::BadRequest("红包金额过大".to_string()))?,
+            Some(red_packet_id.to_string()),
+            format!("聊天大厅发送红包扣款：{red_packet_id}"),
+        )
+    }
+
+    /// 聊天大厅领取红包时给用户入账，并按领取记录 ID 保持幂等。
+    pub(crate) fn credit_chat_red_packet(
+        &mut self,
+        user_id: &str,
+        amount_minor: i64,
+        claim_id: &str,
+        red_packet_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let user_id = user_id.trim();
+        let claim_id = claim_id.trim();
+        let red_packet_id = red_packet_id.trim();
+        if claim_id.is_empty() {
+            return Err(ApiError::BadRequest("红包领取记录不能为空".to_string()));
+        }
+        if amount_minor <= 0 {
+            return Err(ApiError::BadRequest("红包领取金额必须大于 0".to_string()));
+        }
+        if let Some(entry) = self.reference_entry(&LedgerEntryKind::RedPacketCredit, claim_id) {
+            return Ok(entry);
+        }
+        self.account_or_create(user_id)?;
+
+        self.apply_available_delta(
+            user_id,
+            LedgerEntryKind::RedPacketCredit,
+            amount_minor,
+            Some(claim_id.to_string()),
+            format!("聊天大厅领取红包入账：{red_packet_id}"),
         )
     }
 
