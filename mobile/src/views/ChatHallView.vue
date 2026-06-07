@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { showToast } from 'vant'
 import { useRouter } from 'vue-router'
 import {
@@ -19,12 +19,24 @@ const auth = useAuthStore()
 const draft = ref('')
 const loading = ref(false)
 const sending = ref(false)
+const emojiPickerVisible = ref(false)
+const emojiPickerLoading = ref(false)
+const emojiPickerError = ref('')
 const messages = ref<ChatHallMessage[]>([])
 const messageListRef = ref<HTMLElement | null>(null)
 const messageInputRef = ref<HTMLInputElement | null>(null)
+const emojiPickerHostRef = ref<HTMLElement | null>(null)
+let emojiPickerElement: HTMLElement | null = null
 const currentUserId = computed(() => auth.user?.id || '')
 const hasMessages = computed(() => messages.value.length > 0)
 const canSend = computed(() => draft.value.trim().length > 0 && !sending.value)
+
+type EmojiPickerConstructor = typeof import('emoji-mart').Picker
+
+interface EmojiSelection {
+  native?: unknown
+  skins?: unknown
+}
 
 function formatMessageTime(value: string) {
   return formatDateTime(value)
@@ -63,6 +75,7 @@ async function sendMessage() {
   try {
     const message = await sendChatHallMessage(content)
     draft.value = ''
+    emojiPickerVisible.value = false
     appendMessage(message)
     void nextTick(() => messageInputRef.value?.focus())
   } catch (error) {
@@ -70,6 +83,102 @@ async function sendMessage() {
   } finally {
     sending.value = false
   }
+}
+
+async function toggleEmojiPicker() {
+  emojiPickerVisible.value = !emojiPickerVisible.value
+  if (emojiPickerVisible.value) {
+    await mountEmojiPicker()
+  }
+}
+
+async function mountEmojiPicker() {
+  await nextTick()
+  if (!emojiPickerHostRef.value) return
+  if (!emojiPickerElement) {
+    emojiPickerLoading.value = true
+    emojiPickerError.value = ''
+    try {
+      const [{ Picker }, dataModule, i18nModule] = await Promise.all([
+        import('emoji-mart'),
+        import('@emoji-mart/data'),
+        import('@emoji-mart/data/i18n/zh.json'),
+      ])
+      emojiPickerElement = createEmojiPicker(
+        Picker,
+        dataModule.default,
+        i18nModule.default,
+      )
+    } catch {
+      emojiPickerError.value = '表情面板加载失败，请稍后重试'
+    } finally {
+      emojiPickerLoading.value = false
+    }
+  }
+
+  if (
+    emojiPickerElement
+    && emojiPickerHostRef.value
+    && emojiPickerElement.parentElement !== emojiPickerHostRef.value
+  ) {
+    emojiPickerHostRef.value.appendChild(emojiPickerElement)
+  }
+}
+
+function createEmojiPicker(
+  Picker: EmojiPickerConstructor,
+  data: unknown,
+  i18n: unknown,
+) {
+  return new Picker({
+    data,
+    i18n,
+    locale: 'zh',
+    navPosition: 'bottom',
+    onEmojiSelect: insertEmoji,
+    previewPosition: 'none',
+    searchPosition: 'top',
+    set: 'native',
+    skinTonePosition: 'none',
+    theme: 'light',
+  }) as unknown as HTMLElement
+}
+
+function insertEmoji(selection: unknown) {
+  const emoji = nativeEmojiFromSelection(selection)
+  if (!emoji) return
+
+  const input = messageInputRef.value
+  const selectionStart = input?.selectionStart ?? draft.value.length
+  const selectionEnd = input?.selectionEnd ?? selectionStart
+  draft.value = `${draft.value.slice(0, selectionStart)}${emoji}${draft.value.slice(selectionEnd)}`
+  const nextCursor = selectionStart + emoji.length
+  emojiPickerVisible.value = false
+
+  void nextTick(() => {
+    messageInputRef.value?.focus()
+    messageInputRef.value?.setSelectionRange(nextCursor, nextCursor)
+  })
+}
+
+function nativeEmojiFromSelection(selection: unknown) {
+  if (!isRecord(selection)) return ''
+  const emoji = selection as EmojiSelection
+  if (typeof emoji.native === 'string') {
+    return emoji.native
+  }
+  if (Array.isArray(emoji.skins)) {
+    for (const skin of emoji.skins) {
+      if (isRecord(skin) && typeof skin.native === 'string') {
+        return skin.native
+      }
+    }
+  }
+  return ''
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 async function scrollToBottom() {
@@ -86,6 +195,11 @@ watch(() => props.wsMessage, (message) => {
 
 onMounted(() => {
   void loadMessages()
+})
+
+onBeforeUnmount(() => {
+  emojiPickerElement?.remove()
+  emojiPickerElement = null
 })
 </script>
 
@@ -129,7 +243,36 @@ onMounted(() => {
       </template>
     </main>
 
+    <Teleport to="body">
+      <div
+        v-show="emojiPickerVisible"
+        class="chat-hall-emoji-panel"
+        @click.self="emojiPickerVisible = false"
+      >
+        <div class="chat-hall-emoji-panel__shell">
+          <div v-if="emojiPickerLoading || emojiPickerError" class="chat-hall-emoji-panel__state">
+            {{ emojiPickerLoading ? '正在加载表情面板...' : emojiPickerError }}
+          </div>
+          <div
+            ref="emojiPickerHostRef"
+            v-show="!emojiPickerLoading && !emojiPickerError"
+            class="chat-hall-emoji-panel__host"
+          ></div>
+        </div>
+      </div>
+    </Teleport>
+
     <footer class="chat-hall__input-bar">
+      <button
+        class="chat-hall__emoji"
+        type="button"
+        :disabled="sending"
+        :aria-pressed="emojiPickerVisible"
+        aria-label="选择表情"
+        @click="toggleEmojiPicker"
+      >
+        <LucideIcon name="mood" />
+      </button>
       <input
         ref="messageInputRef"
         v-model="draft"
@@ -322,7 +465,7 @@ onMounted(() => {
   bottom: 0;
   z-index: 45;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 0.65rem;
   width: 100%;
   padding: 0.75rem 1rem max(0.9rem, env(safe-area-inset-bottom));
@@ -330,6 +473,69 @@ onMounted(() => {
   border-top: 1px solid rgba(143, 20, 31, 0.08);
   box-shadow: 0 -10px 28px rgba(43, 31, 31, 0.08);
   backdrop-filter: blur(18px);
+}
+
+.chat-hall__emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.85rem;
+  height: 2.85rem;
+  border: 0;
+  border-radius: 1rem;
+  background: #f4e7e4;
+  color: #9f1724;
+  box-shadow: 0 8px 18px rgba(143, 20, 31, 0.08);
+}
+
+.chat-hall__emoji[aria-pressed='true'] {
+  background: #9f1724;
+  color: #fff;
+  box-shadow: 0 10px 22px rgba(159, 23, 36, 0.2);
+}
+
+.chat-hall__emoji:disabled,
+.chat-hall__send:disabled {
+  opacity: 0.56;
+}
+
+.chat-hall__emoji svg {
+  width: 1.12rem;
+  height: 1.12rem;
+}
+
+.chat-hall-emoji-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 12px calc(74px + env(safe-area-inset-bottom));
+  pointer-events: auto;
+}
+
+.chat-hall-emoji-panel__shell {
+  width: min(352px, calc(100vw - 24px));
+  min-height: 300px;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(95, 10, 18, 0.18);
+}
+
+.chat-hall-emoji-panel__host {
+  min-height: 300px;
+}
+
+.chat-hall-emoji-panel__state {
+  display: grid;
+  min-height: 300px;
+  place-items: center;
+  padding: 18px;
+  color: #8d6f6e;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .chat-hall__input {
@@ -370,6 +576,7 @@ onMounted(() => {
 .chat-hall__send:disabled {
   background: #d7c9c8;
   box-shadow: none;
+  opacity: 1;
 }
 
 .chat-hall__send svg {

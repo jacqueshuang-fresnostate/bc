@@ -2189,3 +2189,10 @@
 - 解决问题：此前手机端只有一对一客服会话，缺少面向所有会员的公共聊天场景；如果复用客服会话会把客服工单和公共聊天混在一起，也无法把消息广播给所有在线用户。
 - 实施内容：后端新增 `chat_hall_messages` 数据表、领域模型、仓储、`GET/POST /api/user/chat-hall/messages` 接口和 `chat_hall.message_created` 公开实时事件；手机端新增聊天大厅 API 类型、实时事件归一化、`/chat-hall` 页面和“我的账户”入口；架构说明和 Trellis 规范同步记录接口契约。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml realtime -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；本地内存后端配合手机端 dev server 完成浏览器烟测，`demo_user` 登录后进入 `/chat-hall` 可发送消息，`agent_alpha` 通过接口发送的大厅消息可通过 WebSocket 实时追加，浏览器控制台无错误。
+
+## 2026-06-07 15:40 HKT 手机端聊天大厅表情面板
+
+- 完成任务：为手机端 `/chat-hall` 聊天大厅输入栏增加表情按钮和 emoji-mart 表情面板。
+- 解决问题：聊天大厅此前只能手动输入或粘贴 emoji，没有表情选择器；用户在聊天大厅无法像在线客服一样直接选择表情。
+- 实施内容：`ChatHallView.vue` 复用手机端客服页稳定的表情方案，动态加载 `emoji-mart` 原生 `Picker`、`@emoji-mart/data` 和中文语言包；表情面板通过 `Teleport` 挂到 `body`，由 Vue 遮罩关闭，不传 `onClickOutside`；选中表情后按当前输入框光标位置插入并恢复焦点。
+- 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；代码检查确认聊天大厅未使用 `onClickOutside` 或 `replaceChildren`。本轮浏览器烟测未完成，后续如需继续验证可本地打开 `/chat-hall` 检查表情面板重复打开和插入效果。
