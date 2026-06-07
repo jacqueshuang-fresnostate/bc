@@ -67,6 +67,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端“我的账户”头像设置必须使用用户端 `POST /api/user/avatar/upload` 或 `PUT /api/user/avatar`，不能复用后台 `/api/admin/image-bed/upload`；上传成功后需要同步刷新页面资料和 Pinia 登录态，保证返回个人中心或重新打开应用时继续展示最新 `avatarUrl`。头像点击上传优先使用原生 `input[type="file"]` 与 `label for` 绑定，避免自定义上传插槽在移动端点击不触发；头像视觉必须同时固定宽高并使用 `border-radius: 9999px` 保持正圆。
 - 手机端邀请中心必须使用当前系统的 `GET /api/user/invitations/summary` 当前用户接口，不再请求旧 `/auth/invitations/summary`；页面消费 `canInvite`、`invitationCode`、`directUsers` 等 `camelCase` 字段，普通用户只展示邀请码标识和无可用邀请权限提示，不允许自行把普通用户邀请码当成有效邀请入口。
 - 手机端下注页必须使用 `/api/user/bet/page-config/{lottery_id}`、`POST /api/user/bet/orders` 和 `GET /api/user/bet/orders`，不再调用旧 `/api/bet/*`。提交时前端只负责把位置宫格、胆拖、直选组合和大小单双转换成后端 `selection`，订单金额仍由后端按玩法展开注数和单注金额计算。
+- 手机端下注页顶部的最近开奖号码球必须比开奖历史页更紧凑，默认直径控制在 20-24px，号码容器必须 `flex-wrap` 且设置最大宽度；360px 以下不能使用固定不换行的一排大球，极窄屏需要允许“上期开奖”和号码分成上下两行，避免 5 位开奖号码跑出屏幕。
 - 手机端下注页读取玩法 `positionSelectLimits` 时必须按 `positionKey` 精准限制对应位置的选号数量；未配置的位置不限制。不要只用全局 `maxSelectPerPosition` 套到所有位置，例如前 3 直选只配置 `first=7` 时，第二位和第三位仍应保持不限制。
 - 手机端下注页普通投注或发起合买成功后必须清空本地购彩篮，并用 `router.replace({ name: 'Home' })` 自动返回首页；接口失败时才停留在下注页并刷新余额、期号状态，方便用户继续处理。
 - 手机端下注页用户直接点击“立即投注”“提交购彩篮”或“发起合买”时，如果页面内部需要先把当前草稿加入购彩篮，该内部入篮动作必须静默执行，不显示“已加入购彩篮”；只有用户主动点击“加入购彩篮”按钮时才显示入篮成功提示，最终提交成功只保留下注或合买成功提示。
