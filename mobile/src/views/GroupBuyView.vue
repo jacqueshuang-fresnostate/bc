@@ -207,7 +207,7 @@ onMounted(async () => {
               <div class="mt-2 grid grid-cols-[1fr_0.8fr_0.8fr] gap-2 text-[10px] leading-tight">
                 <div class="min-w-0">
                   <span class="block text-stone-400">发起人</span>
-                  <b class="mt-0.5 block truncate text-stone-800">{{ initiatorDisplay(item) }}</b>
+                  <b class="group-buy-initiator-name mt-0.5 block truncate">{{ initiatorDisplay(item) }}</b>
                 </div>
                 <div>
                   <span class="block text-stone-400">总额</span>
@@ -452,6 +452,13 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.group-buy-initiator-name {
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.1;
+  color: #7f111c;
+}
+
 .group-buy-join-button {
   height: 48px;
   border: 0 !important;

@@ -2945,6 +2945,7 @@ await createInvitation({
 12. 封盘时仍未满员的 `draft/open` 计划必须自动取消，并按参与记录写入幂等的 `groupBuyRefund` 资金流水。
 13. 开奖结算时，如果中奖订单属于合买计划，派奖必须按参与金额占计划总金额的比例拆给参与人；除最后一名参与人外向下取整，最后一名承接余数，随后把计划标记为 `settled`。
 14. 后台计划列表不传 `page/pageSize` 时允许返回全量列表，用于内部调试；管理后台页面必须显式传入分页参数。
+15. 用户端 `/api/user/group-buy/plans`、`/api/user/group-buy/plans/{id}` 和 `/api/user/group-buy/my` 返回的 `initiatorDisplay` 必须是脱敏展示名：普通用户和机器人计划都只保留首尾字符，中间用 `*` 替代；后台合买管理、资金流水和审计仍保留真实 `initiatorUserId/initiatorUsername`。
 
 ### 4. 校验与错误矩阵
 
@@ -2988,11 +2989,13 @@ await createInvitation({
 - Good：自动化封盘时取消未满员计划，按每条参与记录退回认购金额，重复执行不会重复退款。
 - Good：开奖结算时识别合买订单，中奖金额按参与金额比例拆给参与用户，普通订单仍按订单用户派奖。
 - Good：后台合买管理按 `page/pageSize` 请求计划列表，响应 `items` 只包含当前页，`totalCount` 返回全部计划数。
+- Good：普通用户 `regular_user` 发起的用户端合买响应中 `initiatorDisplay` 返回 `r**********r`，机器人计划也返回同样脱敏后的普通会员式展示名。
 - Base：无数据库环境下使用内存合买仓储，服务重启后恢复种子合买计划；数据库模式下使用 `group_buy_plans`、`group_buy_participants` 和 `ledger_entries` 持久化。
 - Bad：前端自行计算 `shareCount` 并提交给后端，后续会与彩种合买配置漂移。
 - Bad：直接把 dashboard 的 `groupBuyPlans` 写成静态函数，页面创建计划后首页摘要不会同步。
 - Bad：用户端继续请求旧 `/group-buys/*` 路径，当前后端没有该旧系统接口。
 - Bad：满单后创建普通订单并再次调用 `debit_order`；这会导致用户既被合买认购扣款，又被订单扣款。
+- Bad：用户端合买列表直接展示 `initiatorUsername`、机器人账号或完整昵称，导致用户可以识别真实发起人或机器人身份。
 
 ### 6. 必要测试
 
@@ -3006,6 +3009,7 @@ await createInvitation({
 - 后端需要覆盖封盘流单退款写入 `groupBuyRefund` 且幂等。
 - 后端需要覆盖合买中奖按参与人份额拆分派奖。
 - 后端需要覆盖后台合买计划分页响应的当前页切片、总数和总页数。
+- 后端需要覆盖用户端普通用户和机器人合买计划的 `initiatorDisplay` 脱敏，断言不会返回完整昵称、机器人账号或包含“机器人”的展示名。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`，确认计划状态、请求字段和 API client 类型一致。
 - API 冒烟需要创建计划、更新状态、添加参与记录到满单、确认 `orderId` 已生成，并验证 dashboard `groupBuyPlans` 来自真实仓储。
@@ -3036,6 +3040,14 @@ await addGroupBuyParticipant(id, {
 ```
 
 这个写法把份额计算放到前端，后续彩种配置调整时容易不一致。
+
+```rust
+fn user_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
+    plan.initiator_username.clone()
+}
+```
+
+这个写法会把完整用户昵称或机器人账号暴露给手机端合买大厅。
 
 #### 正确
 
@@ -3078,6 +3090,20 @@ await http.post('/user/group-buy/plans', {
 ```
 
 手机端只提交当前用户选择的彩种、期号、玩法、投注内容和金额，发起人身份、扣款和流水由后端完成。
+
+```rust
+fn user_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
+    let display_name = if is_robot_group_buy_plan(plan) {
+        robot_group_buy_initiator_display(plan)
+    } else {
+        plan.initiator_username.clone()
+    };
+
+    mask_group_buy_initiator_display(&display_name)
+}
+```
+
+用户端合买响应统一返回脱敏展示名，真实发起人只留在后台和审计链路。
 
 ---
 

@@ -1227,12 +1227,35 @@ fn user_group_buy_title(plan: &GroupBuyPlan) -> String {
     }
 }
 
-/// 生成合买发起人展示名，机器人计划需要做匿名化。
+/// 生成合买发起人展示名，用户端统一只展示脱敏名称。
 fn user_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
-    if is_robot_group_buy_plan(plan) {
+    let display_name = if is_robot_group_buy_plan(plan) {
         robot_group_buy_initiator_display(plan)
     } else {
         plan.initiator_username.clone()
+    };
+
+    mask_group_buy_initiator_display(&display_name)
+}
+
+/// 对合买大厅发起人名称做隐私脱敏，保留首尾并用星号替代中间内容。
+fn mask_group_buy_initiator_display(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        return "会员".to_string();
+    }
+
+    let chars: Vec<char> = value.chars().collect();
+    match chars.len() {
+        0 => "会员".to_string(),
+        1 => chars[0].to_string(),
+        2 => format!("{}*{}", chars[0], chars[1]),
+        len => format!(
+            "{}{}{}",
+            chars[0],
+            "*".repeat(len.saturating_sub(2)),
+            chars[len - 1]
+        ),
     }
 }
 
@@ -2017,6 +2040,7 @@ mod tests {
             user_group_buy_plan(&second_plan, &lotteries, None).expect("robot plan can map");
 
         assert_ne!(first_view.initiator_display, "agent_alpha");
+        assert!(first_view.initiator_display.contains('*'));
         assert!(!first_view.initiator_display.contains("机器人"));
         assert!(!first_view.initiator_display.contains("agent"));
         assert_eq!(first_view.title, "测试彩 第20260605200000期合买");
@@ -2025,8 +2049,8 @@ mod tests {
     }
 
     #[test]
-    /// 验证普通用户合买仍展示真实发起人和自定义标题。
-    fn user_group_buy_plan_keeps_normal_initiator_display() {
+    /// 验证普通用户合买也只展示脱敏发起人和自定义标题。
+    fn user_group_buy_plan_masks_normal_initiator_display() {
         let lotteries = vec![test_group_buy_lottery()];
         let plan = test_group_buy_plan(
             "G-USER-001",
@@ -2037,8 +2061,17 @@ mod tests {
 
         let view = user_group_buy_plan(&plan, &lotteries, None).expect("normal plan can map");
 
-        assert_eq!(view.initiator_display, "regular_user");
+        assert_eq!(view.initiator_display, "r**********r");
         assert_eq!(view.title, "用户发起合买");
+    }
+
+    #[test]
+    /// 验证合买发起人脱敏支持中文、短昵称和空昵称。
+    fn mask_group_buy_initiator_display_handles_edge_cases() {
+        assert_eq!(mask_group_buy_initiator_display(" 张三 "), "张*三");
+        assert_eq!(mask_group_buy_initiator_display("A9"), "A*9");
+        assert_eq!(mask_group_buy_initiator_display("单"), "单");
+        assert_eq!(mask_group_buy_initiator_display(""), "会员");
     }
 
     #[test]

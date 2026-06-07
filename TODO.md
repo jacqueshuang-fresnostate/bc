@@ -1,5 +1,18 @@
 # TODO
 
+## 2026-06-07 21:50 HKT 手机端合买大厅发起人脱敏展示
+
+- 完成任务：优化手机端合买大厅发起人展示，用户端不再完整显示发起人昵称，并提升发起人名称字号。
+- 解决问题：
+  - 合买大厅此前直接展示普通用户完整昵称，用户要求只保留前后字符，中间用 `*` 替代。
+  - 原卡片里的发起人名称继承辅助信息小字号，视觉权重不足。
+- 实施内容：
+  - 后端用户端合买 DTO 转换统一对 `initiatorDisplay` 做脱敏，普通用户和机器人计划都只展示首尾字符，中间使用 `*`。
+  - 保留后台真实 `initiatorUserId/initiatorUsername`、资金流水和审计链路，避免影响运营排查。
+  - 手机端合买大厅卡片发起人名称改为更大字号、加粗和单行截断。
+  - 架构说明、后端 API 契约和前端组件规范同步记录新的脱敏展示规则。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_group_buy_plan_masks -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml mask_group_buy_initiator_display_handles_edge_cases -- --nocapture`、`cd mobile && npm run build` 和 `git diff --check` 均通过。
+
 ## 2026-06-06 02:55 HKT 后台计奖派奖分页
 
 - 完成任务：为后台“计奖派奖”的结算批次列表补充分页能力。
