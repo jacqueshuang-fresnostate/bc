@@ -419,6 +419,10 @@ async fn update_user_avatar(
         .access
         .update_user_avatar(&session.user.id, payload)
         .await?;
+    state
+        .chat_hall
+        .update_user_avatar(&user.id, &user.avatar_url)
+        .await?;
     let user = user_with_financial_balance(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(UserProfileResponse { user })))
@@ -434,6 +438,10 @@ async fn upload_user_avatar(
     let user = state
         .access
         .update_user_avatar(&session.user.id, UserAvatarRequest { avatar_url })
+        .await?;
+    state
+        .chat_hall
+        .update_user_avatar(&user.id, &user.avatar_url)
         .await?;
     let user = user_with_financial_balance(&state, user).await?;
 

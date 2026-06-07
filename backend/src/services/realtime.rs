@@ -431,6 +431,7 @@ mod tests {
             id: "CHM-000000000001".to_string(),
             user_id: "U10001".to_string(),
             username: "demo_user".to_string(),
+            avatar_url: "https://cdn.example.com/avatar.png".to_string(),
             content: "大家晚上好。".to_string(),
             message_type: ChatHallMessageType::Text,
             payload: None,
@@ -442,6 +443,10 @@ mod tests {
         assert_eq!(event["event"], "chat_hall.message_created");
         assert_eq!(event["scope"], "public");
         assert_eq!(event["data"]["message"]["id"], "CHM-000000000001");
+        assert_eq!(
+            event["data"]["message"]["avatarUrl"],
+            "https://cdn.example.com/avatar.png"
+        );
         assert_eq!(event["data"]["message"]["content"], "大家晚上好。");
     }
 }

@@ -41,6 +41,7 @@ const loadingGroupBuys = ref(false)
 const sharingGroupBuyId = ref('')
 const myGroupBuyPlans = ref<GroupBuyPlan[]>([])
 const messages = ref<ChatHallMessage[]>([])
+const failedAvatarIds = ref<Set<string>>(new Set())
 const messageListRef = ref<HTMLElement | null>(null)
 const messageInputRef = ref<HTMLInputElement | null>(null)
 const emojiPickerHostRef = ref<HTMLElement | null>(null)
@@ -69,6 +70,17 @@ function isMine(message: ChatHallMessage) {
 
 function avatarText(username: string) {
   return String(username || '会员').trim().slice(0, 1) || '会'
+}
+
+function messageAvatarUrl(message: ChatHallMessage) {
+  if (failedAvatarIds.value.has(message.id)) return ''
+  return stringValue(message.avatarUrl)
+}
+
+function markAvatarFailed(message: ChatHallMessage) {
+  const next = new Set(failedAvatarIds.value)
+  next.add(message.id)
+  failedAvatarIds.value = next
 }
 
 function upsertMessage(message: ChatHallMessage) {
@@ -431,7 +443,15 @@ onBeforeUnmount(() => {
           class="chat-hall__message-row"
           :class="{ 'chat-hall__message-row--mine': isMine(message) }"
         >
-          <div class="chat-hall__avatar">{{ avatarText(message.username) }}</div>
+          <div class="chat-hall__avatar">
+            <img
+              v-if="messageAvatarUrl(message)"
+              :alt="`${message.username || '会员'}头像`"
+              :src="messageAvatarUrl(message)"
+              @error="markAvatarFailed(message)"
+            />
+            <span v-else>{{ avatarText(message.username) }}</span>
+          </div>
           <div class="chat-hall__bubble-wrap">
             <div class="chat-hall__meta">
               <span>{{ isMine(message) ? '我' : message.username }}</span>
@@ -685,12 +705,20 @@ onBeforeUnmount(() => {
   color: #9f1724;
   font-size: 0.8rem;
   font-weight: 900;
+  overflow: hidden;
   box-shadow: 0 8px 18px rgba(43, 31, 31, 0.08);
 }
 
 .chat-hall__message-row--mine .chat-hall__avatar {
   background: #9f1724;
   color: #fff;
+}
+
+.chat-hall__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
 }
 
 .chat-hall__bubble-wrap {

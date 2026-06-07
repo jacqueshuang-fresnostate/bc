@@ -182,6 +182,21 @@ impl ChatHallRepository {
         Ok(message)
     }
 
+    /// 用户头像变更后同步刷新大厅内该用户历史消息的头像快照。
+    pub async fn update_user_avatar(&self, user_id: &str, avatar_url: &str) -> ApiResult<()> {
+        let snapshot = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("聊天大厅数据锁写入失败".to_string()))?;
+            if !store.update_user_avatar(user_id, avatar_url) {
+                return Ok(());
+            }
+            store.clone()
+        };
+        self.persist(&snapshot).await
+    }
+
     /// PostgreSQL 模式下把当前最近消息快照写入数据库。
     async fn persist(&self, store: &ChatHallStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
@@ -236,6 +251,7 @@ pub(crate) struct ChatHallStore {
 #[derive(Clone, Debug)]
 struct PreparedRedPacket {
     message_id: String,
+    avatar_url: String,
     red_packet: ChatHallRedPacket,
 }
 
@@ -271,6 +287,7 @@ impl ChatHallStore {
             id: chat_hall_message_id(self.next_sequence),
             user_id: user.id.clone(),
             username: user.username.clone(),
+            avatar_url: user.avatar_url.clone(),
             content,
             message_type: ChatHallMessageType::Text,
             payload: None,
@@ -323,6 +340,7 @@ impl ChatHallStore {
 
         Ok(PreparedRedPacket {
             message_id: chat_hall_message_id(self.next_sequence + 1),
+            avatar_url: user.avatar_url.clone(),
             red_packet,
         })
     }
@@ -339,6 +357,7 @@ impl ChatHallStore {
             id: prepared.message_id,
             user_id: prepared.red_packet.user_id.clone(),
             username: prepared.red_packet.username.clone(),
+            avatar_url: prepared.avatar_url,
             content: prepared.red_packet.greeting.clone(),
             message_type: ChatHallMessageType::RedPacket,
             payload: Some(payload),
@@ -454,6 +473,7 @@ impl ChatHallStore {
             id: chat_hall_message_id(self.next_sequence),
             user_id: user.id.clone(),
             username: user.username.clone(),
+            avatar_url: user.avatar_url.clone(),
             content,
             message_type: ChatHallMessageType::GroupBuyPlan,
             payload: Some(to_json(&payload)?),
@@ -463,6 +483,20 @@ impl ChatHallStore {
         self.trim_history();
 
         Ok(message)
+    }
+
+    /// 批量刷新指定用户在聊天大厅历史消息里的头像链接。
+    fn update_user_avatar(&mut self, user_id: &str, avatar_url: &str) -> bool {
+        let user_id = user_id.trim();
+        let avatar_url = avatar_url.trim().to_string();
+        let mut changed = false;
+        for message in &mut self.messages {
+            if message.user_id == user_id && message.avatar_url != avatar_url {
+                message.avatar_url = avatar_url.clone();
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// 限制内存和数据库中保留的大厅历史消息数量，避免无限增长。
@@ -493,9 +527,12 @@ impl ChatHallStore {
 /// 从数据库读取聊天大厅消息，并恢复下一条消息的序号。
 async fn load_chat_hall_store(database: &BusinessDatabase) -> ApiResult<ChatHallStore> {
     let rows = sqlx::query(
-        "SELECT id, user_id, username, content, message_type, payload, created_at
-         FROM chat_hall_messages
-         ORDER BY created_at ASC, id ASC",
+        "SELECT m.id, m.user_id, m.username,
+                COALESCE(NULLIF(m.avatar_url, ''), u.avatar_url, '') AS avatar_url,
+                m.content, m.message_type, m.payload, m.created_at
+         FROM chat_hall_messages m
+         LEFT JOIN users u ON u.id = m.user_id
+         ORDER BY m.created_at ASC, m.id ASC",
     )
     .fetch_all(database.pool())
     .await
@@ -516,6 +553,9 @@ async fn load_chat_hall_store(database: &BusinessDatabase) -> ApiResult<ChatHall
                 .map_err(|_| ApiError::Internal("聊天大厅消息数据读取失败".to_string()))?,
             username: row
                 .try_get("username")
+                .map_err(|_| ApiError::Internal("聊天大厅消息数据读取失败".to_string()))?,
+            avatar_url: row
+                .try_get("avatar_url")
                 .map_err(|_| ApiError::Internal("聊天大厅消息数据读取失败".to_string()))?,
             content: row
                 .try_get("content")
@@ -664,12 +704,13 @@ pub(crate) async fn save_chat_hall_store_in_transaction(
     for message in &store.messages {
         sqlx::query(
             "INSERT INTO chat_hall_messages
-             (id, user_id, username, content, message_type, payload, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             (id, user_id, username, avatar_url, content, message_type, payload, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(&message.id)
         .bind(&message.user_id)
         .bind(&message.username)
+        .bind(&message.avatar_url)
         .bind(&message.content)
         .bind(enum_to_string(&message.message_type)?)
         .bind(&message.payload)
@@ -814,7 +855,7 @@ mod tests {
     /// 验证聊天大厅发送消息会修剪内容并按最近消息正序返回。
     fn chat_hall_store_sends_and_lists_messages() {
         let mut store = ChatHallStore::default();
-        let user = test_user("U90001", "alice");
+        let user = test_user_with_avatar("U90001", "alice", "https://cdn.example.com/a.png");
 
         let message = store
             .send(
@@ -828,6 +869,7 @@ mod tests {
         assert_eq!(message.id, "CHM-000000000001");
         assert_eq!(message.user_id, "U90001");
         assert_eq!(message.username, "alice");
+        assert_eq!(message.avatar_url, "https://cdn.example.com/a.png");
         assert_eq!(message.content, "大家好");
         assert_eq!(message.message_type, ChatHallMessageType::Text);
         assert!(message.payload.is_none());
@@ -883,6 +925,28 @@ mod tests {
             store.messages.back().unwrap().id,
             chat_hall_message_id((CHAT_HALL_HISTORY_LIMIT + 1) as u64)
         );
+    }
+
+    #[test]
+    /// 验证用户更新头像后，聊天大厅历史消息会同步刷新头像链接。
+    fn chat_hall_store_updates_user_avatar_snapshot() {
+        let mut store = ChatHallStore::default();
+        let user = test_user("U90001", "alice");
+        store
+            .send(
+                &user,
+                CreateChatHallMessageRequest {
+                    content: "先发一条".to_string(),
+                },
+            )
+            .unwrap();
+
+        assert!(store.update_user_avatar("U90001", "https://cdn.example.com/new.png"));
+        assert_eq!(
+            store.messages.front().unwrap().avatar_url,
+            "https://cdn.example.com/new.png"
+        );
+        assert!(!store.update_user_avatar("U404", "https://cdn.example.com/new.png"));
     }
 
     #[test]
@@ -977,11 +1041,15 @@ mod tests {
     }
 
     fn test_user(id: &str, username: &str) -> UserSummary {
+        test_user_with_avatar(id, username, "")
+    }
+
+    fn test_user_with_avatar(id: &str, username: &str, avatar_url: &str) -> UserSummary {
         UserSummary {
             id: id.to_string(),
             username: username.to_string(),
             email: None,
-            avatar_url: String::new(),
+            avatar_url: avatar_url.to_string(),
             kind: UserKind::Regular,
             status: UserStatus::Active,
             balance_minor: 0,

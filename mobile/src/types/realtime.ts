@@ -51,6 +51,7 @@ export type MobileChatHallMessage = {
   id: string
   userId: string
   username: string
+  avatarUrl?: string
   content: string
   messageType?: 'text' | 'redPacket' | 'groupBuyPlan'
   payload?: Record<string, unknown> | null
@@ -195,6 +196,7 @@ function normalizeChatHallMessage(value: unknown): MobileChatHallMessage | null 
     id,
     userId,
     username: username || '会员',
+    avatarUrl: optionalString(value.avatarUrl),
     content,
     messageType: chatHallMessageType(value.messageType),
     payload: isPlainObject(value.payload) ? value.payload : null,

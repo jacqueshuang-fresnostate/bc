@@ -227,6 +227,7 @@ export type ChatHallMessage = {
   id: string
   userId: string
   username: string
+  avatarUrl?: string
   content: string
   messageType?: 'text' | 'redPacket' | 'groupBuyPlan'
   payload?: ChatHallMessagePayload | null

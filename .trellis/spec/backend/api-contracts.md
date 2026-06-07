@@ -242,7 +242,7 @@ WebSocket 消息统一使用当前系统事件信封：
 - `lottery.draw_result`：开奖完成，`data` 包含 `lotteryId`、`lotteryName`、`issue`、`drawNumber`、`resultNumbers`、`drawnAt`。
 - `lottery.issue_closed`：期号封盘，`data` 包含 `lotteryId`、`issue`、`scheduledAt`、`saleClosedAt`、`status`。
 - `lottery.issue_opened`：新期号开盘，`data` 包含 `lotteryId`、`issue`、`scheduledAt`、`saleClosedAt`、`status`。
-- `chat_hall.message_created`：公共聊天大厅新增消息，`data.message` 包含 `id`、`userId`、`username`、`content`、`createdAt`，所有在线手机端连接都可收到。
+- `chat_hall.message_created`：公共聊天大厅新增消息，`data.message` 包含 `id`、`userId`、`username`、`avatarUrl`、`content`、`messageType`、`payload`、`createdAt`，所有在线手机端连接都可收到。
 - `system.heartbeat`：连接心跳。
 
 用户私有事件：
@@ -260,9 +260,9 @@ WebSocket 消息统一使用当前系统事件信封：
 
 聊天大厅接口：
 
-- `GET /api/user/chat-hall/messages` 返回最近大厅消息，消息字段使用 `camelCase`，按发送时间正序展示。
+- `GET /api/user/chat-hall/messages` 返回最近大厅消息，消息字段使用 `camelCase`，按发送时间正序展示，并携带发送人的 `avatarUrl`；历史消息头像为空时后端需要用用户表当前头像兜底。
 - `POST /api/user/chat-hall/messages` 请求体为 `{ "content": "..." }`，后端修剪首尾空白，空内容返回业务错误，超过 500 个字符返回业务错误。
-- 聊天大厅消息必须写入 `chat_hall_messages` 表；运行期只保留最近 200 条历史，接口返回最近 100 条。
+- 聊天大厅消息必须写入 `chat_hall_messages` 表；`avatar_url` 保存发送人头像快照，用户更新头像后需要同步刷新该用户历史消息的头像快照。运行期只保留最近 200 条历史，接口返回最近 100 条。
 - 聊天大厅是所有登录用户可进入的公共大厅，不使用客服会话表，不允许把公共大厅消息写入 `support_conversations` 或 `support_messages`。
 
 ### 4. 校验与错误矩阵
@@ -4663,6 +4663,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
   "id": "chat-000001",
   "userId": "U90001",
   "username": "demo",
+  "avatarUrl": "https://cdn.example.com/avatar.png",
   "content": "恭喜发财，大吉大利",
   "messageType": "redPacket",
   "payload": {},

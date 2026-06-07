@@ -19,6 +19,8 @@ pub struct ChatHallMessage {
     pub id: String,
     pub user_id: String,
     pub username: String,
+    #[serde(default)]
+    pub avatar_url: String,
     pub content: String,
     pub message_type: ChatHallMessageType,
     pub payload: Option<Value>,

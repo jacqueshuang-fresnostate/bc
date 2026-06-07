@@ -2313,3 +2313,10 @@
 - 解决问题：此前 `BetRoundInfoCard` 最近开奖号码使用固定 `28px` 号码球且不换行，部分窄屏手机上 5 位开奖号码会和期号文本互相挤压，导致号码区域横向溢出。
 - 实施内容：最近开奖卡片改为 scoped CSS 响应式布局，号码球使用 `clamp(20px-24px)`，号码容器允许换行并限制最大宽度；330px 以下极窄屏自动把开奖文本和号码球拆为上下两行；同步更新架构说明和前端组件规范。
 - 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；手机端测试命令当前显示 0 个测试用例。
+
+## 2026-06-08 01:49 HKT 聊天大厅头像展示修复
+
+- 完成任务：修复用户上传头像后，聊天大厅仍显示文字头像的问题。
+- 解决问题：用户头像只保存到了 `users.avatar_url`，聊天大厅消息模型、历史接口和实时事件都没有 `avatarUrl` 字段，手机端也只渲染用户名首字。
+- 实施内容：`chat_hall_messages` 新增 `avatar_url` 字段和中文字段注释；`ChatHallMessage` 新增 `avatarUrl`，文本、红包、合买计划分享消息创建时写入当前头像；用户更新头像后同步刷新该用户聊天大厅历史消息头像；历史加载时用用户表当前头像兜底旧消息；手机端聊天大厅头像改为图片优先、加载失败回退文字头像；同步更新架构说明和前后端规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml realtime -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；完整后端测试 251 条通过，手机端测试命令当前显示 0 个测试用例。
