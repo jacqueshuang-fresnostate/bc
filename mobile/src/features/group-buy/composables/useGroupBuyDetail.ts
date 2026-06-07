@@ -37,6 +37,11 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
     return Number.isFinite(normalized) ? normalized.toFixed(2) : min.toFixed(2)
   }
 
+  /** 用户完成编辑认购金额后，再把金额校正到可参与范围。 */
+  function commitJoinAmountInput() {
+    joinAmountInput.value = normalizeJoinAmount()
+  }
+
   /** 减少认购金额。 */
   function decreaseJoinAmount() {
     const step = Math.max(0.01, Number(selectedGroupBuy.value?.share_amount || 0.01))
@@ -88,7 +93,7 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
   /** 提交认购并刷新余额、详情和列表。 */
   async function joinGroupBuy() {
     if (!selectedGroupBuy.value) return
-    joinAmountInput.value = normalizeJoinAmount()
+    commitJoinAmountInput()
     submittingJoin.value = true
     try {
       const res = await joinGroupBuyPlan(selectedGroupBuy.value.id, joinAmountInput.value)
@@ -116,6 +121,7 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
     detailVisible,
     maxJoinAmount,
     normalizeJoinAmount,
+    commitJoinAmountInput,
     decreaseJoinAmount,
     increaseJoinAmount,
     applyQuickAmount,

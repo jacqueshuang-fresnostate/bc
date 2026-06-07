@@ -79,7 +79,7 @@ const {
   canJoin,
   joinAmount,
   detailVisible,
-  normalizeJoinAmount,
+  commitJoinAmountInput,
   decreaseJoinAmount,
   increaseJoinAmount,
   applyQuickAmount,
@@ -128,12 +128,6 @@ watch(activeFilter, () => {
 watch(activeTab, (tab) => {
   if (tab === 'hall') loadHall()
   if (tab === 'my') loadMyGroupBuys()
-})
-
-watch(joinAmountInput, (value) => {
-  if (!selectedGroupBuy.value) return
-  const next = normalizeJoinAmount(value)
-  if (next !== value) joinAmountInput.value = next
 })
 
 onMounted(async () => {
@@ -425,7 +419,16 @@ onMounted(async () => {
                 <button class="flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl font-black text-red-900 shadow-sm" @click="decreaseJoinAmount">−</button>
                 <div class="flex flex-1 items-center justify-center px-3">
                   <span class="mr-1 font-headline text-xl font-black text-red-900">¥</span>
-                  <input v-model="joinAmountInput" class="w-28 border-0 bg-transparent text-center font-headline text-2xl font-black text-stone-950 focus:ring-0" type="number" min="0.01" step="0.01" />
+                  <input
+                    v-model="joinAmountInput"
+                    class="w-28 border-0 bg-transparent text-center font-headline text-2xl font-black text-stone-950 focus:ring-0"
+                    inputmode="decimal"
+                    min="0.01"
+                    step="0.01"
+                    type="number"
+                    @blur="commitJoinAmountInput"
+                    @keyup.enter="commitJoinAmountInput"
+                  />
                 </div>
                 <button class="flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl font-black text-red-900 shadow-sm" @click="increaseJoinAmount">＋</button>
               </div>
