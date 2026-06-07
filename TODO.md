@@ -2196,3 +2196,10 @@
 - 解决问题：聊天大厅此前只能手动输入或粘贴 emoji，没有表情选择器；用户在聊天大厅无法像在线客服一样直接选择表情。
 - 实施内容：`ChatHallView.vue` 复用手机端客服页稳定的表情方案，动态加载 `emoji-mart` 原生 `Picker`、`@emoji-mart/data` 和中文语言包；表情面板通过 `Teleport` 挂到 `body`，由 Vue 遮罩关闭，不传 `onClickOutside`；选中表情后按当前输入框光标位置插入并恢复焦点。
 - 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；代码检查确认聊天大厅未使用 `onClickOutside` 或 `replaceChildren`。本轮浏览器烟测未完成，后续如需继续验证可本地打开 `/chat-hall` 检查表情面板重复打开和插入效果。
+
+## 2026-06-07 16:19 HKT 手机端底部导航聊天大厅入口
+
+- 完成任务：在手机端 `mobile-bottom-nav` 新增“聊天”入口，点击后进入 `/chat-hall` 公共聊天大厅。
+- 解决问题：聊天大厅此前只能从“我的账户”进入，底部主导航没有直达入口；如果直接显示底部导航，原固定输入栏和表情面板会被导航栏遮挡。
+- 实施内容：`LayoutView.vue` 新增聊天导航项和 `/chat-hall` 激活态，并取消聊天大厅隐藏底部导航；`ChatHallView.vue` 为底部导航定义预留空间，将输入栏和表情面板抬到导航栏上方，同时增加消息列表底部滚动留白；架构说明和前端组件规范同步记录该布局约束。
+- 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过。

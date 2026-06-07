@@ -292,6 +292,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .chat-hall {
+  --chat-hall-bottom-nav-space: calc(4.5rem + max(1rem, env(safe-area-inset-bottom)));
+  --chat-hall-input-height: 4.5rem;
   min-height: 100vh;
   background: linear-gradient(180deg, #fff8f6 0%, #f5f1ed 56%, #eef2f7 100%);
   color: #2b1f1f;
@@ -361,7 +363,7 @@ onBeforeUnmount(() => {
 .chat-hall__messages {
   height: 100vh;
   overflow-y: auto;
-  padding: calc(5rem + env(safe-area-inset-top)) 1rem calc(6.25rem + env(safe-area-inset-bottom));
+  padding: calc(5rem + env(safe-area-inset-top)) 1rem calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-input-height) + 1rem);
 }
 
 .chat-hall__state {
@@ -462,13 +464,13 @@ onBeforeUnmount(() => {
 .chat-hall__input-bar {
   position: fixed;
   left: 0;
-  bottom: 0;
+  bottom: var(--chat-hall-bottom-nav-space);
   z-index: 45;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 0.65rem;
   width: 100%;
-  padding: 0.75rem 1rem max(0.9rem, env(safe-area-inset-bottom));
+  padding: 0.75rem 1rem;
   background: rgba(255, 255, 255, 0.9);
   border-top: 1px solid rgba(143, 20, 31, 0.08);
   box-shadow: 0 -10px 28px rgba(43, 31, 31, 0.08);
@@ -511,7 +513,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 0 12px calc(74px + env(safe-area-inset-bottom));
+  padding: 0 12px calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-input-height) + 0.5rem);
   pointer-events: auto;
 }
 

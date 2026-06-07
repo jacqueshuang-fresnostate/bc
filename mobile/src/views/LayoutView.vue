@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Home, Trophy, UserRound, UsersRound } from 'lucide-vue-next'
+import { Home, MessageCircle, Trophy, UserRound, UsersRound } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { useWebSocket } from '../composables/useWebSocket'
 
@@ -11,6 +11,7 @@ const { lastMessage } = useWebSocket()
 const navItems = [
   { label: '首页', icon: Home, path: '/' },
   { label: '合买', icon: UsersRound, path: '/group-buy' },
+  { label: '聊天', icon: MessageCircle, path: '/chat-hall' },
   { label: '开奖', icon: Trophy, path: '/history' },
   { label: '我的', icon: UserRound, path: '/me' },
 ]
@@ -18,12 +19,13 @@ const navItems = [
 const active = computed(() => {
   if (route.path === '/') return 0
   if (route.path.startsWith('/group-buy')) return 1
-  if (route.path.startsWith('/history') || route.path.startsWith('/orders')) return 2
-  if (route.path.startsWith('/me')) return 3
+  if (route.path.startsWith('/chat-hall')) return 2
+  if (route.path.startsWith('/history') || route.path.startsWith('/orders')) return 3
+  if (route.path.startsWith('/me')) return 4
   return 0
 })
 
-const hideBottomNav = computed(() => route.path === '/support' || route.path === '/chat-hall' || route.path.startsWith('/bet') || ['/deposit', '/withdraw', '/withdrawal-methods', '/ledger', '/security-center'].includes(route.path))
+const hideBottomNav = computed(() => route.path === '/support' || route.path.startsWith('/bet') || ['/deposit', '/withdraw', '/withdrawal-methods', '/ledger', '/security-center'].includes(route.path))
 
 function onChange(path: string) {
   router.push(path)
