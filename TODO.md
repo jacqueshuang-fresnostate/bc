@@ -2327,3 +2327,10 @@
 - 解决问题：手机端公共错误函数会把后端 `bad request:`、`not found:`、`internal error:`、`financial account ... not found`、Axios `Network Error` 等英文内容原样弹出；旧下注组合和动态下注页还有直接读取 `response.data.detail/message` 的分支。
 - 实施内容：新增 `mobile/src/utils/errorMessage.ts`，统一翻译后端错误前缀、常见英文业务错误、网络错误、超时和 HTTP 状态码；`mobile/src/api/user.ts` 的 `unwrapApiData/errorMessage` 接入统一工具；旧下注组合和动态下注页统一改用 `errorMessage`；用户端鉴权和会话解析的高频英文错误源文案改为中文；同步更新架构说明和前端规范。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml access_repository -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；完整后端测试 251 条通过，手机端测试命令当前显示 0 个测试用例；搜索确认移动端只有统一错误工具内部读取后端 `message/detail`。
+
+## 2026-06-08 02:15 HKT 合买参与人数据保存失败修复
+
+- 完成任务：修复用户端认购合买时返回 `internal error: 合买参与人数据保存失败` 的问题。
+- 解决问题：合买仓储使用快照式保存，多个认购或结算回写请求并发时可能出现旧快照晚于新快照落库；落库失败时内存状态也可能已经变化；参与记录编号原先主要依赖毫秒时间，极端高并发下存在主键碰撞风险。
+- 实施内容：合买仓储新增写操作锁，创建、认购、回滚、取消未满单、满单关联订单和结算回写全部串行化；落库失败时恢复内存快照；数据库保存前锁定 `group_buy_participants` 和 `group_buy_plans`，参与人保存失败日志输出真实数据库错误和关键上下文；用户端参与记录编号增加纳秒时间、参与序号和 64 位随机后缀。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture` 均通过；完整后端测试 252 条通过。

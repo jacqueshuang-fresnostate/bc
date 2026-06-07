@@ -8,6 +8,7 @@ use std::{
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgConnection, Row};
+use tokio::sync::Mutex;
 
 use crate::{
     domain::{
@@ -28,6 +29,8 @@ use super::business_database::{enum_from_string, enum_to_string, BusinessDatabas
 pub struct GroupBuyRepository {
     pub(crate) inner: Arc<RwLock<GroupBuyStore>>,
     pub(crate) persistence: Option<BusinessDatabase>,
+    /// 串行化合买写操作，避免多个快照异步落库时旧快照覆盖新快照。
+    pub(crate) mutation_lock: Arc<Mutex<()>>,
 }
 
 /// 合买计划和参与记录仓储，负责该模块数据读取、业务变更和持久化协调。
@@ -37,6 +40,7 @@ impl GroupBuyRepository {
         Self {
             inner: Arc::new(RwLock::new(GroupBuyStore::seeded())),
             persistence: None,
+            mutation_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -46,6 +50,7 @@ impl GroupBuyRepository {
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
+            mutation_lock: Arc::new(Mutex::new(())),
         })
     }
 
@@ -88,30 +93,14 @@ impl GroupBuyRepository {
         lotteries: &[LotteryKind],
         users: &[UserSummary],
     ) -> ApiResult<GroupBuyPlan> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
-            let result = store.create(request, lotteries, users)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
+        self.mutate_and_persist(|store| store.create(request, lotteries, users))
+            .await
     }
 
     /// 满单后把合买计划关联到真实投注订单。
     pub async fn attach_order(&self, id: &str, order_id: &str) -> ApiResult<GroupBuyPlan> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
-            let result = store.attach_order(id, order_id)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
+        self.mutate_and_persist(|store| store.attach_order(id, order_id))
+            .await
     }
 
     /// 根据结算订单 ID 把对应合买计划标记为已结算。
@@ -119,16 +108,8 @@ impl GroupBuyRepository {
         &self,
         order_ids: &[String],
     ) -> ApiResult<Vec<GroupBuyPlan>> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
-            let result = store.mark_settled_by_order_ids(order_ids);
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
+        self.mutate_and_persist(|store| Ok(store.mark_settled_by_order_ids(order_ids)))
+            .await
     }
 
     /// 封盘时取消未满单的合买计划，返回需要退款的计划。
@@ -137,18 +118,12 @@ impl GroupBuyRepository {
         lottery_id: &str,
         issue: &str,
     ) -> ApiResult<Vec<GroupBuyPlan>> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
+        self.mutate_and_persist_if(|store| {
             let result = store.cancel_unfilled_for_issue(lottery_id, issue);
-            (result, store.clone())
-        };
-        if !result.is_empty() {
-            self.persist(&snapshot).await?;
-        }
-        Ok(result)
+            let should_persist = !result.is_empty();
+            Ok((result, should_persist))
+        })
+        .await
     }
 
     /// 更新现有记录并持久化变更。
@@ -157,16 +132,8 @@ impl GroupBuyRepository {
         id: &str,
         request: UpdateGroupBuyPlanRequest,
     ) -> ApiResult<GroupBuyPlan> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
-            let result = store.update(id, request)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
+        self.mutate_and_persist(|store| store.update(id, request))
+            .await
     }
 
     /// 为团购方案添加参与者。
@@ -176,29 +143,13 @@ impl GroupBuyRepository {
         request: AddGroupBuyParticipantRequest,
         users: &[UserSummary],
     ) -> ApiResult<GroupBuyPlan> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
-            let result = store.add_participant(id, request, users)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
+        self.mutate_and_persist(|store| store.add_participant(id, request, users))
+            .await
     }
 
     /// 移除刚创建但尚未成功扣款的合买计划，用于业务回滚。
     pub async fn remove_unfunded_plan(&self, id: &str) -> ApiResult<()> {
-        let snapshot = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
-            store.remove_plan(id)?;
-            store.clone()
-        };
-        self.persist(&snapshot).await
+        self.mutate_and_persist(|store| store.remove_plan(id)).await
     }
 
     /// 移除刚追加但尚未成功扣款的参与记录，用于业务回滚。
@@ -207,15 +158,49 @@ impl GroupBuyRepository {
         id: &str,
         participant_id: &str,
     ) -> ApiResult<GroupBuyPlan> {
-        let (result, snapshot) = {
+        self.mutate_and_persist(|store| store.remove_participant(id, participant_id))
+            .await
+    }
+
+    /// 执行一次合买写操作并强制落库，落库失败时恢复内存快照。
+    async fn mutate_and_persist<T>(
+        &self,
+        mutate: impl FnOnce(&mut GroupBuyStore) -> ApiResult<T>,
+    ) -> ApiResult<T> {
+        self.mutate_and_persist_if(|store| mutate(store).map(|result| (result, true)))
+            .await
+    }
+
+    /// 执行一次合买写操作，并按需把变更快照保存到数据库。
+    async fn mutate_and_persist_if<T>(
+        &self,
+        mutate: impl FnOnce(&mut GroupBuyStore) -> ApiResult<(T, bool)>,
+    ) -> ApiResult<T> {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, should_persist, previous, snapshot) = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?;
-            let result = store.remove_participant(id, participant_id)?;
-            (result, store.clone())
+            let previous = store.clone();
+            let (result, should_persist) = match mutate(&mut store) {
+                Ok(result) => result,
+                Err(error) => {
+                    *store = previous;
+                    return Err(error);
+                }
+            };
+            let snapshot = store.clone();
+            (result, should_persist, previous, snapshot)
         };
-        self.persist(&snapshot).await?;
+
+        if should_persist {
+            if let Err(error) = self.persist(&snapshot).await {
+                self.replace_store(previous)?;
+                return Err(error);
+            }
+        }
+
         Ok(result)
     }
 
@@ -399,11 +384,22 @@ pub(crate) async fn save_group_buy_store_in_transaction(
     connection: &mut PgConnection,
     store: &GroupBuyStore,
 ) -> ApiResult<()> {
+    sqlx::query("LOCK TABLE group_buy_participants, group_buy_plans IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *connection)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "合买数据表锁定失败");
+            ApiError::Internal("合买数据表锁定失败".to_string())
+        })?;
+
     for table in ["group_buy_participants", "group_buy_plans"] {
         sqlx::query(&format!("DELETE FROM {table}"))
             .execute(&mut *connection)
             .await
-            .map_err(|_| ApiError::Internal("合买数据清理失败".to_string()))?;
+            .map_err(|error| {
+                tracing::error!(%error, table, "合买数据清理失败");
+                ApiError::Internal("合买数据清理失败".to_string())
+            })?;
     }
 
     for plan in store.plans.values() {
@@ -439,9 +435,20 @@ pub(crate) async fn save_group_buy_store_in_transaction(
         .bind(&plan.updated_at)
         .execute(&mut *connection)
         .await
-        .map_err(|_| ApiError::Internal("合买计划数据保存失败".to_string()))?;
+        .map_err(|error| {
+            tracing::error!(
+                %error,
+                group_buy_plan_id = plan.id.as_str(),
+                lottery_id = plan.lottery_id.as_str(),
+                issue = plan.issue.as_str(),
+                "合买计划数据保存失败"
+            );
+            ApiError::Internal("合买计划数据保存失败".to_string())
+        })?;
 
         for participant in &plan.participants {
+            let share_count = i32::try_from(participant.share_count)
+                .map_err(|_| ApiError::Internal("合买参与人份数过大".to_string()))?;
             sqlx::query(
                 "INSERT INTO group_buy_participants
                  (id, plan_id, user_id, username, amount_minor, share_count, note, created_at)
@@ -452,15 +459,23 @@ pub(crate) async fn save_group_buy_store_in_transaction(
             .bind(&participant.user_id)
             .bind(&participant.username)
             .bind(participant.amount_minor)
-            .bind(
-                i32::try_from(participant.share_count)
-                    .map_err(|_| ApiError::Internal("合买参与人份数过大".to_string()))?,
-            )
+            .bind(share_count)
             .bind(&participant.note)
             .bind(&participant.created_at)
             .execute(&mut *connection)
             .await
-            .map_err(|_| ApiError::Internal("合买参与人数据保存失败".to_string()))?;
+            .map_err(|error| {
+                tracing::error!(
+                    %error,
+                    group_buy_plan_id = plan.id.as_str(),
+                    participant_id = participant.id.as_str(),
+                    user_id = participant.user_id.as_str(),
+                    amount_minor = participant.amount_minor,
+                    share_count,
+                    "合买参与人数据保存失败"
+                );
+                ApiError::Internal("合买参与人数据保存失败".to_string())
+            })?;
         }
     }
 

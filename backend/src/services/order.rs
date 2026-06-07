@@ -313,6 +313,7 @@ impl OrderRepository {
         group_buys: &GroupBuyRepository,
         draw_issue: &DrawIssue,
     ) -> ApiResult<(SettlementRun, Vec<LedgerEntry>)> {
+        let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
         let mut order_store = self
             .inner
             .read()

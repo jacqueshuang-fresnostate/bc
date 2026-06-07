@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post, put},
     Extension, Json, Router,
 };
+use rand_core::{OsRng, RngCore};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
@@ -1481,10 +1482,16 @@ fn next_group_buy_plan_id() -> String {
 
 /// 生成合买参与记录编号。
 fn next_group_buy_participant_id(plan: &GroupBuyPlan) -> String {
+    let next_index = plan.participants.len().saturating_add(1);
+    let mut random_bytes = [0_u8; 8];
+    OsRng.fill_bytes(&mut random_bytes);
+    let random_suffix = u64::from_be_bytes(random_bytes);
     format!(
-        "{}-P{}",
+        "{}-P{}-{:03}-{:016X}",
         plan.id,
-        chrono::Local::now().format("%Y%m%d%H%M%S%3f")
+        chrono::Local::now().format("%Y%m%d%H%M%S%f"),
+        next_index,
+        random_suffix,
     )
 }
 
@@ -2132,6 +2139,31 @@ mod tests {
         assert_eq!(mask_group_buy_initiator_display("A9"), "A*9");
         assert_eq!(mask_group_buy_initiator_display("单"), "单");
         assert_eq!(mask_group_buy_initiator_display(""), "会员");
+    }
+
+    #[test]
+    /// 验证合买参与编号包含计划前缀和随机段，连续生成时不应重复。
+    fn group_buy_participant_id_uses_random_suffix() {
+        let plan = test_group_buy_plan(
+            "G-USER-UNIQUE-001",
+            "20260605200000",
+            "regular_user",
+            "用户发起合买",
+        );
+        let mut generated_ids = HashSet::new();
+
+        for _ in 0..32 {
+            let participant_id = next_group_buy_participant_id(&plan);
+            let random_suffix = participant_id
+                .rsplit('-')
+                .next()
+                .expect("参与编号应包含随机后缀");
+
+            assert!(participant_id.starts_with("G-USER-UNIQUE-001-P"));
+            assert_eq!(random_suffix.len(), 16);
+            assert!(random_suffix.chars().all(|ch| ch.is_ascii_hexdigit()));
+            assert!(generated_ids.insert(participant_id));
+        }
     }
 
     #[test]
