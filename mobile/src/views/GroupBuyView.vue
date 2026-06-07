@@ -78,6 +78,7 @@ const {
   joinAmountInput,
   canJoin,
   joinAmount,
+  joinAmountHint,
   detailVisible,
   commitJoinAmountInput,
   decreaseJoinAmount,
@@ -432,6 +433,7 @@ onMounted(async () => {
                 </div>
                 <button class="flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl font-black text-red-900 shadow-sm" @click="increaseJoinAmount">＋</button>
               </div>
+              <p class="mt-2 text-xs font-medium text-stone-500">{{ joinAmountHint }}</p>
               <div class="mt-3 grid grid-cols-4 gap-2">
                 <button v-for="option in quickAmountOptions" :key="option.label" class="rounded-full bg-red-50 py-2 text-xs font-bold text-red-900" @click="applyQuickAmount(option.value)">{{ option.label }}</button>
               </div>

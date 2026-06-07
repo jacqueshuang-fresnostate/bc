@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { showToast } from 'vant'
+import { errorMessage } from '../../../api/user'
 import { createGroupBuyPlan, fetchCurrentBalance, fetchGroupBuyCreateOptions, fetchMyGroupBuys } from '../api'
 import { buildCreateGroupBuyPayload, calculateCreatePaymentAmount, calculateFixedShareCount, calculateRequiredSelfShares, createDefaultGroupBuyForm, normalizeItems, normalizeOptionPayload } from '../presentation'
 import type { GroupBuySettings, SelectOption } from '../types'
@@ -15,7 +16,7 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
   const createIssueOptions = ref<SelectOption[]>([])
   const createPlayOptions = ref<SelectOption[]>([])
   const createOptionsRequestSeq = ref(0)
-  const createSettings = ref<GroupBuySettings>({ min_share_amount: '0.01', initiator_min_buy_ratio: '0.00', share_amount: '1.00' })
+  const createSettings = ref<GroupBuySettings>({ min_share_amount: '0.01', initiator_min_buy_ratio: '0.00', share_amount: '1.00', participant_min_amount: '1.00' })
   const createExtras = ref({ commission_rate: '0', visibility: '公开可见' })
   const createForm = ref(createDefaultGroupBuyForm(lotteryCode.value))
 
@@ -65,6 +66,7 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
         min_share_amount: String(res.data?.settings?.min_share_amount || res.data?.min_share_amount || '0.01'),
         initiator_min_buy_ratio: String(res.data?.settings?.initiator_min_buy_ratio || res.data?.initiator_min_buy_ratio || '0.00'),
         share_amount: String(res.data?.settings?.share_amount || res.data?.share_amount || '1.00'),
+        participant_min_amount: String(res.data?.settings?.participant_min_amount || res.data?.participant_min_amount || res.data?.settings?.share_amount || '1.00'),
       }
       const firstLottery = createLotteryOptions.value[0]?.value || ''
       if (!createForm.value.lottery_code || !createLotteryOptions.value.some(option => option.value === createForm.value.lottery_code)) {
@@ -85,8 +87,8 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
       createLotteryOptions.value = []
       createIssueOptions.value = []
       createPlayOptions.value = []
-      createSettings.value = { min_share_amount: '0.01', initiator_min_buy_ratio: '0.00', share_amount: '1.00' }
-      showToast(e.response?.data?.detail || '加载发起选项失败')
+      createSettings.value = { min_share_amount: '0.01', initiator_min_buy_ratio: '0.00', share_amount: '1.00', participant_min_amount: '1.00' }
+      showToast(errorMessage(e, '加载发起选项失败'))
     }
   }
 
@@ -115,7 +117,7 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
       await options.loadHall()
       return res.data || null
     } catch (e: any) {
-      showToast(e.response?.data?.detail || '发起合买失败')
+      showToast(errorMessage(e, '发起合买失败'))
       return null
     } finally {
       submittingCreate.value = false
@@ -130,7 +132,7 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
       myGroupBuys.value = normalizeItems(res.data)
     } catch (e: any) {
       myGroupBuys.value = []
-      showToast(e.response?.data?.detail || '加载我的合买失败')
+      showToast(errorMessage(e, '加载我的合买失败'))
     } finally {
       loadingMy.value = false
     }

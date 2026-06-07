@@ -203,6 +203,7 @@ pub struct UserGroupBuyPlan {
     pub total_amount_minor: i64,
     pub share_count: u32,
     pub share_amount_minor: i64,
+    pub participant_min_amount_minor: i64,
     pub filled_amount_minor: i64,
     pub sold_shares: u32,
     pub available_shares: u32,

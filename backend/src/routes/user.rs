@@ -1205,6 +1205,7 @@ fn user_group_buy_plan(
         total_amount_minor: plan.total_amount_minor,
         share_count: plan.share_count,
         share_amount_minor: plan.min_share_amount_minor,
+        participant_min_amount_minor: plan.participant_min_amount_minor,
         filled_amount_minor: plan.filled_amount_minor,
         sold_shares,
         available_shares,

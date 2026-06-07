@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { showToast } from 'vant'
+import { errorMessage } from '../../../api/user'
 import { fetchGroupBuyHall, fetchLotteryGroups } from '../api'
 import { normalizeItems } from '../presentation'
 import type { GroupBuyPlan } from '../types'
@@ -45,7 +46,7 @@ export function useGroupBuyHall(lotteryCode: { value: string }) {
     } catch (e: any) {
       if (requestId !== hallRequestSeq.value || lotteryCode.value !== requestedLotteryCode || activeFilter.value !== requestedFilter) return
       hallItems.value = []
-      showToast(e.response?.data?.detail || '加载合买大厅失败')
+      showToast(errorMessage(e, '加载合买大厅失败'))
     } finally {
       if (requestId === hallRequestSeq.value && lotteryCode.value === requestedLotteryCode && activeFilter.value === requestedFilter) {
         loadingHall.value = false

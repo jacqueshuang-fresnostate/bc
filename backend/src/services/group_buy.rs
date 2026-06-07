@@ -766,10 +766,17 @@ impl GroupBuyStore {
             "participant amount",
         )?;
 
-        if request.amount_minor < participant_min_amount(plan) {
+        let remaining_before = plan
+            .total_amount_minor
+            .checked_sub(plan.filled_amount_minor)
+            .ok_or_else(|| ApiError::Internal("合买计划认购进度数据异常".to_string()))?;
+        let minimum_participant_amount = participant_min_amount(plan);
+        if request.amount_minor < minimum_participant_amount
+            && request.amount_minor != remaining_before
+        {
             return Err(ApiError::BadRequest(format!(
-                "participant amount must be at least {}",
-                participant_min_amount(plan)
+                "认购金额不能低于最低认购金额 {} 分",
+                minimum_participant_amount
             )));
         }
 
@@ -779,8 +786,22 @@ impl GroupBuyStore {
             .ok_or_else(|| ApiError::Internal("group buy filled amount overflow".to_string()))?;
         if next_filled > plan.total_amount_minor {
             return Err(ApiError::BadRequest(
-                "participant amount exceeds remaining group buy amount".to_string(),
+                "认购金额超过剩余可认购金额".to_string(),
             ));
+        }
+        let remaining_after = plan
+            .total_amount_minor
+            .checked_sub(next_filled)
+            .ok_or_else(|| ApiError::Internal("合买计划剩余金额计算异常".to_string()))?;
+        if remaining_after > 0 && remaining_after < minimum_participant_amount {
+            let minimum_required = remaining_before
+                .checked_sub(remaining_after)
+                .and_then(|amount| amount.checked_add(minimum_participant_amount))
+                .ok_or_else(|| ApiError::Internal("合买最低认购金额计算异常".to_string()))?;
+            return Err(ApiError::BadRequest(format!(
+                "认购后剩余金额低于最低认购金额，请至少认购 {} 分或选择全包",
+                minimum_required.min(remaining_before)
+            )));
         }
 
         plan.participants.push(GroupBuyParticipant {
@@ -1142,6 +1163,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn group_buy_repository_allows_final_remainder_below_participant_minimum() {
+        let repository = GroupBuyRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let lotteries = lotteries_with_group_buy_enabled("fc3d");
+        repository
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-TEST-FINAL-REMAINDER".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "20260602001".to_string(),
+                    rule_code: "threeDirect".to_string(),
+                    title: "允许尾单全包".to_string(),
+                    numbers: "1,2,3".to_string(),
+                    initiator_user_id: "U90001".to_string(),
+                    total_amount_minor: 1_500,
+                    initiator_amount_minor: 1_000,
+                    note: "剩余低于最低认购金额".to_string(),
+                },
+                &lotteries,
+                &access.users,
+            )
+            .await
+            .expect("plan with small final remainder can be created");
+
+        let filled = repository
+            .add_participant(
+                "G-TEST-FINAL-REMAINDER",
+                AddGroupBuyParticipantRequest {
+                    id: "G-TEST-FINAL-REMAINDER-P002".to_string(),
+                    user_id: "U10001".to_string(),
+                    amount_minor: 500,
+                    note: "全包剩余尾单".to_string(),
+                },
+                &access.users,
+            )
+            .await
+            .expect("final remainder below participant minimum can be fully subscribed");
+
+        assert_eq!(filled.filled_amount_minor, 1_500);
+        assert_eq!(filled.status, GroupBuyPlanStatus::Filled);
+        assert_eq!(filled.participants[1].share_count, 5);
+    }
+
+    #[tokio::test]
+    async fn group_buy_repository_rejects_participant_that_leaves_unjoinable_remainder() {
+        let repository = GroupBuyRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let lotteries = lotteries_with_group_buy_enabled("fc3d");
+        repository
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-TEST-UNJOINABLE-REMAINDER".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "20260602001".to_string(),
+                    rule_code: "threeDirect".to_string(),
+                    title: "拒绝留下尾单".to_string(),
+                    numbers: "1,2,3".to_string(),
+                    initiator_user_id: "U90001".to_string(),
+                    total_amount_minor: 2_500,
+                    initiator_amount_minor: 1_000,
+                    note: "防止剩余不足最低认购".to_string(),
+                },
+                &lotteries,
+                &access.users,
+            )
+            .await
+            .expect("plan can be created");
+
+        let error = repository
+            .add_participant(
+                "G-TEST-UNJOINABLE-REMAINDER",
+                AddGroupBuyParticipantRequest {
+                    id: "G-TEST-UNJOINABLE-REMAINDER-P002".to_string(),
+                    user_id: "U10001".to_string(),
+                    amount_minor: 1_000,
+                    note: "留下小尾巴".to_string(),
+                },
+                &access.users,
+            )
+            .await
+            .expect_err("participant cannot leave a remainder below minimum");
+
+        assert!(error.to_string().contains("剩余金额低于最低认购金额"));
+    }
+
+    #[tokio::test]
     async fn group_buy_repository_rejects_participant_overfill() {
         let repository = GroupBuyRepository::memory_seeded();
         let access = AccessRepository::memory_seeded()
@@ -1162,7 +1275,7 @@ mod tests {
             .await
             .expect_err("participant amount over remaining must be rejected");
 
-        assert!(error.to_string().contains("exceeds remaining"));
+        assert!(error.to_string().contains("超过剩余可认购金额"));
     }
 
     /// 返回显式开启指定彩种合买的测试彩种列表。

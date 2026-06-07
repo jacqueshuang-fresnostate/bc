@@ -2285,3 +2285,10 @@
 - 解决问题：此前 `ResultBalls` 默认号码球为 40px，在开奖列表卡片里视觉偏大，5 位开奖结果会占用过多空间。
 - 实施内容：将 `ResultBalls` 默认号码球调整为 32px，小屏调整为 30px，并同步收紧间距、字号、阴影和字距；同步更新架构说明和前端组件规范。
 - 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；当前手机端测试命令显示 0 个测试用例。
+
+## 2026-06-07 23:44 HKT 合买认购失败问题修复
+
+- 完成任务：排查并修复合买计划偶发无法认购的问题。
+- 解决问题：参与人最低认购金额和剩余金额存在冲突，计划可能留下低于最低认购金额的小尾巴，导致后续用户既不能按最低金额认购，也不能超过剩余金额；手机端也没有拿到参与人最低认购金额，默认金额可能低于后台配置。
+- 实施内容：用户端合买计划响应新增 `participantMinAmountMinor`；后端允许最后尾单低于最低认购金额时一次性全包，同时拒绝普通认购后留下不可认购小尾巴；手机端认购金额按最低认购、单份金额和剩余金额自动归一化，并优先展示后端统一错误 `message`；同步更新架构说明和前后端规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；手机端测试命令当前显示 0 个测试用例。

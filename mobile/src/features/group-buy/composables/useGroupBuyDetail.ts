@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { showToast } from 'vant'
+import { errorMessage } from '../../../api/user'
 import { fetchGroupBuyDetail, joinGroupBuyPlan } from '../api'
 import type { GroupBuyPlan } from '../types'
 
@@ -13,6 +14,15 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
 
   const canJoin = computed(() => Boolean(selectedGroupBuy.value && selectedGroupBuy.value.status === 'open' && selectedGroupBuy.value.available_shares > 0))
   const joinAmount = computed(() => normalizeJoinAmount())
+  const joinAmountHint = computed(() => {
+    const maxCents = maxJoinAmountCents()
+    const minCents = effectiveMinimumJoinAmountCents()
+    const shareCents = shareAmountCents()
+    if (maxCents > 0 && maxCents <= participantMinAmountCents()) {
+      return `剩余 ${centsToMoney(maxCents)} 元，可直接全包`
+    }
+    return `最低认购 ${centsToMoney(minCents)} 元，按每份 ${centsToMoney(shareCents)} 元递增`
+  })
   const detailVisible = computed({
     get: () => selectedGroupBuy.value !== null,
     set: (visible: boolean) => {
@@ -22,19 +32,24 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
 
   /** 计算当前详情最多可认购金额。 */
   function maxJoinAmount() {
-    const available = Math.max(0, Number(selectedGroupBuy.value?.available_shares || 0))
-    const shareAmount = Number(selectedGroupBuy.value?.share_amount || 0)
-    const max = available * shareAmount
-    return Number.isFinite(max) ? max : 0
+    return Number(centsToMoney(maxJoinAmountCents()))
   }
 
   /** 把认购金额限制在可参与范围内。 */
   function normalizeJoinAmount(value: string | number = joinAmountInput.value) {
-    const amount = Math.max(0, Number(value || 0))
-    const min = Math.max(0.01, Number(selectedGroupBuy.value?.share_amount || 0.01))
-    const max = maxJoinAmount()
-    const normalized = max > 0 ? Math.min(Math.max(amount, min), max) : Math.max(amount, min)
-    return Number.isFinite(normalized) ? normalized.toFixed(2) : min.toFixed(2)
+    const shareCents = shareAmountCents()
+    const maxCents = maxJoinAmountCents()
+    const minCents = effectiveMinimumJoinAmountCents()
+    let cents = moneyToCents(value)
+    if (cents <= 0) cents = minCents
+    cents = roundDownToMultiple(cents, shareCents)
+    if (cents < minCents) cents = minCents
+    if (maxCents > 0 && cents > maxCents) cents = maxCents
+    const remainingAfter = maxCents - cents
+    if (remainingAfter > 0 && remainingAfter < participantMinAmountCents()) {
+      cents = maxCents
+    }
+    return centsToMoney(cents)
   }
 
   /** 用户完成编辑认购金额后，再把金额校正到可参与范围。 */
@@ -44,14 +59,12 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
 
   /** 减少认购金额。 */
   function decreaseJoinAmount() {
-    const step = Math.max(0.01, Number(selectedGroupBuy.value?.share_amount || 0.01))
-    joinAmountInput.value = normalizeJoinAmount(Number(joinAmountInput.value || 0) - step)
+    joinAmountInput.value = normalizeJoinAmount(centsToMoney(moneyToCents(joinAmountInput.value) - shareAmountCents()))
   }
 
   /** 增加认购金额。 */
   function increaseJoinAmount() {
-    const step = Math.max(0.01, Number(selectedGroupBuy.value?.share_amount || 0.01))
-    joinAmountInput.value = normalizeJoinAmount(Number(joinAmountInput.value || 0) + step)
+    joinAmountInput.value = normalizeJoinAmount(centsToMoney(moneyToCents(joinAmountInput.value) + shareAmountCents()))
   }
 
   /** 应用快捷认购金额。 */
@@ -67,10 +80,10 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
       const res = await fetchGroupBuyDetail(groupBuyId)
       if (requestId !== detailRequestSeq.value || selectedGroupBuy.value?.id !== groupBuyId) return
       selectedGroupBuy.value = res.data || selectedGroupBuy.value
-      joinAmountInput.value = String(selectedGroupBuy.value?.share_amount || '1.00')
+      resetJoinAmountInput()
     } catch (e: any) {
       if (requestId !== detailRequestSeq.value || selectedGroupBuy.value?.id !== groupBuyId) return
-      showToast(e.response?.data?.detail || '加载合买详情失败')
+      showToast(errorMessage(e, '加载合买详情失败'))
     } finally {
       if (requestId === detailRequestSeq.value && selectedGroupBuy.value?.id === groupBuyId) {
         loadingDetail.value = false
@@ -81,7 +94,7 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
   /** 打开合买详情弹层。 */
   function openDetail(item: GroupBuyPlan) {
     selectedGroupBuy.value = item
-    joinAmountInput.value = String(selectedGroupBuy.value?.share_amount || '1.00')
+    resetJoinAmountInput()
     loadDetail(item.id)
   }
 
@@ -104,10 +117,69 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
       await options.loadHall()
       if (options.activeTab.value === 'my') await options.loadMyGroupBuys()
     } catch (e: any) {
-      showToast(e.response?.data?.detail || '参与合买失败')
+      showToast(errorMessage(e, '参与合买失败'))
     } finally {
       submittingJoin.value = false
     }
+  }
+
+  /** 重置认购输入为当前计划最小可提交金额。 */
+  function resetJoinAmountInput() {
+    joinAmountInput.value = normalizeJoinAmount(centsToMoney(effectiveMinimumJoinAmountCents()))
+  }
+
+  /** 当前计划单份金额，所有认购金额都必须按完整份额取整。 */
+  function shareAmountCents() {
+    return Math.max(1, moneyToCents(selectedGroupBuy.value?.share_amount || '0.01'))
+  }
+
+  /** 当前计划参与人最低认购金额，至少等于一份金额。 */
+  function participantMinAmountCents() {
+    return roundUpToMultiple(
+      Math.max(shareAmountCents(), moneyToCents(selectedGroupBuy.value?.participant_min_amount || selectedGroupBuy.value?.share_amount || '0.01')),
+      shareAmountCents(),
+    )
+  }
+
+  /** 当前计划剩余可认购金额。 */
+  function maxJoinAmountCents() {
+    const available = Math.max(0, Number(selectedGroupBuy.value?.available_shares || 0))
+    const max = available * shareAmountCents()
+    return Number.isFinite(max) ? Math.max(0, Math.trunc(max)) : 0
+  }
+
+  /** 剩余不足最低认购金额时，允许用户直接全包该尾单。 */
+  function effectiveMinimumJoinAmountCents() {
+    const maxCents = maxJoinAmountCents()
+    const minCents = participantMinAmountCents()
+    if (maxCents > 0 && maxCents < minCents) return maxCents
+    return minCents
+  }
+
+  /** 把展示金额转换为分，避免浮点计算影响份额取整。 */
+  function moneyToCents(value: string | number | null | undefined) {
+    const text = String(value ?? '').trim()
+    if (!/^\d+(?:\.\d{0,2})?$/.test(text)) return 0
+    const [whole, fraction = ''] = text.split('.')
+    return Number(whole || 0) * 100 + Number(fraction.padEnd(2, '0').slice(0, 2) || 0)
+  }
+
+  /** 把分格式化为两位小数金额。 */
+  function centsToMoney(value: number) {
+    const cents = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0
+    return (cents / 100).toFixed(2)
+  }
+
+  /** 向下取到完整份额。 */
+  function roundDownToMultiple(value: number, step: number) {
+    if (step <= 0) return Math.max(0, Math.trunc(value))
+    return Math.floor(Math.max(0, value) / step) * step
+  }
+
+  /** 向上取到完整份额，用于最低认购金额不是单份整数倍时。 */
+  function roundUpToMultiple(value: number, step: number) {
+    if (step <= 0) return Math.max(0, Math.trunc(value))
+    return Math.ceil(Math.max(0, value) / step) * step
   }
 
   return {
@@ -118,6 +190,7 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
     detailRequestSeq,
     canJoin,
     joinAmount,
+    joinAmountHint,
     detailVisible,
     maxJoinAmount,
     normalizeJoinAmount,

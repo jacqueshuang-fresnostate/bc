@@ -19,6 +19,7 @@ export type GroupBuyPlan = {
   total_amount: string
   share_count: number
   share_amount: string
+  participant_min_amount: string
   reserved_shares: number
   sold_shares: number
   available_shares: number

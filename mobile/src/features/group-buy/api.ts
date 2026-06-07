@@ -61,6 +61,7 @@ export async function fetchGroupBuyCreateOptions(requestedLotteryCode: string) {
       min_share_amount: minorToMoney(data?.settings?.minShareAmountMinor),
       initiator_min_buy_ratio: String(data?.settings?.initiatorMinPercent ?? 0),
       share_amount: minorToMoney(data?.settings?.minShareAmountMinor),
+      participant_min_amount: minorToMoney(data?.settings?.participantMinAmountMinor),
       settings: {
         min_share_amount: minorToMoney(data?.settings?.minShareAmountMinor),
         initiator_min_buy_ratio: String(data?.settings?.initiatorMinPercent ?? 0),
@@ -85,6 +86,7 @@ function normalizeGroupBuyPlanItems(items: any): GroupBuyPlan[] {
 function normalizeGroupBuyPlan(item: any): GroupBuyPlan {
   const totalAmountMinor = Number(item?.totalAmountMinor || 0)
   const shareAmountMinor = Number(item?.shareAmountMinor || 0)
+  const participantMinAmountMinor = Number(item?.participantMinAmountMinor || shareAmountMinor || 0)
   const soldShares = Number(item?.soldShares || 0)
   const availableShares = Number(item?.availableShares || 0)
   const shareCount = Number(item?.shareCount || 0)
@@ -104,6 +106,7 @@ function normalizeGroupBuyPlan(item: any): GroupBuyPlan {
     total_amount: minorToMoney(totalAmountMinor),
     share_count: shareCount,
     share_amount: minorToMoney(shareAmountMinor),
+    participant_min_amount: minorToMoney(participantMinAmountMinor),
     reserved_shares: 0,
     sold_shares: soldShares,
     available_shares: availableShares,
