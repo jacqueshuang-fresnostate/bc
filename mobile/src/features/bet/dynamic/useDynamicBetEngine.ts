@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { showToast } from 'vant'
 import type { BetCartItem, BetPageConfig, DynamicBetPlay } from './types'
+import { maxSelectForPosition } from './positionLimits'
 
 // 动态投注引擎只维护当前玩法草稿与本地篮子，不直接发起网络请求。
 function emptySelections(play: DynamicBetPlay | null) {
@@ -181,8 +182,10 @@ export function useDynamicBetEngine(config: () => BetPageConfig | null, selected
   function togglePositionNumber(positionKey: string, digit: string) {
     const play = selectedPlay()
     const current = selections.value[positionKey] || []
-    if (!current.includes(digit) && play?.max_select_per_position && current.length >= play.max_select_per_position) {
-      showToast(`每个位最多选择 ${play.max_select_per_position} 个号码`)
+    const maxSelect = maxSelectForPosition(play, positionKey)
+    if (!current.includes(digit) && maxSelect && current.length >= maxSelect) {
+      const positionLabel = play?.positions.find(position => position.key === positionKey)?.label || '当前位'
+      showToast(`${positionLabel}最多选择 ${maxSelect} 个号码`)
       return
     }
     // 用新对象替换 selections，确保 Vue 能追踪单个位置的增删变化。

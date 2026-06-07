@@ -1,6 +1,12 @@
 import { ref } from 'vue'
 import { fetchUserBetPageConfig } from '../../../api/bet'
-import type { BetPageConfig, DynamicBetOptionGroup, DynamicBetPlay, PositionGridKind } from './types'
+import type {
+  BetPageConfig,
+  DynamicBetOptionGroup,
+  DynamicBetPlay,
+  DynamicBetPositionSelectLimit,
+  PositionGridKind,
+} from './types'
 
 const POSITION_GRID_KINDS: PositionGridKind[] = ['direct', 'direct_combination', 'group3_compound', 'group6_compound', 'group3_dantuo', 'group6_dantuo']
 
@@ -71,6 +77,21 @@ function normalizeMaxSelectPerPosition(item: any) {
   return Number.isSafeInteger(value) && value > 0 ? value : null
 }
 
+function normalizePositionSelectLimits(item: any): DynamicBetPositionSelectLimit[] {
+  const rawValue = valueOf(item, 'positionSelectLimits', 'position_select_limits')
+    ?? item?.extra_config?.position_select_limits
+    ?? item?.extraConfig?.positionSelectLimits
+  if (!Array.isArray(rawValue)) return []
+  return rawValue.map((limit: any) => {
+    const positionKey = String(valueOf(limit, 'positionKey', 'position_key') || '').trim()
+    const maxSelectCount = Number(valueOf(limit, 'maxSelectCount', 'max_select_count'))
+    return {
+      position_key: positionKey,
+      max_select_count: Number.isSafeInteger(maxSelectCount) && maxSelectCount > 0 ? maxSelectCount : 0,
+    }
+  }).filter((limit: DynamicBetPositionSelectLimit) => limit.position_key && limit.max_select_count > 0)
+}
+
 // 投注页配置边界：后端返回的松散 JSON 在这里被规整成动态投注页面可直接消费的类型。
 function normalizePlay(item: any): DynamicBetPlay {
   // 输入模式只接受动态渲染器支持的枚举，未知模式统一降级为手动文本输入。
@@ -114,6 +135,7 @@ function normalizePlay(item: any): DynamicBetPlay {
     example_description: String(valueOf(item, 'exampleDescription', 'example_description') || ''),
     position_grid_kind: normalizePositionGridKind(valueOf(item, 'positionGridKind', 'position_grid_kind') || extraConfig.position_grid_kind || extraConfig.positionGridKind),
     max_select_per_position: normalizeMaxSelectPerPosition(item),
+    position_select_limits: normalizePositionSelectLimits(item),
     option_groups: normalizeOptionGroups(valueOf(item, 'optionGroups', 'option_groups') || extraConfig.option_groups || extraConfig.optionGroups),
     option_groups_error: valueOf(item, 'optionGroupsError', 'option_groups_error') == null ? null : String(valueOf(item, 'optionGroupsError', 'option_groups_error')),
   }

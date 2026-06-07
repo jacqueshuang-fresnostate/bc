@@ -65,9 +65,15 @@ export interface GroupBuyConfig {
   participantMinAmountMinor: number;
 }
 
+export interface LotteryPlayPositionSelectLimit {
+  positionKey: string;
+  maxSelectCount: number;
+}
+
 export interface LotteryPlayConfig {
   enabled: boolean;
   oddsBasisPoints: number;
+  positionSelectLimits?: LotteryPlayPositionSelectLimit[];
   ruleCode: PlayRuleCode;
 }
 

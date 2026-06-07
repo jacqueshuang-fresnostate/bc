@@ -8,6 +8,7 @@ import { createGroupBuyPlan } from '../../group-buy/api'
 import { calculateFixedShareCount, calculateRecommendedSelfShares, calculateRequiredSelfShares } from '../../group-buy/presentation'
 import { useBetBatchSubmit } from '../composables/useBetBatchSubmit'
 import { useBetPageConfig } from '../dynamic/useBetPageConfig'
+import { limitPositionValues } from '../dynamic/positionLimits'
 import { useDynamicBetEngine } from '../dynamic/useDynamicBetEngine'
 import type { BetCartItem, DynamicBetPlay } from '../dynamic/types'
 import BetCartSheet from './BetCartSheet.vue'
@@ -200,11 +201,6 @@ function selectPlay(play: DynamicBetPlay) {
   showPlayPopup.value = false
 }
 
-function limitPositionValues(play: DynamicBetPlay, values: string[]) {
-  if (!play.max_select_per_position) return values
-  return values.slice(0, play.max_select_per_position)
-}
-
 function selectAllPosition(positionKey: string) {
   const play = selectedPlay.value
   if (!play) return
@@ -215,11 +211,11 @@ function selectAllPosition(positionKey: string) {
     const oppositeValues = new Set(oppositeKey ? engine.selections.value[oppositeKey] || [] : [])
     const availableDigits = play.digits.filter(digit => !oppositeValues.has(digit))
     const dantuoValues = index === 0 ? availableDigits.slice(0, play.position_grid_kind === 'group6_dantuo' ? 2 : 1) : availableDigits
-    engine.setPositionNumbers(positionKey, limitPositionValues(play, dantuoValues))
+    engine.setPositionNumbers(positionKey, limitPositionValues(play, positionKey, dantuoValues))
     return
   }
   // 位置玩法的全选来源于当前玩法 digits，避免跨玩法复用旧号码池。
-  engine.setPositionNumbers(positionKey, limitPositionValues(play, play.digits))
+  engine.setPositionNumbers(positionKey, limitPositionValues(play, positionKey, play.digits))
 }
 
 function selectPresetPosition(positionKey: string, values: string[]) {
@@ -232,10 +228,10 @@ function selectPresetPosition(positionKey: string, values: string[]) {
     const oppositeValues = new Set(oppositeKey ? engine.selections.value[oppositeKey] || [] : [])
     const availableDigits = validValues.filter(digit => !oppositeValues.has(digit))
     const dantuoValues = index === 0 ? availableDigits.slice(0, play.position_grid_kind === 'group6_dantuo' ? 2 : 1) : availableDigits
-    engine.setPositionNumbers(positionKey, limitPositionValues(play, dantuoValues))
+    engine.setPositionNumbers(positionKey, limitPositionValues(play, positionKey, dantuoValues))
     return
   }
-  engine.setPositionNumbers(positionKey, limitPositionValues(play, validValues))
+  engine.setPositionNumbers(positionKey, limitPositionValues(play, positionKey, validValues))
 }
 
 function clearPosition(positionKey: string) {

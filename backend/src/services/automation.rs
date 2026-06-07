@@ -552,6 +552,7 @@ mod tests {
                 rule_code: PlayRuleCode::ThreeDirect,
                 enabled: true,
                 odds_basis_points: 10_000,
+                position_select_limits: Vec::new(),
             }],
         }
     }

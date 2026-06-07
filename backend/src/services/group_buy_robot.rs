@@ -1488,6 +1488,7 @@ mod tests {
                 rule_code: PlayRuleCode::FiveFrontDirect,
                 enabled: true,
                 odds_basis_points: 95_000,
+                position_select_limits: Vec::new(),
             }],
         }
     }

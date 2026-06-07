@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { DynamicBetPosition, PositionGridKind } from '../dynamic/types'
+import type { DynamicBetPosition, DynamicBetPositionSelectLimit, PositionGridKind } from '../dynamic/types'
 
 const props = defineProps<{
   positions: DynamicBetPosition[]
@@ -8,6 +8,7 @@ const props = defineProps<{
   selections: Record<string, string[]>
   positionGridKind?: PositionGridKind
   maxSelectPerPosition?: number | null
+  positionSelectLimits?: DynamicBetPositionSelectLimit[]
 }>()
 
 const emit = defineEmits<{ toggle: [string, string]; selectAll: [string]; selectPreset: [string, string[]]; clearPosition: [string] }>()
@@ -41,9 +42,16 @@ function isDigitSelected(positionKey: string, digit: string) {
   return (props.selections[positionKey] || []).includes(digit)
 }
 
+function maxSelectForPosition(positionKey: string) {
+  const positionLimit = props.positionSelectLimits?.find(limit => limit.position_key === positionKey)
+  if (positionLimit?.max_select_count && positionLimit.max_select_count > 0) return positionLimit.max_select_count
+  return props.maxSelectPerPosition && props.maxSelectPerPosition > 0 ? props.maxSelectPerPosition : null
+}
+
 function isDigitDisabled(positionKey: string, digit: string) {
   if (isDigitSelected(positionKey, digit)) return false
-  if (props.maxSelectPerPosition && (props.selections[positionKey] || []).length >= props.maxSelectPerPosition) return true
+  const maxSelect = maxSelectForPosition(positionKey)
+  if (maxSelect && (props.selections[positionKey] || []).length >= maxSelect) return true
   if (!isDantuoGrid()) return false
   const index = positionIndex(positionKey)
   if (index === 0) return selectedAt(1).includes(digit) || selectedAt(0).length >= danLimit()

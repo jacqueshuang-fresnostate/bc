@@ -370,7 +370,10 @@ url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     {
       "ruleCode": "threeDirect",
       "enabled": true,
-      "oddsBasisPoints": 104000
+      "oddsBasisPoints": 104000,
+      "positionSelectLimits": [
+        { "positionKey": "hundreds", "maxSelectCount": 7 }
+      ]
     },
     {
       "ruleCode": "threeGroupThree",
@@ -381,7 +384,7 @@ url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
 }
 ```
 
-`playConfigs` 是每个彩种的单玩法配置，`oddsBasisPoints` 使用整数基点赔率，`10000` 表示 `1.00 倍`，`104000` 表示 `10.40 倍`。后端保存彩种时会按 `numberType` 补齐该号码类型下所有玩法，并根据启用玩法反推 `playCategories`，避免粗分类和单玩法配置漂移。
+`playConfigs` 是每个彩种的单玩法配置，`oddsBasisPoints` 使用整数基点赔率，`10000` 表示 `1.00 倍`，`104000` 表示 `10.40 倍`。`positionSelectLimits` 是单玩法位置选号上限，数组为空或缺失表示不限制；每项使用玩法位置 key，例如 `fiveFrontDirect` 支持 `first/second/third`，`threeDirect` 支持 `hundreds/tens/ones`，复式玩法支持 `numbers`，胆拖玩法支持 `banker/drag`，大小单双支持 `tens/ones`。后端保存彩种时会按 `numberType` 补齐该号码类型下所有玩法，并根据启用玩法反推 `playCategories`，避免粗分类和单玩法配置漂移。
 
 `schedule` 是单键枚举对象，只允许以下形状：
 
@@ -408,6 +411,8 @@ url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
 | 玩法分类为空 | HTTP 400，返回 `at least one play category is required` |
 | 单玩法配置号码类型与彩种不匹配 | HTTP 400，返回玩法号码类型错误 |
 | 单玩法赔率小于等于 0 | HTTP 400，返回 `play odds basis points must be greater than zero` |
+| 单玩法位置上限 key 不属于当前玩法 | HTTP 400，返回 `play position select limit key is not allowed for this rule` |
+| 单玩法位置上限小于等于 0 | HTTP 400，返回 `play position select limit must be greater than zero` |
 | 周期开奖秒数为 0 | HTTP 400，返回 `periodic interval must be greater than zero` |
 | 每日开奖时间为空 | HTTP 400，返回 `daily draw time is required` |
 | 周开奖星期或时间为空 | HTTP 400，返回对应 weekly 错误 |
@@ -683,7 +688,10 @@ const result = await evaluatePlayRule(payload);
     {
       "ruleCode": "threeDirect",
       "enabled": true,
-      "oddsBasisPoints": 104000
+      "oddsBasisPoints": 104000,
+      "positionSelectLimits": [
+        { "positionKey": "hundreds", "maxSelectCount": 7 }
+      ]
     },
     {
       "ruleCode": "threeGroupSix",
@@ -699,6 +707,7 @@ const result = await evaluatePlayRule(payload);
 - 未配置该玩法：拒绝创建订单。
 - 配置存在但 `enabled=false`：拒绝创建订单。
 - 配置存在且启用：把当时的 `oddsBasisPoints` 保存进订单。
+- 配置了 `positionSelectLimits`：下单时后端必须按位置 key 校验对应选号数量，超过上限时拒绝订单；未配置的位置不限制。
 
 结算派奖必须使用订单上的赔率快照，不能重新读取当前彩种赔率。派奖公式：
 
@@ -712,23 +721,30 @@ const result = await evaluatePlayRule(payload);
 |------|----------|
 | 彩种提交了不属于当前号码类型的玩法 | HTTP 400，返回玩法号码类型错误 |
 | 彩种提交了小于等于 0 的赔率 | HTTP 400，返回 `play odds basis points must be greater than zero` |
+| 彩种提交了不属于玩法的位置上限 key | HTTP 400，返回 `play position select limit key is not allowed for this rule` |
+| 彩种提交了小于等于 0 的位置上限 | HTTP 400，返回 `play position select limit must be greater than zero` |
 | 彩种保存后没有任何启用玩法 | HTTP 400，返回 `at least one play category is required` |
 | 订单玩法没有配置 | HTTP 400，返回 `lottery does not configure this play rule` |
 | 订单玩法被停用 | HTTP 400，返回 `lottery does not enable this play rule` |
+| 订单某位置选号超过上限 | HTTP 400，返回 `{位置}最多选择 N 个号码` |
 | 结算中奖订单赔率快照小于等于 0 | HTTP 400，返回派奖金额或赔率错误 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：`fc3d.threeDirect` 设置为 `104000`，创建订单后订单响应包含 `oddsBasisPoints=104000`。
 - Good：管理员随后把 `fc3d.threeDirect` 改成 `98000`，旧订单结算仍按 `104000` 派奖。
+- Good：`fiveFrontDirect` 的 `first` 配置 `maxSelectCount=7` 后，手机端第一位最多选择 7 个数字，第二位和第三位未配置时不限制。
+- Good：绕过手机端直接提交第一位 8 个数字时，后端订单报价返回 `{位置}最多选择 7 个号码`。
 - Good：3 位页面只展示 3 位玩法和 3 位彩种，5 位页面只展示 5 位玩法和 5 位彩种。
 - Bad：结算时读取当前彩种赔率；这会导致历史订单派奖被后续调价影响。
 - Bad：前端用小数浮点提交赔率，例如 `10.4`；接口必须提交 `104000`。
+- Bad：只在手机端限制选号数量，后端订单报价不校验；这会被直接调用 API 绕过。
 
 ### 6. 必要测试
 
-- 后端需要覆盖彩种保存后补齐对应号码类型的所有 `playConfigs`。
+- 后端需要覆盖彩种保存后补齐对应号码类型的所有 `playConfigs`，并保留合法 `positionSelectLimits`。
 - 后端需要覆盖订单创建保存赔率快照，并拒绝停用玩法。
+- 后端需要覆盖订单某位置选号超过 `positionSelectLimits` 时被拒绝。
 - 后端需要覆盖结算按订单赔率快照计算派奖。
 - 前端需要运行 `npm run build`，确认玩法、彩种、订单和结算类型一致。
 - 跨层联调需要完成“修改彩种玩法赔率 → 创建订单 → 开奖结算 → 核对订单和结算赔率”。
@@ -951,12 +967,15 @@ await createOrder({
       "inputMode": "position-grid",
       "positionGridKind": "direct",
       "positions": [{ "key": "first", "label": "第 1 位" }],
+      "positionSelectLimits": [{ "positionKey": "first", "maxSelectCount": 7 }],
       "odds": "9.50",
       "unitAmount": "2.00"
     }
   ]
 }
 ```
+
+`positionSelectLimits` 会从彩种玩法配置透传到手机端下注页。手机端必须按 `positionKey` 限制对应位置的选号数量；数组为空或缺失时表示不限制。后端批量下单仍会复用订单服务再次校验，不能只依赖前端禁用按钮。
 
 用户端批量下单请求不允许传 `userId`，后端必须从登录会话中取当前用户：
 
@@ -1007,6 +1026,7 @@ await createOrder({
 | 购彩篮混入旧期号 | 手机端拦截，提示清空购彩篮后重新选择，不请求后端 |
 | 请求期号不存在或非 `open` | HTTP 404/400，沿用订单期号校验错误 |
 | 玩法、号码类型、选号或赔率无效 | HTTP 400，沿用订单和玩法规则引擎错误 |
+| 选号超过玩法位置上限 | HTTP 400，返回 `{位置}最多选择 N 个号码` |
 | 当前用户余额不足 | HTTP 400/409，沿用财务账户余额校验错误 |
 | 扣款失败 | 回滚本次未入账订单，返回财务错误 |
 | 用户参与合买且计划已成单 | `GET /api/user/bet/orders` 返回对应 `orderSource=groupBuy` 注单 |
@@ -1017,6 +1037,7 @@ await createOrder({
 - Good：进入销售中的 `txffc` 下注页，读取到 `round.status=selling`、最近开奖和所有已启用玩法赔率。
 - Good：前端提交 `positions`、`numbers`、`bankerNumbers/dragNumbers` 或 `bigSmallOddEven`，后端复用订单规则计算注数和扣款。
 - Good：直选组合前端使用 `positionGridKind=direct_combination` 多选数字，并按排列数显示注数；后端仍以 `selection.numbers` 展开排列投注。
+- Good：玩法配置返回 `positionSelectLimits=[{positionKey:"first",maxSelectCount:7}]` 时，手机端只限制第一位最多 7 个数字，未配置的其它位置保持不限制。
 - Good：用户独立下注后注单记录展示 `orderSource=direct` 和“独立下单”；用户作为参与人认购的合买满单成单后，即使真实订单 `userId` 是发起人，注单记录也展示 `orderSource=groupBuy` 和“合买下单”。
 - Good：用户切换彩种或期号变化后，购彩篮不能继续提交旧彩种或旧期号单据。
 - Base：没有 open 期号时，下注页返回 `round.status=opening`，手机端轮询下一期，不允许提交。

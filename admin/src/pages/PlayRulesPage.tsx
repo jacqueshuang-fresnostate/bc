@@ -53,6 +53,12 @@ interface FormState {
 interface OddsDraft {
   enabled: boolean;
   oddsInput: string;
+  positionLimitInputs: Record<string, string>;
+}
+
+interface PlayPositionTarget {
+  key: string;
+  label: string;
 }
 
 type PlayableLotteryNumberType = Extract<LotteryNumberType, 'threeDigit' | 'fiveDigit'>;
@@ -173,12 +179,18 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
       return {
         enabled: draft.enabled,
         oddsBasisPoints: oddsInputToBasisPoints(draft.oddsInput),
+        positionSelectLimits: positionSelectLimitsFromDraft(rule, draft),
         ruleCode: rule.code,
       };
     });
     const invalidConfig = playConfigs.find((config) => config.oddsBasisPoints <= 0);
     if (invalidConfig) {
       setLocalError('赔率必须大于 0');
+      return;
+    }
+    const invalidLimit = invalidPositionLimit(filteredRules, oddsDrafts, selectedLottery);
+    if (invalidLimit) {
+      setLocalError(invalidLimit);
       return;
     }
 
@@ -308,7 +320,8 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
                 <div>
                   <h2 className="text-base font-semibold text-ink">彩种玩法配置与赔率</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    当前只展示 {numberTypeText(numberType)}，每个彩种可单独设置玩法启用状态和赔率。
+                    当前只展示 {numberTypeText(numberType)}
+                    ，每个彩种可单独设置玩法启用状态、赔率和选号上限。
                   </p>
                 </div>
                 <Tag color="cyan">{filteredRules.length} 个玩法</Tag>
@@ -357,7 +370,7 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
               </div>
 
               <div className="min-w-0 overflow-x-auto">
-                <table className="w-full min-w-[860px] text-left text-sm">
+                <table className="w-full min-w-[1080px] text-left text-sm">
                   <thead className="border-b border-line text-xs text-slate-500">
                     <tr>
                       <th className="py-2 pr-4 font-medium">启用</th>
@@ -365,6 +378,7 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
                       <th className="py-2 pr-4 font-medium">分类</th>
                       <th className="py-2 pr-4 font-medium">号码段</th>
                       <th className="py-2 pr-4 font-medium">赔率</th>
+                      <th className="py-2 pr-4 font-medium">位置选号上限</th>
                       <th className="py-2 pr-4 font-medium">预览</th>
                     </tr>
                   </thead>
@@ -414,6 +428,20 @@ export function PlayRulesPage({ onDashboardRefresh }: PlayRulesPageProps) {
                               value={draft.oddsInput}
                               onChange={(value) =>
                                 setOddsDraft(rule, { oddsInput: value }, setOddsDrafts)
+                              }
+                            />
+                          </td>
+                          <td className="py-3 pr-4">
+                            <PositionLimitInputs
+                              draft={draft}
+                              rule={rule}
+                              onChange={(positionKey, value) =>
+                                setPositionLimitDraft(
+                                  rule,
+                                  positionKey,
+                                  value,
+                                  setOddsDrafts,
+                                )
                               }
                             />
                           </td>
@@ -637,6 +665,38 @@ function AttributePicker({ label, onToggle, selected }: AttributePickerProps) {
   );
 }
 
+interface PositionLimitInputsProps {
+  draft: OddsDraft;
+  onChange: (positionKey: string, value: string) => void;
+  rule: PlayRuleSummary;
+}
+
+function PositionLimitInputs({ draft, onChange, rule }: PositionLimitInputsProps) {
+  const targets = playPositionTargets(rule);
+  if (!targets.length) {
+    return <span className="text-xs text-slate-400">无可配置位置</span>;
+  }
+
+  return (
+    <div className="grid min-w-[240px] gap-2 md:grid-cols-2">
+      {targets.map((target) => (
+        <label key={target.key} className="space-y-1">
+          <span className="block text-[11px] font-medium text-slate-500">{target.label}</span>
+          <Input
+            className="form-input"
+            min="1"
+            placeholder="不限制"
+            step="1"
+            type="number"
+            value={draft.positionLimitInputs[target.key] ?? ''}
+            onChange={(value) => onChange(target.key, onlyPositiveIntegerText(value))}
+          />
+        </label>
+      ))}
+    </div>
+  );
+}
+
 interface ResultBlockProps {
   label: string;
   tone?: 'danger' | 'success';
@@ -846,12 +906,121 @@ function setOddsDraft(
   }));
 }
 
+function setPositionLimitDraft(
+  rule: PlayRuleSummary,
+  positionKey: string,
+  value: string,
+  setOddsDrafts: Dispatch<SetStateAction<Record<string, OddsDraft>>>,
+) {
+  setOddsDrafts((current) => {
+    const draft = {
+      ...defaultDraftForRule(rule),
+      ...current[rule.code],
+    };
+    return {
+      ...current,
+      [rule.code]: {
+        ...draft,
+        positionLimitInputs: {
+          ...draft.positionLimitInputs,
+          [positionKey]: value,
+        },
+      },
+    };
+  });
+}
+
 function defaultDraftForRule(rule: PlayRuleSummary, lottery?: LotteryKind): OddsDraft {
   const config = lottery?.playConfigs.find((item) => item.ruleCode === rule.code);
+  const limits = new Map(
+    (config?.positionSelectLimits ?? []).map((limit) => [
+      limit.positionKey,
+      String(limit.maxSelectCount),
+    ]),
+  );
   return {
     enabled: config?.enabled ?? true,
     oddsInput: oddsBasisPointsToInput(config?.oddsBasisPoints ?? defaultOddsForRule(rule)),
+    positionLimitInputs: Object.fromEntries(
+      playPositionTargets(rule).map((target) => [target.key, limits.get(target.key) ?? '']),
+    ),
   };
+}
+
+function playPositionTargets(rule: PlayRuleSummary): PlayPositionTarget[] {
+  if (isDirectRule(rule.code)) {
+    if (rule.window === 'front') {
+      return [
+        { key: 'first', label: '第 1 位' },
+        { key: 'second', label: '第 2 位' },
+        { key: 'third', label: '第 3 位' },
+      ];
+    }
+    if (rule.window === 'middle') {
+      return [
+        { key: 'second', label: '第 2 位' },
+        { key: 'third', label: '第 3 位' },
+        { key: 'fourth', label: '第 4 位' },
+      ];
+    }
+    if (rule.window === 'back') {
+      return [
+        { key: 'third', label: '第 3 位' },
+        { key: 'fourth', label: '第 4 位' },
+        { key: 'fifth', label: '第 5 位' },
+      ];
+    }
+    return [
+      { key: 'hundreds', label: '百位' },
+      { key: 'tens', label: '十位' },
+      { key: 'ones', label: '个位' },
+    ];
+  }
+  if (isBigSmallOddEvenRule(rule.code)) {
+    return [
+      { key: 'tens', label: '十位' },
+      { key: 'ones', label: '个位' },
+    ];
+  }
+  if (isBankerRule(rule.code)) {
+    return [
+      { key: 'banker', label: '胆码' },
+      { key: 'drag', label: '拖码' },
+    ];
+  }
+  return [{ key: 'numbers', label: '号码' }];
+}
+
+function positionSelectLimitsFromDraft(rule: PlayRuleSummary, draft: OddsDraft) {
+  return playPositionTargets(rule)
+    .map((target) => ({
+      maxSelectCount: Number(draft.positionLimitInputs[target.key] || 0),
+      positionKey: target.key,
+    }))
+    .filter((limit) => Number.isSafeInteger(limit.maxSelectCount) && limit.maxSelectCount > 0);
+}
+
+function invalidPositionLimit(
+  rules: PlayRuleSummary[],
+  drafts: Record<string, OddsDraft>,
+  lottery?: LotteryKind | null,
+) {
+  for (const rule of rules) {
+    const draft = drafts[rule.code] ?? defaultDraftForRule(rule, lottery ?? undefined);
+    for (const target of playPositionTargets(rule)) {
+      const value = draft.positionLimitInputs[target.key] ?? '';
+      if (!value) continue;
+      const number = Number(value);
+      if (!Number.isSafeInteger(number) || number <= 0) {
+        return `${rule.label} ${target.label} 的选号上限必须是正整数`;
+      }
+    }
+  }
+  return null;
+}
+
+function onlyPositiveIntegerText(value: string) {
+  return value.replace(/\D/g, '');
 }
 
 function defaultOddsForRule(rule: PlayRuleSummary) {

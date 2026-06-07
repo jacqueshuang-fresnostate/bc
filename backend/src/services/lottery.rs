@@ -10,12 +10,15 @@ use crate::{
     domain::{
         lottery::{
             DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategoryConfig, LotteryKind,
-            LotteryNumberType, LotteryPlayConfig, PlayCategory,
+            LotteryNumberType, LotteryPlayConfig, LotteryPlayPositionSelectLimit, PlayCategory,
         },
         play::PlayRuleCode,
     },
     error::{ApiError, ApiResult},
-    services::play_rules::{number_type_for_rule, play_category_for_rule, play_rule_summaries},
+    services::play_rules::{
+        number_type_for_rule, play_category_for_rule, play_position_select_limit_targets,
+        play_rule_summaries,
+    },
 };
 
 #[derive(Clone)]
@@ -1226,15 +1229,74 @@ fn normalize_play_configs(
         let enabled = submitted
             .map(|config| config.enabled && category_enabled)
             .unwrap_or(category_enabled);
+        let position_select_limits = submitted
+            .map(|config| {
+                normalize_position_select_limits(&summary.code, &config.position_select_limits)
+            })
+            .transpose()?
+            .unwrap_or_default();
 
         configs.push(LotteryPlayConfig {
             rule_code: summary.code,
             enabled,
             odds_basis_points,
+            position_select_limits,
         });
     }
 
     Ok(configs)
+}
+
+/// 标准化单玩法各位置选号上限，未配置的位置不限制。
+fn normalize_position_select_limits(
+    rule_code: &PlayRuleCode,
+    limits: &[LotteryPlayPositionSelectLimit],
+) -> ApiResult<Vec<LotteryPlayPositionSelectLimit>> {
+    let targets = play_position_select_limit_targets(rule_code);
+    let mut normalized = Vec::new();
+
+    for (position_key, _) in targets {
+        let matching_limits = limits
+            .iter()
+            .filter(|limit| limit.position_key.trim() == position_key)
+            .collect::<Vec<_>>();
+        if matching_limits.len() > 1 {
+            return Err(ApiError::BadRequest(
+                "play position select limit key is duplicated".to_string(),
+            ));
+        }
+        let Some(limit) = matching_limits.first() else {
+            continue;
+        };
+        if limit.max_select_count == 0 {
+            return Err(ApiError::BadRequest(
+                "play position select limit must be greater than zero".to_string(),
+            ));
+        }
+        normalized.push(LotteryPlayPositionSelectLimit {
+            position_key: position_key.to_string(),
+            max_select_count: limit.max_select_count,
+        });
+    }
+
+    for limit in limits {
+        let position_key = limit.position_key.trim();
+        if position_key.is_empty() {
+            return Err(ApiError::BadRequest(
+                "play position select limit key is required".to_string(),
+            ));
+        }
+        if !play_position_select_limit_targets(rule_code)
+            .iter()
+            .any(|(key, _)| *key == position_key)
+        {
+            return Err(ApiError::BadRequest(
+                "play position select limit key is not allowed for this rule".to_string(),
+            ));
+        }
+    }
+
+    Ok(normalized)
 }
 
 /// 处理 enabled_play_categories 的具体内部流程。
@@ -1269,6 +1331,7 @@ fn play_configs_with_overrides(
                 rule_code: summary.code,
                 enabled: play_categories.contains(&summary.category),
                 odds_basis_points,
+                position_select_limits: Vec::new(),
             }
         })
         .collect()

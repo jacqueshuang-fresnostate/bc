@@ -290,6 +290,61 @@ pub fn play_category_for_rule(rule_code: &PlayRuleCode) -> PlayCategory {
     }
 }
 
+/// 返回玩法可配置选号上限的位置 key 和中文标签。
+pub fn play_position_select_limit_targets(
+    rule_code: &PlayRuleCode,
+) -> Vec<(&'static str, &'static str)> {
+    use PlayRuleCode::*;
+
+    match rule_code {
+        ThreeDirect => vec![("hundreds", "百位"), ("tens", "十位"), ("ones", "个位")],
+        FiveFrontDirect => vec![
+            ("first", "第 1 位"),
+            ("second", "第 2 位"),
+            ("third", "第 3 位"),
+        ],
+        FiveMiddleDirect => vec![
+            ("second", "第 2 位"),
+            ("third", "第 3 位"),
+            ("fourth", "第 4 位"),
+        ],
+        FiveBackDirect => vec![
+            ("third", "第 3 位"),
+            ("fourth", "第 4 位"),
+            ("fifth", "第 5 位"),
+        ],
+        FiveFrontDirectCombination
+        | FiveMiddleDirectCombination
+        | FiveBackDirectCombination
+        | ThreeGroupThree
+        | FiveFrontGroupThree
+        | FiveMiddleGroupThree
+        | FiveBackGroupThree
+        | ThreeGroupSix
+        | FiveFrontGroupSix
+        | FiveMiddleGroupSix
+        | FiveBackGroupSix => vec![("numbers", "号码")],
+        ThreeGroupThreeBanker
+        | FiveFrontGroupThreeBanker
+        | FiveMiddleGroupThreeBanker
+        | FiveBackGroupThreeBanker
+        | ThreeGroupSixBanker
+        | FiveFrontGroupSixBanker
+        | FiveMiddleGroupSixBanker
+        | FiveBackGroupSixBanker => vec![("banker", "胆码"), ("drag", "拖码")],
+        FiveBigSmallOddEven => vec![("tens", "十位"), ("ones", "个位")],
+    }
+}
+
+/// 按玩法和位置 key 返回用户可读位置名称。
+pub fn play_position_label(rule_code: &PlayRuleCode, position_key: &str) -> String {
+    play_position_select_limit_targets(rule_code)
+        .into_iter()
+        .find(|(key, _)| *key == position_key)
+        .map(|(_, label)| label.to_string())
+        .unwrap_or_else(|| position_key.to_string())
+}
+
 /// 处理 expand_bets 的具体内部流程。
 fn expand_bets(rule_code: &PlayRuleCode, selection: &PlaySelection) -> ApiResult<Vec<String>> {
     use PlayRuleCode::*;

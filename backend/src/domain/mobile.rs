@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
+    lottery::LotteryPlayPositionSelectLimit,
     order::OrderDetail,
     play::{PlayRuleCode, PlaySelection},
 };
@@ -208,6 +209,8 @@ pub struct MobileBetPlay {
     pub example_description: String,
     pub position_grid_kind: String,
     pub max_select_per_position: Option<u32>,
+    #[serde(default)]
+    pub position_select_limits: Vec<LotteryPlayPositionSelectLimit>,
     pub option_groups: Vec<MobileBetOptionGroup>,
     pub option_groups_error: Option<String>,
 }

@@ -43,6 +43,7 @@ const inputMode = computed(() => props.play?.input_mode || 'text')
     :selections="props.selections"
     :position-grid-kind="props.play.position_grid_kind"
     :max-select-per-position="props.play.max_select_per_position"
+    :position-select-limits="props.play.position_select_limits"
     @toggle="(positionKey, digit) => emit('togglePosition', positionKey, digit)"
     @select-all="emit('selectAllPosition', $event)"
     @select-preset="(positionKey, values) => emit('selectPresetPosition', positionKey, values)"

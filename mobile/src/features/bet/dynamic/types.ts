@@ -22,6 +22,11 @@ export type DynamicBetOptionGroup = {
   options: DynamicBetOption[]
 }
 
+export type DynamicBetPositionSelectLimit = {
+  position_key: string
+  max_select_count: number
+}
+
 export type DynamicBetPlay = {
   code: string
   name: string
@@ -46,6 +51,7 @@ export type DynamicBetPlay = {
   example_description: string
   position_grid_kind: PositionGridKind
   max_select_per_position: number | null
+  position_select_limits: DynamicBetPositionSelectLimit[]
   option_groups: DynamicBetOptionGroup[]
   option_groups_error: string | null
 }

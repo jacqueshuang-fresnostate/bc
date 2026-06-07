@@ -1,7 +1,7 @@
 //! 订单领域模型，定义订单生命周期、金额和结算相关结构
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -17,14 +17,17 @@ use crate::{
         order::{
             CreateOrderRequest, OrderDetail, OrderQuote, OrderSource, OrderStatus, OrderSummary,
         },
-        play::PlayRuleEvaluateRequest,
+        play::{BigSmallOddEvenPosition, PlayRuleCode, PlayRuleEvaluateRequest, PlaySelection},
         settlement::{OrderSettlement, SettlementRun},
     },
     error::{ApiError, ApiResult},
     services::{
         finance::{save_finance_store_in_transaction, FinanceRepository},
         group_buy::{save_group_buy_store_in_transaction, GroupBuyRepository},
-        play_rules::{evaluate_play_rule, expanded_bets_for_rule, number_type_for_rule},
+        play_rules::{
+            evaluate_play_rule, expanded_bets_for_rule, number_type_for_rule, play_position_label,
+            play_position_select_limit_targets,
+        },
     },
 };
 
@@ -1113,6 +1116,11 @@ fn calculated_order(
             "play odds basis points must be greater than zero".to_string(),
         ));
     }
+    validate_position_select_limits(
+        &play_config.rule_code,
+        &play_config.position_select_limits,
+        &payload.selection,
+    )?;
 
     let expanded_bets = expanded_bets_for_rule(&payload.rule_code, &payload.selection)?;
     if expanded_bets.is_empty() {
@@ -1132,6 +1140,98 @@ fn calculated_order(
         odds_basis_points: play_config.odds_basis_points,
         expanded_bets,
     })
+}
+
+/// 校验本玩法各位置是否超过后台配置的最大可选数量。
+fn validate_position_select_limits(
+    rule_code: &PlayRuleCode,
+    limits: &[crate::domain::lottery::LotteryPlayPositionSelectLimit],
+    selection: &PlaySelection,
+) -> ApiResult<()> {
+    for limit in limits {
+        let selected_count = selected_count_for_position(rule_code, selection, &limit.position_key);
+        if selected_count > limit.max_select_count as usize {
+            let label = play_position_label(rule_code, &limit.position_key);
+            return Err(ApiError::BadRequest(format!(
+                "{label}最多选择 {} 个号码",
+                limit.max_select_count
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// 按玩法和位置 key 读取当前请求实际选择数量。
+fn selected_count_for_position(
+    rule_code: &PlayRuleCode,
+    selection: &PlaySelection,
+    position_key: &str,
+) -> usize {
+    let targets = play_position_select_limit_targets(rule_code);
+    let target_index = targets
+        .iter()
+        .position(|(key, _)| *key == position_key)
+        .unwrap_or(usize::MAX);
+
+    match rule_code {
+        PlayRuleCode::ThreeDirect
+        | PlayRuleCode::FiveFrontDirect
+        | PlayRuleCode::FiveMiddleDirect
+        | PlayRuleCode::FiveBackDirect => selection
+            .positions
+            .get(target_index)
+            .map(|digits| unique_digit_count(digits))
+            .unwrap_or_default(),
+        PlayRuleCode::ThreeGroupThree
+        | PlayRuleCode::ThreeGroupSix
+        | PlayRuleCode::FiveFrontDirectCombination
+        | PlayRuleCode::FiveMiddleDirectCombination
+        | PlayRuleCode::FiveBackDirectCombination
+        | PlayRuleCode::FiveFrontGroupThree
+        | PlayRuleCode::FiveMiddleGroupThree
+        | PlayRuleCode::FiveBackGroupThree
+        | PlayRuleCode::FiveFrontGroupSix
+        | PlayRuleCode::FiveMiddleGroupSix
+        | PlayRuleCode::FiveBackGroupSix => {
+            if position_key == "numbers" {
+                unique_digit_count(&selection.numbers)
+            } else {
+                0
+            }
+        }
+        PlayRuleCode::ThreeGroupThreeBanker
+        | PlayRuleCode::ThreeGroupSixBanker
+        | PlayRuleCode::FiveFrontGroupThreeBanker
+        | PlayRuleCode::FiveMiddleGroupThreeBanker
+        | PlayRuleCode::FiveBackGroupThreeBanker
+        | PlayRuleCode::FiveFrontGroupSixBanker
+        | PlayRuleCode::FiveMiddleGroupSixBanker
+        | PlayRuleCode::FiveBackGroupSixBanker => match position_key {
+            "banker" => unique_digit_count(&selection.banker_numbers),
+            "drag" => unique_digit_count(&selection.drag_numbers),
+            _ => 0,
+        },
+        PlayRuleCode::FiveBigSmallOddEven => selection
+            .big_small_odd_even
+            .iter()
+            .find(|pick| big_small_odd_even_position_key(&pick.position) == position_key)
+            .map(|pick| pick.attributes.len())
+            .unwrap_or_default(),
+    }
+}
+
+/// 去重后统计数字选择数量，避免重复提交同一号码绕过上限。
+fn unique_digit_count(digits: &[u8]) -> usize {
+    digits.iter().copied().collect::<BTreeSet<_>>().len()
+}
+
+/// 大小单双位置枚举转为配置 key。
+fn big_small_odd_even_position_key(position: &BigSmallOddEvenPosition) -> &'static str {
+    match position {
+        BigSmallOddEvenPosition::Tens => "tens",
+        BigSmallOddEvenPosition::Ones => "ones",
+    }
 }
 
 /// 处理 payout_amount_minor 的具体内部流程。
@@ -1166,7 +1266,7 @@ mod tests {
             finance::LedgerEntryKind,
             lottery::{
                 DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
-                LotteryPlayConfig, PlayCategory,
+                LotteryPlayConfig, LotteryPlayPositionSelectLimit, PlayCategory,
             },
             order::{CreateOrderRequest, OrderSource, OrderStatus},
             play::{PlayRuleCode, PlaySelection},
@@ -1211,6 +1311,43 @@ mod tests {
         assert!(order.matched_bets.is_empty());
         assert_eq!(order.payout_minor, 0);
         assert_eq!(order.settled_at, None);
+    }
+
+    #[test]
+    /// 后台配置单位置选号上限后，订单报价会拒绝超出限制的选择。
+    fn store_rejects_position_select_limit_overflow() {
+        let mut lottery =
+            lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        if let Some(config) = lottery
+            .play_configs
+            .iter_mut()
+            .find(|config| config.rule_code == PlayRuleCode::ThreeDirect)
+        {
+            config.position_select_limits = vec![LotteryPlayPositionSelectLimit {
+                position_key: "hundreds".to_string(),
+                max_select_count: 1,
+            }];
+        }
+        let mut store = OrderStore::default();
+
+        let error = store
+            .create(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10001".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026155".to_string(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: PlaySelection {
+                        positions: vec![vec![2, 3], vec![4], vec![7]],
+                        ..PlaySelection::default()
+                    },
+                    unit_amount_minor: 200,
+                },
+            )
+            .expect_err("超过位置上限的订单需要被拒绝");
+
+        assert!(error.to_string().contains("百位最多选择 1 个号码"));
     }
 
     #[tokio::test]
@@ -1615,26 +1752,31 @@ mod tests {
                 rule_code: PlayRuleCode::ThreeDirect,
                 enabled: play_categories.contains(&PlayCategory::Direct),
                 odds_basis_points: 100_000,
+                position_select_limits: Vec::new(),
             },
             LotteryPlayConfig {
                 rule_code: PlayRuleCode::ThreeGroupThree,
                 enabled: play_categories.contains(&PlayCategory::GroupThree),
                 odds_basis_points: 50_000,
+                position_select_limits: Vec::new(),
             },
             LotteryPlayConfig {
                 rule_code: PlayRuleCode::ThreeGroupThreeBanker,
                 enabled: play_categories.contains(&PlayCategory::GroupThree),
                 odds_basis_points: 50_000,
+                position_select_limits: Vec::new(),
             },
             LotteryPlayConfig {
                 rule_code: PlayRuleCode::ThreeGroupSix,
                 enabled: play_categories.contains(&PlayCategory::GroupSix),
                 odds_basis_points: 50_000,
+                position_select_limits: Vec::new(),
             },
             LotteryPlayConfig {
                 rule_code: PlayRuleCode::ThreeGroupSixBanker,
                 enabled: play_categories.contains(&PlayCategory::GroupSix),
                 odds_basis_points: 50_000,
+                position_select_limits: Vec::new(),
             },
         ];
 

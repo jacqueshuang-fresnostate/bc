@@ -68,11 +68,21 @@ pub struct GroupBuyConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 单个玩法位置选号数量上限；未配置的位置不限制。
+pub struct LotteryPlayPositionSelectLimit {
+    pub position_key: String,
+    pub max_select_count: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 /// 彩种单玩法赔率配置，覆盖玩法是否启用和赔率基点。
 pub struct LotteryPlayConfig {
     pub rule_code: PlayRuleCode,
     pub enabled: bool,
     pub odds_basis_points: i64,
+    #[serde(default)]
+    pub position_select_limits: Vec<LotteryPlayPositionSelectLimit>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

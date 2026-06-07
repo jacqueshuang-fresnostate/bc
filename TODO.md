@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-07 22:48 HKT 玩法按位置配置最大选号数量
+
+- 完成任务：为每个彩种的每个玩法增加按位置配置最大选号数量的能力。
+- 解决问题：
+  - 原手机端只有全局 `maxSelectPerPosition` 兜底，不能表达“前 3 直选第一位最多 7 个数字，第二位和第三位不限制”这种精细配置。
+  - 只在手机端限制会被直接调用下单 API 绕过，需要后端订单报价同步校验。
+- 实施内容：
+  - 后端 `LotteryPlayConfig` 新增 `positionSelectLimits`，保存彩种时校验位置 key 属于当前玩法且上限必须大于 0。
+  - 后端订单报价和创建时按配置校验每个位置的选号数量，超过上限返回“{位置}最多选择 N 个号码”。
+  - 管理后台“玩法配置与赔率”表新增“位置选号上限”列，每个玩法按位置显示输入框，留空表示不限制。
+  - 手机端下注页读取 `positionSelectLimits`，选号按钮、全选和快捷选择都按具体位置限制。
+  - 架构说明、后端 API 契约和前端组件规范同步记录按位置选号上限规则。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml store_rejects_position_select_limit_overflow -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml mobile_bet_page_config_returns_position_select_limits -- --nocapture`、`cd admin && npm run build`、`cd mobile && npm run build` 和 `git diff --check` 均通过。
+
 ## 2026-06-07 22:01 HKT 手机端合买认购金额输入修复
 
 - 完成任务：修复手机端合买详情弹层“认购金额”输入框删除键无法正常清空的问题。

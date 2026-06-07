@@ -36,7 +36,7 @@ pub fn build_mobile_bet_page_config(
             let summary = summaries
                 .iter()
                 .find(|summary| summary.code == config.rule_code)?;
-            Some(play_from_config(summary, config.odds_basis_points))
+            Some(play_from_config(summary, config))
         })
         .collect::<Vec<_>>();
 
@@ -126,10 +126,17 @@ fn latest_draw_from_issue(issue: &DrawIssue) -> MobileBetLatestDraw {
 }
 
 /// 根据玩法摘要和赔率配置生成一个动态玩法入口。
-fn play_from_config(summary: &PlayRuleSummary, odds_basis_points: i64) -> MobileBetPlay {
+fn play_from_config(
+    summary: &PlayRuleSummary,
+    config: &crate::domain::lottery::LotteryPlayConfig,
+) -> MobileBetPlay {
     let rule_code = summary.code.clone();
     let position_grid_kind = position_grid_kind_for_rule(&rule_code);
-    let option_groups = option_groups_for_rule(&rule_code, odds_basis_points);
+    let option_groups = option_groups_for_rule(
+        &rule_code,
+        config.odds_basis_points,
+        &config.position_select_limits,
+    );
 
     MobileBetPlay {
         code: rule_code.clone(),
@@ -143,7 +150,7 @@ fn play_from_config(summary: &PlayRuleSummary, odds_basis_points: i64) -> Mobile
         option_value: None,
         min_select_count: min_select_count_for_rule(&summary.code),
         bet_number_count: 3,
-        odds: odds_text(odds_basis_points),
+        odds: odds_text(config.odds_basis_points),
         unit_amount_fixed: true,
         unit_amount: minor_to_decimal(DEFAULT_UNIT_AMOUNT_MINOR),
         multiple_fixed: false,
@@ -155,6 +162,7 @@ fn play_from_config(summary: &PlayRuleSummary, odds_basis_points: i64) -> Mobile
         example_description: example_for_rule(&summary.code),
         position_grid_kind,
         max_select_per_position: None,
+        position_select_limits: config.position_select_limits.clone(),
         option_groups,
         option_groups_error: None,
     }
@@ -239,6 +247,7 @@ fn position_grid_kind_for_rule(rule_code: &PlayRuleCode) -> String {
 fn option_groups_for_rule(
     rule_code: &PlayRuleCode,
     odds_basis_points: i64,
+    position_select_limits: &[crate::domain::lottery::LotteryPlayPositionSelectLimit],
 ) -> Vec<MobileBetOptionGroup> {
     if !matches!(rule_code, PlayRuleCode::FiveBigSmallOddEven) {
         return Vec::new();
@@ -256,17 +265,30 @@ fn option_groups_for_rule(
             key: "tens".to_string(),
             label: "十位".to_string(),
             min_select_count: 1,
-            max_select_count: 1,
+            max_select_count: max_select_count_for_position(position_select_limits, "tens", 1),
             options: options.clone(),
         },
         MobileBetOptionGroup {
             key: "ones".to_string(),
             label: "个位".to_string(),
             min_select_count: 1,
-            max_select_count: 1,
+            max_select_count: max_select_count_for_position(position_select_limits, "ones", 1),
             options,
         },
     ]
+}
+
+/// 读取单个位置的最大选择数；未配置时使用玩法默认限制。
+fn max_select_count_for_position(
+    limits: &[crate::domain::lottery::LotteryPlayPositionSelectLimit],
+    position_key: &str,
+    default_value: u32,
+) -> u32 {
+    limits
+        .iter()
+        .find(|limit| limit.position_key == position_key)
+        .map(|limit| limit.max_select_count)
+        .unwrap_or(default_value)
 }
 
 /// 创建一个大小单双选项。
@@ -377,7 +399,7 @@ mod tests {
         draw::{DrawIssue, DrawIssueStatus},
         lottery::{
             DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
-            LotteryPlayConfig, PlayCategory,
+            LotteryPlayConfig, LotteryPlayPositionSelectLimit, PlayCategory,
         },
         play::PlayRuleCode,
     };
@@ -414,6 +436,7 @@ mod tests {
             rule_code: PlayRuleCode::FiveFrontDirectCombination,
             enabled: true,
             odds_basis_points: 100_000,
+            position_select_limits: Vec::new(),
         }];
 
         let config = build_mobile_bet_page_config(&lottery, Vec::new());
@@ -421,6 +444,26 @@ mod tests {
         assert_eq!(config.plays[0].position_grid_kind, "direct_combination");
         assert_eq!(config.plays[0].positions[0].key, "numbers");
         assert_eq!(config.plays[0].min_select_count, 3);
+    }
+
+    #[test]
+    /// 验证下注页配置会返回每个位置的最大选择数量。
+    fn mobile_bet_page_config_returns_position_select_limits() {
+        let mut lottery = lottery_fixture();
+        lottery.play_configs[0].position_select_limits = vec![LotteryPlayPositionSelectLimit {
+            position_key: "first".to_string(),
+            max_select_count: 7,
+        }];
+
+        let config = build_mobile_bet_page_config(&lottery, Vec::new());
+
+        assert_eq!(
+            config.plays[0].position_select_limits[0],
+            LotteryPlayPositionSelectLimit {
+                position_key: "first".to_string(),
+                max_select_count: 7,
+            }
+        );
     }
 
     fn lottery_fixture() -> LotteryKind {
@@ -447,11 +490,13 @@ mod tests {
                     rule_code: PlayRuleCode::FiveFrontDirect,
                     enabled: true,
                     odds_basis_points: 95_000,
+                    position_select_limits: Vec::new(),
                 },
                 LotteryPlayConfig {
                     rule_code: PlayRuleCode::FiveBackDirect,
                     enabled: false,
                     odds_basis_points: 95_000,
+                    position_select_limits: Vec::new(),
                 },
             ],
         }
