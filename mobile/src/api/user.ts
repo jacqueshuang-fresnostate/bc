@@ -1,5 +1,6 @@
 import type { AxiosResponse } from 'axios'
 import http from './http'
+import { errorMessage as formatErrorMessage, userFacingErrorMessage } from '../utils/errorMessage'
 
 export type ApiEnvelope<T> = {
   success: boolean
@@ -310,17 +311,13 @@ export function unwrapApiData<T>(response: AxiosResponse<ApiEnvelope<T> | T>): T
   const payload = response.data
   if (!isEnvelope<T>(payload)) return payload as T
   if (!payload.success || payload.data === null) {
-    throw new Error(payload.message || '请求失败')
+    throw new Error(userFacingErrorMessage(payload.message, '请求失败'))
   }
   return payload.data
 }
 
 export function errorMessage(error: unknown, fallback: string) {
-  const err = error as {
-    message?: string
-    response?: { data?: { message?: string; detail?: string } }
-  }
-  return err.response?.data?.message || err.response?.data?.detail || err.message || fallback
+  return formatErrorMessage(error, fallback)
 }
 
 function formatMinorAmount(value: number) {

@@ -2320,3 +2320,10 @@
 - 解决问题：用户头像只保存到了 `users.avatar_url`，聊天大厅消息模型、历史接口和实时事件都没有 `avatarUrl` 字段，手机端也只渲染用户名首字。
 - 实施内容：`chat_hall_messages` 新增 `avatar_url` 字段和中文字段注释；`ChatHallMessage` 新增 `avatarUrl`，文本、红包、合买计划分享消息创建时写入当前头像；用户更新头像后同步刷新该用户聊天大厅历史消息头像；历史加载时用用户表当前头像兜底旧消息；手机端聊天大厅头像改为图片优先、加载失败回退文字头像；同步更新架构说明和前后端规范。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml realtime -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；完整后端测试 251 条通过，手机端测试命令当前显示 0 个测试用例。
+
+## 2026-06-08 02:03 HKT 手机端错误提示中文化
+
+- 完成任务：把手机端展示给用户的错误提示统一改成中文。
+- 解决问题：手机端公共错误函数会把后端 `bad request:`、`not found:`、`internal error:`、`financial account ... not found`、Axios `Network Error` 等英文内容原样弹出；旧下注组合和动态下注页还有直接读取 `response.data.detail/message` 的分支。
+- 实施内容：新增 `mobile/src/utils/errorMessage.ts`，统一翻译后端错误前缀、常见英文业务错误、网络错误、超时和 HTTP 状态码；`mobile/src/api/user.ts` 的 `unwrapApiData/errorMessage` 接入统一工具；旧下注组合和动态下注页统一改用 `errorMessage`；用户端鉴权和会话解析的高频英文错误源文案改为中文；同步更新架构说明和前端规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml access_repository -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；完整后端测试 251 条通过，手机端测试命令当前显示 0 个测试用例；搜索确认移动端只有统一错误工具内部读取后端 `message/detail`。

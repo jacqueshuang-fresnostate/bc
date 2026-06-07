@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showNotify, showToast } from 'vant'
 import { fetchCurrentUserProfile } from '../../../api/user'
+import { errorMessage } from '../../../utils/errorMessage'
 import { parseChinaDateTime } from '../../../utils/lotteryFormat'
 import { createGroupBuyPlan } from '../../group-buy/api'
 import { calculateFixedShareCount, calculateRecommendedSelfShares, calculateRequiredSelfShares } from '../../group-buy/presentation'
@@ -258,10 +259,6 @@ function adjustMultiple(delta: number) {
   multipleInputValue.value = String(engine.multiple.value)
 }
 
-function apiErrorMessage(error: any, fallback: string) {
-  return error?.response?.data?.message || error?.response?.data?.detail || fallback
-}
-
 function normalizeGroupBuyShares() {
   if (groupBuyDerivedShareCount.value > 0) groupBuyShareCount.value = groupBuyDerivedShareCount.value
   applyRecommendedGroupBuySelfShares()
@@ -346,7 +343,7 @@ async function submitGroupBuyCart() {
     groupBuyMode.value = false
     await router.replace({ name: 'Home' })
   } catch (e: any) {
-    showToast(apiErrorMessage(e, '发起合买失败'))
+    showToast(errorMessage(e, '发起合买失败'))
     await loadPage()
   } finally {
     submittingGroupBuy.value = false
@@ -371,7 +368,7 @@ async function submitCart() {
     await router.replace({ name: 'Home' })
   } catch (e: any) {
     // 提交失败也刷新一次，避免前端继续停留在已封盘或余额变化前的状态。
-    showToast(apiErrorMessage(e, '投注失败'))
+    showToast(errorMessage(e, '投注失败'))
     await loadPage()
   }
 }
@@ -391,7 +388,7 @@ watch(lotteryCode, async () => {
   try {
     await loadPage()
   } catch (e: any) {
-    showToast(apiErrorMessage(e, '加载投注页失败'))
+    showToast(errorMessage(e, '加载投注页失败'))
   }
 }, { immediate: true })
 

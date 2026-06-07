@@ -1427,21 +1427,17 @@ impl AccessStore {
     fn session_from_user_token(&self, token: &str) -> ApiResult<UserAuthSession> {
         let token = token.trim();
         if token.is_empty() {
-            return Err(ApiError::Unauthorized(
-                "authorization token is required".to_string(),
-            ));
+            return Err(ApiError::Unauthorized("登录令牌不能为空".to_string()));
         }
 
         let token_hash = session_token_hash(token);
         let user_id = self
             .user_sessions
             .get(&token_hash)
-            .ok_or_else(|| ApiError::Unauthorized("invalid user session".to_string()))?;
+            .ok_or_else(|| ApiError::Unauthorized("登录已过期，请重新登录".to_string()))?;
         let user = self.get_user(user_id)?;
         if user.status != UserStatus::Active {
-            return Err(ApiError::Forbidden(
-                "user account is not active".to_string(),
-            ));
+            return Err(ApiError::Forbidden("用户账号未激活".to_string()));
         }
 
         Ok(UserAuthSession {

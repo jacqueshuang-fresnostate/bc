@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref, type Ref } from 'vue'
 import { showToast } from 'vant'
 import http from '../api/http'
 import { fetchLatestLotteryHistory, type LotteryHistoryItem } from '../api/lottery'
+import { errorMessage } from '../utils/errorMessage'
 import { parseChinaDateTime } from '../utils/lotteryFormat'
 
 export type LatestDrawItem = Pick<LotteryHistoryItem, 'issue' | 'result' | 'result_numbers'>
@@ -46,9 +47,9 @@ export function useBettingRound(lotteryCode: Ref<string>) {
       issue.value = res.data?.issue || ''
       roundStatus.value = res.data?.status || ''
       scheduledDrawAt.value = res.data?.scheduled_draw_at || ''
-    } catch (e: any) {
+    } catch (e) {
       if (requestVersion !== roundRequestVersion || currentLotteryCode !== lotteryCode.value) return
-      if (!silent) showToast(e.response?.data?.detail || '加载当前期号失败')
+      if (!silent) showToast(errorMessage(e, '加载当前期号失败'))
     } finally {
       if (!silent && requestVersion === roundRequestVersion && currentLotteryCode === lotteryCode.value) loadingIssue.value = false
     }

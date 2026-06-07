@@ -1,6 +1,7 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { showToast } from 'vant'
 import http from '../api/http'
+import { errorMessage } from '../utils/errorMessage'
 
 export type PlayItem = {
   code: string
@@ -130,8 +131,8 @@ export function useBetCart(options: UseBetCartOptions) {
       showToast('投注成功')
       clearFc3dSelection()
       await Promise.all([options.loadBalance(), options.loadCurrentRound(true)])
-    } catch (e: any) {
-      showToast(e.response?.data?.detail || '投注失败')
+    } catch (e) {
+      showToast(errorMessage(e, '投注失败'))
       await options.loadCurrentRound(true)
     }
   }
@@ -174,8 +175,8 @@ export function useBetCart(options: UseBetCartOptions) {
           numbers: item.numbers,
           amount: item.amount,
         })
-      } catch (e: any) {
-        showToast(e.response?.data?.detail || '投注失败')
+      } catch (e) {
+        showToast(errorMessage(e, '投注失败'))
         await options.loadCurrentRound(true)
         return
       }

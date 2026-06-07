@@ -216,12 +216,10 @@ fn bearer_token(request: &Request) -> ApiResult<&str> {
         .headers()
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| ApiError::Unauthorized("authorization token is required".to_string()))?;
+        .ok_or_else(|| ApiError::Unauthorized("请先登录".to_string()))?;
 
     let Some(token) = header.strip_prefix("Bearer ") else {
-        return Err(ApiError::Unauthorized(
-            "authorization bearer token is required".to_string(),
-        ));
+        return Err(ApiError::Unauthorized("登录令牌格式错误".to_string()));
     };
 
     Ok(token)

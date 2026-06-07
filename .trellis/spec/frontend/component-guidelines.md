@@ -63,6 +63,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端充值页属于高频资金操作页，需要直接展示充值渠道卡片、余额摘要、快捷金额和底部固定提交栏；快捷金额必须按后台 `minAmountMinor/maxAmountMinor` 过滤，最近订单中可继续处理的彩虹易支付订单应提供“继续支付”，客服直充订单应提供“联系客服”。
 - 手机端充值页金额输入属于浏览器原生 `type="number"` 输入，运行时可能返回字符串或数字；金额解析函数不能直接调用 `value.trim()`，必须先用 `String(value ?? '').trim()` 归一化，再按两位小数转换为最小货币单位。
 - 手机端资金类金额输入不能在每个按键后立即强制格式化或夹到最小金额，否则用户按删除键、选择文本或粘贴时会被立刻回填；应允许编辑态为空或部分小数，失焦、回车、快捷金额、加减按钮或提交时再做最终归一化。
+- 手机端所有展示给用户的错误提示都必须走 `mobile/src/utils/errorMessage.ts` 的 `errorMessage` 或 `userFacingErrorMessage`；不得直接把后端 `message/detail`、Axios `err.message`、`Network Error` 或 `Request failed with status code ...` 原样传给 `showToast/showNotify`，避免出现英文错误提示。
 - 手机端“我的账户”资金流水必须使用当前系统的 `GET /api/user/ledger-entries` 当前用户接口，只展示登录用户自己的流水；页面不得调用后台全量资金流水接口，也不需要为旧系统字段做兼容。流水条目不展示后端 `referenceId` 关联单号，避免把内部关联编号暴露给普通用户。
 - 手机端“我的账户”头像设置必须使用用户端 `POST /api/user/avatar/upload` 或 `PUT /api/user/avatar`，不能复用后台 `/api/admin/image-bed/upload`；上传成功后需要同步刷新页面资料和 Pinia 登录态，保证返回个人中心或重新打开应用时继续展示最新 `avatarUrl`。头像点击上传优先使用原生 `input[type="file"]` 与 `label for` 绑定，避免自定义上传插槽在移动端点击不触发；头像视觉必须同时固定宽高并使用 `border-radius: 9999px` 保持正圆。
 - 手机端邀请中心必须使用当前系统的 `GET /api/user/invitations/summary` 当前用户接口，不再请求旧 `/auth/invitations/summary`；页面消费 `canInvite`、`invitationCode`、`directUsers` 等 `camelCase` 字段，普通用户只展示邀请码标识和无可用邀请权限提示，不允许自行把普通用户邀请码当成有效邀请入口。
