@@ -415,7 +415,6 @@ onBeforeUnmount(() => {
     <header class="chat-hall__topbar">
       <div class="chat-hall__title-group">
         <h1>聊天大厅</h1>
-        <p>所有在线会员都可以在这里交流</p>
       </div>
     </header>
 
@@ -618,8 +617,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 4.5rem;
-  padding: max(0.75rem, env(safe-area-inset-top)) 1rem 0.75rem;
+  height: 3.75rem;
+  padding: max(0.7rem, env(safe-area-inset-top)) 1rem 0.7rem;
   background: rgba(255, 255, 255, 0.88);
   border-bottom: 1px solid rgba(143, 20, 31, 0.08);
   box-shadow: 0 10px 30px rgba(143, 20, 31, 0.08);
@@ -640,19 +639,10 @@ onBeforeUnmount(() => {
   color: #241819;
 }
 
-.chat-hall__title-group p {
-  margin: 0.25rem 0 0;
-  overflow: hidden;
-  font-size: 0.72rem;
-  color: #8d6f6e;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .chat-hall__messages {
   height: 100vh;
   overflow-y: auto;
-  padding: calc(5rem + env(safe-area-inset-top)) 1rem calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 1.25rem);
+  padding: calc(4.25rem + env(safe-area-inset-top)) 1rem calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 1.25rem);
 }
 
 .chat-hall__state {
