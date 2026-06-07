@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { showToast } from 'vant'
-import { useRouter } from 'vue-router'
 import {
   errorMessage,
   fetchChatHallMessages,
@@ -14,7 +13,6 @@ import type { MobileRealtimeEvent } from '../types/realtime'
 import { formatDateTime } from '../utils/lotteryFormat'
 
 const props = defineProps<{ wsMessage?: MobileRealtimeEvent | null }>()
-const router = useRouter()
 const auth = useAuthStore()
 const draft = ref('')
 const loading = ref(false)
@@ -206,16 +204,10 @@ onBeforeUnmount(() => {
 <template>
   <div class="chat-hall">
     <header class="chat-hall__topbar">
-      <button class="chat-hall__icon-button" aria-label="返回" @click="router.back()">
-        <LucideIcon name="arrow_back" />
-      </button>
       <div class="chat-hall__title-group">
         <h1>聊天大厅</h1>
         <p>所有在线会员都可以在这里交流</p>
       </div>
-      <button class="chat-hall__icon-button" aria-label="刷新" :disabled="loading" @click="loadMessages">
-        <LucideIcon name="refresh" :class="{ 'chat-hall__spin': loading }" />
-      </button>
     </header>
 
     <main ref="messageListRef" class="chat-hall__messages">
@@ -304,9 +296,9 @@ onBeforeUnmount(() => {
   top: 0;
   left: 0;
   z-index: 40;
-  display: grid;
-  grid-template-columns: 2.5rem minmax(0, 1fr) 2.5rem;
+  display: flex;
   align-items: center;
+  justify-content: center;
   width: 100%;
   height: 4.5rem;
   padding: max(0.75rem, env(safe-area-inset-top)) 1rem 0.75rem;
@@ -316,30 +308,9 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(18px);
 }
 
-.chat-hall__icon-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  border: 0;
-  border-radius: 1rem;
-  background: #fff;
-  color: #8f141f;
-  box-shadow: 0 8px 20px rgba(143, 20, 31, 0.1);
-}
-
-.chat-hall__icon-button:disabled {
-  opacity: 0.56;
-}
-
-.chat-hall__icon-button svg {
-  width: 1.25rem;
-  height: 1.25rem;
-}
-
 .chat-hall__title-group {
   min-width: 0;
+  width: min(100%, 22rem);
   text-align: center;
 }
 
@@ -586,13 +557,4 @@ onBeforeUnmount(() => {
   height: 1rem;
 }
 
-.chat-hall__spin {
-  animation: chat-hall-spin 0.8s linear infinite;
-}
-
-@keyframes chat-hall-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 </style>
