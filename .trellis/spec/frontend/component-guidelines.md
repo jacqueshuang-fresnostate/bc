@@ -64,7 +64,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端充值页金额输入属于浏览器原生 `type="number"` 输入，运行时可能返回字符串或数字；金额解析函数不能直接调用 `value.trim()`，必须先用 `String(value ?? '').trim()` 归一化，再按两位小数转换为最小货币单位。
 - 手机端资金类金额输入不能在每个按键后立即强制格式化或夹到最小金额，否则用户按删除键、选择文本或粘贴时会被立刻回填；应允许编辑态为空或部分小数，失焦、回车、快捷金额、加减按钮或提交时再做最终归一化。
 - 手机端“我的账户”资金流水必须使用当前系统的 `GET /api/user/ledger-entries` 当前用户接口，只展示登录用户自己的流水；页面不得调用后台全量资金流水接口，也不需要为旧系统字段做兼容。流水条目不展示后端 `referenceId` 关联单号，避免把内部关联编号暴露给普通用户。
-- 手机端“我的账户”头像设置必须使用用户端 `POST /api/user/avatar/upload` 或 `PUT /api/user/avatar`，不能复用后台 `/api/admin/image-bed/upload`；上传成功后需要同步刷新页面资料和 Pinia 登录态，保证返回个人中心或重新打开应用时继续展示最新 `avatarUrl`。
+- 手机端“我的账户”头像设置必须使用用户端 `POST /api/user/avatar/upload` 或 `PUT /api/user/avatar`，不能复用后台 `/api/admin/image-bed/upload`；上传成功后需要同步刷新页面资料和 Pinia 登录态，保证返回个人中心或重新打开应用时继续展示最新 `avatarUrl`。头像点击上传优先使用原生 `input[type="file"]` 与 `label for` 绑定，避免自定义上传插槽在移动端点击不触发；头像视觉必须同时固定宽高并使用 `border-radius: 9999px` 保持正圆。
 - 手机端邀请中心必须使用当前系统的 `GET /api/user/invitations/summary` 当前用户接口，不再请求旧 `/auth/invitations/summary`；页面消费 `canInvite`、`invitationCode`、`directUsers` 等 `camelCase` 字段，普通用户只展示邀请码标识和无可用邀请权限提示，不允许自行把普通用户邀请码当成有效邀请入口。
 - 手机端下注页必须使用 `/api/user/bet/page-config/{lottery_id}`、`POST /api/user/bet/orders` 和 `GET /api/user/bet/orders`，不再调用旧 `/api/bet/*`。提交时前端只负责把位置宫格、胆拖、直选组合和大小单双转换成后端 `selection`，订单金额仍由后端按玩法展开注数和单注金额计算。
 - 手机端下注页读取玩法 `positionSelectLimits` 时必须按 `positionKey` 精准限制对应位置的选号数量；未配置的位置不限制。不要只用全局 `maxSelectPerPosition` 套到所有位置，例如前 3 直选只配置 `first=7` 时，第二位和第三位仍应保持不限制。

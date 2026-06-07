@@ -2299,3 +2299,10 @@
 - 解决问题：此前用户资料没有头像字段，手机端也没有用户自己的头像上传入口；如果直接复用后台图床上传接口，会把普通用户头像能力绑到后台权限上。
 - 实施内容：`users` 表新增 `avatar_url` 字段和中文字段注释；后端 `UserSummary` 新增 `avatarUrl`，并新增 `PUT /api/user/avatar`、`POST /api/user/avatar/upload` 用户端受保护接口；上传接口读取系统图床配置透传图片并自动保存返回链接。手机端新增头像 API 封装，个人中心头像区域支持上传成功后刷新页面资料和 Pinia 登录态；同步更新架构说明、OpenAPI 和前后端规范。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml access_repository -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、后台 `npm run build`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；完整后端测试 250 条通过，手机端测试命令当前显示 0 个测试用例。
+
+## 2026-06-08 00:39 HKT 手机端头像点击与圆形展示修复
+
+- 完成任务：修复手机端“我的账户”点击头像没有反应的问题，并把头像展示改成圆形。
+- 解决问题：此前头像上传依赖 `van-uploader` 自定义插槽包裹按钮，移动端点击头像区域可能没有稳定触发文件选择；头像容器使用圆角矩形，不符合圆形头像要求。
+- 实施内容：头像上传触发改为原生 `input[type="file"]` 与 `label for` 绑定，点击头像本体即可打开文件选择器；头像容器、上传中遮罩和相机角标改为圆形视觉；同步更新架构说明和前端组件规范。
+- 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；当前环境未安装 Playwright，无法自动触发文件选择器烟测，但源码检查确认头像 `label for="profile-avatar-input"` 已绑定原生文件输入。

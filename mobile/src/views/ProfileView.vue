@@ -16,6 +16,7 @@ const brandingStore = useBrandingStore()
 const { branding } = storeToRefs(brandingStore)
 const profile = ref<any>(null)
 const uploadingAvatar = ref(false)
+const avatarInput = ref<HTMLInputElement | null>(null)
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
 const username = computed(() => profile.value?.username || '会员')
 const avatarUrl = computed(() => profile.value?.avatar_url || profile.value?.avatarUrl || '')
@@ -78,14 +79,24 @@ function onSupportItem(item: { key: string }) {
   if (item.key === 'help') showToast('帮助中心建设中')
 }
 
-async function uploadAvatar(fileInfo: { file?: File } | { file?: File }[]) {
-  const selected = Array.isArray(fileInfo) ? fileInfo[0] : fileInfo
-  const file = selected?.file
+function openAvatarPicker() {
+  if (uploadingAvatar.value) return
+  avatarInput.value?.click()
+}
+
+async function onAvatarFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
   if (!(file instanceof File)) {
-    showToast('请选择有效的头像图片')
+    input.value = ''
     return
   }
 
+  await uploadAvatarFile(file)
+  input.value = ''
+}
+
+async function uploadAvatarFile(file: File) {
   uploadingAvatar.value = true
   try {
     const updatedProfile = await uploadUserAvatar(file)
@@ -128,35 +139,41 @@ async function logout() {
       <section class="mb-5">
         <div class="mb-5 flex items-start justify-between px-0.5">
           <div class="flex items-center gap-3">
-            <van-uploader
-              :after-read="uploadAvatar"
+            <input
+              id="profile-avatar-input"
+              ref="avatarInput"
               accept="image/*"
+              class="sr-only"
               :disabled="uploadingAvatar"
-              :max-count="1"
-              :show-upload-list="false"
+              type="file"
+              @change="onAvatarFileChange"
+            />
+            <label
+              aria-label="上传头像"
+              class="relative flex h-16 w-16 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-red-900/10 bg-white font-headline text-lg font-black text-red-900 shadow-sm transition active:scale-95"
+              for="profile-avatar-input"
+              role="button"
+              tabindex="0"
+              @keydown.enter.prevent="openAvatarPicker"
+              @keydown.space.prevent="openAvatarPicker"
             >
-              <button
-                class="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-red-900/10 bg-white font-headline text-lg font-black text-red-900 shadow-sm transition active:scale-95"
-                type="button"
+              <img
+                v-if="avatarUrl"
+                :alt="`${username}头像`"
+                class="h-full w-full object-cover"
+                :src="avatarUrl"
+              />
+              <span v-else>{{ avatarText }}</span>
+              <span class="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-red-800 text-white">
+                <LucideIcon name="camera" class="h-3.5 w-3.5" :stroke-width="2.6" />
+              </span>
+              <span
+                v-if="uploadingAvatar"
+                class="absolute inset-0 flex items-center justify-center rounded-full bg-red-950/60 text-[10px] font-bold text-white"
               >
-                <img
-                  v-if="avatarUrl"
-                  :alt="`${username}头像`"
-                  class="h-full w-full object-cover"
-                  :src="avatarUrl"
-                />
-                <span v-else>{{ avatarText }}</span>
-                <span class="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-tl-lg bg-red-800 text-white">
-                  <LucideIcon name="camera" class="h-3.5 w-3.5" :stroke-width="2.6" />
-                </span>
-                <span
-                  v-if="uploadingAvatar"
-                  class="absolute inset-0 flex items-center justify-center bg-red-950/60 text-[10px] font-bold text-white"
-                >
-                  上传中
-                </span>
-              </button>
-            </van-uploader>
+                上传中
+              </span>
+            </label>
             <div>
               <h1 class="font-headline text-xl font-extrabold tracking-tight text-on-surface">我的账户</h1>
               <p class="mt-1 text-[11px] text-on-surface-variant">ID: {{ username }} • {{ memberLabel }}会员</p>
