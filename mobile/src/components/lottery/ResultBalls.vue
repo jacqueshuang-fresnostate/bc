@@ -22,29 +22,29 @@ defineProps<{ item: any; keyPrefix?: string }>()
 .result-balls {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
 }
 
 .result-ball {
   display: inline-flex;
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   color: #fff;
   background: #8c0a15;
-  box-shadow: 0 6px 14px rgba(140, 10, 21, 0.2);
+  box-shadow: 0 4px 10px rgba(140, 10, 21, 0.18);
   font-family: "Plus Jakarta Sans", Avenir Next, ui-sans-serif, system-ui, sans-serif;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 900;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .result-ball--accent {
   color: #fff;
   background: #735c00;
-  box-shadow: 0 6px 14px rgba(115, 92, 0, 0.18);
+  box-shadow: 0 4px 10px rgba(115, 92, 0, 0.16);
 }
 
 .pending-result {
@@ -59,13 +59,13 @@ defineProps<{ item: any; keyPrefix?: string }>()
 
 @media (max-width: 360px) {
   .result-balls {
-    gap: 8px;
+    gap: 6px;
   }
 
   .result-ball {
-    width: 36px;
-    height: 36px;
-    font-size: 16px;
+    width: 30px;
+    height: 30px;
+    font-size: 14px;
   }
 }
 </style>

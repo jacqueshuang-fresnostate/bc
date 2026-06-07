@@ -2278,3 +2278,10 @@
 - 解决问题：后端领域模型、路由处理函数、仓储入口和数据库持久化入口有大量声明缺少中文注释，后续维护时需要反复阅读实现才能理解用途。
 - 实施内容：为 `backend/src/domain` 的公开模型、`backend/src/routes` 的非测试接口处理函数、`backend/src/services` 的仓储/Store/load/save 核心入口，以及 `app/error/response/main` 主入口补充中文注释；同步更新后端质量规范，要求后续新增公开模型、路由处理函数、仓储入口和持久化方法必须写中文用途说明。
 - 验证结果：后端注释扫描确认公开模型、路由处理函数、核心仓储/Store/load/save 入口缺口为 0；`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过。
+
+## 2026-06-07 23:13 HKT 手机端开奖结果号码球尺寸优化
+
+- 完成任务：缩小手机端“开奖结果”列表和单彩种全部开奖弹层里的开奖号码球。
+- 解决问题：此前 `ResultBalls` 默认号码球为 40px，在开奖列表卡片里视觉偏大，5 位开奖结果会占用过多空间。
+- 实施内容：将 `ResultBalls` 默认号码球调整为 32px，小屏调整为 30px，并同步收紧间距、字号、阴影和字距；同步更新架构说明和前端组件规范。
+- 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；当前手机端测试命令显示 0 个测试用例。
