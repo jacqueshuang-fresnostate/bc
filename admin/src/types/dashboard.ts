@@ -153,6 +153,7 @@ export interface UserSummary {
   id: string;
   username: string;
   email: string | null;
+  avatarUrl?: string;
   kind: UserKind;
   status: UserStatus;
   balanceMinor: number;

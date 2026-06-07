@@ -4514,6 +4514,45 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 
 ---
 
+## 场景：手机端用户头像设置
+
+### 1. 范围 / 触发条件
+
+- 触发条件：登录用户在手机端“我的账户”点击头像上传图片，或已有图片链接需要写回个人资料。
+- 范围：`users.avatar_url`、`UserSummary.avatarUrl`、`PUT /api/user/avatar`、`POST /api/user/avatar/upload`、系统图床配置和手机端 `mobile/src/api/user.ts`。
+
+### 2. 签名
+
+- `PUT /api/user/avatar`
+- 认证方式：用户 Bearer Token。
+- 请求体：JSON。
+
+```json
+{
+  "avatarUrl": "https://cdn.example.com/avatar.png"
+}
+```
+
+- `POST /api/user/avatar/upload`
+- 认证方式：用户 Bearer Token。
+- 请求体：`multipart/form-data`，图片字段默认使用 `file`，服务端会读取 `image_bed_upload_field` 配置并兼容默认字段。
+
+### 3. 契约
+
+- 两个接口都返回统一信封，`data.user.avatarUrl` 为保存后的头像链接。
+- `PUT /api/user/avatar` 允许空字符串，表示清空头像；非空值必须是 `http` 或 `https` 链接。
+- `POST /api/user/avatar/upload` 必须读取后台系统设置中的图床上传地址、Token、上传字段名和结果链接字段；接口只保存图床返回的有效图片链接，不把第三方完整响应直接写入用户资料。
+- 图床未配置、上传字段缺失、文件不是图片、返回字段不存在或返回链接非法时，必须返回中文错误信息。
+- 后台用户维护接口不能因为旧表单没有头像字段而清空用户头像；头像由当前用户自己的接口维护。
+
+### 4. 验证
+
+- 后端需要覆盖头像保存成功和非法头像链接拒绝。
+- OpenAPI 测试需要覆盖 `/user/avatar` 和 `/user/avatar/upload`。
+- 手机端需要运行 `npm run build`，确认头像上传 API 类型、个人中心上传入口和登录态刷新可编译。
+
+---
+
 ## 场景：手机端邀请中心汇总接口
 
 ### 1. 范围 / 触发条件

@@ -1052,6 +1052,7 @@ mod tests {
             id: "U-RECHARGE".to_string(),
             username: "demo_user".to_string(),
             email: None,
+            avatar_url: String::new(),
             kind: UserKind::Regular,
             status: UserStatus::Active,
             balance_minor: 0,

@@ -2292,3 +2292,10 @@
 - 解决问题：参与人最低认购金额和剩余金额存在冲突，计划可能留下低于最低认购金额的小尾巴，导致后续用户既不能按最低金额认购，也不能超过剩余金额；手机端也没有拿到参与人最低认购金额，默认金额可能低于后台配置。
 - 实施内容：用户端合买计划响应新增 `participantMinAmountMinor`；后端允许最后尾单低于最低认购金额时一次性全包，同时拒绝普通认购后留下不可认购小尾巴；手机端认购金额按最低认购、单份金额和剩余金额自动归一化，并优先展示后端统一错误 `message`；同步更新架构说明和前后端规范。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；手机端测试命令当前显示 0 个测试用例。
+
+## 2026-06-08 00:13 HKT 手机端用户头像设置
+
+- 完成任务：补齐登录用户设置头像能力，手机端“我的账户”可点击头像上传图片。
+- 解决问题：此前用户资料没有头像字段，手机端也没有用户自己的头像上传入口；如果直接复用后台图床上传接口，会把普通用户头像能力绑到后台权限上。
+- 实施内容：`users` 表新增 `avatar_url` 字段和中文字段注释；后端 `UserSummary` 新增 `avatarUrl`，并新增 `PUT /api/user/avatar`、`POST /api/user/avatar/upload` 用户端受保护接口；上传接口读取系统图床配置透传图片并自动保存返回链接。手机端新增头像 API 封装，个人中心头像区域支持上传成功后刷新页面资料和 Pinia 登录态；同步更新架构说明、OpenAPI 和前后端规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml access_repository -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、后台 `npm run build`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；完整后端测试 250 条通过，手机端测试命令当前显示 0 个测试用例。

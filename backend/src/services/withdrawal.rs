@@ -543,6 +543,7 @@ mod tests {
             id: "U10001".to_string(),
             username: "demo".to_string(),
             email: None,
+            avatar_url: String::new(),
             kind: UserKind::Regular,
             status: UserStatus::Active,
             balance_minor: 0,

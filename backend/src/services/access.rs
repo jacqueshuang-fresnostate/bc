@@ -23,7 +23,7 @@ use crate::{
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         user::{
             AdminPasswordResetRequest, AdminSaveRequest, AdminSummary, RegistrationConfig,
-            UserAuthSession, UserBindEmailRequest, UserChangePasswordRequest,
+            UserAuthSession, UserAvatarRequest, UserBindEmailRequest, UserChangePasswordRequest,
             UserForgotPasswordRequest, UserForgotPasswordResponse, UserKind, UserLoginRequest,
             UserLogoutResponse, UserRegisterRequest, UserResetPasswordRequest,
             UserResetPasswordResponse, UserStatus, UserSummary, WithdrawalMethod,
@@ -50,6 +50,7 @@ const WITHDRAWAL_METHOD_ID_BYTES: usize = 6;
 const SESSION_TOKEN_RANDOM_BYTES: usize = 32;
 const SESSION_TOKEN_PREFIX: &str = "bcst_";
 const SESSION_TOKEN_HASH_PREFIX: &str = "sha256:";
+const MAX_AVATAR_URL_LEN: usize = 500;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct PasswordResetTokenRecord {
@@ -131,7 +132,7 @@ impl AccessRepository {
         Ok(result)
     }
 
-    /// 更新用户：检查路径 ID 与载荷 ID 一致、保留原邀请码，完成唯一性与持久化更新。
+    /// 更新用户：检查路径 ID 与载荷 ID 一致、保留余额、邀请码和头像，完成唯一性与持久化更新。
     pub async fn update_user(&self, id: &str, user: UserSummary) -> ApiResult<UserSummary> {
         let (result, snapshot) = {
             let mut store = self
@@ -222,6 +223,24 @@ impl AccessRepository {
                 .write()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
             let result = store.bind_email(user_id, payload)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 设置当前用户头像：只更新头像链接，不影响邀请码、余额等受控字段。
+    pub async fn update_user_avatar(
+        &self,
+        user_id: &str,
+        payload: UserAvatarRequest,
+    ) -> ApiResult<UserSummary> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.update_user_avatar(user_id, payload)?;
             (result, store.clone())
         };
         self.persist(&snapshot).await?;
@@ -615,7 +634,7 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
     let pool = database.pool();
     let mut users = BTreeMap::new();
     for row in sqlx::query(
-        "SELECT id, username, email, kind, status, balance_minor, agent_id, invite_code
+        "SELECT id, username, email, avatar_url, kind, status, balance_minor, agent_id, invite_code
          FROM users
          ORDER BY id ASC",
     )
@@ -635,6 +654,9 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
                     .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
                 email: row
                     .try_get("email")
+                    .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                avatar_url: row
+                    .try_get("avatar_url")
                     .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
                 kind: enum_from_string(
                     row.try_get("kind")
@@ -997,12 +1019,13 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
 
     for user in store.users.values() {
         sqlx::query(
-            "INSERT INTO users (id, username, email, kind, status, balance_minor, agent_id, invite_code)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            "INSERT INTO users (id, username, email, avatar_url, kind, status, balance_minor, agent_id, invite_code)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind(&user.id)
         .bind(&user.username)
         .bind(&user.email)
+        .bind(&user.avatar_url)
         .bind(enum_to_string(&user.kind)?)
         .bind(enum_to_string(&user.status)?)
         .bind(user.balance_minor)
@@ -1243,7 +1266,7 @@ impl AccessStore {
         Ok(user)
     }
 
-    /// 更新内存用户：余额和邀请码归属财务/邀请链路，用户维护只允许改基础资料和状态。
+    /// 更新内存用户：余额、邀请码和头像分别归属专门链路，用户维护只允许改基础资料和状态。
     fn update_user(&mut self, id: &str, user: UserSummary) -> ApiResult<UserSummary> {
         let mut user = normalize_user(user)?;
         if id != user.id {
@@ -1258,6 +1281,7 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))?;
         user.balance_minor = existing.balance_minor;
         user.invite_code = existing.invite_code;
+        user.avatar_url = existing.avatar_url;
 
         self.users.insert(id.to_string(), user.clone());
         Ok(user)
@@ -1353,6 +1377,7 @@ impl AccessStore {
             id: user_id,
             username,
             email,
+            avatar_url: String::new(),
             kind: UserKind::Regular,
             status: UserStatus::Active,
             balance_minor: 0,
@@ -1453,6 +1478,21 @@ impl AccessStore {
             .get_mut(user_id)
             .ok_or_else(|| ApiError::NotFound(format!("user `{user_id}` not found")))?;
         user.email = Some(email);
+        Ok(user.clone())
+    }
+
+    /// 更新用户头像链接，允许用户清空头像，但非空时必须是 http/https 图片地址。
+    fn update_user_avatar(
+        &mut self,
+        user_id: &str,
+        payload: UserAvatarRequest,
+    ) -> ApiResult<UserSummary> {
+        let avatar_url = normalize_avatar_url(payload.avatar_url)?;
+        let user = self
+            .users
+            .get_mut(user_id)
+            .ok_or_else(|| ApiError::NotFound(format!("user `{user_id}` not found")))?;
+        user.avatar_url = avatar_url;
         Ok(user.clone())
     }
 
@@ -2007,6 +2047,7 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
         .email
         .map(|email| email.trim().to_string())
         .filter(|email| !email.is_empty());
+    user.avatar_url = normalize_avatar_url(user.avatar_url)?;
     user.agent_id = user
         .agent_id
         .map(|agent_id| agent_id.trim().to_string())
@@ -2020,6 +2061,26 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
     }
 
     Ok(user)
+}
+
+/// 标准化头像链接：空值表示未设置，非空值只接受 http/https 链接。
+fn normalize_avatar_url(value: String) -> ApiResult<String> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Ok(value);
+    }
+    if value.chars().count() > MAX_AVATAR_URL_LEN {
+        return Err(ApiError::BadRequest(
+            "头像链接不能超过 500 个字符".to_string(),
+        ));
+    }
+    if !(value.starts_with("https://") || value.starts_with("http://")) {
+        return Err(ApiError::BadRequest(
+            "头像链接必须是 http 或 https 链接".to_string(),
+        ));
+    }
+
+    Ok(value)
 }
 
 /// 依据当前用户集合随机生成 8 位大写字母数字邀请码，最多尝试 128 次防止极端碰撞。
@@ -2299,6 +2360,7 @@ fn seed_users() -> Vec<UserSummary> {
             id: "U10001".to_string(),
             username: "demo_user".to_string(),
             email: Some("demo@example.com".to_string()),
+            avatar_url: String::new(),
             kind: crate::domain::user::UserKind::Regular,
             status: UserStatus::Active,
             balance_minor: 12_000,
@@ -2309,6 +2371,7 @@ fn seed_users() -> Vec<UserSummary> {
             id: "U90001".to_string(),
             username: "agent_alpha".to_string(),
             email: None,
+            avatar_url: String::new(),
             kind: crate::domain::user::UserKind::Agent,
             status: UserStatus::Active,
             balance_minor: 520_000,
@@ -2319,6 +2382,7 @@ fn seed_users() -> Vec<UserSummary> {
             id: "U10004".to_string(),
             username: "risk_watch".to_string(),
             email: None,
+            avatar_url: String::new(),
             kind: crate::domain::user::UserKind::Regular,
             status: UserStatus::Suspended,
             balance_minor: 0,
@@ -2571,6 +2635,7 @@ mod tests {
                 id: " U20001 ".to_string(),
                 username: "new_user".to_string(),
                 email: Some("new@example.com".to_string()),
+                avatar_url: String::new(),
                 kind: UserKind::Regular,
                 status: UserStatus::Active,
                 balance_minor: 1000,
@@ -2598,6 +2663,7 @@ mod tests {
                 id: "U20003".to_string(),
                 username: "random_invite_a".to_string(),
                 email: None,
+                avatar_url: String::new(),
                 kind: UserKind::Regular,
                 status: UserStatus::Active,
                 balance_minor: 0,
@@ -2611,6 +2677,7 @@ mod tests {
                 id: "U20004".to_string(),
                 username: "random_invite_b".to_string(),
                 email: None,
+                avatar_url: String::new(),
                 kind: UserKind::Regular,
                 status: UserStatus::Active,
                 balance_minor: 0,
@@ -2637,6 +2704,7 @@ mod tests {
                     id: "U10001".to_string(),
                     username: "renamed_demo".to_string(),
                     email: original.email.clone(),
+                    avatar_url: "https://example.com/should-not-override.png".to_string(),
                     kind: original.kind.clone(),
                     status: original.status.clone(),
                     balance_minor: 999_999,
@@ -2650,6 +2718,47 @@ mod tests {
         assert_eq!(updated.username, "renamed_demo");
         assert_eq!(updated.balance_minor, original.balance_minor);
         assert_eq!(updated.invite_code, original.invite_code);
+        assert_eq!(updated.avatar_url, original.avatar_url);
+    }
+
+    #[tokio::test]
+    async fn access_repository_updates_user_avatar() {
+        let access = AccessRepository::memory_seeded();
+        let updated = access
+            .update_user_avatar(
+                "U10001",
+                UserAvatarRequest {
+                    avatar_url: " https://cdn.example.com/avatar.png ".to_string(),
+                },
+            )
+            .await
+            .expect("avatar can be updated");
+
+        assert_eq!(updated.avatar_url, "https://cdn.example.com/avatar.png");
+        assert_eq!(
+            access
+                .get_user("U10001")
+                .await
+                .expect("user can be loaded")
+                .avatar_url,
+            "https://cdn.example.com/avatar.png"
+        );
+    }
+
+    #[tokio::test]
+    async fn access_repository_rejects_invalid_user_avatar_url() {
+        let access = AccessRepository::memory_seeded();
+        let error = access
+            .update_user_avatar(
+                "U10001",
+                UserAvatarRequest {
+                    avatar_url: "ftp://cdn.example.com/avatar.png".to_string(),
+                },
+            )
+            .await
+            .expect_err("invalid avatar url should be rejected");
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
     }
 
     #[tokio::test]
@@ -2660,6 +2769,7 @@ mod tests {
                 id: "U20002".to_string(),
                 username: "duplicate_invite_code".to_string(),
                 email: None,
+                avatar_url: String::new(),
                 kind: UserKind::Regular,
                 status: UserStatus::Active,
                 balance_minor: 0,

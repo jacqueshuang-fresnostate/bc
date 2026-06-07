@@ -2,7 +2,7 @@
 
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::{Form, Path, Query, Request, State},
+    extract::{Form, Multipart, Path, Query, Request, State},
     http::header::AUTHORIZATION,
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -45,11 +45,12 @@ use crate::{
     domain::support::{SupportConversation, UserSupportReplyRequest},
     domain::user::WithdrawalMethod,
     domain::user::{
-        RegistrationConfig, UserAuthSession, UserBalanceResponse, UserBindEmailRequest,
-        UserChangePasswordRequest, UserForgotPasswordRequest, UserForgotPasswordResponse,
-        UserInvitationDirectUser, UserInvitationSummaryResponse, UserKind, UserLoginRequest,
-        UserLogoutResponse, UserProfileResponse, UserRegisterRequest, UserResetPasswordRequest,
-        UserResetPasswordResponse, UserStatus, UserSummary, WithdrawalMethodRequest,
+        RegistrationConfig, UserAuthSession, UserAvatarRequest, UserBalanceResponse,
+        UserBindEmailRequest, UserChangePasswordRequest, UserForgotPasswordRequest,
+        UserForgotPasswordResponse, UserInvitationDirectUser, UserInvitationSummaryResponse,
+        UserKind, UserLoginRequest, UserLogoutResponse, UserProfileResponse, UserRegisterRequest,
+        UserResetPasswordRequest, UserResetPasswordResponse, UserStatus, UserSummary,
+        WithdrawalMethodRequest,
     },
     domain::withdrawal::{CreateWithdrawalOrderRequest, WithdrawalOrderSummary},
     error::{ApiError, ApiResult},
@@ -61,6 +62,9 @@ use crate::{
     services::{
         business_database::enum_to_string,
         group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
+        image_bed::{
+            image_bed_value_as_url, upload_configured_image_bed_file, ImageBedUploadOptions,
+        },
         mobile_bet::build_mobile_bet_page_config,
         order::validate_draw_issue_accepts_order,
         play_rules::play_rule_summaries,
@@ -99,6 +103,8 @@ const ROBOT_GROUP_BUY_DISPLAY_NAMES: &[&str] = &[
 pub fn router(state: AppState) -> Router<AppState> {
     let protected_routes = Router::new()
         .route("/me", get(get_current_user))
+        .route("/avatar", put(update_user_avatar))
+        .route("/avatar/upload", post(upload_user_avatar))
         .route("/logout", post(logout_user))
         .route("/bind-email", post(bind_email))
         .route("/password/change", post(change_password))
@@ -401,6 +407,53 @@ async fn get_current_user(
 ) -> ApiResult<Json<ApiEnvelope<UserProfileResponse>>> {
     let user = user_with_financial_balance(&state, session.user).await?;
     Ok(Json(ApiEnvelope::success(UserProfileResponse { user })))
+}
+
+/// 当前用户直接设置头像链接，适用于外部已上传后只回写图片地址的场景。
+async fn update_user_avatar(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Json(payload): Json<UserAvatarRequest>,
+) -> ApiResult<Json<ApiEnvelope<UserProfileResponse>>> {
+    let user = state
+        .access
+        .update_user_avatar(&session.user.id, payload)
+        .await?;
+    let user = user_with_financial_balance(&state, user).await?;
+
+    Ok(Json(ApiEnvelope::success(UserProfileResponse { user })))
+}
+
+/// 当前用户上传头像文件：后端读取图床配置代理上传，并把返回图片链接写入用户资料。
+async fn upload_user_avatar(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    payload: Multipart,
+) -> ApiResult<Json<ApiEnvelope<UserProfileResponse>>> {
+    let avatar_url = upload_avatar_to_image_bed(&state, payload).await?;
+    let user = state
+        .access
+        .update_user_avatar(&session.user.id, UserAvatarRequest { avatar_url })
+        .await?;
+    let user = user_with_financial_balance(&state, user).await?;
+
+    Ok(Json(ApiEnvelope::success(UserProfileResponse { user })))
+}
+
+/// 按系统设置把头像文件透传到图床，返回可保存到用户资料的图片链接。
+async fn upload_avatar_to_image_bed(state: &AppState, payload: Multipart) -> ApiResult<String> {
+    let output = upload_configured_image_bed_file(
+        &state.access,
+        payload,
+        ImageBedUploadOptions {
+            image_only: true,
+            missing_file_message: "未检测到头像图片文件字段",
+            default_file_name: "avatar.png",
+        },
+    )
+    .await?;
+
+    image_bed_value_as_url(&output, "图床返回的头像链接")
 }
 
 /// 注销当前用户登录会话。
@@ -2246,6 +2299,7 @@ mod tests {
             id: id.to_string(),
             username: username.to_string(),
             email: None,
+            avatar_url: String::new(),
             kind,
             status: UserStatus::Active,
             balance_minor: 0,

@@ -14,6 +14,7 @@ export type UserSummary = {
   id: string
   username: string
   email?: string | null
+  avatarUrl: string
   kind: UserKind
   status: UserStatus
   balanceMinor: number
@@ -59,6 +60,7 @@ export type RegistrationConfig = {
 
 export type MobileUserProfile = UserSummary & {
   balance: string
+  avatar_url: string
   invitation_code: string
   can_invite: boolean
 }
@@ -328,6 +330,7 @@ export function normalizeUserProfile(user: UserSummary): MobileUserProfile {
   return {
     ...user,
     balance: formatMinorAmount(user.balanceMinor),
+    avatar_url: user.avatarUrl || '',
     invitation_code: user.inviteCode,
     can_invite: user.kind === 'agent',
   }
@@ -352,6 +355,22 @@ export async function fetchCurrentUser() {
 
 export async function fetchCurrentUserProfile() {
   return normalizeUserProfile(await fetchCurrentUser())
+}
+
+export async function updateUserAvatarUrl(avatarUrl: string) {
+  const profile = unwrapApiData<{ user: UserSummary }>(
+    await http.put('/user/avatar', { avatarUrl }),
+  )
+  return normalizeUserProfile(profile.user)
+}
+
+export async function uploadUserAvatar(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const profile = unwrapApiData<{ user: UserSummary }>(
+    await http.post('/user/avatar/upload', formData),
+  )
+  return normalizeUserProfile(profile.user)
 }
 
 export async function bindUserEmail(email: string) {

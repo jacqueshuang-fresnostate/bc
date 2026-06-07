@@ -2,6 +2,7 @@
 import {
   ArrowLeft,
   Bitcoin,
+  Camera,
   CircleArrowDown,
   CirclePlus,
   Flame,
@@ -43,6 +44,7 @@ const icons = {
   apps: Grid2X2,
   arrow_back: ArrowLeft,
   bolt: Zap,
+  camera: Camera,
   chat: MessageCircle,
   chevron_right: ArrowLeft,
   close: X,

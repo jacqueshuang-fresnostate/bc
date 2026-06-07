@@ -726,6 +726,7 @@ mod tests {
                     id: "U1".to_string(),
                     username: "user".to_string(),
                     email: None,
+                    avatar_url: String::new(),
                     kind: UserKind::Regular,
                     status: UserStatus::Active,
                     balance_minor: 0,

@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useBrandingStore } from '../stores/branding'
 import { showDialog, showToast } from 'vant'
-import { fetchCurrentUserProfile } from '../api/user'
+import { errorMessage, fetchCurrentUserProfile, uploadUserAvatar } from '../api/user'
 import WalletBentoCard from '../components/mobile/WalletBentoCard.vue'
 import SettingsListGroup from '../components/mobile/SettingsListGroup.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
@@ -15,8 +15,11 @@ const auth = useAuthStore()
 const brandingStore = useBrandingStore()
 const { branding } = storeToRefs(brandingStore)
 const profile = ref<any>(null)
+const uploadingAvatar = ref(false)
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
 const username = computed(() => profile.value?.username || '会员')
+const avatarUrl = computed(() => profile.value?.avatar_url || profile.value?.avatarUrl || '')
+const avatarText = computed(() => String(username.value || '会').trim().slice(0, 1).toUpperCase() || '会')
 const memberLabel = computed(() => statusText(profile.value?.status || 'active'))
 const inviteText = computed(() => profile.value?.invitation_code || '-')
 const canInvite = computed(() => profile.value?.can_invite === true)
@@ -75,6 +78,27 @@ function onSupportItem(item: { key: string }) {
   if (item.key === 'help') showToast('帮助中心建设中')
 }
 
+async function uploadAvatar(fileInfo: { file?: File } | { file?: File }[]) {
+  const selected = Array.isArray(fileInfo) ? fileInfo[0] : fileInfo
+  const file = selected?.file
+  if (!(file instanceof File)) {
+    showToast('请选择有效的头像图片')
+    return
+  }
+
+  uploadingAvatar.value = true
+  try {
+    const updatedProfile = await uploadUserAvatar(file)
+    profile.value = updatedProfile
+    await auth.setSession(auth.accessToken, updatedProfile)
+    showToast('头像更新成功')
+  } catch (error) {
+    showToast(errorMessage(error, '头像上传失败'))
+  } finally {
+    uploadingAvatar.value = false
+  }
+}
+
 async function logout() {
   await showDialog({ title: '确认', message: '确定退出登录？' })
   await auth.logout()
@@ -103,9 +127,40 @@ async function logout() {
     <main class="mx-auto max-w-lg px-3 pt-20">
       <section class="mb-5">
         <div class="mb-5 flex items-start justify-between px-0.5">
-          <div>
-            <h1 class="font-headline text-xl font-extrabold tracking-tight text-on-surface">我的账户</h1>
-            <p class="mt-1 text-[11px] text-on-surface-variant">ID: {{ username }} • {{ memberLabel }}会员</p>
+          <div class="flex items-center gap-3">
+            <van-uploader
+              :after-read="uploadAvatar"
+              accept="image/*"
+              :disabled="uploadingAvatar"
+              :max-count="1"
+              :show-upload-list="false"
+            >
+              <button
+                class="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-red-900/10 bg-white font-headline text-lg font-black text-red-900 shadow-sm transition active:scale-95"
+                type="button"
+              >
+                <img
+                  v-if="avatarUrl"
+                  :alt="`${username}头像`"
+                  class="h-full w-full object-cover"
+                  :src="avatarUrl"
+                />
+                <span v-else>{{ avatarText }}</span>
+                <span class="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-tl-lg bg-red-800 text-white">
+                  <LucideIcon name="camera" class="h-3.5 w-3.5" :stroke-width="2.6" />
+                </span>
+                <span
+                  v-if="uploadingAvatar"
+                  class="absolute inset-0 flex items-center justify-center bg-red-950/60 text-[10px] font-bold text-white"
+                >
+                  上传中
+                </span>
+              </button>
+            </van-uploader>
+            <div>
+              <h1 class="font-headline text-xl font-extrabold tracking-tight text-on-surface">我的账户</h1>
+              <p class="mt-1 text-[11px] text-on-surface-variant">ID: {{ username }} • {{ memberLabel }}会员</p>
+            </div>
           </div>
           <button class="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-on-surface-variant shadow-sm transition-colors active:bg-stone-100" type="button">
             <LucideIcon name="settings" class="h-5 w-5" />

@@ -28,6 +28,8 @@ pub struct UserSummary {
     pub id: String,
     pub username: String,
     pub email: Option<String>,
+    #[serde(default)]
+    pub avatar_url: String,
     pub kind: UserKind,
     pub status: UserStatus,
     pub balance_minor: i64,
@@ -62,6 +64,13 @@ pub struct UserLoginRequest {
 /// 用户绑定邮箱时提交的新邮箱地址。
 pub struct UserBindEmailRequest {
     pub email: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 用户设置头像时提交的图片链接，空字符串表示清空头像。
+pub struct UserAvatarRequest {
+    pub avatar_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

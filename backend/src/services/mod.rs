@@ -13,6 +13,7 @@ pub mod finance;
 pub mod group_buy;
 pub mod group_buy_flow;
 pub mod group_buy_robot;
+pub mod image_bed;
 pub mod invite;
 pub mod lottery;
 pub mod mobile_bet;

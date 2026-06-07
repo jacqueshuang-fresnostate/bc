@@ -1108,6 +1108,24 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::None,
     ),
     doc(
+        "put",
+        "/user/avatar",
+        "用户端账户",
+        "设置用户头像",
+        "当前用户直接提交图片链接，后端保存为个人头像。",
+        AuthMode::User,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "post",
+        "/user/avatar/upload",
+        "用户端账户",
+        "上传用户头像",
+        "当前用户上传头像文件，后端按图床配置透传上传并保存返回链接。",
+        AuthMode::User,
+        RequestBodyKind::Multipart,
+    ),
+    doc(
         "post",
         "/user/logout",
         "用户端账户",
@@ -1778,6 +1796,8 @@ mod tests {
         assert!(document["paths"]["/user/group-buy/plans/{id}/participants"]["post"].is_object());
         assert!(document["paths"]["/user/group-buy/my"]["get"].is_object());
         assert!(document["paths"]["/user/group-buy/create-options"]["get"].is_object());
+        assert!(document["paths"]["/user/avatar"]["put"].is_object());
+        assert!(document["paths"]["/user/avatar/upload"]["post"].is_object());
         assert!(document["paths"]["/user/realtime"]["get"].is_object());
         assert!(document["paths"]["/user/chat-hall/messages"]["get"].is_object());
         assert!(document["paths"]["/user/chat-hall/messages"]["post"].is_object());
