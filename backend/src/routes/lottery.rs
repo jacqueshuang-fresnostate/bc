@@ -95,6 +95,7 @@ async fn list_draw_history(
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+/// 手机端开奖历史按分类分组的数据结构。
 struct MobileLotteryHistoryGroup {
     code: String,
     name: String,
@@ -103,6 +104,7 @@ struct MobileLotteryHistoryGroup {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+/// 开奖历史分类下的彩种筛选项。
 struct MobileLotteryGroupLottery {
     code: String,
     name: String,
@@ -116,6 +118,7 @@ struct MobileLotteryGroupLottery {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+/// 手机端开奖历史单条记录。
 struct MobileLotteryHistoryItem {
     id: String,
     lottery_code: String,
@@ -131,6 +134,7 @@ struct MobileLotteryHistoryItem {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+/// 手机端开奖历史分页响应。
 struct MobileLotteryHistoryPage {
     items: Vec<MobileLotteryHistoryItem>,
     total_count: usize,
@@ -139,7 +143,9 @@ struct MobileLotteryHistoryPage {
     total_pages: usize,
 }
 
+/// 手机端开奖历史分页响应。
 impl MobileLotteryHistoryPage {
+    /// 根据完整历史记录和分页参数生成开奖历史分页。
     fn from_items(
         items: Vec<MobileLotteryHistoryItem>,
         page: usize,
@@ -172,6 +178,7 @@ impl MobileLotteryHistoryPage {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// 手机端开奖历史查询条件。
 struct LotteryHistoryQuery {
     lottery_code: Option<String>,
     group_code: Option<String>,
@@ -179,6 +186,7 @@ struct LotteryHistoryQuery {
     page_size: Option<usize>,
 }
 
+/// 生成手机端开奖历史分类和彩种筛选项。
 fn lottery_history_groups(
     lotteries: &[LotteryKind],
     categories: &[LotteryCategoryConfig],
@@ -219,6 +227,7 @@ fn lottery_history_groups(
     groups
 }
 
+/// 把同一分类下的彩种转换为手机端筛选项。
 fn group_lotteries(lotteries: &[&LotteryKind], category: &str) -> Vec<MobileLotteryGroupLottery> {
     lotteries
         .iter()
@@ -238,6 +247,7 @@ fn group_lotteries(lotteries: &[&LotteryKind], category: &str) -> Vec<MobileLott
         .collect()
 }
 
+/// 从彩种排期中提取周期开奖秒数。
 fn draw_interval_seconds(schedule: &DrawSchedule) -> Option<u32> {
     match schedule {
         DrawSchedule::Periodic { interval_seconds } => Some(*interval_seconds),
@@ -245,6 +255,7 @@ fn draw_interval_seconds(schedule: &DrawSchedule) -> Option<u32> {
     }
 }
 
+/// 从彩种排期中提取每日开奖时间。
 fn daily_draw_time(schedule: &DrawSchedule) -> Option<String> {
     match schedule {
         DrawSchedule::Daily { time } => Some(time.clone()),
@@ -252,6 +263,7 @@ fn daily_draw_time(schedule: &DrawSchedule) -> Option<String> {
     }
 }
 
+/// 为每个销售中彩种取最近一条开奖记录。
 fn latest_history_items(
     lotteries: &[LotteryKind],
     issues: &[DrawIssue],
@@ -269,6 +281,7 @@ fn latest_history_items(
         .collect()
 }
 
+/// 按查询条件生成开奖历史分页记录。
 fn draw_history_items(
     lotteries: &[LotteryKind],
     issues: &[DrawIssue],
@@ -280,6 +293,7 @@ fn draw_history_items(
         .collect()
 }
 
+/// 按开奖时间倒序整理可展示的历史期号候选。
 fn sorted_history_candidates<'a>(
     lotteries: &'a [LotteryKind],
     issues: &'a [DrawIssue],
@@ -317,6 +331,7 @@ fn sorted_history_candidates<'a>(
     candidates
 }
 
+/// 判断彩种是否匹配开奖历史查询条件。
 fn lottery_matches_query(lottery: &LotteryKind, query: &LotteryHistoryQuery) -> bool {
     if !lottery.sale_enabled {
         return false;
@@ -333,6 +348,7 @@ fn lottery_matches_query(lottery: &LotteryKind, query: &LotteryHistoryQuery) -> 
     true
 }
 
+/// 规范化可选查询字符串。
 fn normalized_query_value(value: &Option<String>) -> Option<&str> {
     value
         .as_deref()
@@ -340,6 +356,7 @@ fn normalized_query_value(value: &Option<String>) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
+/// 把开奖期号转换为手机端开奖历史记录。
 fn history_item(issue: &DrawIssue, lottery: &LotteryKind) -> MobileLotteryHistoryItem {
     let result = issue.draw_number.clone().unwrap_or_default();
 
@@ -360,6 +377,7 @@ fn history_item(issue: &DrawIssue, lottery: &LotteryKind) -> MobileLotteryHistor
     }
 }
 
+/// 把逗号分隔或连续数字开奖号码拆成号码数组。
 fn split_draw_number(value: &str) -> Vec<String> {
     let text = value.trim();
     if text.is_empty() {
@@ -379,6 +397,7 @@ fn split_draw_number(value: &str) -> Vec<String> {
     vec![text.to_string()]
 }
 
+/// 把空字符串规范化为 None。
 fn optional_text(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -388,6 +407,7 @@ fn optional_text(value: &str) -> Option<String> {
     }
 }
 
+/// 计算开奖历史排序使用的时间值。
 fn history_time_value(issue: &DrawIssue) -> i64 {
     issue
         .drawn_at
@@ -398,6 +418,7 @@ fn history_time_value(issue: &DrawIssue) -> i64 {
         .unwrap_or_default()
 }
 
+/// 解析系统内常用时间文本为时间对象。
 fn parse_timestamp(value: &str) -> Option<NaiveDateTime> {
     let value = value.trim();
     if let Some(seconds) = value.strip_prefix("unix:") {

@@ -19,15 +19,18 @@ use crate::{
 };
 
 #[derive(Clone)]
+/// 彩种配置仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct LotteryRepository {
     inner: Arc<LotteryRepositoryKind>,
 }
 
+/// 彩种仓储运行模式，区分内存演示数据和 PostgreSQL 持久化。
 enum LotteryRepositoryKind {
     Memory(std::sync::RwLock<LotteryStore>),
     Postgres(PostgresLotteryStore),
 }
 
+/// 彩种配置仓储，负责该模块数据读取、业务变更和持久化协调。
 impl LotteryRepository {
     /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
@@ -180,11 +183,13 @@ impl LotteryRepository {
 }
 
 #[derive(Debug, Clone)]
+/// 彩种配置运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 pub struct LotteryStore {
     lotteries: BTreeMap<String, LotteryKind>,
     categories: BTreeMap<String, LotteryCategoryConfig>,
 }
 
+/// 彩种配置运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl LotteryStore {
     /// 返回内置种子数据。
     pub fn seeded() -> Self {
@@ -338,11 +343,14 @@ impl LotteryStore {
     }
 }
 
+/// 彩种配置运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 struct PostgresLotteryStore {
     pool: PgPool,
 }
 
+/// 彩种配置运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl PostgresLotteryStore {
+    /// 写入彩种配置默认种子数据，供空库初始化使用。
     async fn seed_missing_defaults(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         for lottery in seed_lotteries() {
             self.insert_seed_lottery(lottery).await?;

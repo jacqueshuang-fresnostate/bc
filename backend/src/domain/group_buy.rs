@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 合买计划状态，描述从草稿、开放认购到满单、取消和结算的生命周期。
 pub enum GroupBuyPlanStatus {
     Draft,
     Open,
@@ -14,6 +15,7 @@ pub enum GroupBuyPlanStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 合买参与记录，保存每个用户认购金额、份数和参与备注。
 pub struct GroupBuyParticipant {
     pub id: String,
     pub user_id: String,
@@ -26,6 +28,7 @@ pub struct GroupBuyParticipant {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 合买计划完整实体，包含发起人、投注内容、份额设置和参与人列表。
 pub struct GroupBuyPlan {
     pub id: String,
     pub lottery_id: String,
@@ -49,6 +52,7 @@ pub struct GroupBuyPlan {
     pub updated_at: String,
 }
 
+/// 合买计划的派生展示方法。
 impl GroupBuyPlan {
     /// 生成当前实体对象的汇总信息。
     pub fn summary(&self) -> GroupBuyPlanSummary {
@@ -72,6 +76,7 @@ impl GroupBuyPlan {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台列表和关联展示使用的合买计划摘要。
 pub struct GroupBuyPlanSummary {
     pub id: String,
     pub lottery_id: String,
@@ -90,6 +95,7 @@ pub struct GroupBuyPlanSummary {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台创建合买计划时提交的原始参数。
 pub struct CreateGroupBuyPlanRequest {
     pub id: String,
     pub lottery_id: String,
@@ -109,6 +115,7 @@ pub struct CreateGroupBuyPlanRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台更新合买计划状态和备注时提交的参数。
 pub struct UpdateGroupBuyPlanRequest {
     pub status: GroupBuyPlanStatus,
     pub note: String,
@@ -116,6 +123,7 @@ pub struct UpdateGroupBuyPlanRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台为合买计划添加参与人时提交的认购参数。
 pub struct AddGroupBuyParticipantRequest {
     pub id: String,
     pub user_id: String,
@@ -125,6 +133,7 @@ pub struct AddGroupBuyParticipantRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 手机端用户发起合买计划时提交的投注和自购信息。
 pub struct UserCreateGroupBuyPlanRequest {
     pub lottery_id: String,
     pub issue: String,
@@ -137,12 +146,14 @@ pub struct UserCreateGroupBuyPlanRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 手机端用户参与合买计划时提交的认购金额。
 pub struct UserJoinGroupBuyPlanRequest {
     pub amount_minor: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 合买创建页下拉选项，统一承载彩种、期号和玩法选项。
 pub struct GroupBuySelectOption {
     pub label: String,
     pub value: String,
@@ -150,6 +161,7 @@ pub struct GroupBuySelectOption {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 发起合买时的金额、份额和发起人最低自购设置。
 pub struct GroupBuyCreateSettings {
     pub min_share_amount_minor: i64,
     pub initiator_min_percent: u8,
@@ -158,6 +170,7 @@ pub struct GroupBuyCreateSettings {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 手机端发起合买页面所需的彩种、期号、玩法和默认设置。
 pub struct GroupBuyCreateOptions {
     pub lotteries: Vec<GroupBuySelectOption>,
     pub issues: Vec<GroupBuySelectOption>,
@@ -167,6 +180,7 @@ pub struct GroupBuyCreateOptions {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 当前用户在某个合买计划中的参与摘要。
 pub struct GroupBuyParticipationSummary {
     pub share_count: u32,
     pub amount_minor: i64,
@@ -174,6 +188,7 @@ pub struct GroupBuyParticipationSummary {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 手机端合买大厅和我的合买列表使用的计划展示数据。
 pub struct UserGroupBuyPlan {
     pub id: String,
     pub lottery_id: String,
@@ -202,12 +217,14 @@ pub struct UserGroupBuyPlan {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 手机端合买计划分页响应，目前承载当前页计划列表。
 pub struct UserGroupBuyPlanPage {
     pub items: Vec<UserGroupBuyPlan>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 手机端发起或参与合买后的响应，返回计划和最新可用余额。
 pub struct UserGroupBuyActionResponse {
     pub plan: UserGroupBuyPlan,
     pub available_balance_minor: i64,

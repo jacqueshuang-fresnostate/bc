@@ -58,6 +58,7 @@ struct PasswordResetTokenRecord {
 }
 
 #[derive(Debug, Clone)]
+/// 用户权限模块的完整快照，用于后台仪表盘和跨仓储读取。
 pub struct AccessSnapshot {
     pub users: Vec<UserSummary>,
     pub admins: Vec<AdminSummary>,
@@ -67,11 +68,13 @@ pub struct AccessSnapshot {
 }
 
 #[derive(Clone)]
+/// 用户、管理员、角色、会话和系统设置仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct AccessRepository {
     inner: Arc<RwLock<AccessStore>>,
     persistence: Option<BusinessDatabase>,
 }
 
+/// 用户、管理员、角色、会话和系统设置仓储，负责该模块数据读取、业务变更和持久化协调。
 impl AccessRepository {
     /// 创建一个只依赖种子数据的内存访问仓储，适配测试和本地开发场景。
     pub fn memory_seeded() -> Self {
@@ -589,6 +592,7 @@ impl AccessRepository {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+/// 用户、管理员、角色、会话和系统设置运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 struct AccessStore {
     users: BTreeMap<String, UserSummary>,
     admins: BTreeMap<String, AdminSummary>,
@@ -606,6 +610,7 @@ struct AccessStore {
     registration: RegistrationConfig,
 }
 
+/// 从数据库加载用户、管理员、角色、会话和系统设置运行时快照，空库时按模块规则初始化。
 async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore> {
     let pool = database.pool();
     let mut users = BTreeMap::new();
@@ -962,6 +967,7 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
     Ok(access_store)
 }
 
+/// 把用户、管理员、角色、会话和系统设置运行时快照保存到数据库。
 async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> ApiResult<()> {
     let mut tx = database
         .pool()
@@ -1149,6 +1155,7 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
         .map_err(|_| ApiError::Internal("用户权限事务提交失败".to_string()))
 }
 
+/// 用户、管理员、角色、会话和系统设置运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl AccessStore {
     /// 生成初始内存状态：管理员、角色、设置和用户均使用固定种子值，服务可直接启动。
     fn seeded() -> Self {

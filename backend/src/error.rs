@@ -9,6 +9,7 @@ pub type ApiResult<T> = Result<T, ApiError>;
 
 #[derive(Debug, Error)]
 #[allow(dead_code)]
+/// 统一 API 错误类型，所有路由和服务层错误都转换为该枚举。
 pub enum ApiError {
     #[error("bad request: {0}")]
     BadRequest(String),
@@ -24,8 +25,9 @@ pub enum ApiError {
     Internal(String),
 }
 
+/// API 错误的状态码和日志展示方法。
 impl ApiError {
-    /// 处理 status_code 的具体内部流程。
+    /// 根据错误类型映射 HTTP 状态码。
     fn status_code(&self) -> StatusCode {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
@@ -50,8 +52,9 @@ impl ApiError {
     }
 }
 
+/// 把 API 错误转换为统一响应信封。
 impl IntoResponse for ApiError {
-    /// 处理 into_response 的具体内部流程。
+    /// 生成 Axum 响应，并在服务端错误时记录中文日志。
     fn into_response(self) -> axum::response::Response {
         let status = self.status_code();
         let log_message = self.log_message();

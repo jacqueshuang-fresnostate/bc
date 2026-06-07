@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 客服会话状态，描述会话是否处理中、待用户回复、已解决或关闭。
 pub enum SupportConversationStatus {
     Open,
     Pending,
@@ -13,6 +14,7 @@ pub enum SupportConversationStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 客服会话优先级，用于后台客服筛选和提醒。
 pub enum SupportPriority {
     Normal,
     Urgent,
@@ -20,6 +22,7 @@ pub enum SupportPriority {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 客服消息作者类型，区分用户、后台客服和系统消息。
 pub enum SupportMessageAuthor {
     User,
     Admin,
@@ -28,6 +31,7 @@ pub enum SupportMessageAuthor {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 单条客服消息，保存作者快照和消息内容。
 pub struct SupportMessage {
     pub id: String,
     pub author: SupportMessageAuthor,
@@ -39,6 +43,7 @@ pub struct SupportMessage {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 客服会话完整实体，包含分配客服、未读数和消息列表。
 pub struct SupportConversation {
     pub id: String,
     pub user_id: String,
@@ -56,6 +61,7 @@ pub struct SupportConversation {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台为用户创建客服会话时提交的首条消息。
 pub struct CreateSupportConversationRequest {
     pub id: String,
     pub user_id: String,
@@ -66,6 +72,7 @@ pub struct CreateSupportConversationRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台更新客服会话状态、优先级和分配客服时提交的请求。
 pub struct UpdateSupportConversationRequest {
     pub status: SupportConversationStatus,
     pub priority: SupportPriority,
@@ -74,6 +81,7 @@ pub struct UpdateSupportConversationRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台客服回复会话时提交的客服编号和内容。
 pub struct SupportReplyRequest {
     pub admin_id: String,
     pub content: String,
@@ -81,6 +89,7 @@ pub struct SupportReplyRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 用户端继续回复自己客服会话时提交的内容。
 pub struct UserSupportReplyRequest {
     pub content: String,
 }

@@ -4,12 +4,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 广告投放位置，目前用于区分手机端轮播等展示区域。
 pub enum AdvertisementPlacement {
     MobileCarousel,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 广告启停状态，决定手机端是否可以看到该广告。
 pub enum AdvertisementStatus {
     Enabled,
     Disabled,
@@ -17,6 +19,7 @@ pub enum AdvertisementStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台广告维护列表和详情使用的完整广告摘要。
 pub struct AdvertisementSummary {
     pub id: String,
     pub title: String,
@@ -33,6 +36,7 @@ pub struct AdvertisementSummary {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台新建或编辑广告时提交的表单数据。
 pub struct SaveAdvertisementRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -51,6 +55,7 @@ pub struct SaveAdvertisementRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 手机端轮播接口返回的公开广告数据，只保留前台展示需要的字段。
 pub struct MobileAdvertisement {
     pub id: String,
     pub title: String,
@@ -59,6 +64,7 @@ pub struct MobileAdvertisement {
     pub sort_order: i32,
 }
 
+/// 广告摘要的展示转换方法。
 impl AdvertisementSummary {
     /// 转换为手机端可公开读取的轮播广告数据。
     pub fn public_mobile(&self) -> MobileAdvertisement {

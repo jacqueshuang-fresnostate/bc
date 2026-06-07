@@ -36,12 +36,14 @@ const DEFAULT_MIN_AMOUNT_MINOR: i64 = 100;
 const DEFAULT_MAX_AMOUNT_MINOR: i64 = 10_000_000;
 
 #[derive(Clone)]
+/// 充值订单仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct RechargeRepository {
     pub(crate) inner: Arc<RwLock<RechargeStore>>,
     pub(crate) persistence: Option<BusinessDatabase>,
 }
 
 #[derive(Debug, Clone)]
+/// 充值运行配置，从系统设置读取金额范围、渠道和支付参数。
 pub struct RechargeSettings {
     pub rainbow_enabled: bool,
     pub rainbow_gateway_url: String,
@@ -57,12 +59,14 @@ pub struct RechargeSettings {
 }
 
 #[derive(Debug, Clone)]
+/// 客服直充订单创建后绑定的客服会话信息。
 pub struct RechargeSupportTicket {
     pub conversation_id: String,
     pub subject: String,
     pub content: String,
 }
 
+/// 充值订单仓储，负责该模块数据读取、业务变更和持久化协调。
 impl RechargeRepository {
     /// 返回空的内存充值仓储，适配无数据库开发模式。
     pub fn memory() -> Self {
@@ -216,6 +220,7 @@ impl RechargeRepository {
         Ok(())
     }
 
+    /// 用事务提交后的快照替换当前充值订单内存状态。
     pub(crate) fn replace_store(&self, store: RechargeStore) -> ApiResult<()> {
         *self
             .inner
@@ -251,11 +256,13 @@ async fn persist_recharge_finance_stores(
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+/// 充值订单运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 pub(crate) struct RechargeStore {
     orders: BTreeMap<String, RechargeOrderSummary>,
     next_sequence: u64,
 }
 
+/// 充值订单运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl RechargeStore {
     /// 返回按创建顺序倒序排列的充值订单列表。
     fn list(&self) -> Vec<RechargeOrderSummary> {
@@ -514,6 +521,7 @@ pub fn support_ticket_for_recharge(order: &RechargeOrderSummary) -> Option<Recha
     })
 }
 
+/// 从数据库加载充值订单运行时快照，空库时按模块规则初始化。
 async fn load_recharge_store(database: &BusinessDatabase) -> ApiResult<RechargeStore> {
     let pool = database.pool();
     let mut orders = BTreeMap::new();
@@ -587,6 +595,7 @@ async fn load_recharge_store(database: &BusinessDatabase) -> ApiResult<RechargeS
     })
 }
 
+/// 把充值订单运行时快照保存到数据库。
 async fn save_recharge_store(database: &BusinessDatabase, store: &RechargeStore) -> ApiResult<()> {
     let mut tx = database
         .pool()
@@ -601,6 +610,7 @@ async fn save_recharge_store(database: &BusinessDatabase, store: &RechargeStore)
         .map_err(|_| ApiError::Internal("充值事务提交失败".to_string()))
 }
 
+/// 在外层事务中保存充值订单运行时快照，供跨仓储事务复用。
 pub(crate) async fn save_recharge_store_in_transaction(
     connection: &mut PgConnection,
     store: &RechargeStore,

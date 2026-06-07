@@ -258,6 +258,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台实时连接查询参数，浏览器 WebSocket 通过 token 查询参数完成鉴权。
 struct AdminRealtimeQuery {
     token: Option<String>,
 }
@@ -333,6 +334,7 @@ async fn send_realtime_payload(
     socket.send(Message::Text(payload.to_string().into())).await
 }
 
+/// 校验后台接口的管理员登录态和权限范围。
 async fn require_admin_auth(
     State(state): State<AppState>,
     mut request: Request,
@@ -431,6 +433,7 @@ fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
     None
 }
 
+/// 后台管理员登录接口，返回管理员会话和权限范围。
 async fn login_admin(
     State(state): State<AppState>,
     Json(payload): Json<AdminLoginRequest>,
@@ -440,12 +443,14 @@ async fn login_admin(
     Ok(Json(ApiEnvelope::success(session)))
 }
 
+/// 返回当前管理员资料，用于后台刷新登录态。
 async fn get_current_admin(
     Extension(session): Extension<AdminAuthSession>,
 ) -> ApiResult<Json<ApiEnvelope<CurrentAdminProfile>>> {
     Ok(Json(ApiEnvelope::success(session.profile())))
 }
 
+/// 注销当前管理员会话。
 async fn logout_admin(
     State(state): State<AppState>,
     Extension(session): Extension<AdminAuthSession>,
@@ -457,6 +462,7 @@ async fn logout_admin(
     })))
 }
 
+/// 后台手动触发一轮开奖自动化。
 async fn run_draw_automation_request(
     State(state): State<AppState>,
     Json(payload): Json<DrawAutomationRunRequest>,
@@ -475,6 +481,7 @@ async fn run_draw_automation_request(
     Ok(Json(ApiEnvelope::success(run)))
 }
 
+/// 返回开奖调度器当前配置、运行状态和最近执行记录。
 async fn get_draw_scheduler_status(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<DrawSchedulerStatus>>> {
@@ -483,6 +490,7 @@ async fn get_draw_scheduler_status(
     Ok(Json(ApiEnvelope::success(status)))
 }
 
+/// 后台保存开奖调度配置，并按开关启动或停止调度器。
 async fn update_draw_scheduler_config(
     State(state): State<AppState>,
     Json(payload): Json<DrawSchedulerConfig>,
@@ -492,6 +500,7 @@ async fn update_draw_scheduler_config(
     Ok(Json(ApiEnvelope::success(status)))
 }
 
+/// 返回后台开奖源列表。
 async fn list_draw_sources(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<DrawSource>>>> {
@@ -500,6 +509,7 @@ async fn list_draw_sources(
     Ok(Json(ApiEnvelope::success(sources)))
 }
 
+/// 创建新的外部 API 开奖源。
 async fn create_draw_source(
     State(state): State<AppState>,
     Json(payload): Json<SaveDrawSourceRequest>,
@@ -510,6 +520,7 @@ async fn create_draw_source(
     Ok(Json(ApiEnvelope::success(source)))
 }
 
+/// 更新指定开奖源配置。
 async fn update_draw_source(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -524,6 +535,7 @@ async fn update_draw_source(
     Ok(Json(ApiEnvelope::success(source)))
 }
 
+/// 删除指定开奖源配置。
 async fn delete_draw_source(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -533,6 +545,7 @@ async fn delete_draw_source(
     Ok(Json(ApiEnvelope::success(source)))
 }
 
+/// 返回所有彩种开奖控制配置。
 async fn list_lottery_draw_controls(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<LotteryDrawControl>>>> {
@@ -542,6 +555,7 @@ async fn list_lottery_draw_controls(
     Ok(Json(ApiEnvelope::success(controls)))
 }
 
+/// 返回单个彩种的开奖控制配置。
 async fn get_lottery_draw_control(
     State(state): State<AppState>,
     Path(lottery_id): Path<String>,
@@ -552,6 +566,7 @@ async fn get_lottery_draw_control(
     Ok(Json(ApiEnvelope::success(control)))
 }
 
+/// 保存彩种开奖控制号码和控制范围。
 async fn save_lottery_draw_control(
     State(state): State<AppState>,
     Path(lottery_id): Path<String>,
@@ -631,6 +646,7 @@ fn required_admin_control_value(value: Option<&str>, label: &str) -> ApiResult<S
         .ok_or_else(|| ApiError::BadRequest(format!("{label}不能为空")))
 }
 
+/// 按筛选条件返回后台期号分页列表。
 async fn list_draw_issues(
     State(state): State<AppState>,
     Query(query): Query<DrawIssueListQuery>,
@@ -679,6 +695,7 @@ async fn list_draw_issues(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台期号列表筛选和分页查询参数。
 struct DrawIssueListQuery {
     lottery_id: Option<String>,
     page: Option<usize>,
@@ -687,12 +704,14 @@ struct DrawIssueListQuery {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台财务、订单、合买等列表通用分页参数。
 struct FinancePageQuery {
     page: Option<usize>,
     page_size: Option<usize>,
     include_robot_data: Option<bool>,
 }
 
+/// 后台财务、订单、合买等列表通用分页参数。
 impl FinancePageQuery {
     /// 后台列表默认隐藏机器人账户和机器人流水，只有显式打开开关时才返回。
     fn include_robot_data(&self) -> bool {
@@ -702,10 +721,12 @@ impl FinancePageQuery {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台列表是否包含机器人数据的查询参数。
 struct RobotDataQuery {
     include_robot_data: Option<bool>,
 }
 
+/// 后台列表是否包含机器人数据的查询参数。
 impl RobotDataQuery {
     /// 后台查询默认隐藏机器人数据，避免运营统计被系统机器人干扰。
     fn include_robot_data(&self) -> bool {
@@ -713,6 +734,7 @@ impl RobotDataQuery {
     }
 }
 
+/// 按通用分页参数裁剪列表并生成分页响应。
 fn page_items<T>(items: Vec<T>, query: FinancePageQuery) -> FinancePage<T> {
     let total_count = items.len();
     let (page, page_size, start, end) = if query.page.is_none() && query.page_size.is_none() {
@@ -744,6 +766,7 @@ fn page_items<T>(items: Vec<T>, query: FinancePageQuery) -> FinancePage<T> {
     }
 }
 
+/// 返回指定开奖期号详情。
 async fn get_draw_issue(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -753,6 +776,7 @@ async fn get_draw_issue(
     Ok(Json(ApiEnvelope::success(issue)))
 }
 
+/// 后台手动创建开奖期号。
 async fn create_draw_issue(
     State(state): State<AppState>,
     Json(payload): Json<CreateDrawIssueRequest>,
@@ -764,6 +788,7 @@ async fn create_draw_issue(
     Ok(Json(ApiEnvelope::success(issue)))
 }
 
+/// 后台生成单个下一期开奖期号。
 async fn generate_next_draw_issue_request(
     State(state): State<AppState>,
     Json(payload): Json<GenerateDrawIssueRequest>,
@@ -775,6 +800,7 @@ async fn generate_next_draw_issue_request(
     Ok(Json(ApiEnvelope::success(issue)))
 }
 
+/// 预览即将生成的下一期开奖期号，不落库。
 async fn preview_draw_issue_generation_request(
     State(state): State<AppState>,
     Json(payload): Json<GenerateDrawIssuesRequest>,
@@ -785,6 +811,7 @@ async fn preview_draw_issue_generation_request(
     Ok(Json(ApiEnvelope::success(plans)))
 }
 
+/// 后台批量生成未来期开奖期号。
 async fn generate_draw_issue_batch_request(
     State(state): State<AppState>,
     Json(payload): Json<GenerateDrawIssuesRequest>,
@@ -798,6 +825,7 @@ async fn generate_draw_issue_batch_request(
     Ok(Json(ApiEnvelope::success(issues)))
 }
 
+/// 后台手动封盘指定期号。
 async fn close_draw_issue(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -808,6 +836,7 @@ async fn close_draw_issue(
     Ok(Json(ApiEnvelope::success(issue)))
 }
 
+/// 后台手动录入或控制指定期号开奖结果。
 async fn draw_issue_result(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -819,6 +848,7 @@ async fn draw_issue_result(
     Ok(Json(ApiEnvelope::success(issue)))
 }
 
+/// 后台取消尚未结算的开奖期号。
 async fn cancel_draw_issue(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -828,6 +858,7 @@ async fn cancel_draw_issue(
     Ok(Json(ApiEnvelope::success(issue)))
 }
 
+/// 返回计奖派奖批次分页列表。
 async fn list_settlements(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
@@ -838,6 +869,7 @@ async fn list_settlements(
     Ok(Json(ApiEnvelope::success(page_items(settlements, query))))
 }
 
+/// 返回指定计奖派奖批次详情。
 async fn get_settlement(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -847,6 +879,7 @@ async fn get_settlement(
     Ok(Json(ApiEnvelope::success(settlement)))
 }
 
+/// 后台触发指定已开奖期号的订单结算。
 async fn settle_draw_issue_orders(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -947,16 +980,19 @@ fn publish_user_withdrawal_changed(state: &AppState, order: &WithdrawalOrderSumm
         .publish_user(&order.user_id, withdrawal_changed_event(order));
 }
 
+/// 返回后台可配置的玩法规则目录。
 async fn list_play_rules() -> ApiResult<Json<ApiEnvelope<Vec<PlayRuleSummary>>>> {
     Ok(Json(ApiEnvelope::success(play_rule_summaries())))
 }
 
+/// 后台验证玩法选号、注数和中奖匹配项。
 async fn evaluate_play_rule_request(
     Json(payload): Json<PlayRuleEvaluateRequest>,
 ) -> ApiResult<Json<ApiEnvelope<PlayRuleEvaluation>>> {
     Ok(Json(ApiEnvelope::success(evaluate_play_rule(payload)?)))
 }
 
+/// 返回后台首页仪表盘汇总数据。
 async fn get_dashboard_summary(
     State(state): State<AppState>,
     Extension(session): Extension<AdminAuthSession>,
@@ -987,6 +1023,7 @@ async fn get_dashboard_summary(
     Ok(Json(ApiEnvelope::success(summary)))
 }
 
+/// 返回后台合买计划分页列表。
 async fn list_group_buy_plans(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
@@ -996,6 +1033,7 @@ async fn list_group_buy_plans(
     Ok(Json(ApiEnvelope::success(page_items(plans, query))))
 }
 
+/// 返回指定合买计划详情。
 async fn get_group_buy_plan(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1005,6 +1043,7 @@ async fn get_group_buy_plan(
     Ok(Json(ApiEnvelope::success(plan)))
 }
 
+/// 后台创建合买计划。
 async fn create_group_buy_plan(
     State(state): State<AppState>,
     Json(payload): Json<CreateGroupBuyPlanRequest>,
@@ -1093,6 +1132,7 @@ async fn create_group_buy_plan(
     Ok(Json(ApiEnvelope::success(plan)))
 }
 
+/// 后台更新合买计划状态和备注。
 async fn update_group_buy_plan(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1127,6 +1167,7 @@ async fn update_group_buy_plan(
     Ok(Json(ApiEnvelope::success(plan)))
 }
 
+/// 后台为合买计划添加参与人。
 async fn add_group_buy_participant(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1229,6 +1270,7 @@ async fn add_group_buy_participant(
     Ok(Json(ApiEnvelope::success(plan)))
 }
 
+/// 返回后台邀请关系列表。
 async fn list_invitations(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<InviteRecord>>>> {
@@ -1237,6 +1279,7 @@ async fn list_invitations(
     Ok(Json(ApiEnvelope::success(invitations)))
 }
 
+/// 返回指定邀请关系详情。
 async fn get_invitation(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1246,6 +1289,7 @@ async fn get_invitation(
     Ok(Json(ApiEnvelope::success(invitation)))
 }
 
+/// 后台创建邀请关系记录。
 async fn create_invitation(
     State(state): State<AppState>,
     Json(payload): Json<CreateInviteRecordRequest>,
@@ -1260,6 +1304,7 @@ async fn create_invitation(
     Ok(Json(ApiEnvelope::success(invitation)))
 }
 
+/// 后台更新邀请关系状态和返利开关。
 async fn update_invitation(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1270,6 +1315,7 @@ async fn update_invitation(
     Ok(Json(ApiEnvelope::success(invitation)))
 }
 
+/// 返回后台客服会话列表。
 async fn list_support_conversations(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<SupportConversation>>>> {
@@ -1278,6 +1324,7 @@ async fn list_support_conversations(
     Ok(Json(ApiEnvelope::success(conversations)))
 }
 
+/// 返回指定客服会话详情。
 async fn get_support_conversation(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1287,6 +1334,7 @@ async fn get_support_conversation(
     Ok(Json(ApiEnvelope::success(conversation)))
 }
 
+/// 后台为用户创建客服会话。
 async fn create_support_conversation(
     State(state): State<AppState>,
     Json(payload): Json<CreateSupportConversationRequest>,
@@ -1298,6 +1346,7 @@ async fn create_support_conversation(
     Ok(Json(ApiEnvelope::success(conversation)))
 }
 
+/// 后台更新客服会话状态、优先级或分配客服。
 async fn update_support_conversation(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1310,6 +1359,7 @@ async fn update_support_conversation(
     Ok(Json(ApiEnvelope::success(conversation)))
 }
 
+/// 后台客服回复指定会话。
 async fn reply_support_conversation(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1322,6 +1372,7 @@ async fn reply_support_conversation(
     Ok(Json(ApiEnvelope::success(conversation)))
 }
 
+/// 返回后台用户列表。
 async fn list_users(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<UserSummary>>>> {
@@ -1330,6 +1381,7 @@ async fn list_users(
     Ok(Json(ApiEnvelope::success(users)))
 }
 
+/// 返回指定用户详情。
 async fn get_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1339,6 +1391,7 @@ async fn get_user(
     Ok(Json(ApiEnvelope::success(user)))
 }
 
+/// 后台创建用户并初始化资金账户。
 async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<UserSummary>,
@@ -1350,6 +1403,7 @@ async fn create_user(
     Ok(Json(ApiEnvelope::success(user)))
 }
 
+/// 后台更新用户基础资料，不直接修改余额和邀请码。
 async fn update_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1361,6 +1415,7 @@ async fn update_user(
     Ok(Json(ApiEnvelope::success(user)))
 }
 
+/// 后台切换用户状态。
 async fn set_user_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1416,6 +1471,7 @@ fn user_with_account_balance(
     user
 }
 
+/// 返回后台管理员账号列表。
 async fn list_admins(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<AdminSummary>>>> {
@@ -1424,6 +1480,7 @@ async fn list_admins(
     Ok(Json(ApiEnvelope::success(admins)))
 }
 
+/// 返回指定管理员账号详情。
 async fn get_admin(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1433,6 +1490,7 @@ async fn get_admin(
     Ok(Json(ApiEnvelope::success(admin)))
 }
 
+/// 后台创建管理员账号。
 async fn create_admin(
     State(state): State<AppState>,
     Json(payload): Json<AdminSaveRequest>,
@@ -1442,6 +1500,7 @@ async fn create_admin(
     Ok(Json(ApiEnvelope::success(admin)))
 }
 
+/// 后台更新管理员账号资料。
 async fn update_admin(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1452,6 +1511,7 @@ async fn update_admin(
     Ok(Json(ApiEnvelope::success(admin)))
 }
 
+/// 后台重置管理员登录密码。
 async fn reset_admin_password(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1462,6 +1522,7 @@ async fn reset_admin_password(
     Ok(Json(ApiEnvelope::success(admin)))
 }
 
+/// 后台切换管理员账号状态。
 async fn set_admin_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1472,12 +1533,14 @@ async fn set_admin_status(
     Ok(Json(ApiEnvelope::success(admin)))
 }
 
+/// 返回后台角色列表。
 async fn list_roles(State(state): State<AppState>) -> ApiResult<Json<ApiEnvelope<Vec<AdminRole>>>> {
     let roles = state.access.roles().await?;
 
     Ok(Json(ApiEnvelope::success(roles)))
 }
 
+/// 返回指定角色详情。
 async fn get_role(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1487,6 +1550,7 @@ async fn get_role(
     Ok(Json(ApiEnvelope::success(role)))
 }
 
+/// 后台创建权限角色。
 async fn create_role(
     State(state): State<AppState>,
     Json(payload): Json<AdminRole>,
@@ -1496,6 +1560,7 @@ async fn create_role(
     Ok(Json(ApiEnvelope::success(role)))
 }
 
+/// 后台更新权限角色。
 async fn update_role(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1506,6 +1571,7 @@ async fn update_role(
     Ok(Json(ApiEnvelope::success(role)))
 }
 
+/// 后台删除未被使用的权限角色。
 async fn delete_role(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1515,6 +1581,7 @@ async fn delete_role(
     Ok(Json(ApiEnvelope::success(role)))
 }
 
+/// 返回系统设置列表。
 async fn list_system_settings(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<SystemSetting>>>> {
@@ -1523,6 +1590,7 @@ async fn list_system_settings(
     Ok(Json(ApiEnvelope::success(settings)))
 }
 
+/// 后台更新单个系统设置值。
 async fn update_system_setting(
     State(state): State<AppState>,
     Path(key): Path<String>,
@@ -1643,6 +1711,7 @@ async fn upload_image_bed_file(
     Ok(Json(ApiEnvelope::success(output)))
 }
 
+/// 返回后台广告配置列表。
 async fn list_advertisements(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<AdvertisementSummary>>>> {
@@ -1651,6 +1720,7 @@ async fn list_advertisements(
     Ok(Json(ApiEnvelope::success(advertisements)))
 }
 
+/// 返回指定广告配置详情。
 async fn get_advertisement(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1660,6 +1730,7 @@ async fn get_advertisement(
     Ok(Json(ApiEnvelope::success(advertisement)))
 }
 
+/// 后台创建广告配置。
 async fn create_advertisement(
     State(state): State<AppState>,
     Json(payload): Json<SaveAdvertisementRequest>,
@@ -1669,6 +1740,7 @@ async fn create_advertisement(
     Ok(Json(ApiEnvelope::success(advertisement)))
 }
 
+/// 后台更新广告配置。
 async fn update_advertisement(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1679,6 +1751,7 @@ async fn update_advertisement(
     Ok(Json(ApiEnvelope::success(advertisement)))
 }
 
+/// 后台删除广告配置。
 async fn delete_advertisement(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1688,6 +1761,7 @@ async fn delete_advertisement(
     Ok(Json(ApiEnvelope::success(advertisement)))
 }
 
+/// 按后台配置的字段路径从图床响应中提取图片链接。
 fn extract_image_bed_result_field(response: &Value, field_path: &str) -> ApiResult<Value> {
     // 根据配置路径从上游响应里找图片链接，返回缺失时给出可读错误。
     let Some(value) = resolve_json_path(response, field_path) else {
@@ -1705,6 +1779,7 @@ fn extract_image_bed_result_field(response: &Value, field_path: &str) -> ApiResu
     }
 }
 
+/// 解析点号分隔的 JSON 字段路径。
 fn resolve_json_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     // 支持 `.` 分隔的嵌套对象路径，如 `links.download`。
     let mut current = value;
@@ -1722,6 +1797,7 @@ fn resolve_json_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     Some(current)
 }
 
+/// 返回用户注册开关配置。
 async fn get_registration_config(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<RegistrationConfig>>> {
@@ -1730,6 +1806,7 @@ async fn get_registration_config(
     Ok(Json(ApiEnvelope::success(registration)))
 }
 
+/// 后台更新注册方式和邀请码规则。
 async fn update_registration_config(
     State(state): State<AppState>,
     Json(payload): Json<RegistrationConfig>,
@@ -1739,6 +1816,7 @@ async fn update_registration_config(
     Ok(Json(ApiEnvelope::success(registration)))
 }
 
+/// 返回邀请和返利策略。
 async fn get_invite_policy(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<InvitePolicySummary>>> {
@@ -1747,6 +1825,7 @@ async fn get_invite_policy(
     Ok(Json(ApiEnvelope::success(policy)))
 }
 
+/// 后台更新邀请权限和默认返利比例。
 async fn update_invite_policy(
     State(state): State<AppState>,
     Json(payload): Json<InvitePolicyUpdateRequest>,
@@ -1756,6 +1835,7 @@ async fn update_invite_policy(
     Ok(Json(ApiEnvelope::success(policy)))
 }
 
+/// 返回后台机器人配置列表。
 async fn list_robots(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<RobotConfigSummary>>>> {
@@ -1764,6 +1844,7 @@ async fn list_robots(
     Ok(Json(ApiEnvelope::success(robots)))
 }
 
+/// 返回指定机器人配置详情。
 async fn get_robot(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1773,6 +1854,7 @@ async fn get_robot(
     Ok(Json(ApiEnvelope::success(robot)))
 }
 
+/// 后台创建机器人配置。
 async fn create_robot(
     State(state): State<AppState>,
     Json(payload): Json<RobotConfigSummary>,
@@ -1783,6 +1865,7 @@ async fn create_robot(
     Ok(Json(ApiEnvelope::success(robot)))
 }
 
+/// 后台更新机器人配置。
 async fn update_robot(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1794,6 +1877,7 @@ async fn update_robot(
     Ok(Json(ApiEnvelope::success(robot)))
 }
 
+/// 后台删除机器人配置。
 async fn delete_robot(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1803,6 +1887,7 @@ async fn delete_robot(
     Ok(Json(ApiEnvelope::success(robot)))
 }
 
+/// 后台切换机器人运行状态。
 async fn set_robot_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1813,6 +1898,7 @@ async fn set_robot_status(
     Ok(Json(ApiEnvelope::success(robot)))
 }
 
+/// 后台手动触发合买机器人执行。
 async fn run_group_buy_robots_request(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<GroupBuyRobotRun>>> {
@@ -1923,6 +2009,7 @@ fn should_include_user_scoped_record(include_robot_data: bool, user_id: &str) ->
     include_robot_data || !is_group_buy_robot_user_id(user_id)
 }
 
+/// 返回后台财务总览。
 async fn get_finance_overview(
     State(state): State<AppState>,
     Query(query): Query<RobotDataQuery>,
@@ -1932,6 +2019,7 @@ async fn get_finance_overview(
     Ok(Json(ApiEnvelope::success(overview)))
 }
 
+/// 返回资金账户分页列表。
 async fn list_financial_accounts(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
@@ -1963,6 +2051,7 @@ async fn list_financial_accounts(
     Ok(Json(ApiEnvelope::success(page_items(accounts, query))))
 }
 
+/// 返回资金流水分页列表。
 async fn list_ledger_entries(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
@@ -1980,6 +2069,7 @@ async fn list_ledger_entries(
     Ok(Json(ApiEnvelope::success(page_items(entries, query))))
 }
 
+/// 返回充值订单分页列表。
 async fn list_recharge_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
@@ -1989,6 +2079,7 @@ async fn list_recharge_orders(
     Ok(Json(ApiEnvelope::success(page_items(orders, query))))
 }
 
+/// 返回提现申请分页列表。
 async fn list_withdrawal_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
@@ -1998,6 +2089,7 @@ async fn list_withdrawal_orders(
     Ok(Json(ApiEnvelope::success(page_items(orders, query))))
 }
 
+/// 后台确认客服直充或人工充值订单入账。
 async fn confirm_recharge_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2030,6 +2122,7 @@ async fn confirm_recharge_order(
     Ok(Json(ApiEnvelope::success(order)))
 }
 
+/// 后台审核通过提现申请并扣减冻结余额。
 async fn approve_withdrawal_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2042,6 +2135,7 @@ async fn approve_withdrawal_order(
     Ok(Json(ApiEnvelope::success(order)))
 }
 
+/// 后台驳回提现申请并解冻余额。
 async fn reject_withdrawal_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2054,6 +2148,7 @@ async fn reject_withdrawal_order(
     Ok(Json(ApiEnvelope::success(order)))
 }
 
+/// 后台财务手动调账接口。
 async fn manual_balance_adjustment(
     State(state): State<AppState>,
     Json(payload): Json<ManualBalanceAdjustmentRequest>,
@@ -2070,6 +2165,7 @@ async fn manual_balance_adjustment(
     Ok(Json(ApiEnvelope::success(entry)))
 }
 
+/// 返回后台投注订单分页列表。
 async fn list_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
@@ -2088,6 +2184,7 @@ async fn list_orders(
     Ok(Json(ApiEnvelope::success(page_items(orders, query))))
 }
 
+/// 返回指定投注订单详情。
 async fn get_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2097,6 +2194,7 @@ async fn get_order(
     Ok(Json(ApiEnvelope::success(order)))
 }
 
+/// 后台代创建投注订单并扣款。
 async fn create_order(
     State(state): State<AppState>,
     Json(payload): Json<CreateOrderRequest>,
@@ -2117,6 +2215,7 @@ async fn create_order(
     Ok(Json(ApiEnvelope::success(order)))
 }
 
+/// 后台取消待开奖订单并退款。
 async fn cancel_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2128,6 +2227,7 @@ async fn cancel_order(
     Ok(Json(ApiEnvelope::success(order)))
 }
 
+/// 返回后台彩种列表。
 async fn list_lotteries(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<LotteryKind>>>> {
@@ -2136,6 +2236,7 @@ async fn list_lotteries(
     Ok(Json(ApiEnvelope::success(lotteries)))
 }
 
+/// 返回指定彩种详情。
 async fn get_lottery(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2145,6 +2246,7 @@ async fn get_lottery(
     Ok(Json(ApiEnvelope::success(lottery)))
 }
 
+/// 后台创建彩种配置。
 async fn create_lottery(
     State(state): State<AppState>,
     Json(payload): Json<LotteryKind>,
@@ -2154,6 +2256,7 @@ async fn create_lottery(
     Ok(Json(ApiEnvelope::success(lottery)))
 }
 
+/// 后台更新彩种配置。
 async fn update_lottery(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2164,6 +2267,7 @@ async fn update_lottery(
     Ok(Json(ApiEnvelope::success(lottery)))
 }
 
+/// 后台删除彩种配置。
 async fn delete_lottery(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2173,6 +2277,7 @@ async fn delete_lottery(
     Ok(Json(ApiEnvelope::success(lottery)))
 }
 
+/// 后台切换彩种销售状态，并在开售时补齐期号。
 async fn set_lottery_sale(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2213,6 +2318,7 @@ fn should_align_draw_issue_plan_after_sale_on(draw_mode: &DrawMode) -> bool {
     matches!(draw_mode, DrawMode::Api | DrawMode::Platform)
 }
 
+/// 返回彩种分类列表。
 async fn list_lottery_categories(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<LotteryCategoryConfig>>>> {
@@ -2221,6 +2327,7 @@ async fn list_lottery_categories(
     Ok(Json(ApiEnvelope::success(categories)))
 }
 
+/// 后台创建彩种分类。
 async fn create_lottery_category(
     State(state): State<AppState>,
     Json(payload): Json<LotteryCategoryConfig>,
@@ -2230,6 +2337,7 @@ async fn create_lottery_category(
     Ok(Json(ApiEnvelope::success(category)))
 }
 
+/// 后台更新彩种分类名称。
 async fn update_lottery_category(
     State(state): State<AppState>,
     Path(code): Path<String>,
@@ -2244,6 +2352,7 @@ async fn update_lottery_category(
     Ok(Json(ApiEnvelope::success(category)))
 }
 
+/// 后台删除彩种分类。
 async fn delete_lottery_category(
     State(state): State<AppState>,
     Path(code): Path<String>,
@@ -2253,6 +2362,7 @@ async fn delete_lottery_category(
     Ok(Json(ApiEnvelope::success(category)))
 }
 
+/// 彩种开售后按开奖模式补齐可销售期号。
 async fn align_draw_issue_plan_after_sale_on(
     state: &AppState,
     lottery: &LotteryKind,
@@ -2290,6 +2400,7 @@ async fn align_draw_issue_plan_after_sale_on(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台切换彩种销售状态时提交的请求。
 struct SaleStatusRequest {
     sale_enabled: bool,
 }

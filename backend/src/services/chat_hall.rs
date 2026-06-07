@@ -33,11 +33,13 @@ const CHAT_HALL_RED_PACKET_GREETING_MAX_LENGTH: usize = 60;
 const CHAT_HALL_RED_PACKET_MAX_CLAIM_COUNT: u32 = 100;
 
 #[derive(Clone)]
+/// 手机端公共聊天大厅仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct ChatHallRepository {
     inner: Arc<RwLock<ChatHallStore>>,
     persistence: Option<BusinessDatabase>,
 }
 
+/// 手机端公共聊天大厅仓储，负责该模块数据读取、业务变更和持久化协调。
 impl ChatHallRepository {
     /// 创建空的内存聊天大厅仓储，供未配置数据库的本地开发使用。
     pub fn memory() -> Self {
@@ -222,6 +224,7 @@ impl ChatHallRepository {
 }
 
 #[derive(Clone, Debug, Default)]
+/// 手机端公共聊天大厅运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 pub(crate) struct ChatHallStore {
     messages: VecDeque<ChatHallMessage>,
     red_packets: BTreeMap<String, ChatHallRedPacket>,
@@ -241,6 +244,7 @@ struct PreparedRedPacketClaim {
     claim: ChatHallRedPacketClaim,
 }
 
+/// 手机端公共聊天大厅运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl ChatHallStore {
     /// 返回最近消息，超过展示上限时仅返回末尾一段历史。
     fn list(&self) -> Vec<ChatHallMessage> {
@@ -641,6 +645,7 @@ async fn save_chat_hall_store(database: &BusinessDatabase, store: &ChatHallStore
         .map_err(|_| ApiError::Internal("聊天大厅事务提交失败".to_string()))
 }
 
+/// 在外层事务中保存手机端公共聊天大厅运行时快照，供跨仓储事务复用。
 pub(crate) async fn save_chat_hall_store_in_transaction(
     connection: &mut PgConnection,
     store: &ChatHallStore,

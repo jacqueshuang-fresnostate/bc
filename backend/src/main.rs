@@ -14,6 +14,7 @@ use std::{
 };
 
 #[tokio::main]
+/// 后端服务启动入口，加载本地环境、初始化日志、绑定端口并启动 Axum。
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let loaded_env_files = load_local_env_files()?;
 

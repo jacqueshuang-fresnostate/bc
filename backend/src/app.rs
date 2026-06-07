@@ -30,6 +30,7 @@ use crate::{
 };
 
 #[derive(Clone)]
+/// 应用全局状态，集中持有每个业务模块的仓储和实时事件中心。
 pub struct AppState {
     pub access: AccessRepository,
     pub advertisements: AdvertisementRepository,
@@ -49,8 +50,9 @@ pub struct AppState {
     pub withdrawals: WithdrawalRepository,
 }
 
+/// 应用状态构造和环境初始化方法。
 impl AppState {
-    /// 处理 new_with_scheduler 的具体内部流程。
+    /// 创建内存模式应用状态，主要用于未配置数据库的本地开发和测试。
     fn new_with_scheduler(scheduler: DrawSchedulerRepository) -> Self {
         Self {
             access: AccessRepository::memory_seeded(),

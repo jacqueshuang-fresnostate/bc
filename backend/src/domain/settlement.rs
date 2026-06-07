@@ -6,6 +6,7 @@ use crate::domain::{order::OrderStatus, play::PlayRuleCode};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 单次计奖派奖批次，记录某个期号的结算汇总和订单明细。
 pub struct SettlementRun {
     pub id: String,
     pub draw_issue_id: String,
@@ -23,6 +24,7 @@ pub struct SettlementRun {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 单个订单的计奖结果，保存命中项、派奖金额和最终状态。
 pub struct OrderSettlement {
     pub order_id: String,
     pub user_id: String,

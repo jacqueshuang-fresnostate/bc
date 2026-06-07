@@ -51,6 +51,7 @@ const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 开奖调度器配置，控制启停、执行间隔和未来期号缓冲。
 pub struct DrawSchedulerConfig {
     pub enabled: bool,
     pub interval_seconds: u64,
@@ -60,12 +61,14 @@ pub struct DrawSchedulerConfig {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 调度器跳过彩种的原因记录。
 pub struct DrawSchedulerSkippedLottery {
     pub lottery_id: String,
     pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// 调度器单轮执行结果，汇总自动开奖、结算和补期信息。
 pub struct DrawSchedulerRun {
     pub now: String,
     pub automation_run: DrawAutomationRun,
@@ -76,6 +79,7 @@ pub struct DrawSchedulerRun {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 调度器运行记录状态。
 pub enum DrawSchedulerRunStatus {
     Success,
     Failed,
@@ -83,12 +87,14 @@ pub enum DrawSchedulerRunStatus {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 调度器触发来源，区分后台手动和后台工作线程。
 pub enum DrawSchedulerRunTrigger {
     Automatic,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 调度器历史执行记录。
 pub struct DrawSchedulerRunRecord {
     pub id: String,
     pub trigger: DrawSchedulerRunTrigger,
@@ -110,6 +116,7 @@ pub struct DrawSchedulerRunRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台展示的调度器当前状态。
 pub struct DrawSchedulerStatus {
     pub enabled: bool,
     pub config: DrawSchedulerConfig,
@@ -119,18 +126,21 @@ pub struct DrawSchedulerStatus {
 }
 
 #[derive(Clone)]
+/// 开奖调度器仓储，保存配置、历史和运行时序号。
 pub struct DrawSchedulerRepository {
     inner: Arc<RwLock<DrawSchedulerStore>>,
     persistence: Option<BusinessDatabase>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+/// 开奖调度器运行时快照。
 struct DrawSchedulerStore {
     config: DrawSchedulerConfig,
     next_sequence: u64,
     runs: VecDeque<DrawSchedulerRunRecord>,
 }
 
+/// 调度器默认配置，初始关闭并保留最小未来期号缓冲。
 impl Default for DrawSchedulerConfig {
     /// 返回默认配置。
     fn default() -> Self {
@@ -143,6 +153,7 @@ impl Default for DrawSchedulerConfig {
     }
 }
 
+/// 开奖调度器仓储的方法实现。
 impl DrawSchedulerRepository {
     /// 初始化调度器状态。
     pub fn new(config: DrawSchedulerConfig) -> Self {
@@ -244,6 +255,7 @@ impl DrawSchedulerRepository {
     }
 }
 
+/// 从数据库加载开奖调度器配置和历史记录。
 async fn load_scheduler_store(
     database: &BusinessDatabase,
     default_config: DrawSchedulerConfig,
@@ -364,6 +376,7 @@ async fn load_scheduler_store(
     })
 }
 
+/// 把开奖调度器配置、历史和运行时序号保存到数据库。
 async fn save_scheduler_store(
     database: &BusinessDatabase,
     store: &DrawSchedulerStore,
@@ -472,6 +485,7 @@ fn max_sequence(ids: &[String]) -> u64 {
         .unwrap_or_default()
 }
 
+/// 开奖调度器快照的校验、记录和历史裁剪方法。
 impl DrawSchedulerStore {
     /// 创建并初始化新实例。
     fn new(config: DrawSchedulerConfig) -> Self {
@@ -578,6 +592,7 @@ impl DrawSchedulerStore {
     }
 }
 
+/// 开奖调度器配置校验方法。
 impl DrawSchedulerConfig {
     /// 校验参数并返回校验结果。
     fn validate(&self) -> ApiResult<()> {

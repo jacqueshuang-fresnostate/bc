@@ -24,11 +24,13 @@ use crate::{
 use super::business_database::{enum_from_string, enum_to_string};
 
 #[derive(Clone)]
+/// 提现申请仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct WithdrawalRepository {
     pub(crate) inner: Arc<RwLock<WithdrawalStore>>,
     pub(crate) persistence: Option<BusinessDatabase>,
 }
 
+/// 提现申请仓储，负责该模块数据读取、业务变更和持久化协调。
 impl WithdrawalRepository {
     /// 返回空的内存提现仓储，适配无数据库开发模式。
     pub fn memory() -> Self {
@@ -148,6 +150,7 @@ impl WithdrawalRepository {
         Ok(result)
     }
 
+    /// 用事务提交后的快照替换当前提现申请内存状态。
     pub(crate) fn replace_store(&self, store: WithdrawalStore) -> ApiResult<()> {
         *self
             .inner
@@ -183,11 +186,13 @@ async fn persist_withdrawal_finance_stores(
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+/// 提现申请运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 pub(crate) struct WithdrawalStore {
     orders: BTreeMap<String, WithdrawalOrderSummary>,
     next_sequence: u64,
 }
 
+/// 提现申请运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl WithdrawalStore {
     /// 返回全部提现申请列表，最新申请排在最前面。
     fn list(&self) -> Vec<WithdrawalOrderSummary> {
@@ -305,6 +310,7 @@ impl WithdrawalStore {
     }
 }
 
+/// 从数据库加载提现申请运行时快照，空库时按模块规则初始化。
 async fn load_withdrawal_store(database: &BusinessDatabase) -> ApiResult<WithdrawalStore> {
     let pool = database.pool();
     let mut orders = BTreeMap::new();
@@ -378,6 +384,7 @@ async fn load_withdrawal_store(database: &BusinessDatabase) -> ApiResult<Withdra
     })
 }
 
+/// 在外层事务中保存提现申请运行时快照，供跨仓储事务复用。
 pub(crate) async fn save_withdrawal_store_in_transaction(
     connection: &mut PgConnection,
     store: &WithdrawalStore,

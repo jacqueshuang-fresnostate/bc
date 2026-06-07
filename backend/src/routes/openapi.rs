@@ -23,6 +23,7 @@ async fn swagger_ui() -> Html<&'static str> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// OpenAPI 文档中的接口鉴权模式。
 enum AuthMode {
     None,
     Admin,
@@ -30,6 +31,7 @@ enum AuthMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// OpenAPI 文档中的请求体类型，用于生成示例 schema。
 enum RequestBodyKind {
     None,
     Form,
@@ -38,6 +40,7 @@ enum RequestBodyKind {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// OpenAPI 路径文档配置项。
 struct RouteDoc {
     method: &'static str,
     path: &'static str,

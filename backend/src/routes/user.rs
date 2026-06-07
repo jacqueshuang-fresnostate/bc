@@ -191,6 +191,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(protected_routes)
 }
 
+/// 校验用户端接口的登录态，并返回当前用户会话。
 async fn require_user_auth(
     State(state): State<AppState>,
     mut request: Request,
@@ -222,6 +223,7 @@ fn bearer_token(request: &Request) -> ApiResult<&str> {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 用户端实时连接查询参数，支持 WebSocket token 鉴权。
 struct UserRealtimeQuery {
     token: Option<String>,
 }
@@ -296,6 +298,7 @@ async fn send_realtime_payload(
     socket.send(Message::Text(payload.to_string().into())).await
 }
 
+/// 返回手机端轮播广告列表。
 async fn list_mobile_advertisements(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<MobileAdvertisement>>>> {
@@ -304,6 +307,7 @@ async fn list_mobile_advertisements(
     Ok(Json(ApiEnvelope::success(advertisements)))
 }
 
+/// 返回手机端平台名称、Logo 和简介配置。
 async fn get_mobile_site_config(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<MobileSiteConfig>>> {
@@ -347,6 +351,7 @@ fn config_value(settings: &[SystemSetting], key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// 用户注册接口，支持用户名或邮箱注册。
 async fn register_user(
     State(state): State<AppState>,
     Json(payload): Json<UserRegisterRequest>,
@@ -358,6 +363,7 @@ async fn register_user(
     Ok(Json(ApiEnvelope::success(user)))
 }
 
+/// 用户登录接口，支持用户名或邮箱作为登录标识。
 async fn login_user(
     State(state): State<AppState>,
     Json(payload): Json<UserLoginRequest>,
@@ -368,6 +374,7 @@ async fn login_user(
     Ok(Json(ApiEnvelope::success(session)))
 }
 
+/// 用户忘记密码接口，生成临时重置 token。
 async fn forgot_password(
     State(state): State<AppState>,
     Json(payload): Json<UserForgotPasswordRequest>,
@@ -377,6 +384,7 @@ async fn forgot_password(
     Ok(Json(ApiEnvelope::success(response)))
 }
 
+/// 用户通过重置 token 修改密码。
 async fn reset_password(
     State(state): State<AppState>,
     Json(payload): Json<UserResetPasswordRequest>,
@@ -386,6 +394,7 @@ async fn reset_password(
     Ok(Json(ApiEnvelope::success(response)))
 }
 
+/// 返回当前登录用户资料。
 async fn get_current_user(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -394,6 +403,7 @@ async fn get_current_user(
     Ok(Json(ApiEnvelope::success(UserProfileResponse { user })))
 }
 
+/// 注销当前用户登录会话。
 async fn logout_user(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -405,6 +415,7 @@ async fn logout_user(
     })))
 }
 
+/// 当前用户绑定或更新邮箱。
 async fn bind_email(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -419,6 +430,7 @@ async fn bind_email(
     })))
 }
 
+/// 当前用户修改登录密码。
 async fn change_password(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -436,6 +448,7 @@ async fn change_password(
     })))
 }
 
+/// 返回当前用户余额和资金账户。
 async fn get_balance(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -470,6 +483,7 @@ fn user_with_account_balance(
     user
 }
 
+/// 返回当前用户自己的资金流水。
 async fn list_ledger_entries(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -641,6 +655,7 @@ fn sum_direct_deposit_minor(direct_users: &[UserInvitationDirectUser]) -> ApiRes
     })
 }
 
+/// 返回手机端下注页所需的彩种、期号和玩法配置。
 async fn get_user_bet_page_config(
     State(state): State<AppState>,
     Path(lottery_id): Path<String>,
@@ -655,6 +670,7 @@ async fn get_user_bet_page_config(
     Ok(Json(ApiEnvelope::success(config)))
 }
 
+/// 返回当前用户可见的注单列表。
 async fn list_user_bet_orders(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -693,6 +709,7 @@ fn user_visible_bet_orders(
         .collect()
 }
 
+/// 用户端批量提交购彩篮订单并扣款。
 async fn create_user_bet_orders(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -748,6 +765,7 @@ async fn create_user_bet_orders(
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 手机端合买列表筛选参数。
 struct UserGroupBuyListQuery {
     #[serde(default, alias = "lottery_code")]
     lottery_id: Option<String>,
@@ -755,6 +773,7 @@ struct UserGroupBuyListQuery {
     group_code: Option<String>,
 }
 
+/// 返回手机端合买大厅计划列表。
 async fn list_user_group_buy_plans(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -766,6 +785,7 @@ async fn list_user_group_buy_plans(
     Ok(Json(ApiEnvelope::success(UserGroupBuyPlanPage { items })))
 }
 
+/// 返回手机端合买计划详情。
 async fn get_user_group_buy_plan(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -778,6 +798,7 @@ async fn get_user_group_buy_plan(
     Ok(Json(ApiEnvelope::success(plan)))
 }
 
+/// 返回当前用户发起或参与的合买计划。
 async fn list_my_group_buy_plans(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -799,6 +820,7 @@ async fn list_my_group_buy_plans(
     Ok(Json(ApiEnvelope::success(UserGroupBuyPlanPage { items })))
 }
 
+/// 返回手机端发起合买所需的彩种、期号和玩法选项。
 async fn get_user_group_buy_create_options(
     State(state): State<AppState>,
     Query(query): Query<UserGroupBuyListQuery>,
@@ -859,6 +881,7 @@ async fn get_user_group_buy_create_options(
     })))
 }
 
+/// 手机端用户发起合买计划并完成自购扣款。
 async fn create_user_group_buy_plan(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -976,6 +999,7 @@ async fn create_user_group_buy_plan(
     })))
 }
 
+/// 手机端用户认购合买计划并扣款。
 async fn join_user_group_buy_plan(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1094,6 +1118,7 @@ async fn join_user_group_buy_plan(
     })))
 }
 
+/// 把合买计划集合转换为手机端展示列表。
 async fn user_group_buy_plans(
     state: &AppState,
     user_id: &str,
@@ -1142,6 +1167,7 @@ async fn user_group_buy_plans(
         .collect()
 }
 
+/// 把单个合买计划转换为手机端展示详情。
 fn user_group_buy_plan(
     plan: &GroupBuyPlan,
     lotteries: &[LotteryKind],
@@ -1192,6 +1218,7 @@ fn user_group_buy_plan(
     })
 }
 
+/// 生成手机端合买计划标题。
 fn user_group_buy_title(plan: &GroupBuyPlan) -> String {
     if is_robot_group_buy_plan(plan) || plan.title.trim().is_empty() {
         format!("{} 第{}期合买", plan.lottery_name, plan.issue)
@@ -1200,6 +1227,7 @@ fn user_group_buy_title(plan: &GroupBuyPlan) -> String {
     }
 }
 
+/// 生成合买发起人展示名，机器人计划需要做匿名化。
 fn user_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
     if is_robot_group_buy_plan(plan) {
         robot_group_buy_initiator_display(plan)
@@ -1208,10 +1236,12 @@ fn user_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
     }
 }
 
+/// 判断合买计划是否由机器人账户发起。
 fn is_robot_group_buy_plan(plan: &GroupBuyPlan) -> bool {
     plan.id.starts_with(ROBOT_GROUP_BUY_PLAN_PREFIX)
 }
 
+/// 为机器人合买计划生成稳定但不暴露机器人的展示名。
 fn robot_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
     let base_hash = stable_group_buy_display_hash(&plan.id);
     let base = ROBOT_GROUP_BUY_DISPLAY_NAMES
@@ -1224,6 +1254,7 @@ fn robot_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
     format!("{base}{suffix}")
 }
 
+/// 根据计划编号生成稳定哈希，保证匿名展示名可重复。
 fn stable_group_buy_display_hash(value: &str) -> u64 {
     let mut hash = 14_695_981_039_346_656_037_u64;
     for byte in value.as_bytes() {
@@ -1233,6 +1264,7 @@ fn stable_group_buy_display_hash(value: &str) -> u64 {
     hash
 }
 
+/// 汇总当前用户在合买计划中的参与金额和份数。
 fn user_group_buy_participation(
     plan: &GroupBuyPlan,
     user_id: &str,
@@ -1253,6 +1285,7 @@ fn user_group_buy_participation(
     })
 }
 
+/// 筛选已开售且允许合买的彩种。
 fn group_buy_enabled_lotteries(lotteries: &[LotteryKind]) -> Vec<LotteryKind> {
     lotteries
         .iter()
@@ -1261,6 +1294,7 @@ fn group_buy_enabled_lotteries(lotteries: &[LotteryKind]) -> Vec<LotteryKind> {
         .collect()
 }
 
+/// 返回手机端发起合买的默认份额设置。
 fn default_group_buy_create_settings() -> GroupBuyCreateSettings {
     GroupBuyCreateSettings {
         min_share_amount_minor: 100,
@@ -1269,6 +1303,7 @@ fn default_group_buy_create_settings() -> GroupBuyCreateSettings {
     }
 }
 
+/// 返回指定彩种已启用的合买玩法选项。
 fn enabled_group_buy_play_options(lottery: &LotteryKind) -> ApiResult<Vec<GroupBuySelectOption>> {
     let summaries = play_rule_summaries()
         .into_iter()
@@ -1292,6 +1327,7 @@ fn enabled_group_buy_play_options(lottery: &LotteryKind) -> ApiResult<Vec<GroupB
         .collect()
 }
 
+/// 校验彩种是否允许发起合买。
 fn validate_lottery_accepts_group_buy(lottery: &LotteryKind) -> ApiResult<()> {
     if !lottery.sale_enabled {
         return Err(ApiError::BadRequest("彩种已停售".to_string()));
@@ -1302,6 +1338,7 @@ fn validate_lottery_accepts_group_buy(lottery: &LotteryKind) -> ApiResult<()> {
     Ok(())
 }
 
+/// 校验合买期号和玩法是否可用。
 async fn validate_group_buy_issue_and_play(
     state: &AppState,
     lottery: &LotteryKind,
@@ -1333,6 +1370,7 @@ async fn validate_group_buy_issue_and_play(
     Ok(())
 }
 
+/// 校验合买投注内容是否为空或超长。
 fn validate_group_buy_numbers(numbers: &str) -> ApiResult<()> {
     let numbers = numbers.trim();
     if numbers.is_empty() {
@@ -1344,6 +1382,7 @@ fn validate_group_buy_numbers(numbers: &str) -> ApiResult<()> {
     Ok(())
 }
 
+/// 按金额和每份金额换算合买份数。
 fn amount_to_share_count(amount_minor: i64, min_share_amount_minor: i64) -> ApiResult<u32> {
     if min_share_amount_minor <= 0 {
         return Ok(0);
@@ -1352,10 +1391,12 @@ fn amount_to_share_count(amount_minor: i64, min_share_amount_minor: i64) -> ApiR
         .map_err(|_| ApiError::BadRequest("合买份数过大".to_string()))
 }
 
+/// 生成手机端合买计划编号。
 fn next_group_buy_plan_id() -> String {
     format!("G{}", chrono::Local::now().format("%Y%m%d%H%M%S%3f"))
 }
 
+/// 生成合买参与记录编号。
 fn next_group_buy_participant_id(plan: &GroupBuyPlan) -> String {
     format!(
         "{}-P{}",
@@ -1364,6 +1405,7 @@ fn next_group_buy_participant_id(plan: &GroupBuyPlan) -> String {
     )
 }
 
+/// 返回用户端充值配置。
 async fn get_recharge_config(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<RechargeConfigResponse>>> {
@@ -1375,6 +1417,7 @@ async fn get_recharge_config(
     ))))
 }
 
+/// 返回当前用户充值订单列表。
 async fn list_recharge_orders(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1384,6 +1427,7 @@ async fn list_recharge_orders(
     Ok(Json(ApiEnvelope::success(orders)))
 }
 
+/// 用户创建充值订单。
 async fn create_recharge_order(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1424,6 +1468,7 @@ async fn create_recharge_order(
     Ok(Json(ApiEnvelope::success(response)))
 }
 
+/// 处理彩虹易支付 GET 回调。
 async fn rainbow_epay_notify_query(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
@@ -1431,6 +1476,7 @@ async fn rainbow_epay_notify_query(
     confirm_rainbow_notify(state, params).await
 }
 
+/// 处理彩虹易支付表单回调。
 async fn rainbow_epay_notify_form(
     State(state): State<AppState>,
     Form(params): Form<HashMap<String, String>>,
@@ -1438,6 +1484,7 @@ async fn rainbow_epay_notify_form(
     confirm_rainbow_notify(state, params).await
 }
 
+/// 统一校验并确认彩虹易支付回调。
 async fn confirm_rainbow_notify(
     state: AppState,
     params: HashMap<String, String>,
@@ -1471,6 +1518,7 @@ async fn confirm_rainbow_notify(
     Ok("success".to_string())
 }
 
+/// 处理彩虹易支付前端返回页查询参数。
 async fn rainbow_epay_return_query(
     Query(params): Query<HashMap<String, String>>,
 ) -> ApiResult<Json<ApiEnvelope<HashMap<String, String>>>> {
@@ -1599,6 +1647,7 @@ async fn share_chat_hall_group_buy_plan(
     Ok(Json(ApiEnvelope::success(message)))
 }
 
+/// 从聊天大厅消息 payload 中读取指定字符串字段。
 fn chat_hall_message_payload_string(message: &ChatHallMessage, key: &str) -> Option<String> {
     message
         .payload
@@ -1608,6 +1657,7 @@ fn chat_hall_message_payload_string(message: &ChatHallMessage, key: &str) -> Opt
         .map(str::to_string)
 }
 
+/// 返回当前用户客服会话列表。
 async fn list_user_support_conversations(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1617,6 +1667,7 @@ async fn list_user_support_conversations(
     Ok(Json(ApiEnvelope::success(conversations)))
 }
 
+/// 返回当前用户指定客服会话详情。
 async fn get_user_support_conversation(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1627,6 +1678,7 @@ async fn get_user_support_conversation(
     Ok(Json(ApiEnvelope::success(conversation)))
 }
 
+/// 当前用户回复自己的客服会话。
 async fn reply_user_support_conversation(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1642,6 +1694,7 @@ async fn reply_user_support_conversation(
     Ok(Json(ApiEnvelope::success(conversation)))
 }
 
+/// 返回当前用户提现方式列表。
 async fn list_withdrawal_methods(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1654,6 +1707,7 @@ async fn list_withdrawal_methods(
     Ok(Json(ApiEnvelope::success(methods)))
 }
 
+/// 当前用户新增提现方式。
 async fn create_withdrawal_method(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1667,6 +1721,7 @@ async fn create_withdrawal_method(
     Ok(Json(ApiEnvelope::success(method)))
 }
 
+/// 当前用户更新提现方式。
 async fn update_withdrawal_method(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1681,6 +1736,7 @@ async fn update_withdrawal_method(
     Ok(Json(ApiEnvelope::success(method)))
 }
 
+/// 当前用户删除提现方式。
 async fn delete_withdrawal_method(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1694,6 +1750,7 @@ async fn delete_withdrawal_method(
     Ok(Json(ApiEnvelope::success(())))
 }
 
+/// 返回当前用户提现申请列表。
 async fn list_withdrawal_orders(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
@@ -1703,6 +1760,7 @@ async fn list_withdrawal_orders(
     Ok(Json(ApiEnvelope::success(orders)))
 }
 
+/// 当前用户提交提现申请并冻结余额。
 async fn create_withdrawal_order(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,

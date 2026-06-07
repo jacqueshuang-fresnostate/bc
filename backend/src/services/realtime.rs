@@ -18,6 +18,7 @@ const REALTIME_CHANNEL_CAPACITY: usize = 512;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// 实时事件受众范围，区分公开事件和指定用户事件。
 pub enum RealtimeAudience {
     Public,
     Admin,
@@ -25,16 +26,19 @@ pub enum RealtimeAudience {
 }
 
 #[derive(Debug, Clone)]
+/// 实时事件消息，包含受众和事件 payload。
 pub struct RealtimeMessage {
     pub audience: RealtimeAudience,
     pub payload: Value,
 }
 
 #[derive(Clone)]
+/// 实时事件中心，负责广播开奖、资金、客服和聊天大厅事件。
 pub struct RealtimeHub {
     sender: broadcast::Sender<RealtimeMessage>,
 }
 
+/// 实时事件中心默认初始化广播通道。
 impl Default for RealtimeHub {
     /// 创建默认实时事件中心。
     fn default() -> Self {
@@ -42,6 +46,7 @@ impl Default for RealtimeHub {
     }
 }
 
+/// 实时事件中心的发布和订阅方法。
 impl RealtimeHub {
     /// 初始化实时事件中心，使用广播通道保存短时间内的业务事件。
     pub fn new() -> Self {

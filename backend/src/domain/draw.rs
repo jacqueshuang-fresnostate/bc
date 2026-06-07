@@ -10,6 +10,7 @@ use crate::domain::{
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 开奖期号状态，控制下注、封盘、开奖和撤销流程。
 pub enum DrawIssueStatus {
     Open,
     Closed,
@@ -19,6 +20,7 @@ pub enum DrawIssueStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台手动创建开奖期号时提交的基础排期信息。
 pub struct CreateDrawIssueRequest {
     pub lottery_id: String,
     pub issue: String,
@@ -28,6 +30,7 @@ pub struct CreateDrawIssueRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台生成单个下一期开奖期号时使用的参数。
 pub struct GenerateDrawIssueRequest {
     pub lottery_id: String,
     pub now: String,
@@ -37,6 +40,7 @@ pub struct GenerateDrawIssueRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台批量生成未来期开奖期号时使用的参数。
 pub struct GenerateDrawIssuesRequest {
     pub lottery_id: String,
     pub now: String,
@@ -47,6 +51,7 @@ pub struct GenerateDrawIssuesRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 期号生成预览结果，用于前端确认即将生成的期号和封盘时间。
 pub struct DrawIssueGenerationPreview {
     pub lottery_id: String,
     pub lottery_name: String,
@@ -59,6 +64,7 @@ pub struct DrawIssueGenerationPreview {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
+/// 手动开奖或控奖提交的开奖号码请求。
 pub struct DrawIssueResultRequest {
     #[serde(default)]
     pub draw_number: Option<String>,
@@ -66,12 +72,14 @@ pub struct DrawIssueResultRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 开奖控制范围，支持按彩种、指定期号或指定订单所在期号生效。
 pub enum DrawControlTargetScope {
     Lottery,
     Issue,
     Order,
 }
 
+/// 开奖控制范围的默认值实现。
 impl Default for DrawControlTargetScope {
     /// 默认沿用旧版本按彩种整体生效的控制范围。
     fn default() -> Self {
@@ -81,6 +89,7 @@ impl Default for DrawControlTargetScope {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台保存彩种开奖控制号码时提交的配置。
 pub struct SaveLotteryDrawControlRequest {
     pub enabled: bool,
     #[serde(default)]
@@ -95,6 +104,7 @@ pub struct SaveLotteryDrawControlRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台彩种控制台展示的开奖控制配置。
 pub struct LotteryDrawControl {
     pub lottery_id: String,
     pub lottery_name: String,
@@ -109,6 +119,7 @@ pub struct LotteryDrawControl {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 单个开奖期号，包含彩种、计划开奖时间、封盘时间和开奖结果。
 pub struct DrawIssue {
     pub id: String,
     pub lottery_id: String,
@@ -126,6 +137,7 @@ pub struct DrawIssue {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 开奖期号分页响应，供后台期号管理列表使用。
 pub struct DrawIssuePage {
     pub items: Vec<DrawIssue>,
     pub total_count: usize,
@@ -136,12 +148,14 @@ pub struct DrawIssuePage {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台手动触发开奖自动化时传入的当前时间。
 pub struct DrawAutomationRunRequest {
     pub now: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 开奖自动化跳过的期号及原因，便于后台排查调度结果。
 pub struct DrawAutomationSkippedIssue {
     pub draw_issue_id: String,
     pub lottery_id: String,
@@ -151,6 +165,7 @@ pub struct DrawAutomationSkippedIssue {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 单轮开奖自动化执行结果，汇总封盘、开奖、结算和资金流水。
 pub struct DrawAutomationRun {
     pub now: String,
     pub closed_issues: Vec<DrawIssue>,

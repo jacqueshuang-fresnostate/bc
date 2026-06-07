@@ -21,11 +21,13 @@ use super::business_database::{enum_from_string, enum_to_string, BusinessDatabas
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 #[derive(Clone)]
+/// 广告配置和手机端轮播仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct AdvertisementRepository {
     inner: Arc<RwLock<AdvertisementStore>>,
     persistence: Option<BusinessDatabase>,
 }
 
+/// 广告配置和手机端轮播仓储，负责该模块数据读取、业务变更和持久化协调。
 impl AdvertisementRepository {
     /// 返回空的内存广告仓储，适合无数据库本地预览。
     pub fn memory() -> Self {
@@ -129,10 +131,12 @@ impl AdvertisementRepository {
 }
 
 #[derive(Clone, Debug, Default)]
+/// 广告配置和手机端轮播运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 struct AdvertisementStore {
     advertisements: BTreeMap<String, AdvertisementSummary>,
 }
 
+/// 广告配置和手机端轮播运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl AdvertisementStore {
     /// 返回按排序号和 ID 排列的后台广告列表。
     fn list(&self) -> Vec<AdvertisementSummary> {
@@ -235,6 +239,7 @@ impl AdvertisementStore {
     }
 }
 
+/// 广告摘要的状态判断方法实现。
 impl AdvertisementSummary {
     /// 判断当前广告是否应出现在手机端轮播中。
     fn is_active_mobile(&self, now: NaiveDateTime) -> bool {

@@ -10,6 +10,7 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/health", get(health))
 }
 
+/// 健康检查接口，用于确认后端服务和版本信息。
 async fn health() -> ApiResult<Json<ApiEnvelope<HealthResponse>>> {
     Ok(Json(ApiEnvelope::success(HealthResponse {
         service: "bc-backend".to_string(),
@@ -20,6 +21,7 @@ async fn health() -> ApiResult<Json<ApiEnvelope<HealthResponse>>> {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 健康检查响应数据。
 struct HealthResponse {
     service: String,
     status: String,

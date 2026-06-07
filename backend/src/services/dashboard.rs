@@ -17,6 +17,7 @@ use super::access::AccessSnapshot;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台首页仪表盘聚合数据。
 pub struct DashboardSummary {
     pub metrics: Vec<Metric>,
     pub module_groups: Vec<ModuleGroup>,
@@ -37,6 +38,7 @@ pub struct DashboardSummary {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台首页统计指标卡片。
 pub struct Metric {
     pub key: String,
     pub label: String,
@@ -46,6 +48,7 @@ pub struct Metric {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台首页功能模块分组。
 pub struct ModuleGroup {
     pub key: String,
     pub title: String,
@@ -55,6 +58,7 @@ pub struct ModuleGroup {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台首页单个功能模块入口。
 pub struct AdminModule {
     pub key: String,
     pub name: String,
@@ -64,6 +68,7 @@ pub struct AdminModule {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台首页模块状态，用于提示已完成、开发中或待配置。
 pub enum ModuleStatus {
     Scaffolded,
 }

@@ -48,6 +48,7 @@ const DEFAULT_KJ_ENDPOINT: &str = "https://kjapi.net/hall/hallajax/getLotteryInf
 const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// 外部开奖源返回的最新期号和开奖时间摘要。
 pub struct ApiDrawSourceLatestIssue {
     pub issue: String,
     pub draw_time: Option<String>,
@@ -56,6 +57,7 @@ pub struct ApiDrawSourceLatestIssue {
 }
 
 #[derive(Clone)]
+/// API 开奖源仓储，管理外部接口配置和采集解析。
 pub struct ApiDrawSourceRepository {
     client: reqwest::Client,
     inner: Arc<RwLock<ApiDrawSourceStore>>,
@@ -63,6 +65,7 @@ pub struct ApiDrawSourceRepository {
     persistence: Option<BusinessDatabase>,
 }
 
+/// API 开奖源仓储的方法实现。
 impl ApiDrawSourceRepository {
     #[allow(dead_code)]
     /// 创建一个空的开奖源仓储实例（用于测试场景）。

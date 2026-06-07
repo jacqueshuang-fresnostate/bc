@@ -4,6 +4,7 @@ use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 统一 API 响应信封，成功和失败都保持同一 JSON 外层结构。
 pub struct ApiEnvelope<T>
 where
     T: Serialize,
@@ -27,6 +28,7 @@ where
     }
 }
 
+/// 错误响应信封构造方法。
 impl ApiEnvelope<()> {
     /// 构造统一错误响应体并返回错误说明。
     pub fn error(message: impl Into<String>) -> Self {

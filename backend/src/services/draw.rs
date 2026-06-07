@@ -26,6 +26,7 @@ use super::{
 };
 
 #[derive(Clone)]
+/// 开奖期号与开奖控制仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct DrawRepository {
     inner: Arc<RwLock<DrawStore>>,
     api_sources: ApiDrawSourceRepository,
@@ -33,6 +34,7 @@ pub struct DrawRepository {
     persistence: Option<BusinessDatabase>,
 }
 
+/// 开奖期号与开奖控制仓储，负责该模块数据读取、业务变更和持久化协调。
 impl DrawRepository {
     #[allow(dead_code)]
     /// 创建内存仓储实例。
@@ -320,11 +322,13 @@ impl DrawRepository {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+/// 开奖期号与开奖控制运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 struct DrawStore {
     next_sequence: u64,
     issues: BTreeMap<String, DrawIssue>,
 }
 
+/// 从数据库加载开奖期号与开奖控制运行时快照，空库时按模块规则初始化。
 async fn load_draw_store(database: &BusinessDatabase) -> ApiResult<(DrawStore, DrawControlStore)> {
     let mut issues = BTreeMap::new();
     for row in sqlx::query(
@@ -432,6 +436,7 @@ async fn load_draw_store(database: &BusinessDatabase) -> ApiResult<(DrawStore, D
     ))
 }
 
+/// 保存开奖期号运行时快照，重写期号表和运行序号。
 async fn save_draw_issues(database: &BusinessDatabase, store: &DrawStore) -> ApiResult<()> {
     let mut tx = database
         .pool()
@@ -472,6 +477,7 @@ async fn save_draw_issues(database: &BusinessDatabase, store: &DrawStore) -> Api
         .map_err(|_| ApiError::Internal("开奖期号事务提交失败".to_string()))
 }
 
+/// 保存开奖控制配置快照，供彩种控制台和自动开奖共同读取。
 async fn save_draw_controls(
     database: &BusinessDatabase,
     store: &DrawControlStore,
@@ -517,6 +523,7 @@ fn max_sequence<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u64 
         .unwrap_or_default()
 }
 
+/// 开奖期号与开奖控制运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl DrawStore {
     /// 返回完整数据列表。
     fn list(&self) -> Vec<DrawIssue> {
@@ -706,10 +713,12 @@ struct DrawControlConfig {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+/// 开奖期号与开奖控制运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 struct DrawControlStore {
     controls: BTreeMap<String, DrawControlConfig>,
 }
 
+/// 开奖期号与开奖控制运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl DrawControlStore {
     /// 按标识查询并返回单条记录。
     fn get(&self, lottery: &LotteryKind) -> ApiResult<LotteryDrawControl> {
@@ -751,6 +760,7 @@ impl DrawControlStore {
     }
 }
 
+/// 开奖控制配置的目标范围校验方法。
 impl DrawControlConfig {
     /// 判断当前控制配置是否应该作用在传入期号上。
     fn matches_issue(&self, issue: &DrawIssue) -> bool {

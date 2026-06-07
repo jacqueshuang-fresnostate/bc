@@ -20,11 +20,13 @@ use crate::{
 use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
+/// 邀请返利策略仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct RebateRepository {
     inner: Arc<RwLock<RebateStore>>,
     persistence: Option<BusinessDatabase>,
 }
 
+/// 邀请返利策略仓储，负责该模块数据读取、业务变更和持久化协调。
 impl RebateRepository {
     /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
@@ -78,6 +80,7 @@ impl RebateRepository {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+/// 邀请返利策略运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 struct RebateStore {
     agents_can_invite: bool,
     regular_users_can_invite: bool,
@@ -85,6 +88,7 @@ struct RebateStore {
     default_recharge_rebate_basis_points: u16,
 }
 
+/// 从数据库加载邀请返利策略运行时快照，空库时按模块规则初始化。
 async fn load_rebate_store(database: &BusinessDatabase) -> ApiResult<RebateStore> {
     let store = sqlx::query(
         "SELECT agents_can_invite, regular_users_can_invite, rebate_mode,
@@ -125,6 +129,7 @@ async fn load_rebate_store(database: &BusinessDatabase) -> ApiResult<RebateStore
     Ok(store)
 }
 
+/// 把邀请返利策略运行时快照保存到数据库。
 async fn save_rebate_store(database: &BusinessDatabase, store: &RebateStore) -> ApiResult<()> {
     sqlx::query(
         "INSERT INTO rebate_policy
@@ -149,6 +154,7 @@ async fn save_rebate_store(database: &BusinessDatabase, store: &RebateStore) -> 
     Ok(())
 }
 
+/// 邀请返利策略运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl RebateStore {
     /// 构建并返回种子数据。
     fn seeded() -> Self {

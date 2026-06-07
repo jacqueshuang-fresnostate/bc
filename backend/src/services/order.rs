@@ -65,11 +65,13 @@ pub fn validate_draw_issue_accepts_order(
 }
 
 #[derive(Clone)]
+/// 订单仓储，负责投注订单、取消和结算派奖事务。
 pub struct OrderRepository {
     pub(crate) inner: Arc<RwLock<OrderStore>>,
     pub(crate) persistence: Option<BusinessDatabase>,
 }
 
+/// 订单仓储的创建、取消和结算方法实现。
 impl OrderRepository {
     /// 创建内存仓储实例。
     pub fn memory() -> Self {

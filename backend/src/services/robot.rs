@@ -19,11 +19,13 @@ use crate::{
 use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
+/// 机器人配置仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct RobotRepository {
     inner: Arc<RwLock<RobotStore>>,
     persistence: Option<BusinessDatabase>,
 }
 
+/// 机器人配置仓储，负责该模块数据读取、业务变更和持久化协调。
 impl RobotRepository {
     /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
@@ -133,10 +135,12 @@ impl RobotRepository {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+/// 机器人配置运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 struct RobotStore {
     robots: BTreeMap<String, RobotConfigSummary>,
 }
 
+/// 从数据库加载机器人配置运行时快照，空库时按模块规则初始化。
 async fn load_robot_store(database: &BusinessDatabase) -> ApiResult<RobotStore> {
     let pool = database.pool();
     let mut lottery_bindings = BTreeMap::<String, Vec<String>>::new();
@@ -206,6 +210,7 @@ async fn load_robot_store(database: &BusinessDatabase) -> ApiResult<RobotStore> 
     Ok(RobotStore { robots })
 }
 
+/// 把机器人配置运行时快照保存到数据库。
 async fn save_robot_store(database: &BusinessDatabase, store: &RobotStore) -> ApiResult<()> {
     let mut tx = database
         .pool()
@@ -252,6 +257,7 @@ async fn save_robot_store(database: &BusinessDatabase, store: &RobotStore) -> Ap
         .map_err(|_| ApiError::Internal("机器人事务提交失败".to_string()))
 }
 
+/// 机器人配置运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl RobotStore {
     /// 构建并返回种子数据。
     fn seeded() -> Self {

@@ -9,6 +9,7 @@ use crate::domain::{
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 注单状态，描述待开奖、中奖、未中奖和已取消的生命周期。
 pub enum OrderStatus {
     PendingDraw,
     Won,
@@ -18,6 +19,7 @@ pub enum OrderStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 注单来源，用于区分普通独立投注和合买生成的投注。
 pub enum OrderSource {
     Direct,
     GroupBuy,
@@ -25,6 +27,7 @@ pub enum OrderSource {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 注单列表摘要，保留运营和用户列表页需要的关键字段。
 pub struct OrderSummary {
     pub id: String,
     pub order_source: OrderSource,
@@ -46,6 +49,7 @@ pub struct OrderSummary {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后端创建注单时使用的投注请求。
 pub struct CreateOrderRequest {
     pub user_id: String,
     pub lottery_id: String,
@@ -57,6 +61,7 @@ pub struct CreateOrderRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 玩法报价结果，返回注数、总金额和赔率。
 pub struct OrderQuote {
     pub stake_count: u32,
     pub amount_minor: i64,
@@ -65,6 +70,7 @@ pub struct OrderQuote {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 注单完整详情，保存原始选号、展开注码、匹配项和派奖信息。
 pub struct OrderDetail {
     pub id: String,
     pub order_source: OrderSource,
@@ -88,6 +94,7 @@ pub struct OrderDetail {
     pub created_at: String,
 }
 
+/// 注单详情的派生展示方法。
 impl OrderDetail {
     /// 生成当前实体对象的汇总信息。
     pub fn summary(&self) -> OrderSummary {

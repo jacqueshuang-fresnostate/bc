@@ -23,11 +23,13 @@ use crate::{
 use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
+/// 邀请关系仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct InviteRepository {
     inner: Arc<RwLock<InviteStore>>,
     persistence: Option<BusinessDatabase>,
 }
 
+/// 邀请关系仓储，负责该模块数据读取、业务变更和持久化协调。
 impl InviteRepository {
     /// 创建一个仅内存的邀请仓储，适用于测试和未接入数据库的场景。
     pub fn memory_seeded() -> Self {
@@ -110,10 +112,12 @@ impl InviteRepository {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+/// 邀请关系运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 struct InviteStore {
     records: BTreeMap<String, InviteRecord>,
 }
 
+/// 从数据库加载邀请关系运行时快照，空库时按模块规则初始化。
 async fn load_invite_store(database: &BusinessDatabase) -> ApiResult<InviteStore> {
     // 从数据库读取全部邀请关系；空库时写入种子关系后返回默认状态。
     let mut records = BTreeMap::new();
@@ -179,6 +183,7 @@ async fn load_invite_store(database: &BusinessDatabase) -> ApiResult<InviteStore
     Ok(InviteStore { records })
 }
 
+/// 把邀请关系运行时快照保存到数据库。
 async fn save_invite_store(database: &BusinessDatabase, store: &InviteStore) -> ApiResult<()> {
     // 全量重建邀请关系表：先清表再插入快照中的全部记录，最后提交事务。
     let mut tx = database
@@ -220,6 +225,7 @@ async fn save_invite_store(database: &BusinessDatabase, store: &InviteStore) -> 
         .map_err(|_| ApiError::Internal("邀请关系事务提交失败".to_string()))
 }
 
+/// 邀请关系运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl InviteStore {
     /// 使用固定种子邀请关系初始化仓储，支持开发环境与首次启动快速可见关系数据。
     fn seeded() -> Self {

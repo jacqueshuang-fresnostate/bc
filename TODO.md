@@ -2231,3 +2231,10 @@
 - 解决问题：资金仓储使用快照式保存，多个请求同时保存 `ledger_entries` 时可能在删除和重插之间互相冲突；历史数据库如果 `finance_runtime.next_sequence` 落后，也可能生成重复流水编号。
 - 实施内容：`save_finance_store_in_transaction` 保存前锁定 `ledger_entries`、`financial_accounts`、`finance_runtime` 三张资金表，并在资金流水插入失败时记录具体数据库错误和流水上下文；启动加载资金仓储时按已有 `L...` 流水编号校正 `next_sequence`；新增迁移补充红包资金流水类型的中文字段注释；同步更新架构说明和数据库规范。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml finance -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过；数据库只读检查确认当前 `finance_runtime.next_sequence` 与现有最大资金流水编号一致，且已存在红包扣款和红包入账流水类型。
+
+## 2026-06-07 19:12 HKT 后端中文注释补齐
+
+- 完成任务：补齐后端代码中缺少中文说明的核心声明和接口处理函数。
+- 解决问题：后端领域模型、路由处理函数、仓储入口和数据库持久化入口有大量声明缺少中文注释，后续维护时需要反复阅读实现才能理解用途。
+- 实施内容：为 `backend/src/domain` 的公开模型、`backend/src/routes` 的非测试接口处理函数、`backend/src/services` 的仓储/Store/load/save 核心入口，以及 `app/error/response/main` 主入口补充中文注释；同步更新后端质量规范，要求后续新增公开模型、路由处理函数、仓储入口和持久化方法必须写中文用途说明。
+- 验证结果：后端注释扫描确认公开模型、路由处理函数、核心仓储/Store/load/save 入口缺口为 0；`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过。

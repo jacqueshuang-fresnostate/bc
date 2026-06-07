@@ -17,6 +17,7 @@ pub type LotteryCategory = String;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 彩种号码类型，决定开奖号码长度、玩法目录和号码格式校验。
 pub enum LotteryNumberType {
     ThreeDigit,
     FiveDigit,
@@ -28,6 +29,7 @@ pub enum LotteryNumberType {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 彩种开奖模式，区分平台生成、外部 API 采集和人工开奖。
 pub enum DrawMode {
     Platform,
     Api,
@@ -36,6 +38,7 @@ pub enum DrawMode {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
+/// 彩种开奖排期配置，支持周期、每日固定时间和每周固定时间。
 pub enum DrawSchedule {
     Periodic { interval_seconds: u32 },
     Daily { time: String },
@@ -44,6 +47,7 @@ pub enum DrawSchedule {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 彩种启用的玩法粗分类，用于后台筛选和按号码类型补齐玩法。
 pub enum PlayCategory {
     Direct,
     GroupThree,
@@ -54,6 +58,7 @@ pub enum PlayCategory {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 彩种合买配置，控制合买开关、单份金额和参与门槛。
 pub struct GroupBuyConfig {
     pub enabled: bool,
     pub min_share_amount_minor: i64,
@@ -63,6 +68,7 @@ pub struct GroupBuyConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 彩种单玩法赔率配置，覆盖玩法是否启用和赔率基点。
 pub struct LotteryPlayConfig {
     pub rule_code: PlayRuleCode,
     pub enabled: bool,
@@ -71,6 +77,7 @@ pub struct LotteryPlayConfig {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 开奖来源配置，描述外部接口、平台来源和复用彩种绑定。
 pub struct DrawSource {
     pub id: String,
     pub name: String,
@@ -84,6 +91,7 @@ pub struct DrawSource {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 外部开奖源供应商枚举，用于选择不同接口解析器。
 pub enum DrawSourceProvider {
     Api68,
     KjApi,
@@ -91,6 +99,7 @@ pub enum DrawSourceProvider {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台创建或编辑 API 开奖源时提交的配置。
 pub struct SaveDrawSourceRequest {
     pub id: String,
     pub name: String,
@@ -103,6 +112,7 @@ pub struct SaveDrawSourceRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 彩种完整配置，供后台管理、手机端展示和开奖调度共同使用。
 pub struct LotteryKind {
     pub id: String,
     pub name: String,

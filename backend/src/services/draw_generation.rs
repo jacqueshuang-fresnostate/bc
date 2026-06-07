@@ -405,11 +405,13 @@ fn format_issue(value: NaiveDateTime) -> String {
     value.format(ISSUE_FORMAT).to_string()
 }
 
+/// 期号标签生成器，负责按不同排期推进下一期号。
 enum IssueLabeler {
     Timestamp,
     Sequential { next_issue: u64 },
 }
 
+/// 期号标签生成器，负责按不同排期推进下一期号。
 impl IssueLabeler {
     /// 处理 for_api_anchor 的具体内部流程。
     fn for_api_anchor(api_anchor: Option<&ApiIssueAnchor>) -> ApiResult<Self> {

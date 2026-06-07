@@ -6,6 +6,7 @@ use crate::domain::lottery::{LotteryNumberType, PlayCategory};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 玩法规则代码，作为彩种赔率配置、下注和计奖的统一标识。
 pub enum PlayRuleCode {
     ThreeDirect,
     ThreeGroupThree,
@@ -35,6 +36,7 @@ pub enum PlayRuleCode {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 三位窗口枚举，五位彩种前三、中三、后三玩法也复用该概念。
 pub enum ThreeDigitWindow {
     Full,
     Front,
@@ -44,6 +46,7 @@ pub enum ThreeDigitWindow {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 大小单双玩法的投注位置。
 pub enum BigSmallOddEvenPosition {
     Tens,
     Ones,
@@ -51,6 +54,7 @@ pub enum BigSmallOddEvenPosition {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 大小单双玩法可选择的数字属性。
 pub enum DigitAttribute {
     Big,
     Small,
@@ -60,6 +64,7 @@ pub enum DigitAttribute {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 大小单双在某个位置上的属性选择。
 pub struct BigSmallOddEvenPick {
     pub position: BigSmallOddEvenPosition,
     pub attributes: Vec<DigitAttribute>,
@@ -67,6 +72,7 @@ pub struct BigSmallOddEvenPick {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
+/// 统一选号结构，按玩法使用位置选号、复式号码、胆拖或大小单双属性。
 pub struct PlaySelection {
     #[serde(default)]
     pub positions: Vec<Vec<u8>>,
@@ -82,6 +88,7 @@ pub struct PlaySelection {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台玩法规则验证请求，用于计算注数和中奖匹配项。
 pub struct PlayRuleEvaluateRequest {
     pub number_type: LotteryNumberType,
     pub rule_code: PlayRuleCode,
@@ -91,6 +98,7 @@ pub struct PlayRuleEvaluateRequest {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 玩法规则目录项，供后台配置赔率和手机端展示玩法说明。
 pub struct PlayRuleSummary {
     pub code: PlayRuleCode,
     pub label: String,
@@ -102,6 +110,7 @@ pub struct PlayRuleSummary {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 玩法评估结果，返回展开注码、中奖标记和命中投注。
 pub struct PlayRuleEvaluation {
     pub rule_code: PlayRuleCode,
     pub stake_count: u32,

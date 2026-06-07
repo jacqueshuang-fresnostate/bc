@@ -19,12 +19,14 @@ const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const DEFAULT_FEATURED_TITLE: &str = "高频极速";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// 手机端首页高频极速推荐区配置。
 pub struct MobileLotteryFeaturedConfig {
     pub enabled: bool,
     pub title: String,
     pub lottery_codes: Vec<String>,
 }
 
+/// 高频极速推荐区默认关闭，避免未配置时自动展示。
 impl Default for MobileLotteryFeaturedConfig {
     fn default() -> Self {
         Self {

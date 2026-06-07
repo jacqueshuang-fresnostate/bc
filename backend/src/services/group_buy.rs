@@ -24,11 +24,13 @@ use crate::{
 use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
+/// 合买计划和参与记录仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct GroupBuyRepository {
     pub(crate) inner: Arc<RwLock<GroupBuyStore>>,
     pub(crate) persistence: Option<BusinessDatabase>,
 }
 
+/// 合买计划和参与记录仓储，负责该模块数据读取、业务变更和持久化协调。
 impl GroupBuyRepository {
     /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
@@ -225,6 +227,7 @@ impl GroupBuyRepository {
         Ok(())
     }
 
+    /// 用事务提交后的快照替换当前合买计划和参与记录内存状态。
     pub(crate) fn replace_store(&self, store: GroupBuyStore) -> ApiResult<()> {
         *self
             .inner
@@ -235,10 +238,12 @@ impl GroupBuyRepository {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+/// 合买计划和参与记录运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 pub(crate) struct GroupBuyStore {
     plans: BTreeMap<String, GroupBuyPlan>,
 }
 
+/// 从数据库加载合买计划和参与记录运行时快照，空库时按模块规则初始化。
 async fn load_group_buy_store(database: &BusinessDatabase) -> ApiResult<GroupBuyStore> {
     let pool = database.pool();
     let mut plans = BTreeMap::new();
@@ -374,6 +379,7 @@ async fn load_group_buy_store(database: &BusinessDatabase) -> ApiResult<GroupBuy
     Ok(GroupBuyStore { plans })
 }
 
+/// 把合买计划和参与记录运行时快照保存到数据库。
 async fn save_group_buy_store(database: &BusinessDatabase, store: &GroupBuyStore) -> ApiResult<()> {
     let mut tx = database
         .pool()
@@ -388,6 +394,7 @@ async fn save_group_buy_store(database: &BusinessDatabase, store: &GroupBuyStore
         .map_err(|_| ApiError::Internal("合买事务提交失败".to_string()))
 }
 
+/// 在外层事务中保存合买计划和参与记录运行时快照，供跨仓储事务复用。
 pub(crate) async fn save_group_buy_store_in_transaction(
     connection: &mut PgConnection,
     store: &GroupBuyStore,
@@ -460,6 +467,7 @@ pub(crate) async fn save_group_buy_store_in_transaction(
     Ok(())
 }
 
+/// 合买计划和参与记录运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl GroupBuyStore {
     /// 构建并返回种子数据。
     fn seeded() -> Self {

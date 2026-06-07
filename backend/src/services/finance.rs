@@ -25,11 +25,13 @@ use crate::{
 use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
+/// 资金账户和资金流水仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct FinanceRepository {
     pub(crate) inner: Arc<RwLock<FinanceStore>>,
     pub(crate) persistence: Option<BusinessDatabase>,
 }
 
+/// 资金账户和资金流水仓储，负责该模块数据读取、业务变更和持久化协调。
 impl FinanceRepository {
     /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
@@ -215,6 +217,7 @@ impl FinanceRepository {
         Ok(())
     }
 
+    /// 用事务提交后的快照替换当前资金账户和资金流水内存状态。
     pub(crate) fn replace_store(&self, store: FinanceStore) -> ApiResult<()> {
         *self
             .inner
@@ -225,12 +228,14 @@ impl FinanceRepository {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+/// 资金账户和资金流水运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 pub(crate) struct FinanceStore {
     accounts: BTreeMap<String, FinancialAccountSummary>,
     ledger_entries: Vec<LedgerEntry>,
     next_sequence: u64,
 }
 
+/// 从数据库加载资金账户和资金流水运行时快照，空库时按模块规则初始化。
 async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceStore> {
     let pool = database.pool();
     let mut accounts = BTreeMap::new();
@@ -355,6 +360,7 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
     Ok(store)
 }
 
+/// 把资金账户和资金流水运行时快照保存到数据库。
 async fn save_finance_store(database: &BusinessDatabase, store: &FinanceStore) -> ApiResult<()> {
     let mut tx = database
         .pool()
@@ -369,6 +375,7 @@ async fn save_finance_store(database: &BusinessDatabase, store: &FinanceStore) -
         .map_err(|_| ApiError::Internal("资金事务提交失败".to_string()))
 }
 
+/// 在外层事务中保存资金账户和资金流水运行时快照，供跨仓储事务复用。
 pub(crate) async fn save_finance_store_in_transaction(
     connection: &mut PgConnection,
     store: &FinanceStore,
@@ -458,6 +465,7 @@ pub(crate) async fn save_finance_store_in_transaction(
     Ok(())
 }
 
+/// 资金账户和资金流水运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl FinanceStore {
     /// 构建并返回种子数据。
     fn seeded() -> Self {

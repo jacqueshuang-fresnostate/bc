@@ -634,10 +634,12 @@ fn robot_numbers_for_rule(
     }
 }
 
+/// 合买机器人选号器，按玩法生成合法随机投注内容。
 struct RobotNumberPicker {
     state: u64,
 }
 
+/// 合买机器人选号器，按玩法生成合法随机投注内容。
 impl RobotNumberPicker {
     /// 用业务上下文构造确定性随机种子，让同一计划可复现、不同期号会变化。
     fn new(

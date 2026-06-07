@@ -24,11 +24,13 @@ use crate::{
 use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
 #[derive(Clone)]
+/// 在线客服会话仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct SupportRepository {
     inner: Arc<RwLock<SupportStore>>,
     persistence: Option<BusinessDatabase>,
 }
 
+/// 在线客服会话仓储，负责该模块数据读取、业务变更和持久化协调。
 impl SupportRepository {
     /// 返回带内置种子数据的内存仓储实例。
     pub fn memory_seeded() -> Self {
@@ -172,10 +174,12 @@ impl SupportRepository {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+/// 在线客服会话运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 struct SupportStore {
     conversations: BTreeMap<String, SupportConversation>,
 }
 
+/// 从数据库加载在线客服会话运行时快照，空库时按模块规则初始化。
 async fn load_support_store(database: &BusinessDatabase) -> ApiResult<SupportStore> {
     let pool = database.pool();
     let mut conversations = BTreeMap::new();
@@ -282,6 +286,7 @@ async fn load_support_store(database: &BusinessDatabase) -> ApiResult<SupportSto
     Ok(SupportStore { conversations })
 }
 
+/// 把在线客服会话运行时快照保存到数据库。
 async fn save_support_store(database: &BusinessDatabase, store: &SupportStore) -> ApiResult<()> {
     let mut tx = database
         .pool()
@@ -342,6 +347,7 @@ async fn save_support_store(database: &BusinessDatabase, store: &SupportStore) -
         .map_err(|_| ApiError::Internal("客服事务提交失败".to_string()))
 }
 
+/// 在线客服会话运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl SupportStore {
     /// 构建并返回种子数据。
     fn seeded() -> Self {

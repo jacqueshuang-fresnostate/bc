@@ -9,10 +9,12 @@ use sqlx::{postgres::PgPoolOptions, PgPool};
 use crate::error::{ApiError, ApiResult};
 
 #[derive(Clone)]
+/// 业务数据库封装，保存 PostgreSQL 连接池并统一执行迁移。
 pub struct BusinessDatabase {
     pool: PgPool,
 }
 
+/// 业务数据库连接池的构造和访问方法。
 impl BusinessDatabase {
     /// 基于连接字符串创建数据库连接池并执行迁移。
     pub async fn postgres(database_url: &str) -> Result<Self, Box<dyn Error + Send + Sync>> {
@@ -32,6 +34,7 @@ impl BusinessDatabase {
     }
 }
 
+/// 把业务结构序列化为 JSON 值，供 JSONB 字段保存。
 pub(crate) fn to_json<T>(value: &T) -> ApiResult<Value>
 where
     T: Serialize,
@@ -39,6 +42,7 @@ where
     serde_json::to_value(value).map_err(|_| ApiError::Internal("业务数据序列化失败".to_string()))
 }
 
+/// 把 JSONB 字段反序列化为业务结构。
 pub(crate) fn from_json<T>(value: Value) -> ApiResult<T>
 where
     T: DeserializeOwned,
@@ -47,6 +51,7 @@ where
         .map_err(|_| ApiError::Internal("业务数据反序列化失败".to_string()))
 }
 
+/// 把 serde 枚举值转换为数据库保存的 camelCase 字符串。
 pub(crate) fn enum_to_string<T>(value: &T) -> ApiResult<String>
 where
     T: Serialize,
@@ -57,6 +62,7 @@ where
     }
 }
 
+/// 把数据库中的 camelCase 字符串恢复为 serde 枚举值。
 pub(crate) fn enum_from_string<T>(value: String) -> ApiResult<T>
 where
     T: DeserializeOwned,
