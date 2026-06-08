@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile-main",
+  "description": "允许手机端主窗口使用应用启动、登录态存储、头像缓存和文本复制所需的 Tauri 能力。",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "store:default",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text"
+  ]
+}

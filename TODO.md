@@ -2376,3 +2376,10 @@
 - 解决问题：此前普通投注提交期间没有明确等待反馈，底部加入、编辑和提交入口仍可能被重复触发；合买也只有按钮文案变化，用户在网络慢时容易误以为没有响应。
 - 实施内容：`DynamicBetPage.vue` 新增普通投注提交态和统一提交遮罩，提交期间显示“正在提交投注”或“正在发布合买”；`UnifiedBetBottomBar.vue` 新增 `submitting` 入参并在提交期间禁用加入购彩篮、编辑单据和提交按钮；同步更新架构说明和前端规范。
 - 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；当前手机端测试命令显示 0 个测试用例。
+
+## 2026-06-08 19:34 HKT 手机端 APK 启动闪退排查修复
+
+- 完成任务：排查并修复手机端打包 APK 安装后启动异常的主要风险点。
+- 解决问题：Tauri v2 APK 原先没有 `src-tauri/capabilities`，主窗口缺少 `store`、核心 IPC 和剪贴板文本能力声明；Android 构建目录里还存在指向旧工程路径的多 ABI 原生库断链，重新构建前可能让 APK 产物状态不稳定。
+- 实施内容：新增 `mobile/src-tauri/capabilities/default.json`，授予主窗口 `core:default`、`store:default` 和文本剪贴板权限；手机端 `bootstrap()` 增加启动异常兜底错误页；执行 Android APK 构建刷新 `gen/schemas/capabilities.json`，并确认四个 ABI 原生库都来自当前 `bc/mobile/src-tauri/target` 路径。
+- 验证结果：手机端 `npm run build`、`mobile/src-tauri cargo check`、`npm test`、`npx tauri android build --apk --ci` 均通过；新生成的 `app-universal-release-unsigned.apk` 包含 `arm64-v8a`、`armeabi-v7a`、`x86`、`x86_64` 四个原生库，构建输出的各 Android 目标 `capabilities.json` 均包含 `mobile-main` 能力。

@@ -35,4 +35,16 @@ async function bootstrap() {
   app.mount('#app')
 }
 
-bootstrap()
+bootstrap().catch((error) => {
+  console.error('手机端应用启动失败', error)
+  const root = document.getElementById('app')
+  if (!root) return
+  root.innerHTML = `
+    <main style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:#f9f9f9;color:#1a1c1c;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+      <section style="width:min(100%,360px);border-radius:24px;background:#fff;padding:24px;text-align:center;box-shadow:0 18px 48px rgba(140,10,21,0.12);">
+        <h1 style="margin:0 0 10px;font-size:20px;font-weight:900;">应用启动失败</h1>
+        <p style="margin:0;color:#8e706d;font-size:14px;font-weight:700;line-height:1.7;">请关闭应用后重新打开；如果仍然异常，请联系平台客服处理。</p>
+      </section>
+    </main>
+  `
+})
