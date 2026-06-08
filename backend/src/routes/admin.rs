@@ -173,10 +173,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/robots", get(list_robots).post(create_robot))
         .route("/robots/run", post(run_group_buy_robots_request))
-        .route(
-            "/robots/{id}",
-            get(get_robot).put(update_robot).delete(delete_robot),
-        )
+        .route("/robots/{id}", get(get_robot).put(update_robot))
         .route("/robots/{id}/status", patch(set_robot_status))
         .route(
             "/draw-sources",
@@ -1736,13 +1733,6 @@ async fn update_robot(
     Ok(Json(ApiEnvelope::success(robot)))
 }
 
-/// 后台拒绝删除机器人配置：机器人只能通过暂停或禁用停止执行，避免误删系统自动化配置。
-async fn delete_robot(Path(_id): Path<String>) -> ApiResult<Json<ApiEnvelope<RobotConfigSummary>>> {
-    Err(ApiError::Forbidden(
-        "机器人配置不能删除，请改为暂停或禁用".to_string(),
-    ))
-}
-
 /// 后台切换机器人运行状态。
 async fn set_robot_status(
     State(state): State<AppState>,
@@ -2264,12 +2254,11 @@ struct SaleStatusRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        align_draw_issue_plan_after_sale_on, delete_robot, finance_overview_for_query,
+        align_draw_issue_plan_after_sale_on, finance_overview_for_query,
         normalize_admin_draw_control_target, page_items, required_scope_for_path,
         should_align_draw_issue_plan_after_sale_on, should_include_user_scoped_record,
         FinancePageQuery,
     };
-    use crate::error::ApiError;
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
         app::AppState,
@@ -2299,7 +2288,6 @@ mod tests {
             withdrawal::WithdrawalRepository,
         },
     };
-    use axum::extract::Path;
 
     #[test]
     /// 处理 required_scope_maps_admin_paths 的具体内部流程。
@@ -2397,20 +2385,6 @@ mod tests {
             .expect("overview can include robot account");
 
         assert!(full_overview.total_balance_minor > hidden_robot_overview.total_balance_minor);
-    }
-
-    #[tokio::test]
-    /// 机器人配置不能删除，后台误调用删除接口时也只能返回禁止删除错误。
-    async fn delete_robot_endpoint_rejects_deletion() {
-        let result = delete_robot(Path("R-GROUP-001".to_string())).await;
-
-        match result {
-            Err(ApiError::Forbidden(message)) => {
-                assert!(message.contains("机器人配置不能删除"));
-            }
-            Err(other) => panic!("删除机器人应返回禁止错误，实际为 {other:?}"),
-            Ok(_) => panic!("删除机器人不应成功"),
-        }
     }
 
     #[test]

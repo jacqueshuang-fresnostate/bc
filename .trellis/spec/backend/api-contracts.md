@@ -2247,7 +2247,6 @@ await createAdmin({
 - `GET /api/admin/robots/{id}`
 - `POST /api/admin/robots`
 - `PUT /api/admin/robots/{id}`
-- `DELETE /api/admin/robots/{id}`
 - `PATCH /api/admin/robots/{id}/status`
 - `POST /api/admin/robots/run`
 
@@ -2272,7 +2271,7 @@ await createAdmin({
 2. `status` 只允许 `enabled`、`paused`、`disabled`。
 3. `lotteryIds` 必须至少包含一个有效彩种 ID；后端保存时会去重并按稳定顺序返回。
 4. `DashboardSummary.robots` 必须从 `RobotRepository` 读取，不允许 dashboard 使用独立静态机器人函数。
-5. 机器人配置不能删除；`DELETE /api/admin/robots/{id}` 固定拒绝，运营需要通过 `PATCH /api/admin/robots/{id}/status` 改为 `paused` 或 `disabled` 停止执行。
+5. 机器人配置没有删除接口；运营需要通过 `PATCH /api/admin/robots/{id}/status` 改为 `paused` 或 `disabled` 停止执行。
 6. `POST /api/admin/robots/run` 只执行已启用的 `groupBuy` 机器人，不执行 `purchase` 机器人。
 7. 合买机器人执行结果字段：
    - `now`：本轮执行时间，格式为 `YYYY-MM-DD HH:mm:ss`。
@@ -2301,7 +2300,7 @@ await createAdmin({
 | 创建重复机器人 ID | HTTP 409，返回重复机器人错误 |
 | 更新路径 ID 与机器人 ID 不一致 | HTTP 400，返回 `path id must match robot id` |
 | 查询、更新不存在机器人 | HTTP 404，返回机器人不存在 |
-| 删除任意机器人配置 | HTTP 403，返回“机器人配置不能删除，请改为暂停或禁用” |
+| 对机器人详情路径发起 `DELETE` | HTTP 405 或路由层拒绝，不存在业务删除能力 |
 | 手动执行时系统机器人资金账户不存在 | HTTP 404，返回合买机器人资金账号不存在 |
 | 手动执行时彩种停售或未开启合买 | HTTP 200，进入 `skippedItems`，不创建计划 |
 | 手动执行时没有可销售 open 期号 | HTTP 200，进入 `skippedItems`，不创建计划 |

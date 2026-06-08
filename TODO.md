@@ -7,12 +7,12 @@
   - 原后台机器人配置 SideSheet 中存在“删除”按钮，后端 `DELETE /api/admin/robots/{id}` 也会真正删除仓储中的机器人配置。
   - 机器人配置关联调度、资金流水、合买计划和运营排查链路，误删后会造成自动化执行配置缺失。
 - 实施内容：
-  - 后端 `DELETE /api/admin/robots/{id}` 保留路由但固定返回 403，提示“机器人配置不能删除，请改为暂停或禁用”。
+  - 后端不再注册 `DELETE /api/admin/robots/{id}`，机器人配置没有业务删除接口。
   - 移除 `RobotRepository` 删除写入口，避免后端内部继续暴露机器人删除能力。
   - 管理后台移除机器人表单里的“删除”按钮，页面说明改为只能暂停或禁用。
   - 前端 `useRobots` 和 API client 移除删除调用。
   - 架构说明、OpenAPI 说明、后端 API 契约和前端组件规范同步记录机器人禁止删除规则。
-- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml delete_robot_endpoint_rejects_deletion -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`cd admin && npm run build` 和 `git diff --check` 均通过；管理后台构建仅保留既有 Vite chunk 体积提示。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、`cd admin && npm run build` 和 `git diff --check` 均通过；管理后台构建仅保留既有 Vite chunk 体积提示。
 
 ## 2026-06-08 15:21 HKT 手机端 Tauri 头像缓存
 
