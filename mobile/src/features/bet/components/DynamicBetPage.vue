@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { showNotify, showToast } from 'vant'
-import { fetchCurrentUserProfile } from '../../../api/user'
 import { errorMessage } from '../../../utils/errorMessage'
 import { parseChinaDateTime } from '../../../utils/lotteryFormat'
+import { useMobileUserDataStore } from '../../../stores/mobileUserData'
 import { createGroupBuyPlan } from '../../group-buy/api'
 import { calculateFixedShareCount, calculateRecommendedSelfShares, calculateRequiredSelfShares } from '../../group-buy/presentation'
 import { useBetBatchSubmit } from '../composables/useBetBatchSubmit'
@@ -25,12 +26,13 @@ const OPENING_REFRESH_INTERVAL_MS = 3000
 
 const route = useRoute()
 const router = useRouter()
+const userDataStore = useMobileUserDataStore()
+const { profile } = storeToRefs(userDataStore)
 const { config, loading, loadBetPageConfig } = useBetPageConfig()
 const { submitBatch } = useBetBatchSubmit()
 
 // 动态投注页状态边界：路由决定彩种，配置决定玩法，引擎只接管草稿和篮子。
 const selectedPlayCode = ref('')
-const balance = ref('0.00')
 const currentTime = ref(Date.now())
 const showCartSheet = ref(false)
 const showPlayPopup = ref(false)
@@ -46,6 +48,7 @@ let openingRefreshInFlight = false
 let drawRefreshSeq = 0
 
 const lotteryCode = computed(() => String(route.params.code || ''))
+const balance = computed(() => profile.value?.balance || '0.00')
 const selectedPlay = computed(() => config.value?.plays.find(play => play.code === selectedPlayCode.value) || config.value?.plays[0] || null)
 // 批量提交需要玩法元数据，用于把本地篮子号码转换成后端标准 selection。
 const playSubmitMeta = computed(() => Object.fromEntries((config.value?.plays || []).map(play => [play.code, {
@@ -137,20 +140,18 @@ const submitButtonDisplayText = computed(() => {
 })
 const submitLoadingText = computed(() => submittingGroupBuy.value ? '正在发布合买...' : '正在提交投注...')
 
-async function loadBalance() {
+async function loadBalance(options: { force?: boolean; silent?: boolean } = {}) {
   try {
-    const profile = await fetchCurrentUserProfile()
-    balance.value = profile.balance
+    await userDataStore.loadProfile(options)
   } catch {
-    // 余额失败不阻断投注页配置渲染，页面以 0.00 作为兜底展示。
-    balance.value = '0.00'
+    // 余额失败不阻断投注页配置渲染，页面以缓存或 0.00 作为兜底展示。
   }
 }
 
-async function loadPage() {
+async function loadPage(options: { force?: boolean; silent?: boolean } = {}) {
   if (!lotteryCode.value) return
   // 页面进入、期开奖和投注后都复用同一加载流程，保持配置、期号和余额同步。
-  await Promise.all([loadBetPageConfig(lotteryCode.value), loadBalance()])
+  await Promise.all([loadBetPageConfig(lotteryCode.value), loadBalance(options)])
 }
 
 function stopOpeningRefresh() {
@@ -164,7 +165,7 @@ async function refreshOpeningRoundConfig() {
   openingRefreshInFlight = true
   try {
     await loadBetPageConfig(lotteryCode.value, { silent: true })
-    if (config.value?.round.status !== 'opening') await loadBalance()
+    if (config.value?.round.status !== 'opening') await loadBalance({ force: true, silent: true })
   } catch {
     // 开盘轮询允许短暂失败，下一轮继续探测期号状态。
   } finally {
@@ -350,6 +351,7 @@ async function submitGroupBuyCart() {
     showToast('合买发起成功')
     engine.clearCart()
     groupBuyMode.value = false
+    await loadBalance({ force: true, silent: true })
     await router.replace({ name: 'Home' })
   } catch (e: any) {
     showToast(errorMessage(e, '发起合买失败'))
@@ -376,6 +378,7 @@ async function submitCart() {
     if (!payload) return
     // 提交成功后清空本地篮子并回到首页，避免用户继续停留在已完成的下注页重复操作。
     engine.clearCart()
+    await loadBalance({ force: true, silent: true })
     await router.replace({ name: 'Home' })
   } catch (e: any) {
     // 提交失败也刷新一次，避免前端继续停留在已封盘或余额变化前的状态。

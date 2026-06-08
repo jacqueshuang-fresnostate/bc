@@ -1,16 +1,19 @@
 import { computed, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { showToast } from 'vant'
 import { errorMessage } from '../../../api/user'
-import { createGroupBuyPlan, fetchCurrentBalance, fetchGroupBuyCreateOptions, fetchMyGroupBuys } from '../api'
+import { useMobileUserDataStore } from '../../../stores/mobileUserData'
+import { createGroupBuyPlan, fetchGroupBuyCreateOptions, fetchMyGroupBuys } from '../api'
 import { buildCreateGroupBuyPayload, calculateCreatePaymentAmount, calculateFixedShareCount, calculateRequiredSelfShares, createDefaultGroupBuyForm, normalizeItems, normalizeOptionPayload } from '../presentation'
 import type { GroupBuySettings, SelectOption } from '../types'
 
 /** 创建发起合买弹窗的模板方法状态流。 */
 export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loadHall: () => Promise<void>; activeTab: { value: string }; initialVisible?: boolean }) {
+  const userDataStore = useMobileUserDataStore()
+  const { profile } = storeToRefs(userDataStore)
   const createVisible = ref(Boolean(options.initialVisible))
   const submittingCreate = ref(false)
   const loadingMy = ref(false)
-  const balance = ref('0.00')
   const myGroupBuys = ref<any[]>([])
   const createLotteryOptions = ref<SelectOption[]>([])
   const createIssueOptions = ref<SelectOption[]>([])
@@ -24,15 +27,15 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
   const fixedShareAmount = computed(() => String(createSettings.value.share_amount || '1.00'))
   const computedShareCount = computed(() => calculateFixedShareCount(createForm.value.total_amount, fixedShareAmount.value))
   const computedShareAmount = fixedShareAmount
+  const balance = computed(() => profile.value?.balance || '0.00')
   const initiatorMinBuyRatio = computed(() => Number(createSettings.value.initiator_min_buy_ratio || 0))
   const requiredSelfShares = computed(() => calculateRequiredSelfShares(createForm.value.total_amount, fixedShareAmount.value, initiatorMinBuyRatio.value))
   const createPaymentAmount = computed(() => calculateCreatePaymentAmount(fixedShareAmount.value, createForm.value.self_shares))
 
   /** 加载当前用户余额。 */
-  async function loadBalance() {
+  async function loadBalance(options: { force?: boolean; silent?: boolean } = {}) {
     try {
-      const res = await fetchCurrentBalance()
-      balance.value = res.data?.balance || '0.00'
+      await userDataStore.loadProfile(options)
     } catch {}
   }
 
@@ -113,7 +116,7 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
       showToast('发起成功')
       createVisible.value = false
       options.activeTab.value = 'hall'
-      await loadBalance()
+      await loadBalance({ force: true, silent: true })
       await options.loadHall()
       return res.data || null
     } catch (e: any) {

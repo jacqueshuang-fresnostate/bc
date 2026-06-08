@@ -5,7 +5,7 @@ import { fetchGroupBuyDetail, joinGroupBuyPlan } from '../api'
 import type { GroupBuyPlan } from '../types'
 
 /** 创建合买详情和认购的模板方法状态流。 */
-export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; loadHall: () => Promise<void>; loadMyGroupBuys: () => Promise<void>; activeTab: { value: string } }) {
+export function useGroupBuyDetail(options: { loadBalance: (loadOptions?: { force?: boolean; silent?: boolean }) => Promise<void>; loadHall: () => Promise<void>; loadMyGroupBuys: () => Promise<void>; activeTab: { value: string } }) {
   const selectedGroupBuy = ref<any | null>(null)
   const loadingDetail = ref(false)
   const submittingJoin = ref(false)
@@ -112,7 +112,7 @@ export function useGroupBuyDetail(options: { loadBalance: () => Promise<void>; l
       const res = await joinGroupBuyPlan(selectedGroupBuy.value.id, joinAmountInput.value)
       selectedGroupBuy.value = res.data?.plan || selectedGroupBuy.value
       showToast(`参与成功，余额 ${res.data?.balance || '-'}，金额 ${joinAmountInput.value}`)
-      await options.loadBalance()
+      await options.loadBalance({ force: true, silent: true })
       await loadDetail(selectedGroupBuy.value.id)
       await options.loadHall()
       if (options.activeTab.value === 'my') await options.loadMyGroupBuys()

@@ -64,6 +64,12 @@ export type MobileUserProfile = UserSummary & {
   avatar_url: string
   invitation_code: string
   can_invite: boolean
+  inviter?: {
+    username: string
+    invitation_code?: string | null
+  } | null
+  used_invitation_code?: string | null
+  usdt_balance?: string | number | null
 }
 
 export type MobileSiteConfig = {

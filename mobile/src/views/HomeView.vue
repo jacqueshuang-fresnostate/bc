@@ -10,14 +10,17 @@ import { useHomepageDrawUpdates } from '../composables/useHomepageDrawUpdates'
 import type { LotteryDrawMessage } from '../composables/useHomepageDrawUpdates'
 import { useBrandingStore } from '../stores/branding'
 import { useHomepageStore } from '../stores/homepage'
+import { useMobileUserDataStore } from '../stores/mobileUserData'
 import { parseChinaDateTime } from '../utils/lotteryFormat'
 
 const props = defineProps<{ wsMessage?: LotteryDrawMessage | null }>()
 const router = useRouter()
 const brandingStore = useBrandingStore()
 const homepageStore = useHomepageStore()
+const userDataStore = useMobileUserDataStore()
 const { branding } = storeToRefs(brandingStore)
-const { balance, homepage, mobileAdvertisements, loadingHomepage } = storeToRefs(homepageStore)
+const { homepage, mobileAdvertisements, loadingHomepage } = storeToRefs(homepageStore)
+const { profile } = storeToRefs(userDataStore)
 
 // 首页数据边界：余额和首页模块数据由 homepage store 缓存，倒计时由 nowMs 驱动。
 const nowMs = ref(Date.now())
@@ -34,6 +37,7 @@ const lotteriesSetting = computed(() => homepage.value?.settings || {
   groupsEnabled: false,
   statsEnabled: false,
 })
+const balance = computed(() => profile.value?.balance || '0.00')
 const heroBanners = computed<HomepageBanner[]>(() => mobileAdvertisements.value.map(advertisement => ({
   id: advertisement.id,
   title: advertisement.title,
@@ -168,7 +172,7 @@ onMounted(async () => {
     void refreshHomepageAfterDrawTime()
   }, 1000)
   await Promise.all([
-    homepageStore.loadBalance(),
+    userDataStore.loadProfile(),
     loadHomepage(),
     loadMobileAdvertisements(),
   ])

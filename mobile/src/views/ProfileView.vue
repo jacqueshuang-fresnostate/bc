@@ -5,17 +5,19 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useBrandingStore } from '../stores/branding'
 import { showDialog, showToast } from 'vant'
-import { errorMessage, fetchCurrentUserProfile, uploadUserAvatar } from '../api/user'
+import { errorMessage, uploadUserAvatar } from '../api/user'
 import CachedAvatarImage from '../components/mobile/CachedAvatarImage.vue'
 import WalletBentoCard from '../components/mobile/WalletBentoCard.vue'
 import SettingsListGroup from '../components/mobile/SettingsListGroup.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import { useMobileUserDataStore } from '../stores/mobileUserData'
 
 const router = useRouter()
 const auth = useAuthStore()
 const brandingStore = useBrandingStore()
+const userDataStore = useMobileUserDataStore()
 const { branding } = storeToRefs(brandingStore)
-const profile = ref<any>(null)
+const { profile } = storeToRefs(userDataStore)
 const uploadingAvatar = ref(false)
 const avatarInput = ref<HTMLInputElement | null>(null)
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
@@ -56,7 +58,7 @@ const statusTextMap: Record<string, string> = {
 
 onMounted(async () => {
   try {
-    profile.value = await fetchCurrentUserProfile()
+    await userDataStore.loadProfile()
   } catch {}
 })
 
@@ -101,7 +103,7 @@ async function uploadAvatarFile(file: File) {
   uploadingAvatar.value = true
   try {
     const updatedProfile = await uploadUserAvatar(file)
-    profile.value = updatedProfile
+    userDataStore.setProfile(updatedProfile)
     await auth.setSession(auth.accessToken, updatedProfile)
     showToast('头像更新成功')
   } catch (error) {
@@ -114,6 +116,7 @@ async function uploadAvatarFile(file: File) {
 async function logout() {
   await showDialog({ title: '确认', message: '确定退出登录？' })
   await auth.logout()
+  userDataStore.clearUserScopedState()
   router.push('/login')
 }
 </script>

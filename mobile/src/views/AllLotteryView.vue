@@ -3,9 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { fetchLotteryGroups } from '../api/lottery'
-import { fetchCurrentUserProfile } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import { useBrandingStore } from '../stores/branding'
+import { useMobileUserDataStore } from '../stores/mobileUserData'
 
 type LotteryItem = {
   code: string
@@ -26,8 +26,9 @@ type LotteryGroup = {
 
 const router = useRouter()
 const brandingStore = useBrandingStore()
+const userDataStore = useMobileUserDataStore()
 const { branding } = storeToRefs(brandingStore)
-const balance = ref('0.00')
+const { profile } = storeToRefs(userDataStore)
 const lotteryGroups = ref<LotteryGroup[]>([])
 const searchKeyword = ref('')
 const loadingGroups = ref(false)
@@ -60,6 +61,7 @@ const filteredGroups = computed(() => {
     .filter(group => group.lotteries.length)
 })
 const hasLotteries = computed(() => searchedLotteries.value.length > 0)
+const balance = computed(() => profile.value?.balance || '0.00')
 
 function isSpeedLottery(lottery: LotteryItem) {
   const interval = Number(lottery.draw_interval || 0)
@@ -102,8 +104,7 @@ function openLottery(lottery: LotteryItem) {
 
 async function loadBalance() {
   try {
-    const profile = await fetchCurrentUserProfile()
-    balance.value = profile.balance
+    await userDataStore.loadProfile()
   } catch {}
 }
 

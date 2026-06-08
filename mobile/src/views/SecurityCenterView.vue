@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { ArrowLeft, CheckCircle2, KeyRound, Mail, ShieldCheck } from 'lucide-vue-next'
@@ -8,13 +9,14 @@ import {
   bindUserEmail,
   changeUserPassword,
   errorMessage,
-  fetchCurrentUserProfile,
   normalizeUserProfile,
 } from '../api/user'
+import { useMobileUserDataStore } from '../stores/mobileUserData'
 
 const router = useRouter()
 const auth = useAuthStore()
-const profile = ref<any>(null)
+const userDataStore = useMobileUserDataStore()
+const { profile } = storeToRefs(userDataStore)
 const bindEmail = ref('')
 const currentPassword = ref('')
 const newPassword = ref('')
@@ -29,7 +31,7 @@ const canBindEmail = computed(() => !isEmailBound.value && bindEmailEnabled.valu
 
 async function loadProfile() {
   try {
-    profile.value = await fetchCurrentUserProfile()
+    await userDataStore.loadProfile()
   } catch (e: unknown) {
     showToast(errorMessage(e, '账户信息加载失败'))
   }
@@ -46,7 +48,7 @@ async function submitBindEmail() {
   try {
     const session = await bindUserEmail(bindEmail.value.trim())
     await auth.setSession(session.token, session.user)
-    profile.value = normalizeUserProfile(session.user)
+    userDataStore.setProfile(normalizeUserProfile(session.user))
     showToast('邮箱已绑定')
     bindEmail.value = ''
     activeTab.value = 'password'
@@ -65,7 +67,7 @@ async function submitPasswordChange() {
   try {
     const session = await changeUserPassword(currentPassword.value, newPassword.value)
     await auth.setSession(session.token, session.user)
-    profile.value = normalizeUserProfile(session.user)
+    userDataStore.setProfile(normalizeUserProfile(session.user))
     currentPassword.value = ''
     newPassword.value = ''
     confirmPassword.value = ''

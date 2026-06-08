@@ -1,6 +1,6 @@
 import http from '../../api/http'
 import { fetchLotteryGroups as fetchMobileLotteryGroups } from '../../api/lottery'
-import { fetchCurrentUserProfile, unwrapApiData } from '../../api/user'
+import { unwrapApiData } from '../../api/user'
 import type { CreateGroupBuyPayload, GroupBuyPlan } from './types'
 
 export async function fetchGroupBuyHall(params: Record<string, string>) {
@@ -138,8 +138,4 @@ function minorToMoney(value: string | number | null | undefined) {
   const amount = Number(value || 0)
   if (!Number.isFinite(amount)) return '0.00'
   return (amount / 100).toFixed(2)
-}
-
-export async function fetchCurrentBalance() {
-  return { data: await fetchCurrentUserProfile() }
 }

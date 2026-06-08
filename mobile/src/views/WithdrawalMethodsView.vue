@@ -1,22 +1,28 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import {
   createWithdrawalMethod,
   deleteWithdrawalMethod,
   errorMessage,
-  fetchWithdrawalMethods,
   updateWithdrawalMethod,
   type WithdrawalMethod,
   type WithdrawalMethodPayload,
   type WithdrawalMethodType,
 } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import { useMobileUserDataStore } from '../stores/mobileUserData'
 
 type MethodType = WithdrawalMethodType
 
 const router = useRouter()
+const userDataStore = useMobileUserDataStore()
+const {
+  withdrawalMethods: methods,
+  loadingWithdrawalMethods: loading,
+} = storeToRefs(userDataStore)
 const labels: Record<MethodType, string> = {
   alipay: '支付宝',
   wechat: '微信',
@@ -24,8 +30,6 @@ const labels: Record<MethodType, string> = {
 }
 
 const typeOrder: MethodType[] = ['alipay', 'wechat', 'bankCard']
-const methods = ref<WithdrawalMethod[]>([])
-const loading = ref(false)
 const saving = ref(false)
 const actionLoading = ref(false)
 const showEditor = ref(false)
@@ -78,14 +82,11 @@ function maskAccount(value?: string | null) {
   return `**** **** **** ${text.slice(-4)}`
 }
 
-async function loadMethods() {
-  loading.value = true
+async function loadMethods(options: { force?: boolean; silent?: boolean } = {}) {
   try {
-    methods.value = await fetchWithdrawalMethods()
+    await userDataStore.loadWithdrawalMethods(options)
   } catch (e: unknown) {
     showToast(errorMessage(e, '加载失败'))
-  } finally {
-    loading.value = false
   }
 }
 
@@ -147,7 +148,7 @@ async function saveMethod() {
     }
     showToast('已保存')
     showEditor.value = false
-    await loadMethods()
+    await loadMethods({ force: true })
   } catch (e: unknown) {
     showToast(errorMessage(e, '保存失败'))
   } finally {
@@ -167,7 +168,7 @@ async function deleteMethod(item: WithdrawalMethod | null) {
     await deleteWithdrawalMethod(item.id)
     showToast('已删除')
     showEditor.value = false
-    await loadMethods()
+    await loadMethods({ force: true })
   } catch (e: unknown) {
     showToast(errorMessage(e, '删除失败'))
   } finally {
@@ -192,7 +193,7 @@ async function setDefault(item: WithdrawalMethod | null) {
     })
     showToast('已设为默认')
     showEditor.value = false
-    await loadMethods()
+    await loadMethods({ force: true })
   } catch (e: unknown) {
     showToast(errorMessage(e, '设置失败'))
   } finally {

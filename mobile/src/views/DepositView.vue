@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { showToast } from 'vant'
 import { useRouter } from 'vue-router'
 import {
   createRechargeOrder,
   errorMessage,
-  fetchCurrentUserProfile,
-  fetchRechargeConfig,
-  fetchRechargeOrders,
-  type MobileUserProfile,
   type RechargeChannel,
   type RechargeChannelConfig,
   type RechargeConfig,
@@ -16,20 +13,24 @@ import {
   type RechargeOrderStatus,
 } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import { useMobileUserDataStore } from '../stores/mobileUserData'
 import type { MobileRealtimeEvent } from '../types/realtime'
 import { formatDateTime } from '../utils/lotteryFormat'
 
 const props = defineProps<{ wsMessage?: MobileRealtimeEvent | null }>()
 const router = useRouter()
+const userDataStore = useMobileUserDataStore()
+const {
+  profile,
+  rechargeConfig: config,
+  rechargeOrders: orders,
+  loadingProfile,
+  loadingRechargeConfig: loadingConfig,
+  loadingRechargeOrders: loadingOrders,
+} = storeToRefs(userDataStore)
 const amount = ref<string | number>('')
 const selectedChannel = ref<RechargeChannel | ''>('')
 const selectedPayType = ref('')
-const config = ref<RechargeConfig | null>(null)
-const orders = ref<RechargeOrder[]>([])
-const profile = ref<MobileUserProfile | null>(null)
-const loadingConfig = ref(false)
-const loadingOrders = ref(false)
-const loadingProfile = ref(false)
 const submitting = ref(false)
 
 const enabledChannels = computed(() => (config.value?.channels || []).filter(channel => {
@@ -84,36 +85,27 @@ watch(currentPayTypes, (payTypes) => {
   }
 }, { immediate: true })
 
-async function loadRechargeConfig() {
-  loadingConfig.value = true
+async function loadRechargeConfig(options: { force?: boolean; silent?: boolean } = {}) {
   try {
-    config.value = await fetchRechargeConfig()
+    await userDataStore.loadRechargeConfig(options)
   } catch (error) {
     showToast(errorMessage(error, '加载充值配置失败'))
-  } finally {
-    loadingConfig.value = false
   }
 }
 
-async function loadRechargeOrders() {
-  loadingOrders.value = true
+async function loadRechargeOrders(options: { force?: boolean; silent?: boolean } = {}) {
   try {
-    orders.value = await fetchRechargeOrders()
+    await userDataStore.loadRechargeOrders(options)
   } catch (error) {
     showToast(errorMessage(error, '加载充值记录失败'))
-  } finally {
-    loadingOrders.value = false
   }
 }
 
-async function loadUserProfile() {
-  loadingProfile.value = true
+async function loadUserProfile(options: { force?: boolean; silent?: boolean } = {}) {
   try {
-    profile.value = await fetchCurrentUserProfile()
+    await userDataStore.loadProfile(options)
   } catch {
-    profile.value = null
-  } finally {
-    loadingProfile.value = false
+    if (!profile.value) showToast('加载用户余额失败')
   }
 }
 
@@ -123,10 +115,10 @@ onMounted(async () => {
 
 watch(() => props.wsMessage, (message) => {
   if (message?.event === 'recharge_changed') {
-    void loadRechargeOrders()
+    void loadRechargeOrders({ force: true, silent: true })
   }
   if (message?.event === 'balance_changed') {
-    void loadUserProfile()
+    void loadUserProfile({ force: true, silent: true })
   }
 })
 
@@ -267,7 +259,10 @@ function openOrder(order: RechargeOrder) {
 }
 
 async function refreshPageData() {
-  await Promise.all([loadRechargeOrders(), loadUserProfile()])
+  await Promise.all([
+    loadRechargeOrders({ force: true }),
+    loadUserProfile({ force: true }),
+  ])
 }
 
 async function submitRecharge() {

@@ -1,28 +1,34 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import {
   errorMessage,
-  fetchCurrentUserProfile,
-  fetchUserLedgerEntries,
-  type LedgerEntry,
   type LedgerEntryKind,
-  type MobileUserProfile,
 } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import { useMobileUserDataStore } from '../stores/mobileUserData'
 import { formatDateTime } from '../utils/lotteryFormat'
 
 const router = useRouter()
-const profile = ref<MobileUserProfile | null>(null)
-const entries = ref<LedgerEntry[]>([])
-const loading = ref(false)
+const userDataStore = useMobileUserDataStore()
+const {
+  profile,
+  ledgerEntries: entries,
+  loadingProfile,
+  loadingLedgerEntries,
+} = storeToRefs(userDataStore)
 const refreshing = ref(false)
 
 const balanceText = computed(() => profile.value?.balance || '0.00')
 const incomeMinor = computed(() => entries.value.filter(item => item.amountMinor > 0).reduce((sum, item) => sum + item.amountMinor, 0))
 const expenseMinor = computed(() => Math.abs(entries.value.filter(item => item.amountMinor < 0).reduce((sum, item) => sum + item.amountMinor, 0)))
 const latestEntries = computed(() => entries.value)
+const loading = computed(() => Boolean(
+  (loadingProfile.value && !profile.value)
+    || (loadingLedgerEntries.value && !entries.value.length),
+))
 
 const kindTextMap: Record<LedgerEntryKind, string> = {
   manualAdjustment: '财务调整',
@@ -70,26 +76,22 @@ function balanceAfterText(value: number) {
   return `余额 ¥${formatMinorAmount(value)}`
 }
 
-async function loadLedger(showLoading = true) {
-  if (showLoading) loading.value = true
+async function loadLedger(options: { force?: boolean; silent?: boolean } = {}) {
   try {
-    const [profileRes, ledgerRes] = await Promise.all([
-      fetchCurrentUserProfile(),
-      fetchUserLedgerEntries(),
+    await Promise.all([
+      userDataStore.loadProfile(options),
+      userDataStore.loadLedgerEntries(options),
     ])
-    profile.value = profileRes
-    entries.value = ledgerRes
   } catch (error) {
     showToast(errorMessage(error, '加载资金流水失败'))
   } finally {
-    loading.value = false
     refreshing.value = false
   }
 }
 
 async function refreshLedger() {
   refreshing.value = true
-  await loadLedger(false)
+  await loadLedger({ force: true, silent: true })
 }
 
 onMounted(() => loadLedger())

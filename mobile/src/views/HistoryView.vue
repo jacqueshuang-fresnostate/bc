@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
-import { fetchCurrentUserProfile } from '../api/user'
 import DrawResultCard from '../components/lottery/DrawResultCard.vue'
 import HistoryTabs from '../components/lottery/HistoryTabs.vue'
 import LotteryGroupFilter from '../components/lottery/LotteryGroupFilter.vue'
@@ -12,15 +11,18 @@ import OrderDetailSheet from '../components/orders/OrderDetailSheet.vue'
 import { useBetOrders } from '../composables/useBetOrders'
 import { useLotteryHistory } from '../composables/useLotteryHistory'
 import { useBrandingStore } from '../stores/branding'
+import { useMobileUserDataStore } from '../stores/mobileUserData'
 
 const props = defineProps<{ wsMessage?: Record<string, any> | null }>()
 const route = useRoute()
 const router = useRouter()
 const brandingStore = useBrandingStore()
+const userDataStore = useMobileUserDataStore()
 const { branding } = storeToRefs(brandingStore)
+const { profile } = storeToRefs(userDataStore)
 
 const activeTab = ref<'draws' | 'orders'>(route.path === '/orders' ? 'orders' : 'draws')
-const balance = ref('0.00')
+const balance = computed(() => profile.value?.balance || '0.00')
 
 const {
   activeGroupCode,
@@ -55,8 +57,7 @@ const {
 
 async function loadBalance() {
   try {
-    const profile = await fetchCurrentUserProfile()
-    balance.value = profile.balance
+    await userDataStore.loadProfile()
   } catch {}
 }
 

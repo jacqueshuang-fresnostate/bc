@@ -1,35 +1,44 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import {
   createWithdrawalOrder,
   errorMessage,
-  fetchCurrentUserProfile,
-  fetchWithdrawalMethods,
-  fetchWithdrawalOrders,
   type WithdrawalMethod,
   type WithdrawalMethodType,
   type WithdrawalOrder,
   type WithdrawalOrderStatus,
 } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import { useMobileUserDataStore } from '../stores/mobileUserData'
 
 type MethodType = WithdrawalMethodType
 
 const router = useRouter()
-const profile = ref<any>(null)
-const methods = ref<WithdrawalMethod[]>([])
-const orders = ref<WithdrawalOrder[]>([])
+const userDataStore = useMobileUserDataStore()
+const {
+  profile,
+  withdrawalMethods: methods,
+  withdrawalOrders: orders,
+  loadingProfile,
+  loadingWithdrawalMethods,
+  loadingWithdrawalOrders,
+} = storeToRefs(userDataStore)
 const amount = ref('')
 const selectedMethodId = ref<string | null>(null)
-const loading = ref(false)
 const submitting = ref(false)
 
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
 const enabledMethods = computed(() => methods.value)
 const selectedMethod = computed(() => enabledMethods.value.find(item => item.id === selectedMethodId.value) || enabledMethods.value[0] || null)
 const latestOrders = computed(() => orders.value.slice(0, 6))
+const loading = computed(() => Boolean(
+  (loadingProfile.value && !profile.value)
+    || (loadingWithdrawalMethods.value && !methods.value.length)
+    || (loadingWithdrawalOrders.value && !orders.value.length),
+))
 
 const statusTextMap: Record<WithdrawalOrderStatus, string> = {
   pending: '待审核',
@@ -108,22 +117,21 @@ function useMaxAmount() {
   amount.value = balanceText.value
 }
 
-async function loadWithdrawData() {
-  loading.value = true
+function syncSelectedMethod() {
+  if (selectedMethodId.value && methods.value.some(item => item.id === selectedMethodId.value)) return
+  selectedMethodId.value = methods.value.find(item => item.isDefault)?.id || enabledMethods.value[0]?.id || null
+}
+
+async function loadWithdrawData(options: { force?: boolean; silent?: boolean } = {}) {
   try {
-    const [currentProfile, methodRes, orderRes] = await Promise.all([
-      fetchCurrentUserProfile(),
-      fetchWithdrawalMethods(),
-      fetchWithdrawalOrders(),
+    await Promise.all([
+      userDataStore.loadProfile(options),
+      userDataStore.loadWithdrawalMethods(options),
+      userDataStore.loadWithdrawalOrders(options),
     ])
-    profile.value = currentProfile
-    methods.value = methodRes
-    orders.value = orderRes
-    selectedMethodId.value = methods.value.find(item => item.isDefault)?.id || enabledMethods.value[0]?.id || null
+    syncSelectedMethod()
   } catch (e: unknown) {
     showToast(errorMessage(e, '加载失败'))
-  } finally {
-    loading.value = false
   }
 }
 
@@ -146,7 +154,7 @@ async function submitWithdraw() {
     })
     showToast('提现申请已提交')
     amount.value = ''
-    await loadWithdrawData()
+    await loadWithdrawData({ force: true })
   } catch (e: unknown) {
     showToast(errorMessage(e, '提交失败'))
   } finally {
@@ -160,7 +168,7 @@ function amountToMinor(value: string) {
   return Math.round(amount * 100)
 }
 
-onMounted(loadWithdrawData)
+onMounted(() => loadWithdrawData())
 </script>
 
 <template>
@@ -231,7 +239,7 @@ onMounted(loadWithdrawData)
       <section class="rounded-xl bg-surface-container-lowest p-6 shadow-[0_4px_40px_0_rgba(140,10,21,0.04)]">
         <div class="mb-4 flex items-center justify-between">
           <h2 class="text-sm text-on-surface-variant font-label">提现申请记录</h2>
-          <button class="text-xs font-semibold text-primary transition-opacity active:opacity-80" type="button" @click="loadWithdrawData">
+          <button class="text-xs font-semibold text-primary transition-opacity active:opacity-80" type="button" @click="loadWithdrawData({ force: true })">
             刷新
           </button>
         </div>
