@@ -582,12 +582,6 @@ export function updateRobot(id: string, payload: RobotConfigSummary) {
   });
 }
 
-export function deleteRobot(id: string) {
-  return requestJson<RobotConfigSummary>(`/api/admin/robots/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  });
-}
-
 export function setRobotStatus(id: string, payload: RobotStatusUpdateRequest) {
   return requestJson<RobotConfigSummary>(
     `/api/admin/robots/${encodeURIComponent(id)}/status`,

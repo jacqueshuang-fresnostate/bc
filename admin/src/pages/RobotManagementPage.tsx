@@ -8,7 +8,7 @@ import {
   Spin,
   Tag,
 } from '@douyinfe/semi-ui';
-import { Bot, PlayCircle, Plus, RefreshCcw, Save, Trash2 } from 'lucide-react';
+import { Bot, PlayCircle, Plus, RefreshCcw, Save } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -54,7 +54,6 @@ export function RobotManagementPage({
     loading,
     lotteries,
     refresh,
-    remove,
     robots,
     running,
     save,
@@ -107,24 +106,13 @@ export function RobotManagementPage({
     onDashboardRefresh();
   };
 
-  const deleteCurrent = async () => {
-    if (!editingId) {
-      return;
-    }
-    await remove(editingId);
-    setEditingId(null);
-    setForm(emptyRobotForm(filterKind));
-    setRobotSheetVisible(false);
-    onDashboardRefresh();
-  };
-
   return (
     <div className="space-y-5">
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-ink">机器人配置</h1>
           <p className="mt-1 text-sm text-slate-500">
-            维护合买机器人和购彩机器人适用彩种、状态和说明。
+            维护合买机器人和购彩机器人适用彩种、状态和说明；机器人配置不能删除，只能暂停或禁用。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -326,7 +314,7 @@ export function RobotManagementPage({
               {editingId ? '维护已有机器人配置' : '新增机器人配置'}
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              保存后会同步机器人列表和工作台概览。
+              保存后会同步机器人列表和工作台概览；不再使用的机器人请改为暂停或禁用。
             </p>
           </div>
         </div>
@@ -416,13 +404,6 @@ export function RobotManagementPage({
               onClick={() => openNewRobot(form.kind)}
             >
               新建
-            </Button>
-            <Button
-              disabled={!editingId || saving}
-              icon={<Trash2 size={16} />}
-              onClick={() => void deleteCurrent()}
-            >
-              删除
             </Button>
             <Button onClick={() => setRobotSheetVisible(false)}>取消</Button>
           </div>

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   createRobot,
-  deleteRobot,
   fetchLotteries,
   fetchRobots,
   runGroupBuyRobots,
@@ -72,21 +71,6 @@ export function useRobots() {
     [],
   );
 
-  const remove = useCallback(async (id: string) => {
-    setSaving(true);
-    setError(null);
-    try {
-      const deleted = await deleteRobot(id);
-      setRobots((current) => current.filter((robot) => robot.id !== id));
-      return deleted;
-    } catch (requestError) {
-      setError(errorMessage(requestError));
-      throw requestError;
-    } finally {
-      setSaving(false);
-    }
-  }, []);
-
   const changeStatus = useCallback(async (id: string, status: RobotStatus) => {
     setSaving(true);
     setError(null);
@@ -126,7 +110,6 @@ export function useRobots() {
     loading,
     lotteries,
     refresh,
-    remove,
     robots,
     running,
     save,

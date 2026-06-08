@@ -97,20 +97,6 @@ impl RobotRepository {
         Ok(result)
     }
 
-    /// 删除现有记录并返回被删对象。
-    pub async fn delete(&self, id: &str) -> ApiResult<RobotConfigSummary> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("robot store lock poisoned".to_string()))?;
-            let result = store.delete(id)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
-    }
-
     /// 更新机器人的运行状态。
     pub async fn set_status(&self, id: &str, status: RobotStatus) -> ApiResult<RobotConfigSummary> {
         let (result, snapshot) = {
@@ -319,13 +305,6 @@ impl RobotStore {
 
         self.robots.insert(id.to_string(), robot.clone());
         Ok(robot)
-    }
-
-    /// 删除指定记录并返回删除结果。
-    fn delete(&mut self, id: &str) -> ApiResult<RobotConfigSummary> {
-        self.robots
-            .remove(id)
-            .ok_or_else(|| ApiError::NotFound(format!("robot `{id}` not found")))
     }
 
     /// 更新并持久化状态。
