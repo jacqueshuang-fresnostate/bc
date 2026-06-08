@@ -350,10 +350,15 @@ function createEmojiPicker(
   data: unknown,
   i18n: unknown,
 ) {
-  return new Picker({
+  const picker = new Picker({
     data,
+    dynamicWidth: true,
+    emojiButtonRadius: '10px',
+    emojiButtonSize: 30,
+    emojiSize: 20,
     i18n,
     locale: 'zh',
+    maxFrequentRows: 1,
     navPosition: 'bottom',
     onEmojiSelect: insertEmoji,
     previewPosition: 'none',
@@ -362,6 +367,10 @@ function createEmojiPicker(
     skinTonePosition: 'none',
     theme: 'light',
   }) as unknown as HTMLElement
+  picker.style.width = '100%'
+  picker.style.height = '300px'
+  picker.style.minHeight = '240px'
+  return picker
 }
 
 function insertEmoji(selection: unknown) {
@@ -1001,21 +1010,23 @@ onBeforeUnmount(() => {
 }
 
 .chat-hall-emoji-panel__shell {
-  width: min(352px, calc(100vw - 24px));
-  min-height: 300px;
+  width: min(300px, calc(100vw - 32px));
+  height: min(300px, 42dvh);
+  min-height: 240px;
   overflow: hidden;
-  border-radius: 18px;
+  border-radius: 16px;
   background: #fff;
   box-shadow: 0 18px 50px rgba(95, 10, 18, 0.18);
 }
 
 .chat-hall-emoji-panel__host {
-  min-height: 300px;
+  height: 100%;
+  min-height: 240px;
 }
 
 .chat-hall-emoji-panel__state {
   display: grid;
-  min-height: 300px;
+  min-height: 240px;
   place-items: center;
   padding: 18px;
   color: #8d6f6e;
@@ -1076,22 +1087,22 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+  padding: 0.8rem 0.9rem calc(0.8rem + env(safe-area-inset-bottom));
   background: rgba(43, 31, 31, 0.22);
 }
 
 .chat-hall-modal__sheet {
-  width: min(100%, 26rem);
-  max-height: min(80vh, 34rem);
+  width: min(100%, 24rem);
+  max-height: min(64dvh, 28rem);
   overflow: auto;
-  border-radius: 1.4rem;
+  border-radius: 1.15rem;
   background: #fff;
-  padding: 1rem;
+  padding: 0.85rem;
   box-shadow: 0 20px 60px rgba(43, 31, 31, 0.2);
 }
 
 .chat-hall-modal__sheet--tall {
-  min-height: 18rem;
+  min-height: 14rem;
 }
 
 .chat-hall-modal__header {
@@ -1099,7 +1110,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 0.8rem;
+  margin-bottom: 0.65rem;
 }
 
 .chat-hall-modal__header h2 {
@@ -1111,8 +1122,8 @@ onBeforeUnmount(() => {
 
 .chat-hall-modal__header button {
   display: grid;
-  width: 2.2rem;
-  height: 2.2rem;
+  width: 2rem;
+  height: 2rem;
   place-items: center;
   border: 0;
   border-radius: 0.8rem;
@@ -1140,7 +1151,7 @@ onBeforeUnmount(() => {
 
 .chat-hall-form-field input {
   width: 100%;
-  height: 2.85rem;
+  height: 2.55rem;
   border: 1px solid rgba(143, 20, 31, 0.13);
   border-radius: 1rem;
   background: #fffafa;

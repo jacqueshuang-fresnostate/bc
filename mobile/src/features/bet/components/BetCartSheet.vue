@@ -38,12 +38,12 @@ function confirmChanges() {
 </script>
 
 <template>
-  <van-popup :show="show" position="bottom" round :style="{ maxHeight: '85vh' }" @update:show="emit('update:show', $event)">
-    <div class="bg-[#f9f9f9] px-6 pb-6 pt-4">
-      <div class="mx-auto mb-5 h-1.5 w-12 rounded-full bg-[#e2e2e2]"></div>
-      <div class="mb-5 flex items-center justify-between">
+  <van-popup :show="show" position="bottom" round :style="{ maxHeight: '68dvh' }" @update:show="emit('update:show', $event)">
+    <div class="bg-[#f9f9f9] px-4 pb-4 pt-3">
+      <div class="mx-auto mb-3 h-1.5 w-10 rounded-full bg-[#e2e2e2]"></div>
+      <div class="mb-3 flex items-center justify-between">
         <div>
-          <h2 class="font-headline text-2xl font-extrabold text-[#1a1c1c]">编辑购彩篮</h2>
+          <h2 class="font-headline text-xl font-extrabold text-[#1a1c1c]">编辑购彩篮</h2>
           <p class="mt-1 text-xs text-[#8e706d]">编辑后请确认修改</p>
         </div>
         <button class="text-sm text-[#5a403e] disabled:opacity-40" type="button" :disabled="editableItems.length === 0" @click="clearEditableItems">清空</button>
@@ -52,17 +52,17 @@ function confirmChanges() {
         <div class="font-headline text-xl font-extrabold text-[#1a1c1c]">暂无单据</div>
         <p class="mt-2 text-sm text-[#8e706d]">先选择号码并加入购彩篮</p>
       </div>
-      <div v-else class="max-h-[58vh] space-y-4 overflow-y-auto pb-4">
-        <article v-for="item in editableItems" :key="item.id" class="rounded-3xl bg-white p-5 shadow-sm shadow-red-900/5">
-          <div class="mb-4 flex items-start justify-between gap-3">
+      <div v-else class="max-h-[40dvh] space-y-3 overflow-y-auto pb-3">
+        <article v-for="item in editableItems" :key="item.id" class="rounded-2xl bg-white p-4 shadow-sm shadow-red-900/5">
+          <div class="mb-3 flex items-start justify-between gap-3">
             <div class="flex items-center gap-3">
               <strong class="text-lg text-[#1a1c1c]">{{ item.lottery_name }}</strong>
               <span class="rounded-lg bg-[#f3f3f3] px-2.5 py-1 text-xs text-[#5a403e]">{{ item.play_name }}</span>
             </div>
             <button class="text-[#8e706d]" type="button" @click="removeItem(item.id)">×</button>
           </div>
-          <div class="mb-4 break-all font-headline text-xl font-extrabold tracking-widest text-[#8c0a15]">{{ item.display_numbers }}</div>
-          <div class="mb-5 grid grid-cols-3 gap-2 rounded-2xl bg-[#fff8f0] px-3 py-3 text-center text-xs text-[#5a403e]">
+          <div class="mb-3 break-all font-headline text-lg font-extrabold tracking-widest text-[#8c0a15]">{{ item.display_numbers }}</div>
+          <div class="mb-4 grid grid-cols-3 gap-2 rounded-2xl bg-[#fff8f0] px-3 py-2 text-center text-xs text-[#5a403e]">
             <div>
               <div>单注</div>
               <strong class="mt-1 block text-[#1a1c1c]">¥{{ item.unit_amount.toFixed(2) }}</strong>
@@ -82,13 +82,13 @@ function confirmChanges() {
           </div>
         </article>
       </div>
-      <div class="rounded-t-3xl bg-white px-1 pt-4">
+      <div class="rounded-t-2xl bg-white px-1 pt-3">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-xs text-[#5a403e]">总计 {{ editableCount }} 注</div>
-            <div class="font-headline text-2xl font-extrabold text-[#8c0a15]">¥{{ editableAmount.toFixed(2) }}</div>
+            <div class="font-headline text-xl font-extrabold text-[#8c0a15]">¥{{ editableAmount.toFixed(2) }}</div>
           </div>
-          <button class="rounded-2xl bg-[#af2829] px-8 py-4 text-lg font-bold text-white" type="button" @click="confirmChanges">确认修改</button>
+          <button class="rounded-2xl bg-[#af2829] px-6 py-3 text-base font-bold text-white" type="button" @click="confirmChanges">确认修改</button>
         </div>
       </div>
     </div>

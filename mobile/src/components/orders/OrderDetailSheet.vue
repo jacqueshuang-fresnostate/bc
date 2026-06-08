@@ -217,10 +217,10 @@ watch(() => props.selectedOrder?.id, () => {
 .order-detail-sheet {
   display: flex;
   width: min(100%, 512px);
-  max-height: min(92dvh, 813px);
+  max-height: min(66dvh, 600px);
   flex-direction: column;
   overflow: hidden;
-  border-radius: 32px 32px 0 0;
+  border-radius: 24px 24px 0 0;
   background: #fff;
   box-shadow: 0 -10px 40px rgba(140, 10, 21, 0.12);
   animation: detail-sheet-in 0.24s ease-out;
@@ -243,7 +243,7 @@ watch(() => props.selectedOrder?.id, () => {
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 24px 14px;
+  padding: 16px 18px 10px;
   background: #fff;
 }
 
@@ -276,7 +276,7 @@ watch(() => props.selectedOrder?.id, () => {
 .order-detail-sheet__body {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 0 24px 24px;
+  padding: 0 18px 18px;
   scrollbar-width: none;
 }
 
@@ -288,7 +288,7 @@ watch(() => props.selectedOrder?.id, () => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 10px 0 18px;
+  padding: 6px 0 14px;
   text-align: center;
 }
 
@@ -696,7 +696,7 @@ watch(() => props.selectedOrder?.id, () => {
 .order-detail-sheet__footer {
   flex: 0 0 auto;
   border-top: 1px solid #f3f3f3;
-  padding: 16px 24px max(24px, env(safe-area-inset-bottom));
+  padding: 12px 18px max(18px, env(safe-area-inset-bottom));
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(16px);
 }
@@ -709,7 +709,7 @@ watch(() => props.selectedOrder?.id, () => {
   gap: 8px;
   border: 0;
   border-radius: 14px;
-  padding: 15px 18px;
+  padding: 13px 16px;
   color: #fff;
   background: linear-gradient(135deg, #8c0a15, #af2829);
   box-shadow: 0 8px 20px rgba(140, 10, 21, 0.25);
@@ -728,7 +728,7 @@ watch(() => props.selectedOrder?.id, () => {
   }
 
   .order-detail-sheet {
-    border-radius: 32px;
+    border-radius: 24px;
     box-shadow: 0 20px 40px rgba(140, 10, 21, 0.15);
   }
 }

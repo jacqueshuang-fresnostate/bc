@@ -41,11 +41,11 @@ function closeDrawHistory() {
 .selected-lottery-history-sheet {
   display: flex;
   width: min(100vw, 672px);
-  max-height: 82dvh;
+  max-height: 62dvh;
   flex-direction: column;
   margin: 0 auto;
   overflow: hidden;
-  border-radius: 28px 28px 0 0;
+  border-radius: 24px 24px 0 0;
   background: #fff;
 }
 
@@ -55,7 +55,7 @@ function closeDrawHistory() {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 22px 22px 16px;
+  padding: 18px 18px 12px;
   border-bottom: 1px solid rgba(238, 238, 238, 0.78);
 }
 
@@ -97,9 +97,9 @@ function closeDrawHistory() {
 .selected-lottery-history-sheet__list {
   display: grid;
   flex: 1 1 auto;
-  gap: 12px;
+  gap: 10px;
   overflow-y: auto;
-  padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
+  padding: 12px 14px calc(16px + env(safe-area-inset-bottom));
   scrollbar-width: none;
 }
 
@@ -110,8 +110,8 @@ function closeDrawHistory() {
 .selected-lottery-history-card {
   display: grid;
   gap: 12px;
-  border-radius: 18px;
-  padding: 16px;
+  border-radius: 16px;
+  padding: 12px;
   background: #f9f9f9;
 }
 

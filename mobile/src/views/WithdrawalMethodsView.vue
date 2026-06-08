@@ -260,19 +260,19 @@ onMounted(loadMethods)
       </section>
     </main>
 
-    <van-popup v-model:show="showEditor" position="bottom" round class="withdrawal-method-popup overflow-hidden !rounded-t-[2rem] bg-surface-container-lowest">
-      <van-form class="flex h-[90vh] max-h-[90vh] flex-col" @submit="saveMethod">
-        <div class="withdrawal-method-popup__header relative flex flex-col items-center px-6 pb-5 pt-7 text-center">
-          <h3 class="withdrawal-method-popup__title font-headline text-xl font-black tracking-tight text-on-surface">{{ editingId ? '编辑提现方式' : '新增提现方式' }}</h3>
-          <p class="withdrawal-method-popup__subtitle mt-2 text-sm font-label text-on-surface-variant">请填写真实收款信息，避免提现失败</p>
+    <van-popup v-model:show="showEditor" position="bottom" round class="withdrawal-method-popup overflow-hidden !rounded-t-[1.5rem] bg-surface-container-lowest">
+      <van-form class="flex h-[70dvh] max-h-[70dvh] flex-col" @submit="saveMethod">
+        <div class="withdrawal-method-popup__header relative flex flex-col items-center px-5 pb-3 pt-5 text-center">
+          <h3 class="withdrawal-method-popup__title font-headline text-lg font-black tracking-tight text-on-surface">{{ editingId ? '编辑提现方式' : '新增提现方式' }}</h3>
+          <p class="withdrawal-method-popup__subtitle mt-1 text-xs font-label text-on-surface-variant">请填写真实收款信息，避免提现失败</p>
           <button class="withdrawal-method-popup__close absolute right-5 top-5 flex h-9 w-9 items-center justify-center rounded-full bg-surface-container-low text-on-surface-variant transition-colors active:bg-surface-dim" type="button" aria-label="关闭" @click="showEditor = false">
             <LucideIcon name="close" class="h-5 w-5" />
           </button>
         </div>
 
-        <div class="flex-1 overflow-y-auto px-6 pb-6">
-          <section class="withdrawal-method-popup__form-card rounded-[1.75rem]  p-4 shadow-[0_4px_40px_0_rgba(140,10,21,0.04)]">
-            <van-cell-group inset class="space-y-5">
+        <div class="flex-1 overflow-y-auto px-4 pb-4">
+          <section class="withdrawal-method-popup__form-card rounded-[1.25rem] p-3 shadow-[0_4px_40px_0_rgba(140,10,21,0.04)]">
+            <van-cell-group inset class="space-y-3">
               <van-field class="withdrawal-method-popup__field" name="methodType" label="类型">
                 <template #input>
                   <van-dropdown-menu class="withdrawal-method-popup__dropdown w-full">
@@ -290,7 +290,7 @@ onMounted(loadMethods)
           </section>
         </div>
 
-        <div class="space-y-3 border-t border-outline-variant/20 bg-surface-container-lowest px-6 pb-8 pt-4 shadow-[0_-10px_40px_0_rgba(140,10,21,0.06)]">
+        <div class="space-y-2 border-t border-outline-variant/20 bg-surface-container-lowest px-4 pb-5 pt-3 shadow-[0_-10px_40px_0_rgba(140,10,21,0.06)]">
           <div v-if="editingId" class="flex gap-3">
             <van-button block plain type="danger" native-type="button" :loading="actionLoading" class="!flex-1" @click="deleteMethod(editingMethod)">删除</van-button>
             <van-button block plain type="primary" native-type="button" :loading="actionLoading" class="!flex-1" @click="setDefault(editingMethod)">设默认</van-button>

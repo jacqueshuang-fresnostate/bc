@@ -642,10 +642,10 @@ onBeforeUnmount(() => {
 }
 
 .play-select-sheet {
-  max-height: min(72dvh, 560px);
+  max-height: min(64dvh, 480px);
   overflow-y: auto;
-  border-radius: 28px 28px 0 0;
-  padding: 22px 18px max(24px, env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0;
+  padding: 18px 16px max(18px, env(safe-area-inset-bottom));
   background: #f9f9f9;
 }
 
@@ -654,7 +654,7 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .play-select-sheet__header p {
@@ -667,7 +667,7 @@ onBeforeUnmount(() => {
 .play-select-sheet__header h2 {
   margin: 0;
   color: #1a1c1c;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 900;
 }
 

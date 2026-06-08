@@ -246,17 +246,17 @@ onMounted(async () => {
       </van-tab>
     </van-tabs>
 
-    <van-popup v-model:show="createVisible" position="bottom" round overlay-class="backdrop-blur-sm" :style="{ height: '90vh' }">
-      <section class="group-buy-create-popup group-buy-create-modal flex h-[90vh] flex-col overflow-hidden bg-[#f9f9f9]">
-        <header class="group-buy-create-header z-10 flex shrink-0 items-center justify-between border-b border-stone-100 bg-white/90 px-5 py-4 backdrop-blur-md">
-          <h2 class="font-headline text-xl font-black tracking-wide text-red-900">发起合买计划</h2>
+    <van-popup v-model:show="createVisible" position="bottom" round overlay-class="backdrop-blur-sm" :style="{ height: '70dvh', maxHeight: '70dvh' }">
+      <section class="group-buy-create-popup group-buy-create-modal flex h-[70dvh] max-h-[70dvh] flex-col overflow-hidden bg-[#f9f9f9]">
+        <header class="group-buy-create-header z-10 flex shrink-0 items-center justify-between border-b border-stone-100 bg-white/90 px-4 py-3 backdrop-blur-md">
+          <h2 class="font-headline text-lg font-black tracking-wide text-red-900">发起合买计划</h2>
           <button aria-label="关闭发起合买弹窗" class="flex h-8 w-8 items-center justify-center rounded-full text-stone-500 transition-colors hover:bg-stone-100" @click="closeCreatePlan">×</button>
         </header>
 
         <van-form class="flex min-h-0 flex-1 flex-col" @submit="createGroupBuy">
-          <main class="group-buy-create-scroll flex-1 space-y-6 overflow-y-auto bg-[#f9f9f9] px-5 py-6">
-            <section class="rounded-xl bg-white p-5 shadow-[0_2px_10px_rgba(140,10,21,0.02)]">
-              <h3 class="mb-4 font-headline text-lg font-black text-stone-950">选择彩种</h3>
+          <main class="group-buy-create-scroll flex-1 space-y-4 overflow-y-auto bg-[#f9f9f9] px-4 py-4">
+            <section class="rounded-xl bg-white p-4 shadow-[0_2px_10px_rgba(140,10,21,0.02)]">
+              <h3 class="mb-3 font-headline text-base font-black text-stone-950">选择彩种</h3>
               <div class="grid grid-cols-3 gap-3">
                 <button
                   v-for="option in createLotteryOptions"
@@ -282,7 +282,7 @@ onMounted(async () => {
               </div>
             </section>
 
-            <section class="rounded-xl border border-stone-100 bg-white p-5 shadow-[0_2px_10px_rgba(140,10,21,0.02)]">
+            <section class="rounded-xl border border-stone-100 bg-white p-4 shadow-[0_2px_10px_rgba(140,10,21,0.02)]">
               <div class="mb-4 flex items-center justify-between">
                 <h3 class="font-headline text-lg font-black text-stone-950">投注内容</h3>
               </div>
@@ -305,7 +305,7 @@ onMounted(async () => {
               </div>
             </section>
 
-            <section class="rounded-xl border border-stone-100 bg-white p-5 shadow-[0_2px_10px_rgba(140,10,21,0.02)]">
+            <section class="rounded-xl border border-stone-100 bg-white p-4 shadow-[0_2px_10px_rgba(140,10,21,0.02)]">
               <h3 class="mb-4 font-headline text-lg font-black text-stone-950">合买设置</h3>
               <div class="space-y-4">
                 <div class="flex items-center justify-between rounded-lg bg-stone-50 p-3 transition-all focus-within:bg-white focus-within:shadow-[inset_0_0_0_1px_rgba(140,10,21,0.2)]">
@@ -353,7 +353,7 @@ onMounted(async () => {
             </section>
           </main>
 
-          <div class="group-buy-create-dock z-10 shrink-0 border-t border-stone-200 bg-white px-5 py-4 shadow-[0_-10px_20px_rgba(0,0,0,0.03)]">
+          <div class="group-buy-create-dock z-10 shrink-0 border-t border-stone-200 bg-white px-4 py-3 shadow-[0_-10px_20px_rgba(0,0,0,0.03)]">
             <div class="flex items-center justify-between">
               <div>
                 <span class="text-xs text-stone-500">共需支付</span>
@@ -370,8 +370,8 @@ onMounted(async () => {
         </van-form>
       </section>
     </van-popup>
-    <van-popup v-model:show="detailVisible" position="bottom" round :style="{ minHeight: '78vh' }">
-      <section v-if="selectedGroupBuy" class="group-buy-detail-sheet flex min-h-[78vh] flex-col bg-[#fff8f1] p-4">
+    <van-popup v-model:show="detailVisible" position="bottom" round :style="{ maxHeight: '66dvh' }">
+      <section v-if="selectedGroupBuy" class="group-buy-detail-sheet flex max-h-[66dvh] flex-col overflow-y-auto bg-[#fff8f1] p-3">
         <div class="mx-auto mb-3 h-1.5 w-12 rounded-full bg-stone-300"></div>
         <div class="mb-4 flex items-start justify-between gap-3">
           <div>

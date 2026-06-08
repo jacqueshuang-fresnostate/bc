@@ -159,10 +159,15 @@ function createEmojiPicker(
   data: unknown,
   i18n: unknown,
 ) {
-  return new Picker({
+  const picker = new Picker({
     data,
+    dynamicWidth: true,
+    emojiButtonRadius: '10px',
+    emojiButtonSize: 30,
+    emojiSize: 20,
     i18n,
     locale: 'zh',
+    maxFrequentRows: 1,
     navPosition: 'bottom',
     onEmojiSelect: insertEmoji,
     previewPosition: 'none',
@@ -171,6 +176,10 @@ function createEmojiPicker(
     skinTonePosition: 'none',
     theme: 'light',
   }) as unknown as HTMLElement
+  picker.style.width = '100%'
+  picker.style.height = '300px'
+  picker.style.minHeight = '240px'
+  return picker
 }
 
 function insertEmoji(selection: unknown) {
@@ -743,21 +752,23 @@ onBeforeUnmount(() => {
 }
 
 .support-emoji-panel__shell {
-  width: min(352px, calc(100vw - 24px));
-  min-height: 300px;
+  width: min(300px, calc(100vw - 32px));
+  height: min(300px, 46dvh);
+  min-height: 240px;
   overflow: hidden;
-  border-radius: 18px;
+  border-radius: 16px;
   background: #fff;
   box-shadow: 0 18px 50px rgba(95, 10, 18, 0.18);
 }
 
 .support-emoji-panel__host {
-  min-height: 300px;
+  height: 100%;
+  min-height: 240px;
 }
 
 .support-emoji-panel__state {
   display: grid;
-  min-height: 300px;
+  min-height: 240px;
   place-items: center;
   padding: 18px;
   color: #8e706d;
