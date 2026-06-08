@@ -13,6 +13,7 @@ import {
   type ChatHallMessage,
   type ChatHallRedPacketPayload,
 } from '../api/user'
+import CachedAvatarImage from '../components/mobile/CachedAvatarImage.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import { fetchMyGroupBuys } from '../features/group-buy/api'
 import type { GroupBuyPlan } from '../features/group-buy/types'
@@ -444,12 +445,14 @@ onBeforeUnmount(() => {
           :class="{ 'chat-hall__message-row--mine': isMine(message) }"
         >
           <div class="chat-hall__avatar">
-            <img
+            <CachedAvatarImage
               v-if="messageAvatarUrl(message)"
               :alt="`${message.username || '会员'}头像`"
               :src="messageAvatarUrl(message)"
               @error="markAvatarFailed(message)"
-            />
+            >
+              {{ avatarText(message.username) }}
+            </CachedAvatarImage>
             <span v-else>{{ avatarText(message.username) }}</span>
           </div>
           <div class="chat-hall__bubble-wrap">

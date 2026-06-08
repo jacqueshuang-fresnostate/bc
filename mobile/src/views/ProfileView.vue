@@ -6,6 +6,7 @@ import { useAuthStore } from '../stores/auth'
 import { useBrandingStore } from '../stores/branding'
 import { showDialog, showToast } from 'vant'
 import { errorMessage, fetchCurrentUserProfile, uploadUserAvatar } from '../api/user'
+import CachedAvatarImage from '../components/mobile/CachedAvatarImage.vue'
 import WalletBentoCard from '../components/mobile/WalletBentoCard.vue'
 import SettingsListGroup from '../components/mobile/SettingsListGroup.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
@@ -157,12 +158,14 @@ async function logout() {
               @keydown.enter.prevent="openAvatarPicker"
               @keydown.space.prevent="openAvatarPicker"
             >
-              <img
+              <CachedAvatarImage
                 v-if="avatarUrl"
                 :alt="`${username}头像`"
                 class="h-full w-full object-cover"
                 :src="avatarUrl"
-              />
+              >
+                <span>{{ avatarText }}</span>
+              </CachedAvatarImage>
               <span v-else>{{ avatarText }}</span>
               <span class="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-red-800 text-white">
                 <LucideIcon name="camera" class="h-3.5 w-3.5" :stroke-width="2.6" />

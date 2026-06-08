@@ -66,6 +66,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端所有展示给用户的错误提示都必须走 `mobile/src/utils/errorMessage.ts` 的 `errorMessage` 或 `userFacingErrorMessage`；不得直接把后端 `message/detail`、Axios `err.message`、`Network Error` 或 `Request failed with status code ...` 原样传给 `showToast/showNotify`，避免出现英文错误提示。
 - 手机端“我的账户”资金流水必须使用当前系统的 `GET /api/user/ledger-entries` 当前用户接口，只展示登录用户自己的流水；页面不得调用后台全量资金流水接口，也不需要为旧系统字段做兼容。流水条目不展示后端 `referenceId` 关联单号，避免把内部关联编号暴露给普通用户。
 - 手机端“我的账户”头像设置必须使用用户端 `POST /api/user/avatar/upload` 或 `PUT /api/user/avatar`，不能复用后台 `/api/admin/image-bed/upload`；上传成功后需要同步刷新页面资料和 Pinia 登录态，保证返回个人中心或重新打开应用时继续展示最新 `avatarUrl`。头像点击上传优先使用原生 `input[type="file"]` 与 `label for` 绑定，避免自定义上传插槽在移动端点击不触发；头像视觉必须同时固定宽高并使用 `border-radius: 9999px` 保持正圆。
+- 手机端头像图片展示必须通过公共 `CachedAvatarImage` 和 `avatarImageCache` 缓存，优先读取内存和本地 data URL 缓存；Tauri 打包场景可通过 Rust 命令下载远程头像并转为 data URL，避免个人中心和聊天大厅对同一个图床头像地址反复请求。缓存失败时才能回退原始 URL。
 - 手机端邀请中心必须使用当前系统的 `GET /api/user/invitations/summary` 当前用户接口，不再请求旧 `/auth/invitations/summary`；页面消费 `canInvite`、`invitationCode`、`directUsers` 等 `camelCase` 字段，普通用户只展示邀请码标识和无可用邀请权限提示，不允许自行把普通用户邀请码当成有效邀请入口。
 - 手机端下注页必须使用 `/api/user/bet/page-config/{lottery_id}`、`POST /api/user/bet/orders` 和 `GET /api/user/bet/orders`，不再调用旧 `/api/bet/*`。提交时前端只负责把位置宫格、胆拖、直选组合和大小单双转换成后端 `selection`，订单金额仍由后端按玩法展开注数和单注金额计算。
 - 手机端下注页顶部的最近开奖号码球必须比开奖历史页更紧凑，默认直径控制在 20-24px，号码容器必须 `flex-wrap` 且设置最大宽度；360px 以下不能使用固定不换行的一排大球，极窄屏需要允许“上期开奖”和号码分成上下两行，避免 5 位开奖号码跑出屏幕。

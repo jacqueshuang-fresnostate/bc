@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-08 15:21 HKT 手机端 Tauri 头像缓存
+
+- 完成任务：为手机端个人中心和聊天大厅头像新增 Tauri 兼容的图片缓存能力，减少同一个头像链接反复请求图床。
+- 解决问题：
+  - 个人中心和聊天大厅此前直接渲染远程头像 URL，页面重新进入、历史消息重新渲染或 WebView 缓存失效时会再次请求图片。
+  - 手机端后续要打包为 Tauri App，不能只依赖网页环境的普通 HTTP 缓存或 Service Worker。
+- 实施内容：
+  - 新增 `avatarImageCache` 工具，以头像 URL 为 key 做内存缓存和本地 data URL 缓存，并限制缓存有效期、单项大小和缓存数量。
+  - 新增 `CachedAvatarImage` 公共头像组件，缓存命中时直接显示 data URL，失败时回退原始 URL，再失败则显示用户名首字。
+  - 个人中心头像和聊天大厅头像统一切换为公共缓存组件。
+  - Tauri Rust 侧新增 `cache_avatar_image` 命令，下载 `http/https` 头像、校验 `image/*` 类型和 1MB 大小限制后返回 data URL。
+  - 架构说明和前端组件规范同步记录“手机端头像必须通过公共缓存组件展示”的规则。
+- 验证结果：`cd mobile && npm run build`、`cd mobile && npm test`、`cargo fmt --manifest-path mobile/src-tauri/Cargo.toml --check`、`cargo check --manifest-path mobile/src-tauri/Cargo.toml`、`cargo test --manifest-path mobile/src-tauri/Cargo.toml` 和 `git diff --check` 均通过。
+
 ## 2026-06-07 22:48 HKT 玩法按位置配置最大选号数量
 
 - 完成任务：为每个彩种的每个玩法增加按位置配置最大选号数量的能力。

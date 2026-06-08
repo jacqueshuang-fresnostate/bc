@@ -1,4 +1,5 @@
 backend/target/
+mobile/src-tauri/target/
 admin/node_modules/
 admin/dist/
 admin/*.tsbuildinfo
