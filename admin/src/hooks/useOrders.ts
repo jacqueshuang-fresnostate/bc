@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { cancelOrder, createOrder, fetchOrders } from '../api/client';
+import { cancelOrder, clearBetOrders, createOrder, fetchOrders } from '../api/client';
 import type {
   CreateOrderRequest,
   OrderDetail,
@@ -75,8 +75,27 @@ export function useOrders(query: OrderListQuery = {}) {
     }
   }, []);
 
+  const clearRecords = useCallback(
+    async () => {
+      setSaving(true);
+      setError(null);
+      try {
+        const result = await clearBetOrders();
+        refresh();
+        return result;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refresh],
+  );
+
   return {
     cancel,
+    clearRecords,
     create,
     error,
     loading,

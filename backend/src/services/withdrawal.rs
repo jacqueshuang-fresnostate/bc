@@ -67,6 +67,20 @@ impl WithdrawalRepository {
             .map(|store| store.list())
     }
 
+    /// 一键清除提现历史；存在待审核申请时拒绝清理，避免冻结余额失去对应申请。
+    pub async fn clear_records(&self) -> ApiResult<usize> {
+        let (deleted_count, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?;
+            let deleted_count = store.clear_records()?;
+            (deleted_count, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(deleted_count)
+    }
+
     /// 创建提现申请，并在创建成功前冻结对应用户可用余额。
     pub async fn create_order(
         &self,
@@ -158,6 +172,21 @@ impl WithdrawalRepository {
             .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))? = store;
         Ok(())
     }
+
+    async fn persist(&self, store: &WithdrawalStore) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            let mut tx = persistence
+                .pool()
+                .begin()
+                .await
+                .map_err(|_| ApiError::Internal("提现事务开启失败".to_string()))?;
+            save_withdrawal_store_in_transaction(&mut *tx, store).await?;
+            tx.commit()
+                .await
+                .map_err(|_| ApiError::Internal("提现事务提交失败".to_string()))?;
+        }
+        Ok(())
+    }
 }
 
 /// 在同一个数据库事务中保存提现和资金快照，确保冻结、打款和解冻不会只落一边。
@@ -207,6 +236,24 @@ impl WithdrawalStore {
             .cloned()
             .rev()
             .collect()
+    }
+
+    /// 清除已结束的提现申请记录；待审核申请会保留，要求管理员先审核或驳回。
+    fn clear_records(&mut self) -> ApiResult<usize> {
+        let pending_count = self
+            .orders
+            .values()
+            .filter(|order| order.status == WithdrawalOrderStatus::Pending)
+            .count();
+        if pending_count > 0 {
+            return Err(ApiError::BadRequest(format!(
+                "存在 {pending_count} 笔待审核提现申请，请先审核或驳回后再清除记录"
+            )));
+        }
+
+        let deleted_count = self.orders.len();
+        self.orders.clear();
+        Ok(deleted_count)
     }
 
     /// 校验提现参数并生成尚未入库的提现申请。
@@ -536,6 +583,42 @@ mod tests {
             .expect_err("approved order cannot be rejected")
             .to_string()
             .contains("不能驳回"));
+    }
+
+    #[test]
+    /// 清理提现记录会拒绝待审核申请，已审核结束后才允许清理。
+    fn withdrawal_store_clear_records_rejects_pending_orders() {
+        let mut store = WithdrawalStore::default();
+        let user = sample_user();
+        let method = sample_method(&user.id);
+        let order = store
+            .draft_order(
+                &user,
+                &method,
+                CreateWithdrawalOrderRequest {
+                    method_id: method.id.clone(),
+                    amount_minor: 2_000,
+                },
+            )
+            .expect("withdrawal order can be drafted");
+        let inserted = store
+            .insert_order(order)
+            .expect("withdrawal order can be inserted");
+
+        assert!(store
+            .clear_records()
+            .expect_err("pending order cannot be cleared")
+            .to_string()
+            .contains("待审核提现申请"));
+
+        store
+            .mark_reviewed(&inserted.id, WithdrawalOrderStatus::Rejected)
+            .expect("order can be rejected");
+        assert_eq!(
+            store.clear_records().expect("finished records can clear"),
+            1
+        );
+        assert!(store.list().is_empty());
     }
 
     fn sample_user() -> UserSummary {

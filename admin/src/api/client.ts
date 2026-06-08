@@ -43,6 +43,7 @@ import type {
 } from '../types/draws';
 import type {
   AdminFinancialAccountSummary,
+  ClearRecordsResult,
   LedgerEntry,
   ConfirmRechargeOrderRequest,
   FinanceOverview,
@@ -130,6 +131,31 @@ async function requestJson<T>(
   return envelope.data;
 }
 
+async function requestBlob(
+  path: string,
+  { method = 'GET', signal }: Pick<JsonRequestOptions, 'method' | 'signal'> = {},
+) {
+  const token = getStoredAuthToken();
+  const headers = new Headers();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers,
+    method,
+    signal,
+  });
+  if (!response.ok) {
+    const envelope = (await response
+      .json()
+      .catch(() => null)) as ApiEnvelope<unknown> | null;
+    throw new Error(envelope?.message || '文件下载请求失败');
+  }
+
+  return response.blob();
+}
+
 export function getStoredAuthToken() {
   if (typeof window === 'undefined') {
     return null;
@@ -212,6 +238,16 @@ export function fetchRechargeOrders(signal?: AbortSignal, query?: FinancePageQue
   );
 }
 
+export function exportRechargeOrders(signal?: AbortSignal) {
+  return requestBlob('/api/admin/recharge-orders/export', { signal });
+}
+
+export function clearRechargeOrders() {
+  return requestJson<ClearRecordsResult>('/api/admin/recharge-orders/clear', {
+    method: 'DELETE',
+  });
+}
+
 export function confirmRechargeOrder(
   id: string,
   payload: ConfirmRechargeOrderRequest = {},
@@ -230,6 +266,12 @@ export function fetchWithdrawalOrders(signal?: AbortSignal, query?: FinancePageQ
     adminQueryPath('/api/admin/withdrawal-orders', query),
     { signal },
   );
+}
+
+export function clearWithdrawalOrders() {
+  return requestJson<ClearRecordsResult>('/api/admin/withdrawal-orders/clear', {
+    method: 'DELETE',
+  });
 }
 
 export function approveWithdrawalOrder(id: string) {
@@ -838,6 +880,12 @@ export function createOrder(payload: CreateOrderRequest) {
 export function cancelOrder(id: string) {
   return requestJson<OrderDetail>(`/api/admin/orders/${encodeURIComponent(id)}/cancel`, {
     method: 'PATCH',
+  });
+}
+
+export function clearBetOrders() {
+  return requestJson<ClearRecordsResult>('/api/admin/orders/clear', {
+    method: 'DELETE',
   });
 }
 

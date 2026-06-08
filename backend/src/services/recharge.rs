@@ -93,6 +93,20 @@ impl RechargeRepository {
             .map(|store| store.list())
     }
 
+    /// 一键清除充值订单历史；仅删除记录，不回滚已入账余额和资金流水。
+    pub async fn clear_records(&self) -> ApiResult<usize> {
+        let (deleted_count, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?;
+            let deleted_count = store.clear_records();
+            (deleted_count, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(deleted_count)
+    }
+
     /// 返回指定用户充值订单。
     pub async fn list_for_user(&self, user_id: &str) -> ApiResult<Vec<RechargeOrderSummary>> {
         let user_id = required_trimmed(user_id, "user id")?;
@@ -277,6 +291,13 @@ impl RechargeStore {
             .cloned()
             .rev()
             .collect()
+    }
+
+    /// 清除所有充值订单记录并保留下一订单流水号，避免清理后生成重复单号。
+    fn clear_records(&mut self) -> usize {
+        let deleted_count = self.orders.len();
+        self.orders.clear();
+        deleted_count
     }
 
     /// 校验配置和金额并创建充值订单。
@@ -978,6 +999,54 @@ mod tests {
         assert!(
             matches!(result, Err(ApiError::BadRequest(message)) if message == "彩虹易支付未开启任何支付方式")
         );
+    }
+
+    #[test]
+    /// 清理充值记录只删除历史订单，并保留流水号避免后续充值单号重复。
+    fn recharge_store_clear_records_keeps_next_sequence() {
+        let mut store = RechargeStore::default();
+        let user = user();
+        let settings = RechargeSettings {
+            rainbow_enabled: false,
+            rainbow_gateway_url: String::new(),
+            rainbow_pid: String::new(),
+            rainbow_key: String::new(),
+            rainbow_notify_url: String::new(),
+            rainbow_return_url: String::new(),
+            rainbow_pay_types: Vec::new(),
+            customer_service_enabled: true,
+            customer_service_message: "联系客服充值".to_string(),
+            min_amount_minor: 100,
+            max_amount_minor: 10_000,
+        };
+        let first = store
+            .create_order(
+                &user,
+                CreateRechargeOrderRequest {
+                    channel: RechargeChannel::CustomerService,
+                    amount_minor: 1000,
+                    pay_type: None,
+                },
+                &settings,
+            )
+            .expect("first order can be created");
+
+        assert_eq!(first.order.id, "R000000000001");
+        assert_eq!(store.clear_records(), 1);
+        assert!(store.list().is_empty());
+
+        let second = store
+            .create_order(
+                &user,
+                CreateRechargeOrderRequest {
+                    channel: RechargeChannel::CustomerService,
+                    amount_minor: 1200,
+                    pay_type: None,
+                },
+                &settings,
+            )
+            .expect("second order can be created");
+        assert_eq!(second.order.id, "R000000000002");
     }
 
     #[tokio::test]

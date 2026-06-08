@@ -43,6 +43,10 @@ export interface FinancePageQuery {
   includeRobotData?: boolean;
 }
 
+export interface ClearRecordsResult {
+  deletedCount: number;
+}
+
 export interface AdminFinancialAccountSummary {
   userId: string;
   username: string | null;

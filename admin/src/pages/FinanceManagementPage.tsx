@@ -8,8 +8,17 @@ import {
   Switch,
   Tabs,
   Tag,
+  Toast,
 } from '@douyinfe/semi-ui';
-import { CheckCircle2, Plus, RefreshCcw, WalletCards, XCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  Download,
+  Plus,
+  RefreshCcw,
+  Trash2,
+  WalletCards,
+  XCircle,
+} from 'lucide-react';
 import {
   useState,
   type Dispatch,
@@ -56,8 +65,11 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
     accounts,
     adjustBalance,
     approveWithdrawal,
+    clearRechargeRecords,
+    clearWithdrawalRecords,
     confirmRecharge,
     error,
+    exportRechargeRecords,
     ledgerEntries,
     loading,
     overview,
@@ -111,6 +123,44 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
   const rejectPendingWithdrawal = async (id: string) => {
     await rejectWithdrawal(id);
     onDashboardRefresh();
+  };
+
+  const downloadRechargeOrders = async () => {
+    try {
+      const blob = await exportRechargeRecords();
+      downloadBlob(blob, `充值订单-${dateFileLabel()}.csv`);
+      Toast.success('充值记录已开始下载');
+    } catch {
+      Toast.error('充值记录导出失败，请查看接口错误提示');
+    }
+  };
+
+  const clearRechargeOrderRecords = async () => {
+    if (!window.confirm('确定一键清除全部用户充值记录吗？已入账余额和资金流水不会回滚。')) {
+      return;
+    }
+    try {
+      const result = await clearRechargeRecords();
+      setRechargePage(1);
+      onDashboardRefresh();
+      Toast.success(`已清除 ${result.deletedCount} 笔充值记录`);
+    } catch {
+      Toast.error('充值记录清除失败，请查看接口错误提示');
+    }
+  };
+
+  const clearWithdrawalOrderRecords = async () => {
+    if (!window.confirm('确定一键清除全部提现记录吗？存在待审核申请时系统会拒绝清理。')) {
+      return;
+    }
+    try {
+      const result = await clearWithdrawalRecords();
+      setWithdrawalPage(1);
+      onDashboardRefresh();
+      Toast.success(`已清除 ${result.deletedCount} 笔提现记录`);
+    } catch {
+      Toast.error('提现记录清除失败，请查看接口错误提示');
+    }
   };
 
   return (
@@ -330,18 +380,36 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
             <h2 className="text-base font-semibold text-ink">充值订单</h2>
             <Tag color="green">{rechargeOrders.totalCount} 笔</Tag>
           </div>
-          <PageControls
-            loading={loading}
-            page={rechargeOrders.page}
-            pageSize={rechargePageSize}
-            totalCount={rechargeOrders.totalCount}
-            totalPages={rechargeOrders.totalPages}
-            onPageChange={setRechargePage}
-            onPageSizeChange={(nextPageSize) => {
-              setRechargePage(1);
-              setRechargePageSize(nextPageSize);
-            }}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              disabled={saving || loading || rechargeOrders.totalCount === 0}
+              icon={<Download size={16} />}
+              onClick={() => void downloadRechargeOrders()}
+            >
+              导出记录
+            </Button>
+            <Button
+              disabled={saving || loading || rechargeOrders.totalCount === 0}
+              icon={<Trash2 size={16} />}
+              theme="solid"
+              type="danger"
+              onClick={() => void clearRechargeOrderRecords()}
+            >
+              一键清除
+            </Button>
+            <PageControls
+              loading={loading}
+              page={rechargeOrders.page}
+              pageSize={rechargePageSize}
+              totalCount={rechargeOrders.totalCount}
+              totalPages={rechargeOrders.totalPages}
+              onPageChange={setRechargePage}
+              onPageSizeChange={(nextPageSize) => {
+                setRechargePage(1);
+                setRechargePageSize(nextPageSize);
+              }}
+            />
+          </div>
         </div>
 
         {loading ? (
@@ -443,18 +511,29 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
             <h2 className="text-base font-semibold text-ink">提现管理</h2>
             <Tag color="red">{withdrawalOrders.totalCount} 笔</Tag>
           </div>
-          <PageControls
-            loading={loading}
-            page={withdrawalOrders.page}
-            pageSize={withdrawalPageSize}
-            totalCount={withdrawalOrders.totalCount}
-            totalPages={withdrawalOrders.totalPages}
-            onPageChange={setWithdrawalPage}
-            onPageSizeChange={(nextPageSize) => {
-              setWithdrawalPage(1);
-              setWithdrawalPageSize(nextPageSize);
-            }}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              disabled={saving || loading || withdrawalOrders.totalCount === 0}
+              icon={<Trash2 size={16} />}
+              theme="solid"
+              type="danger"
+              onClick={() => void clearWithdrawalOrderRecords()}
+            >
+              一键清除
+            </Button>
+            <PageControls
+              loading={loading}
+              page={withdrawalOrders.page}
+              pageSize={withdrawalPageSize}
+              totalCount={withdrawalOrders.totalCount}
+              totalPages={withdrawalOrders.totalPages}
+              onPageChange={setWithdrawalPage}
+              onPageSizeChange={(nextPageSize) => {
+                setWithdrawalPage(1);
+                setWithdrawalPageSize(nextPageSize);
+              }}
+            />
+          </div>
         </div>
 
         {loading ? (
@@ -663,6 +742,19 @@ function setFormValue<K extends keyof AdjustmentFormState>(
 function numberField(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  window.URL.revokeObjectURL(url);
+}
+
+function dateFileLabel() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function ledgerKindText(kind: LedgerEntryKind) {

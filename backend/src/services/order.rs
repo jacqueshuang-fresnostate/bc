@@ -268,6 +268,20 @@ impl OrderRepository {
         Ok(result)
     }
 
+    /// 一键清除投注订单和计奖派奖历史；存在待开奖订单时拒绝清理，避免扣款订单失去结算机会。
+    pub async fn clear_bet_records(&self) -> ApiResult<usize> {
+        let (deleted_count, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?;
+            let deleted_count = store.clear_bet_records()?;
+            (deleted_count, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(deleted_count)
+    }
+
     /// 返回最近订单汇总列表。
     pub async fn recent_summaries(&self, limit: usize) -> ApiResult<Vec<OrderSummary>> {
         self.inner
@@ -913,6 +927,25 @@ impl OrderStore {
         self.orders
             .remove(id)
             .ok_or_else(|| ApiError::NotFound(format!("order `{id}` not found")))
+    }
+
+    /// 清除投注订单与对应结算批次，保留订单和结算流水号防止后续 ID 重复。
+    fn clear_bet_records(&mut self) -> ApiResult<usize> {
+        let pending_count = self
+            .orders
+            .values()
+            .filter(|order| order.status == OrderStatus::PendingDraw)
+            .count();
+        if pending_count > 0 {
+            return Err(ApiError::BadRequest(format!(
+                "存在 {pending_count} 笔待开奖投注订单，请先开奖结算或取消后再清除记录"
+            )));
+        }
+
+        let deleted_count = self.orders.len();
+        self.orders.clear();
+        self.settlement_runs.clear();
+        Ok(deleted_count)
     }
 
     /// 处理 recent_summaries 的具体内部流程。
@@ -1621,6 +1654,70 @@ mod tests {
         assert!(losing.matched_bets.is_empty());
         assert_eq!(losing.payout_minor, 0);
         assert!(losing.settled_at.is_some());
+    }
+
+    #[test]
+    /// 清理投注记录会拒绝待开奖订单，避免已经扣款的订单失去结算机会。
+    fn store_clear_bet_records_rejects_pending_draw_orders() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let mut store = OrderStore::default();
+        store
+            .create(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10001".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026155".to_string(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: PlaySelection {
+                        positions: vec![vec![2], vec![4], vec![7]],
+                        ..PlaySelection::default()
+                    },
+                    unit_amount_minor: 200,
+                },
+            )
+            .expect("order can be created");
+
+        assert!(store
+            .clear_bet_records()
+            .expect_err("pending draw order cannot be cleared")
+            .to_string()
+            .contains("待开奖投注订单"));
+    }
+
+    #[test]
+    /// 已结算订单允许一键清理，并同步清除计奖派奖批次。
+    fn store_clear_bet_records_removes_settlement_runs() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let mut store = OrderStore::default();
+        store
+            .create(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10001".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026156".to_string(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: PlaySelection {
+                        positions: vec![vec![2], vec![4], vec![7]],
+                        ..PlaySelection::default()
+                    },
+                    unit_amount_minor: 200,
+                },
+            )
+            .expect("order can be created");
+        store
+            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")))
+            .expect("drawn issue can be settled");
+
+        assert_eq!(
+            store
+                .clear_bet_records()
+                .expect("settled records can clear"),
+            1
+        );
+        assert!(store.list().is_empty());
+        assert!(store.settlement_runs().is_empty());
     }
 
     #[test]

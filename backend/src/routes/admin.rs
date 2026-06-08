@@ -3,10 +3,13 @@
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     extract::{Multipart, Path, Query, Request, State},
-    http::header::AUTHORIZATION,
+    http::{
+        header::{self, AUTHORIZATION},
+        HeaderMap, HeaderValue,
+    },
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, patch, post, put},
+    routing::{delete, get, patch, post, put},
     Extension, Json, Router,
 };
 use chrono::Local;
@@ -41,7 +44,9 @@ use crate::{
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
         rebate::{InvitePolicySummary, InvitePolicyUpdateRequest},
-        recharge::{ConfirmRechargeOrderRequest, RechargeOrderSummary},
+        recharge::{
+            ConfirmRechargeOrderRequest, RechargeChannel, RechargeOrderStatus, RechargeOrderSummary,
+        },
         robot::{GroupBuyRobotRun, RobotConfigSummary, RobotStatusRequest},
         settlement::SettlementRun,
         support::{
@@ -92,11 +97,14 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/financial-accounts", get(list_financial_accounts))
         .route("/ledger-entries", get(list_ledger_entries))
         .route("/recharge-orders", get(list_recharge_orders))
+        .route("/recharge-orders/export", get(export_recharge_orders))
+        .route("/recharge-orders/clear", delete(clear_recharge_orders))
         .route(
             "/recharge-orders/{id}/confirm",
             post(confirm_recharge_order),
         )
         .route("/withdrawal-orders", get(list_withdrawal_orders))
+        .route("/withdrawal-orders/clear", delete(clear_withdrawal_orders))
         .route(
             "/withdrawal-orders/{id}/approve",
             post(approve_withdrawal_order),
@@ -220,6 +228,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/play-rules", get(list_play_rules))
         .route("/play-rules/evaluate", post(evaluate_play_rule_request))
         .route("/orders", get(list_orders).post(create_order))
+        .route("/orders/clear", delete(clear_bet_orders))
         .route("/orders/{id}", get(get_order))
         .route("/orders/{id}/cancel", patch(cancel_order))
         .route("/lotteries", get(list_lotteries).post(create_lottery))
@@ -699,6 +708,13 @@ struct FinancePageQuery {
     page: Option<usize>,
     page_size: Option<usize>,
     include_robot_data: Option<bool>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台一键清理记录后的统一返回结构。
+struct ClearRecordsResult {
+    deleted_count: usize,
 }
 
 /// 后台财务、订单、合买等列表通用分页参数。
@@ -1855,6 +1871,77 @@ fn should_include_user_scoped_record(include_robot_data: bool, user_id: &str) ->
     include_robot_data || !is_group_buy_robot_user_id(user_id)
 }
 
+/// 生成充值订单 CSV 文本，带 UTF-8 BOM 方便表格软件直接识别中文。
+fn recharge_orders_csv(orders: &[RechargeOrderSummary]) -> String {
+    let mut csv = String::from(
+        "\u{feff}订单ID,用户ID,用户名,充值渠道,支付方式,金额(元),状态,外部交易号,客服会话ID,创建时间,入账时间\n",
+    );
+    for order in orders {
+        push_csv_row(
+            &mut csv,
+            &[
+                order.id.clone(),
+                order.user_id.clone(),
+                order.username.clone(),
+                recharge_channel_label(&order.channel).to_string(),
+                order.pay_type.clone().unwrap_or_default(),
+                minor_to_money_text(order.amount_minor),
+                recharge_status_label(&order.status).to_string(),
+                order.provider_trade_no.clone().unwrap_or_default(),
+                order.support_conversation_id.clone().unwrap_or_default(),
+                order.created_at.clone(),
+                order.paid_at.clone().unwrap_or_default(),
+            ],
+        );
+    }
+    csv
+}
+
+/// 追加一行 CSV，并对逗号、引号和换行做标准转义。
+fn push_csv_row(csv: &mut String, columns: &[String]) {
+    for (index, column) in columns.iter().enumerate() {
+        if index > 0 {
+            csv.push(',');
+        }
+        csv.push_str(&csv_escape(column));
+    }
+    csv.push('\n');
+}
+
+/// 转义单个 CSV 字段，保证用户昵称或交易号包含特殊字符时不会错列。
+fn csv_escape(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+/// 把分转换为固定两位小数的元金额文本，避免导出时出现浮点误差。
+fn minor_to_money_text(amount_minor: i64) -> String {
+    let sign = if amount_minor < 0 { "-" } else { "" };
+    let absolute = amount_minor.checked_abs().unwrap_or(i64::MAX);
+    format!("{sign}{}.{:02}", absolute / 100, absolute % 100)
+}
+
+/// 返回充值渠道中文标签。
+fn recharge_channel_label(channel: &RechargeChannel) -> &'static str {
+    match channel {
+        RechargeChannel::RainbowEpay => "彩虹易支付",
+        RechargeChannel::CustomerService => "客服直充",
+    }
+}
+
+/// 返回充值订单状态中文标签。
+fn recharge_status_label(status: &RechargeOrderStatus) -> &'static str {
+    match status {
+        RechargeOrderStatus::Pending => "待支付",
+        RechargeOrderStatus::WaitingCustomerService => "等待客服",
+        RechargeOrderStatus::Paid => "已入账",
+        RechargeOrderStatus::Cancelled => "已取消",
+    }
+}
+
 /// 返回后台财务总览。
 async fn get_finance_overview(
     State(state): State<AppState>,
@@ -1925,6 +2012,34 @@ async fn list_recharge_orders(
     Ok(Json(ApiEnvelope::success(page_items(orders, query))))
 }
 
+/// 导出全部充值订单为 CSV 文件，供后台财务留档或离线核对。
+async fn export_recharge_orders(State(state): State<AppState>) -> ApiResult<Response> {
+    let orders = state.recharges.list().await?;
+    let csv = recharge_orders_csv(&orders);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/csv; charset=utf-8"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment; filename=\"recharge-orders.csv\""),
+    );
+
+    Ok((headers, csv).into_response())
+}
+
+/// 一键清除充值订单历史；不会回滚已入账余额和资金流水。
+async fn clear_recharge_orders(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
+    let deleted_count = state.recharges.clear_records().await?;
+
+    Ok(Json(ApiEnvelope::success(ClearRecordsResult {
+        deleted_count,
+    })))
+}
+
 /// 返回提现申请分页列表。
 async fn list_withdrawal_orders(
     State(state): State<AppState>,
@@ -1933,6 +2048,17 @@ async fn list_withdrawal_orders(
     let orders = state.withdrawals.list().await?;
 
     Ok(Json(ApiEnvelope::success(page_items(orders, query))))
+}
+
+/// 一键清除提现申请历史；存在待审核申请时由仓储拒绝执行。
+async fn clear_withdrawal_orders(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
+    let deleted_count = state.withdrawals.clear_records().await?;
+
+    Ok(Json(ApiEnvelope::success(ClearRecordsResult {
+        deleted_count,
+    })))
 }
 
 /// 后台确认客服直充或人工充值订单入账。
@@ -2028,6 +2154,17 @@ async fn list_orders(
         .collect::<Vec<_>>();
 
     Ok(Json(ApiEnvelope::success(page_items(orders, query))))
+}
+
+/// 一键清除投注订单和计奖派奖历史；存在待开奖订单时由仓储拒绝执行。
+async fn clear_bet_orders(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
+    let deleted_count = state.orders.clear_bet_records().await?;
+
+    Ok(Json(ApiEnvelope::success(ClearRecordsResult {
+        deleted_count,
+    })))
 }
 
 /// 返回指定投注订单详情。

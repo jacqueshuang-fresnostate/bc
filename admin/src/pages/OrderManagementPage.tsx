@@ -1,5 +1,15 @@
-import { Input, Banner, Button, Card, Select, Spin, Switch, Tag } from '@douyinfe/semi-ui';
-import { Ban, Plus, RefreshCcw } from 'lucide-react';
+import {
+  Input,
+  Banner,
+  Button,
+  Card,
+  Select,
+  Spin,
+  Switch,
+  Tag,
+  Toast,
+} from '@douyinfe/semi-ui';
+import { Ban, Plus, RefreshCcw, Trash2 } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -65,6 +75,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
   const [orderPageSize, setOrderPageSize] = useState(20);
   const {
     cancel,
+    clearRecords,
     create,
     error: orderError,
     loading: ordersLoading,
@@ -184,6 +195,21 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
     onDashboardRefresh();
   };
 
+  const clearBetOrderRecords = async () => {
+    if (!window.confirm('确定一键清除全部用户投注记录吗？存在待开奖订单时系统会拒绝清理。')) {
+      return;
+    }
+    try {
+      const result = await clearRecords();
+      setOrderPageNumber(1);
+      setCreatedOrder(null);
+      onDashboardRefresh();
+      Toast.success(`已清除 ${result.deletedCount} 笔投注记录`);
+    } catch {
+      Toast.error('投注记录清除失败，请查看接口错误提示');
+    }
+  };
+
   const loading = ordersLoading || lotteriesLoading || rulesLoading || drawsLoading;
   const error = orderError ?? lotteryError ?? drawsError ?? rulesError;
 
@@ -209,6 +235,15 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
           </label>
           <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
             刷新
+          </Button>
+          <Button
+            disabled={saving || loading || orderPage.totalCount === 0}
+            icon={<Trash2 size={16} />}
+            theme="solid"
+            type="danger"
+            onClick={() => void clearBetOrderRecords()}
+          >
+            清除投注记录
           </Button>
         </div>
       </section>

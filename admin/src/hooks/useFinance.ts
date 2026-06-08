@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   approveWithdrawalOrder,
+  clearRechargeOrders,
+  clearWithdrawalOrders,
   confirmRechargeOrder,
   createManualBalanceAdjustment,
+  exportRechargeOrders,
   fetchFinanceOverview,
   fetchFinancialAccounts,
   fetchLedgerEntries,
@@ -183,12 +186,58 @@ export function useFinance({
     [refresh],
   );
 
+  const exportRechargeRecords = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      return await exportRechargeOrders();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const clearRechargeRecords = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await clearRechargeOrders();
+      refresh();
+      return result;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
+  const clearWithdrawalRecords = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await clearWithdrawalOrders();
+      refresh();
+      return result;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
   return {
     accounts,
     adjustBalance,
     approveWithdrawal,
+    clearRechargeRecords,
+    clearWithdrawalRecords,
     confirmRecharge,
     error,
+    exportRechargeRecords,
     ledgerEntries,
     loading,
     overview,
