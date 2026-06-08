@@ -12,7 +12,7 @@ const emit = defineEmits<{ back: [] }>()
 </script>
 
 <template>
-  <header class="sticky top-0 z-40 bg-[#f9f9f9]/90 px-6 py-4 shadow-sm shadow-red-900/5 backdrop-blur">
+  <header class="mobile-safe-compact-header sticky top-0 z-40 bg-[#f9f9f9]/90 px-6 py-4 shadow-sm shadow-red-900/5 backdrop-blur">
     <div class="mx-auto flex max-w-md items-center justify-between gap-4">
       <div class="flex min-w-0 items-center gap-3">
         <button class="text-2xl text-[#8c0a15]" type="button" @click="emit('back')">←</button>

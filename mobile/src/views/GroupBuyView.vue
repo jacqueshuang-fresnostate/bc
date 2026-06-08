@@ -140,7 +140,7 @@ onMounted(async () => {
 
 <template>
   <div class="group-buy-page min-h-screen bg-[#f7f7f7] pb-24 text-[#171717]">
-    <header v-if="activeTab === 'hall'" class="group-buy-brand-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
+    <header v-if="activeTab === 'hall'" class="group-buy-brand-header mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <h1 class="sr-only">合买大厅</h1>
       <div class="flex items-center gap-3">
         <img
@@ -160,7 +160,7 @@ onMounted(async () => {
 
     <van-tabs v-model:active="activeTab" sticky class="group-buy-tabs hidden-tab-header">
       <van-tab title="大厅" name="hall">
-        <section class="group-buy-hall group-buy-hall-scroll space-y-2 px-3 pb-4 pt-16">
+        <section class="group-buy-hall group-buy-hall-scroll mobile-safe-main-top-tight space-y-2 px-3 pb-4">
           <div class="hallCategoryChips filterChips flex min-h-11 gap-2 overflow-x-auto pb-1">
             <button
               v-for="chip in hallCategoryChips"

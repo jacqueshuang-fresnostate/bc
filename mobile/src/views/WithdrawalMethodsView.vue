@@ -205,7 +205,7 @@ onMounted(loadMethods)
 
 <template>
   <div class="withdrawal-management relative flex min-h-screen flex-col items-center bg-surface text-on-surface font-body">
-    <nav class="fixed top-0 z-50 w-full bg-white/80 backdrop-blur-md shadow-[0_4px_40px_0_rgba(140,10,21,0.04)]">
+    <nav class="mobile-safe-header fixed top-0 z-50 w-full bg-white/80 backdrop-blur-md shadow-[0_4px_40px_0_rgba(140,10,21,0.04)]">
       <div class="flex justify-between items-center px-6 py-4 w-full max-w-lg mx-auto">
         <button class="text-primary transition-opacity duration-200 active:scale-95 active:opacity-80" aria-label="返回" @click="router.back()">
           <LucideIcon name="arrow_back" class="h-5 w-5" />
@@ -218,7 +218,7 @@ onMounted(loadMethods)
       <div class="h-[1px] w-full bg-stone-100 opacity-20"></div>
     </nav>
 
-    <main class="w-full max-w-lg mx-auto pt-24 pb-32 px-6 flex flex-col gap-8">
+    <main class="mobile-safe-main-top-loose w-full max-w-lg mx-auto pb-32 px-6 flex flex-col gap-8">
       <header class="mb-4">
         <h1 class="mb-2 font-headline text-3xl font-extrabold text-on-surface">提现管理</h1>
         <p class="text-sm text-on-surface-variant font-label">管理您的提现方式</p>

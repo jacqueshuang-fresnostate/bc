@@ -130,7 +130,7 @@ onMounted(() => {
 
 <template>
   <div class="all-lottery-page min-h-screen bg-surface pb-28 text-on-surface font-body">
-    <header class="fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
+    <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="flex items-center gap-3">
         <img
           :alt="`${branding.site_name} 标志`"
@@ -146,7 +146,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <main class="mx-auto w-full max-w-2xl space-y-6 px-4 pb-28 pt-20">
+    <main class="mobile-safe-main-top mx-auto w-full max-w-2xl space-y-6 px-4 pb-28">
       <section class="space-y-2">
         <h2 class="font-headline text-3xl font-extrabold tracking-tight text-primary">全部彩种</h2>
         <p class="text-sm all-lottery-muted">探索全网最全的高频与经典彩票</p>

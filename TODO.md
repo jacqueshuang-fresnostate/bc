@@ -2404,3 +2404,38 @@
 - 解决问题：当前 release 构建开启 R8/ProGuard 混淆裁剪，但 Tauri Android 桥接和插件没有完整 keep 规则，存在 release 启动闪退风险；同时原 release APK 为 unsigned，不能作为直接安装验证包。
 - 实施内容：关闭 Android release 构建的 `isMinifyEnabled`，并让本地 release APK 使用 Android debug keystore 签名；正式发布前仍需替换正式签名。尝试启动本机已有 AVD，但两个虚拟机均提示缺失系统镜像，`sdkmanager` 重新安装镜像时卡在远端 manifest 下载，暂时无法完成虚拟机实测。
 - 验证结果：`pnpm tauri:build:app` 已通过，生成 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`；`apksigner verify --verbose` 显示 `Verifies`，当前文件大小约 44M。
+
+## 2026-06-08 21:28 HKT 手机端 Tauri 插件配置闪退修复
+
+- 完成任务：修复手机端 release APK 在真机启动时因 Tauri store 插件配置解析失败导致的闪退。
+- 解决问题：真机 logcat 显示 `PluginInitialization("store", "invalid type: map, expected unit")`，根因是 `tauri.conf.json` 中写了 `"store": {}` 空对象配置；当前 store 插件在 Android 侧期望无配置单元，空对象会被当成错误 map 解析。
+- 实施内容：移除 `tauri.conf.json` 里的 `plugins.store` 和 `plugins.clipboard-manager` 空对象配置；插件继续通过 Rust `.plugin(...)` 注册，权限继续由 `capabilities/default.json` 控制；Tauri 原生入口保留中文 logcat 诊断钩子并补充中文注释；同步更新架构说明和前端质量规范。
+- 验证结果：`mobile/src-tauri cargo check`、`pnpm tauri:build:app` 和 `apksigner verify --verbose` 均通过；已安装到真机 `V2301A` 并启动，8 秒后 `pidof com.hongfu.app` 仍有进程，logcat 没有 `PluginInitialization`、panic 或 SIGABRT，真机截屏确认应用进入登录页。
+
+## 2026-06-08 21:36 HKT 手机端 APK HTTP 域名解析修复
+
+- 完成任务：修复 APK 内 HTTP/WS 请求没有打到真实后端域名的问题。
+- 解决问题：域名虽然存在于构建产物，但原判断把所有 `http` 协议都当成普通浏览器同源；Tauri Android 本地页面使用 `http://tauri.localhost` 时，手机端会走相对 `/api`，导致请求打到 `tauri.localhost/api`。
+- 实施内容：`mobile/src/api/http.ts` 新增 API base 解析函数，优先使用 `VITE_API_BASE_URL` / `VITE_API_BASE`，识别 `tauri.localhost`、`tauri:`、`asset:` 后回落到 `https://bc.hippo-web3.cc.cd`；普通浏览器开发环境继续使用相对 `/api` 走 Vite 代理；同步更新架构说明和前端质量规范。
+- 验证结果：`pnpm build` 通过且产物包含 `tauri.localhost` 判断和打包域名；`pnpm tauri:build:app` 通过；`apksigner verify --verbose` 通过；真机安装并清理应用数据后启动，登录页成功加载后端站点配置，显示图床 logo 和“祝您理性购彩、好运常伴。”，logcat 未发现启动崩溃或网络异常。
+
+## 2026-06-08 21:50 HKT 手机端首页重复加载优化
+
+- 完成任务：优化手机端首页缓存，避免每次通过底部导航返回首页都重新请求并显示加载态。
+- 解决问题：`HomeView` 原先在每次 `onMounted` 时无条件请求用户余额、首页聚合接口和广告接口；底部导航切换回来会重新挂载页面，因此首页会重复网络请求和重新加载。
+- 实施内容：新增 `mobile/src/stores/homepage.ts`，用 Pinia 缓存首页聚合数据、手机端广告和余额；首页聚合缓存 30 秒，广告缓存 5 分钟，余额缓存 15 秒并绑定当前用户 ID；同类请求做去重；倒计时超过开奖时间或收到开奖 WebSocket 推送时仍通过 `force + silent` 绕过缓存静默刷新；同步更新架构说明和前端状态规范。
+- 验证结果：手机端 `pnpm build`、`pnpm test` 和 `git diff --check` 均通过；当前测试命令显示 0 个测试用例。
+
+## 2026-06-08 22:39 HKT 手机端登录注册一屏展示优化
+
+- 完成任务：把手机端登录页和注册页调整为一个屏幕内完整展示。
+- 解决问题：原页面品牌区、表单卡片和页脚间距偏大，注册态在小屏手机需要拖动；同时 `100dvh` 在本地浏览器验证时比实际视口多 8px，会造成轻微可滚动。
+- 实施内容：`LoginView` 改为根节点满高布局，移除登录页页脚，收紧 Logo、标题、表单卡片、输入框和按钮尺寸；全局清除 `body` 默认外边距并让 `html/body/#app` 高度等于视口；同步更新架构说明和前端组件规范。
+- 验证结果：本地浏览器按 `390x844` 和 `360x667` 验证登录态、注册态，`scrollHeight` 均等于 `innerHeight`，垂直溢出为 0；后续已继续执行手机端构建、测试和空白差异检查。
+
+## 2026-06-08 22:55 HKT 手机端顶部安全区修复
+
+- 完成任务：修复 APK 真机里顶部 Header 被 Android 状态栏遮挡的问题。
+- 解决问题：首页、开奖、合买、我的、充值、提现等页面的顶部栏使用 `fixed top-0` 或 `sticky top-0`，Tauri Android 下会顶进状态栏，导致 Logo、站点名和钱包与时间/信号图标重叠。
+- 实施内容：viewport 增加 `viewport-fit=cover`；新增公共 `mobile-safe-*` 安全区样式；品牌 Header、紧凑 Header、固定 Header 主内容偏移以及聊天/客服 scoped 顶部栏统一接入安全区变量；同步更新架构说明和前端组件规范。
+- 验证结果：手机端 `pnpm build`、`pnpm test`、`git diff --check`、`pnpm tauri:build:app` 和 APK 签名校验均通过；真机 `V2301A` 覆盖安装并冷启动后无崩溃日志，首页截图确认 Header 已避开状态栏。

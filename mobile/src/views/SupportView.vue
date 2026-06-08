@@ -382,8 +382,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 64px;
-  padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+  min-height: calc(64px + var(--mobile-status-safe-top));
+  padding: calc(10px + var(--mobile-status-safe-top)) 16px 10px;
   background: rgba(255, 250, 247, 0.9);
   border-bottom: 1px solid rgba(175, 40, 41, 0.09);
   box-shadow: 0 8px 30px rgba(95, 10, 18, 0.08);
@@ -487,7 +487,7 @@ onBeforeUnmount(() => {
   max-width: 540px;
   min-height: 100vh;
   margin: 0 auto;
-  padding: calc(86px + env(safe-area-inset-top)) 16px 24px;
+  padding: calc(86px + var(--mobile-status-safe-top)) 16px 24px;
   display: flex;
   flex-direction: column;
   gap: 18px;

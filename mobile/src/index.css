@@ -1,5 +1,44 @@
 @import "tailwindcss";
 
+html,
+body,
+#app {
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+:root {
+  --mobile-status-safe-top: max(1.75rem, env(safe-area-inset-top, 0px));
+  --mobile-brand-header-height: calc(4rem + var(--mobile-status-safe-top));
+  --mobile-compact-header-height: calc(3.5rem + var(--mobile-status-safe-top));
+  --mobile-brand-page-top: calc(var(--mobile-brand-header-height) + 1rem);
+  --mobile-brand-page-top-tight: var(--mobile-brand-header-height);
+  --mobile-brand-page-top-loose: calc(var(--mobile-brand-header-height) + 3rem);
+}
+
+.mobile-safe-header {
+  min-height: var(--mobile-brand-header-height);
+  padding-top: var(--mobile-status-safe-top);
+}
+
+.mobile-safe-compact-header {
+  min-height: var(--mobile-compact-header-height);
+  padding-top: var(--mobile-status-safe-top);
+}
+
+.mobile-safe-main-top {
+  padding-top: var(--mobile-brand-page-top) !important;
+}
+
+.mobile-safe-main-top-tight {
+  padding-top: var(--mobile-brand-page-top-tight) !important;
+}
+
+.mobile-safe-main-top-loose {
+  padding-top: var(--mobile-brand-page-top-loose) !important;
+}
+
 @theme {
   --font-headline: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

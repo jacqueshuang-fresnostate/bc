@@ -92,7 +92,7 @@ onMounted(() => {
 
 <template>
   <section class="history-center">
-    <header class="fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
+    <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="flex items-center gap-3">
         <img
           :alt="`${branding.site_name} 标志`"
@@ -205,7 +205,7 @@ onMounted(() => {
 .history-content {
   width: min(100%, 672px);
   margin: 0 auto;
-  padding: 80px 16px 112px;
+  padding: var(--mobile-brand-page-top) 16px 112px;
 }
 
 .draw-panel__header {

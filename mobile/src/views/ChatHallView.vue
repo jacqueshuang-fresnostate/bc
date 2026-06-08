@@ -640,8 +640,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 3.75rem;
-  padding: max(0.7rem, env(safe-area-inset-top)) 1rem 0.7rem;
+  min-height: calc(3.75rem + var(--mobile-status-safe-top));
+  padding: var(--mobile-status-safe-top) 1rem 0.7rem;
   background: rgba(255, 255, 255, 0.88);
   border-bottom: 1px solid rgba(143, 20, 31, 0.08);
   box-shadow: 0 10px 30px rgba(143, 20, 31, 0.08);
@@ -665,7 +665,7 @@ onBeforeUnmount(() => {
 .chat-hall__messages {
   height: 100vh;
   overflow-y: auto;
-  padding: calc(4.25rem + env(safe-area-inset-top)) 1rem calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 1.25rem);
+  padding: calc(4.25rem + var(--mobile-status-safe-top)) 1rem calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 1.25rem);
 }
 
 .chat-hall__state {

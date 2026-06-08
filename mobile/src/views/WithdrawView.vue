@@ -165,7 +165,7 @@ onMounted(loadWithdrawData)
 
 <template>
   <div class="withdraw-application flex min-h-screen flex-col items-center bg-surface pb-24 text-on-surface antialiased font-body">
-    <header class="fixed top-0 z-50 w-full bg-white/80 backdrop-blur-md shadow-[0_4px_40px_0_rgba(140,10,21,0.04)]">
+    <header class="mobile-safe-header fixed top-0 z-50 w-full bg-white/80 backdrop-blur-md shadow-[0_4px_40px_0_rgba(140,10,21,0.04)]">
       <div class="flex justify-between items-center px-6 py-4 w-full max-w-lg mx-auto relative">
         <button class="text-primary transition-opacity duration-200 active:scale-95 active:opacity-80" aria-label="返回" @click="router.back()">
           <LucideIcon name="arrow_back" class="h-5 w-5" />
@@ -178,7 +178,7 @@ onMounted(loadWithdrawData)
       <div class="mx-auto h-[1px] w-full max-w-lg bg-stone-100 opacity-20"></div>
     </header>
 
-    <main class="w-full max-w-lg mx-auto px-6 pt-28 flex-1 flex flex-col gap-8">
+    <main class="mobile-safe-main-top-loose w-full max-w-lg mx-auto px-6 flex-1 flex flex-col gap-8">
       <section class="rounded-xl bg-surface-container-lowest p-6 shadow-[0_4px_40px_0_rgba(140,10,21,0.04)]">
         <p class="mb-2 text-sm text-on-surface-variant font-label">可用余额</p>
         <div class="flex items-baseline gap-2">

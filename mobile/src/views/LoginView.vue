@@ -91,44 +91,44 @@ async function doRegister() {
 </script>
 
 <template>
-  <div class="bg-surface font-body text-on-surface flex flex-col min-h-screen relative overflow-hidden">
+  <div class="auth-page bg-surface font-body text-on-surface relative flex h-full max-h-full flex-col overflow-hidden">
     <div class="absolute inset-0 opacity-[0.03] pointer-events-none select-none overflow-hidden">
       <div class="grid grid-cols-12 gap-4 w-full h-full">
         <div v-for="i in 144" :key="i" class="w-1 h-1 bg-primary rounded-full"></div>
       </div>
     </div>
 
-    <main class="flex-grow pt-32 pb-20 px-6 flex flex-col items-center justify-center relative z-10">
-      <div class="w-full max-w-md">
-        <div class="mb-12 text-center">
+    <main class="auth-main relative z-10 flex min-h-0 flex-1 items-center justify-center px-5 py-4">
+      <div class="w-full max-w-sm">
+        <div class="auth-brand text-center">
           <div class="inline-block relative">
             <div class="absolute inset-0 bg-primary/10 blur-3xl rounded-full"></div>
             <img
               :alt="`${branding.site_name} 标志`"
-              class="relative w-24 h-24 object-cover rounded-full border-2 border-primary-fixed shadow-xl mx-auto"
+              class="auth-logo relative mx-auto rounded-full border-2 border-primary-fixed object-cover shadow-xl"
               :src="branding.logo_url"
               @error="onLogoError"
             />
           </div>
-          <h2 class="mt-4 font-headline text-4xl font-black tracking-tighter text-primary italic">{{ branding.site_name }}</h2>
-          <p class="mt-2 text-on-surface-variant font-medium tracking-widest uppercase text-xs">{{ branding.slogan }}</p>
+          <h2 class="auth-title font-headline font-black tracking-tight text-primary italic">{{ branding.site_name }}</h2>
+          <p class="auth-slogan truncate text-on-surface-variant font-medium">{{ branding.slogan }}</p>
         </div>
 
-        <div class="bg-surface-container-lowest p-10 rounded-[2rem] shadow-2xl shadow-primary/5 relative overflow-hidden ring-1 ring-black/5">
-          <form v-if="mode === 'login'" class="space-y-8" @submit.prevent="doLogin">
-            <div class="space-y-2">
-              <label class="block font-label text-sm font-bold text-on-surface-variant ml-1">用户名或邮箱</label>
+        <div class="auth-card bg-surface-container-lowest relative overflow-hidden rounded-[1.5rem] shadow-xl shadow-primary/5 ring-1 ring-black/5">
+          <form v-if="mode === 'login'" class="auth-form" @submit.prevent="doLogin">
+            <div class="auth-field">
+              <label class="auth-label block font-label font-bold text-on-surface-variant">用户名或邮箱</label>
               <input
                 v-model="account"
-                class="w-full px-6 py-4 bg-surface-container-low border-none rounded-2xl focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
+                class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
                 placeholder="请输入您的账号"
                 type="text"
               />
             </div>
 
-            <div class="space-y-2">
+            <div class="auth-field">
               <div class="flex justify-between items-center px-1">
-                <label class="block font-label text-sm font-bold text-on-surface-variant">密码</label>
+                <label class="auth-label block font-label font-bold text-on-surface-variant">密码</label>
                 <button
                   type="button"
                   class="text-xs font-bold text-primary"
@@ -141,7 +141,7 @@ async function doRegister() {
                 <input
                   v-model="password"
                   :type="showPassword ? 'text' : 'password'"
-                  class="w-full px-6 py-4 bg-surface-container-low border-none rounded-2xl focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
+                  class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
                   placeholder="请输入您的密码"
                 />
                 <button
@@ -156,21 +156,21 @@ async function doRegister() {
             </div>
 
             <button
-              class="w-full lacquer-gradient !text-on-primary font-headline font-bold py-5 rounded-2xl shadow-xl shadow-primary/30 active:scale-[0.98] transition-all duration-300 cursor-pointer text-lg disabled:opacity-60"
+              class="auth-primary-button w-full lacquer-gradient !text-on-primary font-headline font-bold shadow-xl shadow-primary/30 active:scale-[0.98] transition-all duration-300 cursor-pointer disabled:opacity-60"
               type="submit"
               :disabled="loading"
             >
               {{ loading ? '登录中...' : '登录' }}
             </button>
 
-            <div class="flex items-center gap-4 py-2">
+            <div class="auth-separator flex items-center gap-3">
               <div class="flex-grow h-[1px] bg-outline-variant/30"></div>
-              <span class="text-[10px] font-bold tracking-widest text-outline uppercase">或者</span>
+              <span class="text-[10px] font-bold text-outline">或者</span>
               <div class="flex-grow h-[1px] bg-outline-variant/30"></div>
             </div>
 
             <div class="text-center">
-              <p class="text-sm font-medium text-on-surface-variant">
+              <p class="auth-switch-text font-medium text-on-surface-variant">
                 还没有账号？
                 <button
                   type="button"
@@ -183,11 +183,11 @@ async function doRegister() {
             </div>
           </form>
 
-          <form v-else class="space-y-6" @submit.prevent="doRegister">
-            <div v-if="usernameRegEnabled && emailRegEnabled" class="grid grid-cols-2 gap-2 rounded-2xl bg-surface-container-low p-1">
+          <form v-else class="auth-form" @submit.prevent="doRegister">
+            <div v-if="usernameRegEnabled && emailRegEnabled" class="grid grid-cols-2 gap-2 rounded-xl bg-surface-container-low p-1">
               <button
                 type="button"
-                class="rounded-xl py-3 text-sm font-bold transition-all"
+                class="auth-segment-button rounded-lg font-bold transition-all"
                 :class="regType === 'username' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant'"
                 @click="regType = 'username'"
               >
@@ -195,7 +195,7 @@ async function doRegister() {
               </button>
               <button
                 type="button"
-                class="rounded-xl py-3 text-sm font-bold transition-all"
+                class="auth-segment-button rounded-lg font-bold transition-all"
                 :class="regType === 'email' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant'"
                 @click="regType = 'email'"
               >
@@ -203,35 +203,35 @@ async function doRegister() {
               </button>
             </div>
 
-            <div v-if="regType === 'username' && usernameRegEnabled" class="space-y-2">
-              <label class="block font-label text-sm font-bold text-on-surface-variant ml-1">用户名</label>
+            <div v-if="regType === 'username' && usernameRegEnabled" class="auth-field">
+              <label class="auth-label block font-label font-bold text-on-surface-variant">用户名</label>
               <input
                 v-model="account"
-                class="w-full px-6 py-4 bg-surface-container-low border-none rounded-2xl focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
+                class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
                 placeholder="请输入用户名"
                 type="text"
               />
             </div>
 
             <template v-else>
-              <div class="space-y-2">
-                <label class="block font-label text-sm font-bold text-on-surface-variant ml-1">邮箱</label>
+              <div class="auth-field">
+                <label class="auth-label block font-label font-bold text-on-surface-variant">邮箱</label>
                 <input
                   v-model="email"
-                  class="w-full px-6 py-4 bg-surface-container-low border-none rounded-2xl focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
+                  class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
                   placeholder="请输入邮箱"
                   type="email"
                 />
               </div>
             </template>
 
-            <div class="space-y-2">
-              <label class="block font-label text-sm font-bold text-on-surface-variant ml-1">密码</label>
+            <div class="auth-field">
+              <label class="auth-label block font-label font-bold text-on-surface-variant">密码</label>
               <div class="relative group">
                 <input
                   v-model="password"
                   :type="showPassword ? 'text' : 'password'"
-                  class="w-full px-6 py-4 bg-surface-container-low border-none rounded-2xl focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
+                  class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
                   placeholder="请输入密码（至少6位）"
                 />
                 <button
@@ -245,11 +245,11 @@ async function doRegister() {
               </div>
             </div>
 
-            <div class="space-y-2">
-              <label class="block font-label text-sm font-bold text-on-surface-variant ml-1">邀请码</label>
+            <div class="auth-field">
+              <label class="auth-label block font-label font-bold text-on-surface-variant">邀请码</label>
               <input
                 v-model="invitationCode"
-                class="w-full px-6 py-4 bg-surface-container-low border-none rounded-2xl focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
+                class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
                 :placeholder="inviteRequired ? '请输入上级邀请码' : '选填上级邀请码'"
                 maxlength="16"
                 type="text"
@@ -257,7 +257,7 @@ async function doRegister() {
             </div>
 
             <button
-              class="w-full lacquer-gradient !text-on-primary font-headline font-bold py-5 rounded-2xl shadow-xl shadow-primary/30 active:scale-[0.98] transition-all duration-300 cursor-pointer text-lg disabled:opacity-60"
+              class="auth-primary-button w-full lacquer-gradient !text-on-primary font-headline font-bold shadow-xl shadow-primary/30 active:scale-[0.98] transition-all duration-300 cursor-pointer disabled:opacity-60"
               type="submit"
               :disabled="loading"
             >
@@ -267,7 +267,7 @@ async function doRegister() {
             <div class="text-center">
               <button
                 type="button"
-                class="text-primary font-bold hover:underline cursor-pointer"
+                class="auth-switch-text text-primary font-bold hover:underline cursor-pointer"
                 @click="mode = 'login'"
               >
                 返回登录
@@ -277,14 +277,124 @@ async function doRegister() {
         </div>
       </div>
     </main>
-
-    <footer class="w-full py-16 mt-auto relative z-10">
-      <div class="flex flex-col items-center gap-8 max-w-4xl mx-auto text-center">
-        <div class="w-px h-16 bg-primary/20"></div>
-        <p class="font-headline text-[10px] tracking-[0.4em] uppercase font-bold text-outline">
-          {{ branding.footer_text }}
-        </p>
-      </div>
-    </footer>
   </div>
 </template>
+
+<style scoped>
+.auth-main {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+.auth-brand {
+  margin-bottom: 1rem;
+}
+
+.auth-logo {
+  width: 4.5rem;
+  height: 4.5rem;
+}
+
+.auth-title {
+  margin-top: 0.625rem;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.auth-slogan {
+  margin-top: 0.375rem;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+.auth-card {
+  padding: 1.25rem;
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.875rem;
+}
+
+.auth-field {
+  display: grid;
+  gap: 0.375rem;
+}
+
+.auth-label {
+  margin-left: 0.25rem;
+  font-size: 0.8125rem;
+}
+
+.auth-input {
+  min-height: 3rem;
+  border-radius: 1rem;
+  padding: 0.75rem 1rem;
+}
+
+.auth-primary-button {
+  min-height: 3rem;
+  border-radius: 1rem;
+  font-size: 1rem;
+}
+
+.auth-separator {
+  min-height: 1rem;
+}
+
+.auth-switch-text {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.auth-segment-button {
+  min-height: 2.5rem;
+  font-size: 0.8125rem;
+}
+
+@media (max-height: 720px) {
+  .auth-brand {
+    margin-bottom: 0.75rem;
+  }
+
+  .auth-logo {
+    width: 3.75rem;
+    height: 3.75rem;
+  }
+
+  .auth-title {
+    margin-top: 0.5rem;
+    font-size: 1.75rem;
+  }
+
+  .auth-slogan {
+    margin-top: 0.25rem;
+    font-size: 0.6875rem;
+    line-height: 1rem;
+  }
+
+  .auth-card {
+    padding: 1rem;
+    border-radius: 1.25rem;
+  }
+
+  .auth-form {
+    gap: 0.625rem;
+  }
+
+  .auth-input,
+  .auth-primary-button {
+    min-height: 2.625rem;
+  }
+
+  .auth-input {
+    border-radius: 0.875rem;
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+  }
+
+  .auth-segment-button {
+    min-height: 2.25rem;
+  }
+}
+</style>

@@ -80,7 +80,7 @@ async function submitPasswordChange() {
 
 <template>
   <div class="min-h-screen bg-background text-on-surface font-body">
-    <header class="sticky top-0 z-40 flex h-14 items-center justify-between bg-white/90 px-4 shadow-[0_1px_0_rgba(140,10,21,0.06)] backdrop-blur-md">
+    <header class="mobile-safe-compact-header sticky top-0 z-40 flex h-14 items-center justify-between bg-white/90 px-4 shadow-[0_1px_0_rgba(140,10,21,0.06)] backdrop-blur-md">
       <button class="flex h-9 w-9 items-center justify-center rounded-full bg-surface-container-low text-on-surface-variant active:bg-surface-container" type="button" @click="router.back()">
         <ArrowLeft class="h-5 w-5" />
       </button>

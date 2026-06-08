@@ -120,7 +120,7 @@ async function logout() {
 
 <template>
   <div class="account-dashboard min-h-screen bg-background pb-28 text-on-surface font-body">
-    <header class="fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
+    <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="flex items-center gap-3">
         <img
           :alt="`${branding.site_name} 标志`"
@@ -136,7 +136,7 @@ async function logout() {
       </div>
     </header>
 
-    <main class="mx-auto max-w-lg px-3 pt-20">
+    <main class="mobile-safe-main-top mx-auto max-w-lg px-3">
       <section class="mb-5">
         <div class="mb-5 flex items-start justify-between px-0.5">
           <div class="flex items-center gap-3">

@@ -3,27 +3,23 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { showNotify } from 'vant'
-import { fetchLotteryHomepage } from '../api/lottery'
-import type { HomepageBanner, HomepageResponse, LotteryCard } from '../api/lottery'
-import { fetchCurrentUserProfile, fetchMobileAdvertisements } from '../api/user'
-import type { MobileAdvertisement } from '../api/user'
+import type { HomepageBanner, LotteryCard } from '../api/lottery'
 import HomeDrawCard from '../components/lottery/HomeDrawCard.vue'
 import WinningTicker from '../components/lottery/WinningTicker.vue'
 import { useHomepageDrawUpdates } from '../composables/useHomepageDrawUpdates'
 import type { LotteryDrawMessage } from '../composables/useHomepageDrawUpdates'
 import { useBrandingStore } from '../stores/branding'
+import { useHomepageStore } from '../stores/homepage'
 import { parseChinaDateTime } from '../utils/lotteryFormat'
 
 const props = defineProps<{ wsMessage?: LotteryDrawMessage | null }>()
 const router = useRouter()
 const brandingStore = useBrandingStore()
+const homepageStore = useHomepageStore()
 const { branding } = storeToRefs(brandingStore)
+const { balance, homepage, mobileAdvertisements, loadingHomepage } = storeToRefs(homepageStore)
 
-// 首页数据边界：余额单独加载，首页模块数据整体保存在 homepage，倒计时由 nowMs 驱动。
-const balance = ref('0.00')
-const homepage = ref<HomepageResponse | null>(null)
-const mobileAdvertisements = ref<MobileAdvertisement[]>([])
-const loadingHomepage = ref(false)
+// 首页数据边界：余额和首页模块数据由 homepage store 缓存，倒计时由 nowMs 驱动。
 const nowMs = ref(Date.now())
 const activeHeroBannerIndex = ref(0)
 const heroBannerImageFailed = ref<Record<string, true>>({})
@@ -146,34 +142,23 @@ async function refreshHomepageAfterDrawTime() {
   homepageRefreshInFlight = true
   lastSilentHomepageRefreshMs = currentTime
   try {
-    await loadHomepage({ silent: true })
+    await loadHomepage({ silent: true, force: true })
   } finally {
     homepageRefreshInFlight = false
   }
 }
 
-async function loadHomepage(options: { silent?: boolean } = {}) {
-  if (!options.silent) loadingHomepage.value = true
-  try {
-    // 首页接口一次返回 banner、跑马灯、推荐区、分组和统计数据。
-    const data = await fetchLotteryHomepage()
-    homepage.value = data || null
-    const serverTime = parseChinaDateTime(data?.serverTime)
+async function loadHomepage(options: { silent?: boolean; force?: boolean } = {}) {
+  // 首页接口一次返回 banner、跑马灯、推荐区、分组和统计数据；store 负责缓存和请求去重。
+  const result = await homepageStore.loadHomepage(options)
+  if (result.refreshed) {
+    const serverTime = parseChinaDateTime(result.data?.serverTime)
     nowMs.value = Number.isFinite(serverTime) ? serverTime : Date.now()
-  } catch {
-    // 加载失败时置空首页数据，由模板进入“暂无彩种”兜底分支。
-    if (!options.silent) homepage.value = null
-  } finally {
-    if (!options.silent) loadingHomepage.value = false
   }
 }
 
 async function loadMobileAdvertisements() {
-  try {
-    mobileAdvertisements.value = await fetchMobileAdvertisements()
-  } catch {
-    mobileAdvertisements.value = []
-  }
+  await homepageStore.loadMobileAdvertisements()
 }
 
 onMounted(async () => {
@@ -182,11 +167,11 @@ onMounted(async () => {
     nowMs.value += 1000
     void refreshHomepageAfterDrawTime()
   }, 1000)
-  try {
-    const profile = await fetchCurrentUserProfile()
-    balance.value = profile.balance
-  } catch {}
-  await Promise.all([loadHomepage(), loadMobileAdvertisements()])
+  await Promise.all([
+    homepageStore.loadBalance(),
+    loadHomepage(),
+    loadMobileAdvertisements(),
+  ])
 })
 
 onUnmounted(() => {
@@ -198,7 +183,7 @@ watch(() => props.wsMessage, (msg) => {
     // WebSocket 开奖推送先局部更新首页轮次展示，再弹出当前彩种开奖结果提示。
     applyDrawResult(msg)
     showNotify({ type: 'success', message: `${lotteryName(msg.lotteryCode || msg.lottery_code)} 第${msg.issue}期：${msg.result}` })
-    void loadHomepage({ silent: true })
+    void loadHomepage({ silent: true, force: true })
     return
   }
   if (msg?.event === 'issue_opened' || msg?.event === 'issue_closed') {
@@ -213,7 +198,7 @@ watch(heroBanners, (banners) => {
 
 <template>
   <div class="home-dashboard min-h-screen bg-surface text-on-surface font-body selection:bg-primary/10">
-    <header class="fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
+    <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="flex items-center gap-3">
         <img
           :alt="`${branding.site_name} 标志`"
@@ -229,7 +214,7 @@ watch(heroBanners, (banners) => {
       </div>
     </header>
 
-    <main class="mx-auto max-w-2xl space-y-6 px-4 pb-28 pt-20">
+    <main class="mobile-safe-main-top mx-auto max-w-2xl space-y-6 px-4 pb-28">
       <!-- 首页容器只负责品牌、数据加载与区块编排。 -->
       <section
         v-if="showBanner"

@@ -24,9 +24,5 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"]
-  },
-  "plugins": {
-    "store": {},
-    "clipboard-manager": {}
   }
 }

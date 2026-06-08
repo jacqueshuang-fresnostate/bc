@@ -102,7 +102,7 @@ function rebateModeText(mode: RebateMode) {
 
 <template>
   <div class="min-h-screen bg-background pb-24 text-on-surface font-body">
-    <header class="sticky top-0 z-30 flex h-14 items-center justify-between bg-white/85 px-4 shadow-sm shadow-red-900/5 backdrop-blur-md">
+    <header class="mobile-safe-compact-header sticky top-0 z-30 flex h-14 items-center justify-between bg-white/85 px-4 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <button class="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-50 text-red-900" type="button" @click="router.back()">
         <LucideIcon name="arrow_back" class="h-5 w-5" />
       </button>

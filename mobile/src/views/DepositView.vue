@@ -313,7 +313,7 @@ async function submitRecharge() {
 
 <template>
   <div class="deposit-page min-h-screen bg-surface pb-32 text-on-surface font-body">
-    <header class="fixed top-0 left-0 z-50 w-full bg-white/85 shadow-sm shadow-red-900/5 backdrop-blur-md">
+    <header class="mobile-safe-header fixed top-0 left-0 z-50 w-full bg-white/85 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="mx-auto flex h-16 w-full max-w-lg items-center justify-between px-5">
         <button class="text-primary transition-opacity duration-200 active:scale-95 active:opacity-80" aria-label="返回" @click="router.back()">
           <LucideIcon name="arrow_back" class="h-5 w-5" />
@@ -328,7 +328,7 @@ async function submitRecharge() {
       </div>
     </header>
 
-    <main class="mx-auto flex w-full max-w-lg flex-col gap-5 px-4 pb-6 pt-20">
+    <main class="mobile-safe-main-top mx-auto flex w-full max-w-lg flex-col gap-5 px-4 pb-6">
       <section class="deposit-hero rounded-[28px] p-5 text-white shadow-[0_18px_45px_rgba(140,10,21,0.18)]">
         <div class="flex items-start justify-between gap-4">
           <div>
