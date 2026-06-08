@@ -2390,3 +2390,10 @@
 - 解决问题：原脚本执行 `tauri build --bundles app`，产物是 macOS 桌面 `.app`，不会生成 Android APK，导致按脚本名打包后找不到 APK。
 - 实施内容：`tauri:build:app` 和 `tauri:build:apk` 改为执行 `tauri android build --apk --debug --ci`，用于生成可安装调试 APK；新增 `tauri:build:apk:release` 用于 release APK 构建，新增 `tauri:build:desktop-app` 保留 macOS `.app` 打包能力；同步更新架构说明和前端质量规范。
 - 验证结果：`pnpm build`、`pnpm test`、`mobile/src-tauri cargo check` 和 `pnpm tauri:build:app` 均通过；已确认 APK 生成在 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`，文件大小约 501M。
+
+## 2026-06-08 20:15 HKT 手机端 APK 默认构建体积修正
+
+- 完成任务：修正 `pnpm tauri:build:app` 默认生成 debug 大包的问题。
+- 解决问题：debug APK 会打入四个未瘦身 ABI 原生库，导致包体约 501M；此前用户正常打包约 27M，对应的是 release APK。
+- 实施内容：`tauri:build:app` 和 `tauri:build:apk` 改为执行 `tauri android build --apk --ci`，默认生成 release APK；新增 `tauri:build:apk:debug` 专门用于需要调试时生成 debug APK；同步更新架构说明和前端质量规范。
+- 验证结果：`pnpm tauri:build:app` 已通过，生成 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk`；当前 universal release APK 文件大小约 42M，内部四个 release 原生库约 7.1M 到 11M。

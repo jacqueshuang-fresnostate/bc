@@ -11,8 +11,9 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:app": "tauri android build --apk --debug --ci",
-    "tauri:build:apk": "tauri android build --apk --debug --ci",
+    "tauri:build:app": "tauri android build --apk --ci",
+    "tauri:build:apk": "tauri android build --apk --ci",
+    "tauri:build:apk:debug": "tauri android build --apk --debug --ci",
     "tauri:build:apk:release": "tauri android build --apk --ci",
     "tauri:build:desktop-app": "tauri build --bundles app",
     "tauri:build:dmg": "tauri build --bundles dmg"
