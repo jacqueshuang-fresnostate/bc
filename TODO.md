@@ -2397,3 +2397,10 @@
 - 解决问题：debug APK 会打入四个未瘦身 ABI 原生库，导致包体约 501M；此前用户正常打包约 27M，对应的是 release APK。
 - 实施内容：`tauri:build:app` 和 `tauri:build:apk` 改为执行 `tauri android build --apk --ci`，默认生成 release APK；新增 `tauri:build:apk:debug` 专门用于需要调试时生成 debug APK；同步更新架构说明和前端质量规范。
 - 验证结果：`pnpm tauri:build:app` 已通过，生成 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk`；当前 universal release APK 文件大小约 42M，内部四个 release 原生库约 7.1M 到 11M。
+
+## 2026-06-08 20:24 HKT 手机端 release APK 闪退风险修复
+
+- 完成任务：处理手机端 release APK 打包后仍闪退的高概率构建风险，并尝试使用安卓虚拟机验证。
+- 解决问题：当前 release 构建开启 R8/ProGuard 混淆裁剪，但 Tauri Android 桥接和插件没有完整 keep 规则，存在 release 启动闪退风险；同时原 release APK 为 unsigned，不能作为直接安装验证包。
+- 实施内容：关闭 Android release 构建的 `isMinifyEnabled`，并让本地 release APK 使用 Android debug keystore 签名；正式发布前仍需替换正式签名。尝试启动本机已有 AVD，但两个虚拟机均提示缺失系统镜像，`sdkmanager` 重新安装镜像时卡在远端 manifest 下载，暂时无法完成虚拟机实测。
+- 验证结果：`pnpm tauri:build:app` 已通过，生成 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`；`apksigner verify --verbose` 显示 `Verifies`，当前文件大小约 44M。

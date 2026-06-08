@@ -37,12 +37,12 @@ android {
             }
         }
         getByName("release") {
-            isMinifyEnabled = true
-            proguardFiles(
-                *fileTree(".") { include("**/*.pro") }
-                    .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
-                    .toList().toTypedArray()
-            )
+            // Tauri Android 的桥接和插件依赖反射/生成代码，未配置完整 keep 规则时
+            // release 混淆裁剪可能造成打包后启动闪退；本地验证先保持不裁剪。
+            isMinifyEnabled = false
+            // 当前项目还没有正式发布 keystore，本地 APK 使用 debug keystore 签名，
+            // 保证 release 体积较小且可以直接安装验证；正式上架前需要替换为正式签名。
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     kotlinOptions {
