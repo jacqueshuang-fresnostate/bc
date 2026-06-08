@@ -2383,3 +2383,10 @@
 - 解决问题：Tauri v2 APK 原先没有 `src-tauri/capabilities`，主窗口缺少 `store`、核心 IPC 和剪贴板文本能力声明；Android 构建目录里还存在指向旧工程路径的多 ABI 原生库断链，重新构建前可能让 APK 产物状态不稳定。
 - 实施内容：新增 `mobile/src-tauri/capabilities/default.json`，授予主窗口 `core:default`、`store:default` 和文本剪贴板权限；手机端 `bootstrap()` 增加启动异常兜底错误页；执行 Android APK 构建刷新 `gen/schemas/capabilities.json`，并确认四个 ABI 原生库都来自当前 `bc/mobile/src-tauri/target` 路径。
 - 验证结果：手机端 `npm run build`、`mobile/src-tauri cargo check`、`npm test`、`npx tauri android build --apk --ci` 均通过；新生成的 `app-universal-release-unsigned.apk` 包含 `arm64-v8a`、`armeabi-v7a`、`x86`、`x86_64` 四个原生库，构建输出的各 Android 目标 `capabilities.json` 均包含 `mobile-main` 能力。
+
+## 2026-06-08 19:49 HKT 手机端 APK 构建脚本修正
+
+- 完成任务：修正 `pnpm tauri:build:app` 找不到 APK 的问题。
+- 解决问题：原脚本执行 `tauri build --bundles app`，产物是 macOS 桌面 `.app`，不会生成 Android APK，导致按脚本名打包后找不到 APK。
+- 实施内容：`tauri:build:app` 和 `tauri:build:apk` 改为执行 `tauri android build --apk --debug --ci`，用于生成可安装调试 APK；新增 `tauri:build:apk:release` 用于 release APK 构建，新增 `tauri:build:desktop-app` 保留 macOS `.app` 打包能力；同步更新架构说明和前端质量规范。
+- 验证结果：`pnpm build`、`pnpm test`、`mobile/src-tauri cargo check` 和 `pnpm tauri:build:app` 均通过；已确认 APK 生成在 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`，文件大小约 501M。

@@ -30,6 +30,7 @@
 - API 页面必须提供可见 loading 和 error 状态。
 - 涉及下注、充值、提现、认购等资金或订单写入的提交动作，必须在请求期间显示明确 loading，并禁用会造成重复提交的主要入口。
 - 手机端 Tauri APK 相关变更需要同时跑 Web 构建、`src-tauri` Rust 检查和 `tauri android build --apk --ci`，并确认 APK 包含当前工程路径生成的多 ABI 原生库。
+- 手机端脚本约定：`pnpm tauri:build:app` 必须产出可安装 Android debug APK；macOS `.app` 必须使用 `pnpm tauri:build:desktop-app`，避免 “app” 脚本误导为桌面包导致找不到 APK。
 
 ---
 
