@@ -15,7 +15,7 @@ use crate::{
     services::{draw::DrawRepository, draw_api::ApiDrawSourceLatestIssue},
 };
 
-pub const DEFAULT_SALE_CLOSE_LEAD_SECONDS: u32 = 30;
+pub const DEFAULT_SALE_CLOSE_LEAD_SECONDS: u32 = 1;
 const MAX_GENERATION_COUNT: u32 = 50;
 const MAX_UNIQUE_ATTEMPTS_PER_ISSUE: u32 = 100;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -524,7 +524,7 @@ mod tests {
 
         assert_eq!(issue.issue, "20260602200100");
         assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
-        assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:30");
+        assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:59");
     }
 
     #[tokio::test]
@@ -557,7 +557,7 @@ mod tests {
             .expect("issue can be generated");
 
         assert_eq!(issue.issue, "20260603210015");
-        assert_eq!(issue.sale_closed_at, "2026-06-03 20:59:45");
+        assert_eq!(issue.sale_closed_at, "2026-06-03 21:00:14");
     }
 
     #[tokio::test]
@@ -654,7 +654,7 @@ mod tests {
 
         assert_eq!(issue.issue, "51320850");
         assert_eq!(issue.scheduled_at, "2026-06-03 11:23:40");
-        assert_eq!(issue.sale_closed_at, "2026-06-03 11:23:10");
+        assert_eq!(issue.sale_closed_at, "2026-06-03 11:23:39");
     }
 
     #[tokio::test]
@@ -703,7 +703,7 @@ mod tests {
         lottery.number_type = LotteryNumberType::FiveDigit;
 
         let issue =
-            generate_next_draw_issue(&draws, &lottery, request_for("au5", "2026-06-03 11:23:30"))
+            generate_next_draw_issue(&draws, &lottery, request_for("au5", "2026-06-03 11:23:39"))
                 .await
                 .expect("issue can be generated");
 
@@ -750,7 +750,7 @@ mod tests {
         let issue = generate_next_draw_issue(
             &draws,
             &lottery,
-            request_for("txffc", "2026-06-03 19:38:40"),
+            request_for("txffc", "2026-06-03 19:38:59"),
         )
         .await
         .expect("issue can be generated");

@@ -2478,7 +2478,7 @@ mod tests {
                 enabled: false,
                 interval_seconds: 5,
                 future_issue_count: 1,
-                sale_close_lead_seconds: 30,
+                sale_close_lead_seconds: 1,
             }),
             support: SupportRepository::memory_seeded(),
             withdrawals: WithdrawalRepository::memory(),

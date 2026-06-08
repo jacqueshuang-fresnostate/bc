@@ -1901,7 +1901,7 @@ function drawOverview(
 
 function emptyForm(): DrawIssueFormState {
   const scheduledAt = new Date(Date.now() + 60 * 60 * 1000);
-  const saleClosedAt = new Date(scheduledAt.getTime() - 30 * 1000);
+  const saleClosedAt = new Date(scheduledAt.getTime() - 1000);
 
   return {
     drawNumber: '',
@@ -1943,7 +1943,7 @@ function emptySchedulerConfigForm(): SchedulerConfigFormState {
     enabled: false,
     futureIssueCount: '1',
     intervalSeconds: '60',
-    saleCloseLeadSeconds: '30',
+    saleCloseLeadSeconds: '1',
   };
 }
 

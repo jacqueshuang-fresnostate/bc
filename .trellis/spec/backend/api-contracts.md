@@ -1701,11 +1701,11 @@ let entries = finance.credit_settlement(&settlement).await?;
 {
   "lotteryId": "fc3d",
   "now": "2026-06-02 20:00:00",
-  "saleCloseLeadSeconds": 30
+  "saleCloseLeadSeconds": 1
 }
 ```
 
-`now` 使用 `YYYY-MM-DD HH:mm:ss`。`saleCloseLeadSeconds` 可省略，默认 `30`，表示封盘时间为开奖前 30 秒。
+`now` 使用 `YYYY-MM-DD HH:mm:ss`。`saleCloseLeadSeconds` 可省略，默认 `1`，表示封盘时间为开奖前 1 秒。
 
 `preview-generation` 和 `generate-batch` 请求体：
 
@@ -1714,7 +1714,7 @@ let entries = finance.credit_settlement(&settlement).await?;
   "lotteryId": "fc3d",
   "now": "2026-06-02 20:00:00",
   "count": 5,
-  "saleCloseLeadSeconds": 30
+  "saleCloseLeadSeconds": 1
 }
 ```
 
@@ -1885,7 +1885,7 @@ await previewDrawIssueGeneration({
   "enabled": false,
   "intervalSeconds": 60,
   "futureIssueCount": 1,
-  "saleCloseLeadSeconds": 30
+  "saleCloseLeadSeconds": 1
 }
 ```
 
@@ -1898,7 +1898,7 @@ await previewDrawIssueGeneration({
     "enabled": true,
     "intervalSeconds": 60,
     "futureIssueCount": 1,
-    "saleCloseLeadSeconds": 30
+    "saleCloseLeadSeconds": 1
   },
   "runCount": 1,
   "lastRun": {
