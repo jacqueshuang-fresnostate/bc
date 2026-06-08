@@ -38,6 +38,7 @@ const groupBuyMode = ref(false)
 const groupBuyShareCount = ref(10)
 const groupBuySelfShares = ref(1)
 const groupBuySelfSharesTouched = ref(false)
+const submittingBet = ref(false)
 const submittingGroupBuy = ref(false)
 let timer: number | undefined
 let openingRefreshTimer: number | undefined
@@ -128,6 +129,13 @@ const submitButtonText = computed(() => {
   if (selectedPlay.value?.input_mode === 'fixed-option') return '立即投注选项'
   return '立即投注'
 })
+const submittingOrder = computed(() => submittingBet.value || submittingGroupBuy.value)
+const submitButtonDisplayText = computed(() => {
+  if (submittingGroupBuy.value) return '发布中...'
+  if (submittingBet.value) return '投注中...'
+  return submitButtonText.value
+})
+const submitLoadingText = computed(() => submittingGroupBuy.value ? '正在发布合买...' : '正在提交投注...')
 
 async function loadBalance() {
   try {
@@ -300,6 +308,7 @@ function applyRecommendedGroupBuySelfShares(force = false) {
 }
 
 async function submitGroupBuyCart() {
+  if (submittingOrder.value) return
   if (!config.value?.round.issue) {
     showToast('当前期号未就绪')
     return
@@ -351,6 +360,7 @@ async function submitGroupBuyCart() {
 }
 
 async function submitCart() {
+  if (submittingOrder.value) return
   if (groupBuyMode.value) {
     await submitGroupBuyCart()
     return
@@ -361,6 +371,7 @@ async function submitCart() {
     if (!added) return
   }
   try {
+    submittingBet.value = true
     const payload = await submitBatch(lotteryCode.value, config.value?.round.issue || '', engine.cart.value, playSubmitMeta.value)
     if (!payload) return
     // 提交成功后清空本地篮子并回到首页，避免用户继续停留在已完成的下注页重复操作。
@@ -370,7 +381,19 @@ async function submitCart() {
     // 提交失败也刷新一次，避免前端继续停留在已封盘或余额变化前的状态。
     showToast(errorMessage(e, '投注失败'))
     await loadPage()
+  } finally {
+    submittingBet.value = false
   }
+}
+
+function addDraftToCart() {
+  if (submittingOrder.value) return
+  engine.addDraftToCart()
+}
+
+function openCartSheet() {
+  if (submittingOrder.value) return
+  showCartSheet.value = true
 }
 
 function confirmCart(items: BetCartItem[]) {
@@ -578,14 +601,23 @@ onBeforeUnmount(() => {
       :selected-count="engine.cartTotalCount.value + engine.draftBetCount.value"
       :cart-count="engine.cartTotalCount.value"
       :total-amount="engine.cartTotalAmount.value + engine.draftAmount.value"
-      :can-add="canAddCurrentDraft"
-      :can-submit="canSubmitCurrentOrder && !submittingGroupBuy"
+      :can-add="canAddCurrentDraft && !submittingOrder"
+      :can-submit="canSubmitCurrentOrder && !submittingOrder"
+      :submitting="submittingOrder"
       :add-text="addButtonText"
-      :submit-text="submittingGroupBuy ? '发布中...' : submitButtonText"
-      @add="engine.addDraftToCart"
+      :submit-text="submitButtonDisplayText"
+      @add="addDraftToCart"
       @submit="submitCart"
-      @edit="showCartSheet = true"
+      @edit="openCartSheet"
     />
+
+    <div v-if="submittingOrder" class="bet-submit-loading" role="status" aria-live="assertive">
+      <div class="bet-submit-loading__panel">
+        <van-loading color="#8c0a15" size="30px" vertical>{{ submitLoadingText }}</van-loading>
+        <p>请稍候，正在同步订单和余额</p>
+      </div>
+    </div>
+
     <van-popup v-model:show="showPlayPopup" position="bottom" round class="play-select-popup">
       <section class="play-select-sheet">
         <header class="play-select-sheet__header">
@@ -651,5 +683,41 @@ onBeforeUnmount(() => {
   background: #eeeeee;
   font-size: 22px;
   line-height: 1;
+}
+
+.bet-submit-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(249, 249, 249, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.bet-submit-loading__panel {
+  width: min(72vw, 240px);
+  border: 1px solid rgba(140, 10, 21, 0.1);
+  border-radius: 24px;
+  padding: 24px 18px 20px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 24px 64px rgba(140, 10, 21, 0.14);
+  text-align: center;
+}
+
+.bet-submit-loading__panel :deep(.van-loading__text) {
+  margin-top: 12px;
+  color: #1a1c1c;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.bet-submit-loading__panel p {
+  margin: 10px 0 0;
+  color: #8e706d;
+  font-size: 12px;
+  font-weight: 800;
 }
 </style>

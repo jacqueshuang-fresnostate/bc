@@ -2369,3 +2369,10 @@
 - 解决问题：合买满单生成的真实投注订单金额是整单总额，参与人查看“我的注单”时如果直接展示 `amountMinor`，会误以为自己投注了整单金额。
 - 实施内容：用户端 `GET /api/user/bet/orders` 对合买订单新增 `participationAmountMinor`，按当前用户在合买参与记录中的金额累加；手机端注单卡片和详情页对合买订单显示“参与金额”，并优先展示该字段；同步更新架构说明、后端 API 契约和前端组件规范。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_visible_bet_orders_include_participated_group_buy_order -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；完整后端测试 252 条通过，手机端测试命令当前显示 0 个测试用例。
+
+## 2026-06-08 16:07 HKT 手机端下注提交 Loading
+
+- 完成任务：给手机端下注页补充普通投注、提交购彩篮和发起合买过程中的页面级 loading。
+- 解决问题：此前普通投注提交期间没有明确等待反馈，底部加入、编辑和提交入口仍可能被重复触发；合买也只有按钮文案变化，用户在网络慢时容易误以为没有响应。
+- 实施内容：`DynamicBetPage.vue` 新增普通投注提交态和统一提交遮罩，提交期间显示“正在提交投注”或“正在发布合买”；`UnifiedBetBottomBar.vue` 新增 `submitting` 入参并在提交期间禁用加入购彩篮、编辑单据和提交按钮；同步更新架构说明和前端规范。
+- 验证结果：手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；当前手机端测试命令显示 0 个测试用例。

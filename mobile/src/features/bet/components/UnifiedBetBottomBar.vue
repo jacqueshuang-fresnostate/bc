@@ -6,12 +6,14 @@ const props = withDefaults(defineProps<{
   editing?: boolean
   canAdd?: boolean
   canSubmit?: boolean
+  submitting?: boolean
   addText?: string
   submitText?: string
 }>(), {
   editing: false,
   canAdd: true,
   canSubmit: true,
+  submitting: false,
   addText: '加入购彩篮',
   submitText: '立即投注',
 })
@@ -31,11 +33,11 @@ const emit = defineEmits<{ add: []; submit: []; edit: [] }>()
           <span class="text-sm text-[#5a403e]">共</span>
           <span class="font-headline text-2xl font-extrabold text-[#735c00]">¥{{ Number(props.totalAmount || 0).toFixed(2) }}</span>
         </div>
-        <button class="rounded-full bg-[#f3f3f3] px-3 py-2 text-xs text-[#5a403e] disabled:opacity-40" type="button" :disabled="props.cartCount <= 0" @click="emit('edit')">编辑单据</button>
+        <button class="rounded-full bg-[#f3f3f3] px-3 py-2 text-xs text-[#5a403e] disabled:opacity-40" type="button" :disabled="props.cartCount <= 0 || props.submitting" @click="emit('edit')">编辑单据</button>
       </div>
       <div class="flex gap-4">
-        <button class="h-14 flex-1 rounded-2xl border-2 border-[#8c0a15] bg-white text-lg font-bold text-[#8c0a15] disabled:opacity-40" type="button" :disabled="!props.canAdd" @click="emit('add')">{{ props.addText }}</button>
-        <button class="unified-submit-button h-14 flex-[2] rounded-2xl text-lg font-bold shadow-lg shadow-red-900/20 disabled:opacity-60" type="button" :disabled="!props.canSubmit" @click="emit('submit')">{{ props.editing ? '确认修改' : props.submitText }}</button>
+        <button class="h-14 flex-1 rounded-2xl border-2 border-[#8c0a15] bg-white text-lg font-bold text-[#8c0a15] disabled:opacity-40" type="button" :disabled="!props.canAdd || props.submitting" @click="emit('add')">{{ props.addText }}</button>
+        <button class="unified-submit-button h-14 flex-[2] rounded-2xl text-lg font-bold shadow-lg shadow-red-900/20 disabled:opacity-60" type="button" :disabled="!props.canSubmit || props.submitting" @click="emit('submit')">{{ props.editing ? '确认修改' : props.submitText }}</button>
       </div>
     </div>
   </section>
