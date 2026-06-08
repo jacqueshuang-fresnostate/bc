@@ -598,10 +598,35 @@ export function orderSourceText(order: any) {
   return isGroupBuyOrder(order) ? '合买下单' : '独立下单'
 }
 
+export function hasGroupBuyParticipationAmount(order: any) {
+  if (!isGroupBuyOrder(order)) return false
+  const minorValue = order?.participationAmountMinor ?? order?.participation_amount_minor
+  if (minorValue !== undefined && minorValue !== null && Number.isFinite(Number(minorValue))) {
+    return true
+  }
+  const amountValue = order?.participation_amount
+  return amountValue !== undefined && amountValue !== null && String(amountValue).trim() !== ''
+}
+
+export function orderDisplayAmount(order: any) {
+  if (hasGroupBuyParticipationAmount(order)) {
+    const minorValue = order?.participationAmountMinor ?? order?.participation_amount_minor
+    if (minorValue !== undefined && minorValue !== null && Number.isFinite(Number(minorValue))) {
+      return Number(minorValue) / 100
+    }
+    return order.participation_amount
+  }
+  return order.amount || '0.00'
+}
+
+export function orderAmountLabel(order: any) {
+  return hasGroupBuyParticipationAmount(order) ? '参与金额' : '下注金额'
+}
+
 export function orderAmountText(order: any) {
   const payout = Number(order.payout || 0)
   if (order.status === 'won' && payout > 0) return signedMoneyText(order.payout)
-  return moneyText(order.amount || '0.00')
+  return moneyText(orderDisplayAmount(order))
 }
 
 export function orderResultLabel(order: any) {

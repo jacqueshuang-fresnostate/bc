@@ -34,6 +34,7 @@ export type UserBetOrderDetail = {
   stakeCount: number
   unitAmountMinor: number
   amountMinor: number
+  participationAmountMinor?: number | null
   oddsBasisPoints: number
   expandedBets: string[]
   drawNumber?: string | null
@@ -153,6 +154,16 @@ function positionGridKind(ruleCode: string) {
 export function normalizeUserBetOrder(order: UserBetOrderDetail) {
   const numbers = selectionNumbers(order)
   const isGroupBuy = order.orderSource === 'groupBuy'
+  const rawParticipationAmountMinor = order.participationAmountMinor
+  const parsedParticipationAmountMinor = rawParticipationAmountMinor === null || rawParticipationAmountMinor === undefined
+    ? null
+    : Number(rawParticipationAmountMinor)
+  const participationAmountMinor = parsedParticipationAmountMinor !== null && Number.isFinite(parsedParticipationAmountMinor)
+    ? parsedParticipationAmountMinor
+    : null
+  const participationAmount = participationAmountMinor !== null
+    ? formatMinorAmount(participationAmountMinor)
+    : undefined
   return {
     ...order,
     order_source: order.orderSource,
@@ -174,6 +185,9 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     unit_amount: formatMinorAmount(order.unitAmountMinor),
     multiple: 1,
     amount: formatMinorAmount(order.amountMinor),
+    participation_amount_minor: participationAmountMinor,
+    participation_amount: participationAmount,
+    display_amount: participationAmount || formatMinorAmount(order.amountMinor),
     odds: formatMinorAmount(order.oddsBasisPoints / 100),
     payout: formatMinorAmount(order.payoutMinor),
     created_at: order.createdAt,

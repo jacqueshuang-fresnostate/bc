@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatDateTime, moneyText, orderBetContentText, orderBetCount, orderMultiple, orderResultLabel, orderResultText, orderSourceText, orderStatusIcon, orderTagText, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
+import { formatDateTime, moneyText, orderAmountLabel, orderBetContentText, orderBetCount, orderDisplayAmount, orderMultiple, orderResultLabel, orderResultText, orderSourceText, orderStatusIcon, orderTagText, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
 
 const props = defineProps<{ order: any }>()
 const emit = defineEmits<{ open: [any] }>()
@@ -55,8 +55,8 @@ const orderNumbersText = computed(() => orderBetContentText(props.order))
         <strong>{{ orderMultiple(order) }} 倍</strong>
       </div>
       <div>
-        <p>下注金额</p>
-        <strong>{{ moneyText(order.amount || '0.00') }}</strong>
+        <p>{{ orderAmountLabel(order) }}</p>
+        <strong>{{ moneyText(orderDisplayAmount(order)) }}</strong>
       </div>
       <div>
         <p>赔率</p>

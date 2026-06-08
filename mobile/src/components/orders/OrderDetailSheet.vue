@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { detailHeroAmount, detailHeroNote, formatDateTime, moneyText, orderAmountText, orderBetContentGroups, orderBetCount, orderMatchItems, orderMatchedBetKeys, orderMultiple, orderSourceText, orderStatusIcon, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
+import { detailHeroAmount, detailHeroNote, formatDateTime, moneyText, orderAmountLabel, orderAmountText, orderBetContentGroups, orderBetCount, orderDisplayAmount, orderMatchItems, orderMatchedBetKeys, orderMultiple, orderSourceText, orderStatusIcon, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
 
 const props = defineProps<{
   selectedOrder: any
@@ -66,8 +66,8 @@ watch(() => props.selectedOrder?.id, () => {
             <p>第 <strong>{{ selectedOrder.issue }}</strong> 期</p>
           </div>
           <div class="detail-lottery-card__amount">
-            <strong>{{ moneyText(selectedOrder.amount || '0.00') }}</strong>
-            <span>投注总额</span>
+            <strong>{{ moneyText(orderDisplayAmount(selectedOrder)) }}</strong>
+            <span>{{ orderAmountLabel(selectedOrder) }}</span>
           </div>
         </section>
 
@@ -139,8 +139,8 @@ watch(() => props.selectedOrder?.id, () => {
               <strong>{{ orderMultiple(selectedOrder) }} 倍</strong>
             </div>
             <div>
-              <span>下注金额</span>
-              <strong>{{ moneyText(selectedOrder.amount || '0.00') }}</strong>
+              <span>{{ orderAmountLabel(selectedOrder) }}</span>
+              <strong>{{ moneyText(orderDisplayAmount(selectedOrder)) }}</strong>
             </div>
             <div>
               <span>结算金额</span>

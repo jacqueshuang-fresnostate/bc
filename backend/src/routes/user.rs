@@ -10,8 +10,8 @@ use axum::{
     Extension, Json, Router,
 };
 use rand_core::{OsRng, RngCore};
-use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use crate::{
@@ -730,14 +730,24 @@ async fn get_user_bet_page_config(
     Ok(Json(ApiEnvelope::success(config)))
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 用户端注单列表响应，合买订单会额外带出当前用户的参与金额。
+struct UserBetOrderDetailResponse {
+    #[serde(flatten)]
+    order: OrderDetail,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    participation_amount_minor: Option<i64>,
+}
+
 /// 返回当前用户可见的注单列表。
 async fn list_user_bet_orders(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
-) -> ApiResult<Json<ApiEnvelope<Vec<OrderDetail>>>> {
+) -> ApiResult<Json<ApiEnvelope<Vec<UserBetOrderDetailResponse>>>> {
     let orders = state.orders.list().await?;
     let group_buy_plans = state.group_buys.list_details().await?;
-    let orders = user_visible_bet_orders(&session.user.id, orders, &group_buy_plans);
+    let orders = user_visible_bet_orders(&session.user.id, orders, &group_buy_plans)?;
 
     Ok(Json(ApiEnvelope::success(orders)))
 }
@@ -747,26 +757,51 @@ fn user_visible_bet_orders(
     user_id: &str,
     orders: Vec<OrderDetail>,
     group_buy_plans: &[GroupBuyPlan],
-) -> Vec<OrderDetail> {
-    let participated_group_buy_order_ids = group_buy_plans
+) -> ApiResult<Vec<UserBetOrderDetailResponse>> {
+    let participation_amounts = group_buy_plans
         .iter()
         .filter(|plan| {
             plan.participants
                 .iter()
                 .any(|participant| participant.user_id == user_id)
         })
-        .filter_map(|plan| plan.order_id.as_ref())
-        .cloned()
-        .collect::<HashSet<_>>();
+        .filter_map(|plan| plan.order_id.as_ref().map(|order_id| (order_id, plan)))
+        .try_fold(
+            HashMap::<String, i64>::new(),
+            |mut amounts, (order_id, plan)| {
+                let participation_amount = plan
+                    .participants
+                    .iter()
+                    .filter(|participant| participant.user_id == user_id)
+                    .try_fold(0_i64, |sum, participant| {
+                        sum.checked_add(participant.amount_minor)
+                            .ok_or_else(|| ApiError::Internal("合买参与金额汇总溢出".to_string()))
+                    })?;
+                amounts.insert(order_id.clone(), participation_amount);
+                Ok::<_, ApiError>(amounts)
+            },
+        )?;
 
-    orders
+    let orders = orders
         .into_iter()
-        .filter(|order| {
-            order.user_id == user_id
-                || (order.order_source == OrderSource::GroupBuy
-                    && participated_group_buy_order_ids.contains(&order.id))
+        .filter_map(|order| {
+            let participation_amount_minor = if order.order_source == OrderSource::GroupBuy {
+                participation_amounts.get(&order.id).copied()
+            } else {
+                None
+            };
+            if order.user_id == user_id || participation_amount_minor.is_some() {
+                Some(UserBetOrderDetailResponse {
+                    order,
+                    participation_amount_minor,
+                })
+            } else {
+                None
+            }
         })
-        .collect()
+        .collect();
+
+    Ok(orders)
 }
 
 /// 用户端批量提交购彩篮订单并扣款。
@@ -1938,6 +1973,7 @@ mod tests {
         play::{PlayRuleCode, PlaySelection},
         rebate::RebateMode,
     };
+    use std::collections::HashSet;
 
     #[test]
     /// 验证用户端邀请中心只允许代理在策略开启时使用邀请码。
@@ -2180,6 +2216,11 @@ mod tests {
                 vec![
                     test_group_buy_participant("G-USER-ORDER-001-P001", "U10001"),
                     test_group_buy_participant("G-USER-ORDER-001-P002", "U20002"),
+                    test_group_buy_participant_with_amount(
+                        "G-USER-ORDER-001-P003",
+                        "U20002",
+                        2_000,
+                    ),
                 ],
             ),
             test_group_buy_plan_with_order(
@@ -2201,16 +2242,24 @@ mod tests {
                 direct_order,
             ],
             &plans,
-        );
+        )
+        .expect("用户注单列表可以合并合买参与金额");
         let visible_ids = visible
             .iter()
-            .map(|order| order.id.as_str())
+            .map(|item| item.order.id.as_str())
             .collect::<Vec<_>>();
 
         assert_eq!(visible_ids, vec!["O000000000002", "O000000000001"]);
-        assert!(visible
+        let group_buy_item = visible
             .iter()
-            .any(|order| order.order_source == OrderSource::GroupBuy));
+            .find(|item| item.order.order_source == OrderSource::GroupBuy)
+            .expect("参与的合买订单应进入注单列表");
+        assert_eq!(group_buy_item.participation_amount_minor, Some(3_000));
+        let direct_item = visible
+            .iter()
+            .find(|item| item.order.order_source == OrderSource::Direct)
+            .expect("独立订单应进入注单列表");
+        assert_eq!(direct_item.participation_amount_minor, None);
     }
 
     fn test_group_buy_lottery() -> LotteryKind {
@@ -2288,12 +2337,20 @@ mod tests {
     }
 
     fn test_group_buy_participant(id: &str, user_id: &str) -> GroupBuyParticipant {
+        test_group_buy_participant_with_amount(id, user_id, 1_000)
+    }
+
+    fn test_group_buy_participant_with_amount(
+        id: &str,
+        user_id: &str,
+        amount_minor: i64,
+    ) -> GroupBuyParticipant {
         GroupBuyParticipant {
             id: id.to_string(),
             user_id: user_id.to_string(),
             username: format!("{user_id}_name"),
-            amount_minor: 1_000,
-            share_count: 1,
+            amount_minor,
+            share_count: u32::try_from(amount_minor / 1_000).unwrap_or(1),
             note: "测试认购".to_string(),
             created_at: "2026-06-05 20:00:00".to_string(),
         }

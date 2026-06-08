@@ -2334,3 +2334,10 @@
 - 解决问题：合买仓储使用快照式保存，多个认购或结算回写请求并发时可能出现旧快照晚于新快照落库；落库失败时内存状态也可能已经变化；参与记录编号原先主要依赖毫秒时间，极端高并发下存在主键碰撞风险。
 - 实施内容：合买仓储新增写操作锁，创建、认购、回滚、取消未满单、满单关联订单和结算回写全部串行化；落库失败时恢复内存快照；数据库保存前锁定 `group_buy_participants` 和 `group_buy_plans`，参与人保存失败日志输出真实数据库错误和关键上下文；用户端参与记录编号增加纳秒时间、参与序号和 64 位随机后缀。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture` 均通过；完整后端测试 252 条通过。
+
+## 2026-06-08 14:48 HKT 合买注单显示参与金额
+
+- 完成任务：让手机端注单记录中的合买订单显示当前用户实际参与金额。
+- 解决问题：合买满单生成的真实投注订单金额是整单总额，参与人查看“我的注单”时如果直接展示 `amountMinor`，会误以为自己投注了整单金额。
+- 实施内容：用户端 `GET /api/user/bet/orders` 对合买订单新增 `participationAmountMinor`，按当前用户在合买参与记录中的金额累加；手机端注单卡片和详情页对合买订单显示“参与金额”，并优先展示该字段；同步更新架构说明、后端 API 契约和前端组件规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_visible_bet_orders_include_participated_group_buy_order -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；完整后端测试 252 条通过，手机端测试命令当前显示 0 个测试用例。
