@@ -116,6 +116,7 @@ export interface OrderSummary {
   id: string;
   orderSource: 'direct' | 'groupBuy';
   userId: string;
+  username?: string | null;
   lotteryId: string;
   lotteryName: string;
   issue: string;

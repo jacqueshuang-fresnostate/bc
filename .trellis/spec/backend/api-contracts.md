@@ -1398,6 +1398,7 @@ POST /api/admin/settlements/draw-issues/D000000000001
     {
       "orderId": "O000000000001",
       "userId": "U10001",
+      "username": "demo_user",
       "ruleCode": "threeDirect",
       "stakeCount": 1,
       "amountMinor": 200,
@@ -1531,6 +1532,7 @@ let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
 {
   "id": "L000000000001",
   "userId": "U10001",
+  "username": "demo_user",
   "kind": "orderDebit",
   "amountMinor": -200,
   "balanceAfterMinor": 13800,
@@ -1546,6 +1548,15 @@ let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
 - `orderDebit`：投注扣款，金额为负数。
 - `orderRefund`：取消订单退款，金额为正数。
 - `payoutCredit`：中奖派奖入账，金额为正数。
+- `rechargeCredit`：充值入账，金额为正数。
+- `rechargeRebateCredit`：充值返利入账，金额为正数。
+- `withdrawalFreeze`：提现冻结，金额为负数。
+- `withdrawalPayout`：提现打款，冻结资金出账。
+- `withdrawalReject`：提现驳回解冻，金额为正数。
+- `groupBuyDebit`：合买认购扣款，金额为负数。
+- `groupBuyRefund`：合买退款，金额为正数。
+- `redPacketDebit`：聊天大厅红包支出，金额为负数。
+- `redPacketCredit`：聊天大厅红包领取入账，金额为正数。
 
 手动调账请求：
 
@@ -2010,6 +2021,7 @@ await previewDrawIssueGeneration({
 11. `saleEnabled=false` 彩种不会自动补期，也不会被合买机器人发起计划，会记录为跳过彩种或机器人跳过项。
 12. 调度周期成功或失败都要写入调度运行历史，页面通过状态接口读取历史，而不是解析日志。
 13. 调度周期成功或失败都使用 `tracing` 结构化日志记录，不暴露原始请求体或敏感信息；成功日志中的统计字段必须使用中文键名，包括机器人新增合买、机器人满单、机器人生成订单和机器人跳过项。
+14. API 开奖期号到期开奖前需要先按彩种读取开奖源最新期号；如果当前期号与最新期号都是纯数字，且 `最新期号 - 当前期号 > 5`，本轮自动开奖必须停止请求该旧期号开奖号码，只把期号写入 `skippedIssues`，原因说明“停止重试旧期号”。同一轮内同一彩种的最新期号查询需要缓存，避免多个旧期号重复请求开奖源。
 
 ### 4. 校验与错误矩阵
 
@@ -2023,6 +2035,8 @@ await previewDrawIssueGeneration({
 | `draw_scheduler_config.sale_close_lead_seconds=0` | 启动时配置校验失败，返回封盘提前秒数错误 |
 | 单轮调度 `now` 为空 | 返回 `draw scheduler time is required` |
 | 自动开奖或补期过程中发生业务错误 | 当前轮记录错误日志，后台任务继续下一轮 |
+| API 旧期号落后开奖源最新期号超过 5 期 | 不再请求旧期号开奖号码，写入跳过期号明细 |
+| API 旧期号落后开奖源最新期号等于 5 期 | 仍按原开奖源逻辑请求开奖号码 |
 | 调度未启用时查询状态 | HTTP 200，`enabled=false`，历史为空 |
 | 最近运行超过 20 条 | 只保留最新 20 条，旧记录从内存仓储移除 |
 | 状态仓储锁异常 | HTTP 500，返回统一错误信封 |
@@ -2035,6 +2049,7 @@ await previewDrawIssueGeneration({
 - Good：已有到期开奖期号时，单轮调度先执行封盘/开奖/结算，再补齐下一期期号。
 - Good：已有期号刚到封盘时间但未到开奖时间时，单轮调度先把当前期转为 `closed`，再生成下一期 `open`，保证销售链路继续有可投注期号。
 - Good：销售中且开启合买的彩种在补出 open 期号后，同轮调度可以执行合买机器人并创建本期机器人合买。
+- Good：API 彩种存在大量历史旧期号时，落后最新期号超过 5 期的旧期号只记录跳过原因，不再逐个请求旧期号开奖号码，避免拖慢平台开奖彩种。
 - Base：默认关闭适合本地开发和测试，不会让后台循环干扰手动 API 冒烟。
 - Bad：把 `closed` 期号算作未来缓冲；这会让当前期封盘后没有新的 `open` 期号可投注。
 - Bad：在调度服务里复制一套封盘、开奖、结算或开奖计划计算逻辑；这些必须继续复用 `run_draw_automation` 和 `generate_draw_issue_batch`。
@@ -2050,6 +2065,7 @@ await previewDrawIssueGeneration({
 - 后端需要覆盖未来期号缓冲已满足时不重复生成。
 - 后端需要覆盖到期期号先自动开奖，再补齐未来期号。
 - 后端需要覆盖当前期到封盘时间后会生成下一期 `open` 期号，不能因为当前期 `closed` 仍未开奖就跳过补期。
+- 后端需要覆盖 API 旧期号超过最新期号 5 期后停止重试，以及刚好相差 5 期时仍保持原重试逻辑。
 - 后端需要覆盖调度历史成功记录、失败记录和最近 20 条保留上限。
 - 后端需要覆盖调度单轮会执行合买机器人，并把机器人资金流水计入调度成功记录。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。

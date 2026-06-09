@@ -5,6 +5,7 @@ import type { PlayRuleCode } from './playRules';
 export interface OrderSettlement {
   orderId: string;
   userId: string;
+  username?: string | null;
   ruleCode: PlayRuleCode;
   stakeCount: number;
   amountMinor: number;

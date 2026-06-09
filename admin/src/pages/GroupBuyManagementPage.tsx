@@ -718,7 +718,7 @@ export function GroupBuyManagementPage({
                                     {participant.username}
                                   </div>
                                   <div className="mt-1 text-xs text-slate-400">
-                                    {participant.id}
+                                    {participant.userId}
                                   </div>
                                 </td>
                                 <td className="py-3 pr-4 text-slate-600">

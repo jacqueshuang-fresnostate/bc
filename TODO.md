@@ -1,5 +1,29 @@
 # TODO
 
+## 2026-06-10 02:10 HKT API开奖旧期号停止过度重试
+
+- 完成任务：给 API 开奖旧期号增加“距离最新期号超过 5 期则停止重试”的自动开奖规则。
+- 解决问题：API 期号已经明显落后开奖源最新期号时，每轮调度仍继续请求旧期号开奖号码，多个旧期号叠加第三方接口等待会拖慢同一轮调度，导致本地平台开奖彩种到点后长时间显示“等待调度”。
+- 实施内容：`run_draw_automation` 在 API 期号开奖前读取并缓存同彩种最新 API 期号；当前期号和最新期号都是纯数字且差距超过 5 期时，直接写入 `skippedIssues` 并提示“停止重试旧期号”，不再请求旧期号开奖号码；刚好相差 5 期仍保持原开奖源请求逻辑。同步更新架构说明和后端 API 契约规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml automation_ -- --nocapture`、完整 `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过；后端完整测试 270 条通过，新增覆盖超过 5 期停止重试和刚好 5 期继续重试。
+
+## 2026-06-10 01:53 HKT 后台资金流水和用户列展示补齐
+
+- 完成任务：补齐后台资金流水类型展示，并统一多个后台表格的用户列展示。
+- 解决问题：
+  - 资金流水前端类型和中文映射缺少 `redPacketDebit`、`redPacketCredit`，红包相关流水会出现类型无法显示。
+  - 财务管理“资金流水”只显示用户 ID，运营需要额外查询用户名。
+  - 首页最近订单、计奖派奖明细和彩种控制台控单表格仍存在只显示用户 ID 的位置。
+- 实施内容：
+  - 后台资金流水接口返回 `username`，前端资金流水用户列改为“用户名 + 用户 ID”。
+  - 资金流水类型补充“红包支出”和“红包入账”的中文文案与颜色。
+  - 后台首页最近订单摘要补充用户名，并在首页表格展示用户名和用户 ID。
+  - 计奖派奖结算明细接口和前端表格补充用户名。
+  - 彩种控制台目标订单下拉和用户下单信息表改为展示用户名和用户 ID。
+  - 合买计划参与记录用户列改为显示参与用户 ID，不再误显示参与记录 ID。
+  - 同步更新 OpenAPI、架构说明和前端组件规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cd admin && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
 ## 2026-06-10 01:23 HKT 后台合买详情与参与记录改为 SideSheet
 
 - 完成任务：将后台合买计划的“计划详情”和“参与记录”从页面常驻区域改为点击“查看详情”后通过 Semi UI `SideSheet` 打开。

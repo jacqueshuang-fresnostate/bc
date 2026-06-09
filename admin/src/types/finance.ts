@@ -9,6 +9,8 @@ export type LedgerEntryKind =
   | 'payoutCredit'
   | 'rechargeCredit'
   | 'rechargeRebateCredit'
+  | 'redPacketCredit'
+  | 'redPacketDebit'
   | 'withdrawalFreeze'
   | 'withdrawalPayout'
   | 'withdrawalReject';
@@ -57,6 +59,7 @@ export interface AdminFinancialAccountSummary {
 export interface LedgerEntry {
   id: string;
   userId: string;
+  username?: string | null;
   kind: LedgerEntryKind;
   amountMinor: number;
   balanceAfterMinor: number;

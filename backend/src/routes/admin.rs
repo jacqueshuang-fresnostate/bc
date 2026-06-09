@@ -40,7 +40,7 @@ use crate::{
         lottery::{
             DrawMode, DrawSource, LotteryCategoryConfig, LotteryKind, SaveDrawSourceRequest,
         },
-        order::{CreateOrderRequest, OrderDetail, OrderSource, OrderStatus},
+        order::{CreateOrderRequest, OrderDetail, OrderSource, OrderStatus, OrderSummary},
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
         rebate::{InvitePolicySummary, InvitePolicyUpdateRequest},
@@ -48,7 +48,7 @@ use crate::{
             ConfirmRechargeOrderRequest, RechargeChannel, RechargeOrderStatus, RechargeOrderSummary,
         },
         robot::{GroupBuyRobotRun, RobotConfigSummary, RobotStatusRequest},
-        settlement::SettlementRun,
+        settlement::{OrderSettlement, SettlementRun},
         support::{
             CreateSupportConversationRequest, SupportConversation, SupportReplyRequest,
             UpdateSupportConversationRequest,
@@ -756,6 +756,42 @@ struct AdminOrderDetail {
     username: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台资金流水展示结构，在原始流水外补充用户名，方便财务按用户核对。
+struct AdminLedgerEntry {
+    #[serde(flatten)]
+    entry: LedgerEntry,
+    username: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台结算明细展示结构，在订单结算结果外补充用户名。
+struct AdminOrderSettlement {
+    #[serde(flatten)]
+    settlement: OrderSettlement,
+    username: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台结算批次展示结构，订单明细会带用户名和用户 ID。
+struct AdminSettlementRun {
+    id: String,
+    draw_issue_id: String,
+    lottery_id: String,
+    lottery_name: String,
+    issue: String,
+    draw_number: String,
+    settled_order_count: u32,
+    winning_order_count: u32,
+    total_stake_amount_minor: i64,
+    total_payout_minor: i64,
+    created_at: String,
+    orders: Vec<AdminOrderSettlement>,
+}
+
 /// 后台财务、订单、合买等列表通用分页参数。
 impl FinancePageQuery {
     /// 后台列表默认隐藏机器人账户和机器人流水，只有显式打开开关时才返回。
@@ -1014,9 +1050,14 @@ async fn cancel_draw_issue(
 async fn list_settlements(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
-) -> ApiResult<Json<ApiEnvelope<FinancePage<SettlementRun>>>> {
+) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminSettlementRun>>>> {
     // 计奖派奖批次会持续增长，后台列表按统一分页信封返回。
+    let usernames = admin_usernames(&state).await?;
     let settlements = state.orders.settlement_runs().await?;
+    let settlements = settlements
+        .into_iter()
+        .map(|settlement| admin_settlement_run_with_usernames(settlement, &usernames))
+        .collect::<Vec<_>>();
 
     Ok(Json(ApiEnvelope::success(page_items(settlements, query))))
 }
@@ -1025,8 +1066,10 @@ async fn list_settlements(
 async fn get_settlement(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> ApiResult<Json<ApiEnvelope<SettlementRun>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminSettlementRun>>> {
+    let usernames = admin_usernames(&state).await?;
     let settlement = state.orders.get_settlement(&id).await?;
+    let settlement = admin_settlement_run_with_usernames(settlement, &usernames);
 
     Ok(Json(ApiEnvelope::success(settlement)))
 }
@@ -1035,13 +1078,15 @@ async fn get_settlement(
 async fn settle_draw_issue_orders(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> ApiResult<Json<ApiEnvelope<SettlementRun>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminSettlementRun>>> {
     let draw_issue = state.draws.get(&id).await?;
     let (settlement, entries) = state
         .orders
         .settle_with_payouts(&state.finance, &state.group_buys, &draw_issue)
         .await?;
     publish_settlement_balance_events(&state, &entries).await;
+    let usernames = admin_usernames(&state).await?;
+    let settlement = admin_settlement_run_with_usernames(settlement, &usernames);
 
     Ok(Json(ApiEnvelope::success(settlement)))
 }
@@ -1154,6 +1199,11 @@ async fn get_dashboard_summary(
     let finance = state.finance.overview().await?;
     let financial_accounts = state.finance.accounts().await?;
     let access = state.access.snapshot().await?;
+    let usernames = username_map_from_users(&access.users);
+    let recent_orders = recent_orders
+        .into_iter()
+        .map(|order| order_summary_with_username(order, &usernames))
+        .collect();
     let invite_policy = state.rebates.get().await?;
     let robots = state.robots.list().await?;
     let group_buy_plans = state.group_buys.list().await?;
@@ -2159,7 +2209,8 @@ async fn list_financial_accounts(
 async fn list_ledger_entries(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
-) -> ApiResult<Json<ApiEnvelope<FinancePage<LedgerEntry>>>> {
+) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminLedgerEntry>>>> {
+    let usernames = admin_usernames(&state).await?;
     let entries = state
         .finance
         .ledger_entries()
@@ -2168,6 +2219,7 @@ async fn list_ledger_entries(
         .filter(|entry| {
             should_include_user_scoped_record(query.include_robot_data(), &entry.user_id)
         })
+        .map(|entry| admin_ledger_entry_with_usernames(entry, &usernames))
         .collect::<Vec<_>>();
 
     Ok(Json(ApiEnvelope::success(page_items(entries, query))))
@@ -2314,7 +2366,7 @@ async fn list_orders(
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminOrderDetail>>>> {
     // 订单管理按分页读取；彩种控制台不传分页参数时仍通过同一信封拿到完整订单页。
-    let usernames = admin_order_usernames(&state).await?;
+    let usernames = admin_usernames(&state).await?;
     let orders = state
         .orders
         .list()
@@ -2386,8 +2438,8 @@ async fn cancel_order(
     Ok(Json(ApiEnvelope::success(order)))
 }
 
-/// 读取用户名称映射，订单列表只需要展示用户名，不把用户维护中的余额等其它字段混进订单领域。
-async fn admin_order_usernames(state: &AppState) -> ApiResult<BTreeMap<String, String>> {
+/// 读取用户名称映射，后台表格只需要展示用户名，不把用户维护中的余额等其它字段混进业务领域。
+async fn admin_usernames(state: &AppState) -> ApiResult<BTreeMap<String, String>> {
     Ok(state
         .access
         .users()
@@ -2397,9 +2449,26 @@ async fn admin_order_usernames(state: &AppState) -> ApiResult<BTreeMap<String, S
         .collect())
 }
 
+/// 从已有用户列表生成用户名称映射，供看板聚合接口避免重复读取用户仓储。
+fn username_map_from_users(users: &[UserSummary]) -> BTreeMap<String, String> {
+    users
+        .iter()
+        .map(|user| (user.id.clone(), user.username.clone()))
+        .collect()
+}
+
+/// 为首页订单摘要补充用户名。
+fn order_summary_with_username(
+    mut order: OrderSummary,
+    usernames: &BTreeMap<String, String>,
+) -> OrderSummary {
+    order.username = usernames.get(&order.user_id).cloned();
+    order
+}
+
 /// 为单条后台订单补充用户名，供创建、取消和详情接口复用。
 async fn admin_order_detail(state: &AppState, order: OrderDetail) -> ApiResult<AdminOrderDetail> {
-    let usernames = admin_order_usernames(state).await?;
+    let usernames = admin_usernames(state).await?;
     Ok(admin_order_detail_with_usernames(order, &usernames))
 }
 
@@ -2410,6 +2479,46 @@ fn admin_order_detail_with_usernames(
 ) -> AdminOrderDetail {
     let username = usernames.get(&order.user_id).cloned();
     AdminOrderDetail { order, username }
+}
+
+/// 为后台资金流水补充用户名。
+fn admin_ledger_entry_with_usernames(
+    entry: LedgerEntry,
+    usernames: &BTreeMap<String, String>,
+) -> AdminLedgerEntry {
+    let username = usernames.get(&entry.user_id).cloned();
+    AdminLedgerEntry { entry, username }
+}
+
+/// 为后台结算批次中的每条订单明细补充用户名。
+fn admin_settlement_run_with_usernames(
+    settlement: SettlementRun,
+    usernames: &BTreeMap<String, String>,
+) -> AdminSettlementRun {
+    AdminSettlementRun {
+        id: settlement.id,
+        draw_issue_id: settlement.draw_issue_id,
+        lottery_id: settlement.lottery_id,
+        lottery_name: settlement.lottery_name,
+        issue: settlement.issue,
+        draw_number: settlement.draw_number,
+        settled_order_count: settlement.settled_order_count,
+        winning_order_count: settlement.winning_order_count,
+        total_stake_amount_minor: settlement.total_stake_amount_minor,
+        total_payout_minor: settlement.total_payout_minor,
+        created_at: settlement.created_at,
+        orders: settlement
+            .orders
+            .into_iter()
+            .map(|order| {
+                let username = usernames.get(&order.user_id).cloned();
+                AdminOrderSettlement {
+                    settlement: order,
+                    username,
+                }
+            })
+            .collect(),
+    }
 }
 
 /// 返回后台彩种列表。

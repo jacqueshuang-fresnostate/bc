@@ -441,8 +441,8 @@ impl IssueLabeler {
     }
 }
 
-/// 解析 API 返回的期号文本并提取序号。
-fn parse_api_sequence_issue(value: &str) -> Option<u64> {
+/// 解析 API 返回的纯数字期号文本并提取序号，供补期和自动开奖过期判断复用。
+pub(crate) fn parse_api_sequence_issue(value: &str) -> Option<u64> {
     let value = value.trim();
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;

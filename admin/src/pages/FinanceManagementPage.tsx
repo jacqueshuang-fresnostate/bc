@@ -691,7 +691,12 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                       <div className="font-semibold text-ink">{entry.id}</div>
                       <div className="mt-1 text-xs text-slate-400">{entry.createdAt}</div>
                     </td>
-                    <td className="py-3 pr-4 text-slate-600">{entry.userId}</td>
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-slate-700">
+                        {entry.username ?? '未知用户'}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">{entry.userId}</div>
+                    </td>
                     <td className="py-3 pr-4">
                       <Tag color={ledgerKindColor(entry.kind)}>
                         {ledgerKindText(entry.kind)}
@@ -773,6 +778,8 @@ function ledgerKindText(kind: LedgerEntryKind) {
     payoutCredit: '派奖入账',
     rechargeCredit: '充值入账',
     rechargeRebateCredit: '充值返利',
+    redPacketCredit: '红包入账',
+    redPacketDebit: '红包支出',
     withdrawalFreeze: '提现冻结',
     withdrawalPayout: '提现打款',
     withdrawalReject: '提现驳回解冻',
@@ -790,6 +797,8 @@ function ledgerKindColor(kind: LedgerEntryKind) {
     payoutCredit: 'green',
     rechargeCredit: 'green',
     rechargeRebateCredit: 'green',
+    redPacketCredit: 'green',
+    redPacketDebit: 'red',
     withdrawalFreeze: 'red',
     withdrawalPayout: 'red',
     withdrawalReject: 'blue',

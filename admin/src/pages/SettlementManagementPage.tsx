@@ -311,7 +311,12 @@ function SettlementDetail({ settlement }: { settlement: SettlementRun }) {
               {settlement.orders.map((order) => (
                 <tr key={order.orderId} className="border-b border-slate-100">
                   <td className="py-3 pr-4 font-semibold text-ink">{order.orderId}</td>
-                  <td className="py-3 pr-4 text-slate-600">{order.userId}</td>
+                  <td className="py-3 pr-4">
+                    <div className="font-medium text-slate-700">
+                      {order.username ?? '未知用户'}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-400">{order.userId}</div>
+                  </td>
                   <td className="py-3 pr-4 text-slate-600">{order.ruleCode}</td>
                   <td className="py-3 pr-4">
                     {order.matchedBets.length > 0 ? (

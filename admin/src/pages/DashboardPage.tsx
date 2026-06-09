@@ -166,7 +166,12 @@ export function DashboardPage({
                       <div className="font-semibold text-ink">{order.id}</div>
                       <div className="mt-1 text-xs text-slate-400">{order.issue}</div>
                     </td>
-                    <td className="py-3 pr-4 text-slate-600">{order.userId}</td>
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-slate-700">
+                        {order.username ?? '未知用户'}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">{order.userId}</div>
+                    </td>
                     <td className="py-3 pr-4 text-slate-600">{order.lotteryName}</td>
                     <td className="py-3 pr-4 text-slate-600">{order.ruleCode}</td>
                     <td className="py-3 pr-4 text-slate-600">{order.stakeCount} 注</td>

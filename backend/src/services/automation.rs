@@ -12,10 +12,18 @@ use crate::{
     },
     error::{ApiError, ApiResult},
     services::{
-        draw::DrawRepository, finance::FinanceRepository, group_buy::GroupBuyRepository,
-        order::OrderRepository,
+        draw::DrawRepository, draw_generation::parse_api_sequence_issue,
+        finance::FinanceRepository, group_buy::GroupBuyRepository, order::OrderRepository,
     },
 };
+
+const API_DRAW_RETRY_MAX_LATEST_ISSUE_DISTANCE: u64 = 5;
+
+#[derive(Clone)]
+enum ApiLatestIssueLookup {
+    Found(String),
+    Missing,
+}
 
 /// 触发自动化开奖一轮任务并返回执行结果。
 pub async fn run_draw_automation(
@@ -43,6 +51,7 @@ pub async fn run_draw_automation(
     };
 
     let lottery_sale_status = lottery_sale_status(lotteries).await?;
+    let mut api_latest_issue_cache = HashMap::new();
 
     for issue in draws.list().await? {
         if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_sale_status) {
@@ -78,6 +87,12 @@ pub async fn run_draw_automation(
         }
 
         if !should_draw(&issue, &now) {
+            continue;
+        }
+        if let Some(reason) =
+            stale_api_issue_retry_reason(draws, &mut api_latest_issue_cache, &issue).await
+        {
+            run.skipped_issues.push(skipped_issue(&issue, &reason));
             continue;
         }
         if issue.draw_mode == DrawMode::Manual && !draws.has_active_draw_control(&issue).await? {
@@ -124,12 +139,12 @@ pub async fn run_draw_automation(
     Ok(run)
 }
 
-/// 处理 should_close 的具体内部流程。
+/// 判断期号是否已经到达封盘时间。
 fn should_close(issue: &DrawIssue, now: &str) -> bool {
     issue.status == DrawIssueStatus::Open && is_due_at(&issue.sale_closed_at, now)
 }
 
-/// 处理 should_draw 的具体内部流程。
+/// 判断期号是否已经到达开奖时间。
 fn should_draw(issue: &DrawIssue, now: &str) -> bool {
     matches!(
         issue.status,
@@ -137,13 +152,13 @@ fn should_draw(issue: &DrawIssue, now: &str) -> bool {
     ) && is_due_at(&issue.scheduled_at, now)
 }
 
-/// 判断并返回布尔结果。
+/// 判断排期时间是否已经早于或等于本轮调度时间。
 fn is_due_at(value: &str, now: &str) -> bool {
     let value = value.trim();
     !value.is_empty() && value <= now
 }
 
-/// 处理 skipped_issue 的具体内部流程。
+/// 构造调度跳过期号明细，供后台调度历史展示。
 fn skipped_issue(issue: &DrawIssue, reason: &str) -> DrawAutomationSkippedIssue {
     DrawAutomationSkippedIssue {
         draw_issue_id: issue.id.clone(),
@@ -151,6 +166,74 @@ fn skipped_issue(issue: &DrawIssue, reason: &str) -> DrawAutomationSkippedIssue 
         issue: issue.issue.clone(),
         reason: reason.to_string(),
     }
+}
+
+/// 对 API 开奖旧期号做重试上限判断，超过最新期号 5 期后不再请求旧期号开奖号码。
+async fn stale_api_issue_retry_reason(
+    draws: &DrawRepository,
+    latest_issue_cache: &mut HashMap<String, ApiLatestIssueLookup>,
+    issue: &DrawIssue,
+) -> Option<String> {
+    if issue.draw_mode != DrawMode::Api {
+        return None;
+    }
+
+    let issue_sequence = parse_api_sequence_issue(&issue.issue)?;
+    let latest_lookup = cached_latest_api_issue_lookup(draws, latest_issue_cache, issue).await;
+    let ApiLatestIssueLookup::Found(latest_issue) = latest_lookup else {
+        return None;
+    };
+    let latest_sequence = parse_api_sequence_issue(&latest_issue)?;
+    if latest_sequence <= issue_sequence {
+        return None;
+    }
+
+    let distance = latest_sequence - issue_sequence;
+    if distance <= API_DRAW_RETRY_MAX_LATEST_ISSUE_DISTANCE {
+        return None;
+    }
+
+    tracing::warn!(
+        draw_issue_id = %issue.id,
+        lottery_id = %issue.lottery_id,
+        issue = %issue.issue,
+        latest_issue = %latest_issue,
+        issue_distance = distance,
+        retry_limit = API_DRAW_RETRY_MAX_LATEST_ISSUE_DISTANCE,
+        "API开奖期号已落后最新期号超过限制，停止重试旧期号"
+    );
+
+    Some(format!(
+        "距离开奖源最新期号 {latest_issue} 已超过 {API_DRAW_RETRY_MAX_LATEST_ISSUE_DISTANCE} 期，停止重试旧期号"
+    ))
+}
+
+/// 单轮自动开奖内缓存 API 最新期号，避免同一彩种多个旧期号重复请求开奖源。
+async fn cached_latest_api_issue_lookup(
+    draws: &DrawRepository,
+    latest_issue_cache: &mut HashMap<String, ApiLatestIssueLookup>,
+    issue: &DrawIssue,
+) -> ApiLatestIssueLookup {
+    if let Some(lookup) = latest_issue_cache.get(&issue.lottery_id) {
+        return lookup.clone();
+    }
+
+    let lookup = match draws.latest_api_issue_for_lottery(&issue.lottery_id).await {
+        Ok(Some(latest_issue)) => ApiLatestIssueLookup::Found(latest_issue.issue),
+        Ok(None) => ApiLatestIssueLookup::Missing,
+        Err(error) => {
+            tracing::warn!(
+                lottery_id = %issue.lottery_id,
+                issue = %issue.issue,
+                error = %error.log_message(),
+                "API开奖旧期号重试上限判断读取最新期号失败"
+            );
+            ApiLatestIssueLookup::Missing
+        }
+    };
+
+    latest_issue_cache.insert(issue.lottery_id.clone(), lookup.clone());
+    lookup
 }
 
 async fn lottery_sale_status(
@@ -165,7 +248,7 @@ async fn lottery_sale_status(
     Ok(sale_status)
 }
 
-/// 处理 skip_issue_if_lottery_disabled 的具体内部流程。
+/// 判断彩种停售或配置缺失时是否需要跳过自动封盘开奖。
 fn skip_issue_if_lottery_disabled(
     issue: &DrawIssue,
     lottery_sale_status: &HashMap<String, bool>,
@@ -184,7 +267,7 @@ fn skip_issue_if_lottery_disabled(
     }
 }
 
-/// 处理 automation_error_reason 的具体内部流程。
+/// 把自动开奖内部错误转换为后台调度历史可读的中文原因。
 fn automation_error_reason(error: &ApiError) -> String {
     match error {
         ApiError::BadRequest(message) => format!("请求错误：{message}"),
@@ -449,6 +532,83 @@ mod tests {
         assert_eq!(stored.status, DrawIssueStatus::Closed);
         assert!(stored.draw_number.is_none());
         assert!(run.skipped_issues[0].reason.contains("未找到"));
+    }
+
+    #[tokio::test]
+    async fn automation_stops_retrying_api_issue_when_it_is_more_than_five_issues_behind_latest() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let lottery = lottery(DrawMode::Api);
+        let issue = draws
+            .create(&lottery, create_request("2026137"))
+            .await
+            .expect("stale api issue can be created");
+
+        let run = run_draw_automation(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            DrawAutomationRunRequest {
+                now: "2026-06-02 22:00:00".to_string(),
+            },
+        )
+        .await
+        .expect("automation can skip stale api issue");
+        let stored = draws.get(&issue.id).await.expect("issue still exists");
+
+        assert_eq!(run.closed_issues.len(), 1);
+        assert!(run.drawn_issues.is_empty());
+        assert_eq!(run.skipped_issues.len(), 1);
+        assert_eq!(stored.status, DrawIssueStatus::Closed);
+        assert!(stored.draw_number.is_none());
+        assert!(run.skipped_issues[0].reason.contains("停止重试旧期号"));
+    }
+
+    #[tokio::test]
+    async fn automation_keeps_retrying_api_issue_within_five_issue_distance() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let lottery = lottery(DrawMode::Api);
+        let issue = draws
+            .create(&lottery, create_request("2026138"))
+            .await
+            .expect("api issue can be created");
+
+        let run = run_draw_automation(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            DrawAutomationRunRequest {
+                now: "2026-06-02 22:00:00".to_string(),
+            },
+        )
+        .await
+        .expect("automation can retry api issue in retry window");
+        let stored = draws.get(&issue.id).await.expect("issue still exists");
+
+        assert_eq!(run.closed_issues.len(), 1);
+        assert!(run.drawn_issues.is_empty());
+        assert_eq!(run.skipped_issues.len(), 1);
+        assert_eq!(stored.status, DrawIssueStatus::Closed);
+        assert!(stored.draw_number.is_none());
+        assert!(run.skipped_issues[0].reason.contains("未找到"));
+        assert!(!run.skipped_issues[0].reason.contains("停止重试旧期号"));
     }
 
     #[tokio::test]

@@ -670,7 +670,7 @@ function DrawControlSideSheet({
                   <Select.Option key={order.id} value={order.id}>
                     <div className="min-w-0">
                       <div className="truncate">
-                        {order.id} · 用户 {order.userId} · 第 {order.issue} 期 · {formatMoney(order.amountMinor)}
+                        {order.id} · 用户 {formatOrderUser(order)} · 第 {order.issue} 期 · {formatMoney(order.amountMinor)}
                       </div>
                       <div className="truncate text-xs text-slate-500">
                         {formatBetInfoSummary(order.selection, order.expandedBets)}
@@ -713,7 +713,14 @@ function DrawControlSideSheet({
                         <td className="py-2 pr-3 font-mono font-semibold text-ink">
                           {order.id}
                         </td>
-                        <td className="py-2 pr-3 text-slate-600">{order.userId}</td>
+                        <td className="py-2 pr-3">
+                          <div className="font-medium text-slate-700">
+                            {order.username ?? '未知用户'}
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-400">
+                            {order.userId}
+                          </div>
+                        </td>
                         <td className="py-2 pr-3 text-slate-600">{order.issue}</td>
                         <td className="py-2 pr-3 text-slate-600">{order.ruleCode}</td>
                         <td className="py-2 pr-3">
@@ -1191,6 +1198,10 @@ function orderStatusColor(status: OrderStatus) {
     won: 'green',
   };
   return colors[status];
+}
+
+function formatOrderUser(order: OrderDetail) {
+  return `${order.username ?? '未知用户'}（${order.userId}）`;
 }
 
 function scheduleText(lottery: LotteryKind) {
