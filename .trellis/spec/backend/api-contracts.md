@@ -4945,3 +4945,54 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 - 后端需要覆盖充值清理保留流水号、提现待审核拒绝清理、投注待开奖拒绝清理、已结算投注清理同时移除结算批次。
 - 后台需要运行 `npm run build`，确认新增按钮、Blob 下载和清理 API 类型可编译。
 - 修改接口后必须同步更新 `admin/src/api/client.ts` 和对应页面刷新逻辑。
+
+---
+
+## 场景：后台手动同步 API 开奖源
+
+### 1. 范围 / 触发条件
+
+- 触发条件：后台彩种控制台中 API 彩种的本地待开奖期号和外部开奖源出现偏移，运营点击“立即同步”。
+- 范围：`POST /api/admin/lotteries/{id}/sync-draw-source`、开奖源最新期号读取、开奖期号仓储、彩种控制台刷新。
+- 只适用于 `drawMode=api` 的彩种；平台开奖和手动开奖彩种不得使用该接口。
+
+### 2. 签名
+
+- 手动同步开奖源：`POST /api/admin/lotteries/{id}/sync-draw-source`
+- 请求体：无。
+- 响应体：统一信封内返回 `DrawSourceSyncResult`，包含 `apiSnapshot`、`targetIssue`、`generatedIssues`、`updatedIssues`、`cancelledIssues`、`keptIssues` 和中文 `message`。
+
+### 3. 契约
+
+- 后端必须读取当前彩种绑定的 API 开奖源，按 `preDrawIssue/preDrawTime` 和 `drawIssue/drawTime` 计算当前可销售目标期。
+- 封盘提前秒数必须使用后台调度配置 `saleCloseLeadSeconds`，与常驻调度保持一致。
+- 如果目标期号本地不存在，创建新的 `open` 期号。
+- 如果目标期号本地存在且尚未开奖，更新为 `open` 并校准 `scheduledAt/saleClosedAt`。
+- 同彩种其它 `open/closed` 期号如果没有待开奖订单，自动标记为 `cancelled`。
+- 同彩种其它 `open/closed` 期号如果存在待开奖订单，必须保留到 `keptIssues`，不得静默取消或退款。
+- 同步完成后必须发布 `lottery.issue_opened`，让后台和手机端可以刷新当前期号。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 彩种不存在 | 返回 `not found` |
+| 彩种不是 API 开奖模式 | 返回业务错误“只有 API 开奖彩种可以同步开奖源” |
+| 彩种未绑定 API 开奖源 | 返回业务错误“当前彩种没有绑定 API 开奖源” |
+| API 请求失败或响应无法解析 | 返回业务错误，并保留原始错误详情到中文日志 |
+| API 目标期号已在本地开奖 | 返回冲突错误，不修改本地期号 |
+| 存在无订单旧期 | 同步时取消旧期 |
+| 存在有待开奖订单旧期 | 同步时保留旧期并在结果中提示 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`txffc` 本地停在旧期，点击同步后生成 API 返回的下一期，并取消没有订单的旧 open 期。
+- Good：旧期已有用户待开奖订单，点击同步后目标期正常生成，旧期保留在 `keptIssues`，管理员可以后续人工处理订单。
+- Base：目标期已经存在但时间偏移，点击同步只更新目标期时间和状态。
+- Bad：同步按钮直接删除有订单旧期，导致已扣款订单失去开奖/退款路径。
+- Bad：平台开奖彩种也调用 API 同步接口，导致本地调度彩种被外部接口规则影响。
+
+### 6. 必要测试
+
+- 后端需要覆盖 API 同步生成目标期、取消无订单旧期、保留有订单旧期。
+- 前端需要运行 `npm run build`，确认彩种控制台按钮、同步结果 Toast 和类型契约可编译。

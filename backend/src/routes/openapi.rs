@@ -883,6 +883,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::None,
     ),
     doc(
+        "post",
+        "/admin/lotteries/{id}/sync-draw-source",
+        "开奖源与调度",
+        "立即同步开奖源",
+        "按 API 开奖源校准指定彩种的当前可销售期号；无待开奖订单的旧期会取消，有待开奖订单的旧期会保留。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
         "get",
         "/admin/draw-scheduler/status",
         "开奖源与调度",

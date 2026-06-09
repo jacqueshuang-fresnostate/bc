@@ -9,7 +9,7 @@ use crate::{
             CreateDrawIssueRequest, DrawIssue, DrawIssueGenerationPreview,
             GenerateDrawIssueRequest, GenerateDrawIssuesRequest,
         },
-        lottery::{DrawSchedule, LotteryKind},
+        lottery::{DrawMode, DrawSchedule, LotteryKind},
     },
     error::{ApiError, ApiResult},
     services::{draw::DrawRepository, draw_api::ApiDrawSourceLatestIssue},
@@ -52,6 +52,52 @@ pub async fn preview_draw_issue_generation(
     payload: GenerateDrawIssuesRequest,
 ) -> ApiResult<Vec<DrawIssueGenerationPreview>> {
     plan_draw_issue_generation(draws, lottery, payload).await
+}
+
+/// 按 API 开奖源快照计算当前应校准到的下一期，不读取本地旧期号基线。
+pub(crate) fn plan_api_draw_source_target(
+    lottery: &LotteryKind,
+    latest_api_issue: &ApiDrawSourceLatestIssue,
+    now: &str,
+    sale_close_lead_seconds: u32,
+) -> ApiResult<DrawIssueGenerationPreview> {
+    if lottery.draw_mode != DrawMode::Api {
+        return Err(ApiError::BadRequest(
+            "只有 API 开奖彩种可以同步开奖源".to_string(),
+        ));
+    }
+    if sale_close_lead_seconds == 0 {
+        return Err(ApiError::BadRequest("封盘提前秒数必须大于 0".to_string()));
+    }
+
+    let now = parse_timestamp(now, "now")?;
+    let api_anchor = api_issue_anchor_from_latest(latest_api_issue)?;
+    let baseline = generation_baseline(lottery, &[], Some(&api_anchor), now)?;
+    let mut issue_labeler = IssueLabeler::for_api_anchor(Some(&api_anchor))?;
+    let mut scheduled_at = next_scheduled_at(&lottery.schedule, baseline)?;
+
+    for _ in 0..MAX_UNIQUE_ATTEMPTS_PER_ISSUE {
+        let issue = issue_labeler.next_issue(scheduled_at)?;
+        let sale_closed_at = scheduled_at
+            .checked_sub_signed(Duration::seconds(i64::from(sale_close_lead_seconds)))
+            .ok_or_else(|| ApiError::BadRequest("sale close time is out of range".to_string()))?;
+
+        if sale_closed_at > now {
+            return Ok(DrawIssueGenerationPreview {
+                lottery_id: lottery.id.clone(),
+                lottery_name: lottery.name.clone(),
+                issue,
+                number_type: lottery.number_type.clone(),
+                draw_mode: lottery.draw_mode.clone(),
+                scheduled_at: format_timestamp(scheduled_at),
+                sale_closed_at: format_timestamp(sale_closed_at),
+            });
+        }
+
+        scheduled_at = next_scheduled_at(&lottery.schedule, scheduled_at)?;
+    }
+
+    Err(ApiError::Conflict("无法按开奖源生成可销售期号".to_string()))
 }
 
 /// 按批次参数生成开奖期并持久化写入。
@@ -184,6 +230,46 @@ fn latest_scheduled_at(issues: &[DrawIssue], lottery_id: &str) -> ApiResult<Opti
     Ok(latest)
 }
 
+/// 仅用外部开奖源快照建立期号锚点，供手动同步时忽略本地旧待开奖期。
+fn api_issue_anchor_from_latest(
+    latest_api_issue: &ApiDrawSourceLatestIssue,
+) -> ApiResult<ApiIssueAnchor> {
+    let latest_external_issue =
+        parse_api_sequence_issue(&latest_api_issue.issue).ok_or_else(|| {
+            ApiError::Internal(format!(
+                "API 开奖源最新期号 `{}` 不是数字期号",
+                latest_api_issue.issue
+            ))
+        })?;
+    let latest_draw_time = latest_api_issue
+        .draw_time
+        .as_deref()
+        .map(|value| parse_timestamp(value, "api latest draw time"))
+        .transpose()?;
+    let next_external_issue = latest_api_issue
+        .next_issue
+        .as_deref()
+        .map(|value| {
+            parse_api_sequence_issue(value).ok_or_else(|| {
+                ApiError::Internal(format!("API 开奖源下一期 `{value}` 不是数字期号"))
+            })
+        })
+        .transpose()?;
+    let next_draw_time = latest_api_issue
+        .next_draw_time
+        .as_deref()
+        .map(|value| parse_timestamp(value, "api next draw time"))
+        .transpose()?;
+
+    Ok(ApiIssueAnchor {
+        latest_external_issue,
+        latest_issue: latest_external_issue,
+        latest_draw_time,
+        next_external_issue,
+        next_draw_time,
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ApiIssueAnchor {
     latest_external_issue: u64,
@@ -253,17 +339,17 @@ fn generation_baseline(
     api_anchor: Option<&ApiIssueAnchor>,
     now: NaiveDateTime,
 ) -> ApiResult<NaiveDateTime> {
-    if let (
-        DrawSchedule::Periodic { interval_seconds },
-        Some(ApiIssueAnchor {
+    if let (DrawSchedule::Periodic { interval_seconds }, Some(api_anchor)) =
+        (&lottery.schedule, api_anchor)
+    {
+        let ApiIssueAnchor {
             latest_external_issue,
             latest_issue,
-            latest_draw_time: Some(latest_draw_time),
+            latest_draw_time,
             next_external_issue,
             next_draw_time,
-        }),
-    ) = (&lottery.schedule, api_anchor)
-    {
+        } = *api_anchor;
+
         if let (Some(next_external_issue), Some(next_draw_time)) =
             (next_external_issue, next_draw_time)
         {
@@ -279,8 +365,11 @@ fn generation_baseline(
                 .ok_or_else(|| ApiError::BadRequest("scheduled time is out of range".to_string()));
         }
 
+        let Some(latest_draw_time) = latest_draw_time else {
+            return Ok(now);
+        };
         let issue_offset = latest_issue
-            .checked_sub(*latest_external_issue)
+            .checked_sub(latest_external_issue)
             .ok_or_else(|| ApiError::Internal("API 开奖源期号序列无效".to_string()))?;
         let offset_seconds = i64::from(*interval_seconds) * issue_offset_count(issue_offset)?;
         return latest_draw_time

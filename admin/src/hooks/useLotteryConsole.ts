@@ -6,6 +6,7 @@ import {
   fetchLotteryDrawControls,
   fetchOrders,
   saveLotteryDrawControl,
+  syncLotteryDrawSource,
 } from '../api/client';
 import type { LotteryKind } from '../types/dashboard';
 import type {
@@ -114,6 +115,12 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
     [],
   );
 
+  const syncDrawSource = useCallback(async (lotteryId: string) => {
+    const result = await syncLotteryDrawSource(lotteryId);
+    refresh();
+    return result;
+  }, [refresh]);
+
   return {
     drawControls,
     error,
@@ -124,6 +131,7 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
     refresh,
     schedulerStatus,
     saveDrawControl,
+    syncDrawSource,
   };
 }
 

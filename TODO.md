@@ -1,5 +1,17 @@
 # TODO
 
+## 2026-06-10 04:02 HKT 彩种控制台立即同步开奖源
+
+- 完成任务：后台彩种控制台新增 API 彩种“立即同步开奖源”按钮，并补齐后端手动校准接口。
+- 解决问题：API 彩种本地待开奖期号和外部开奖源偏移时，运营此前只能等待调度或手动处理期号，缺少直接按开奖源校准当前可销售期的入口。
+- 实施内容：
+  - 新增 `POST /api/admin/lotteries/{id}/sync-draw-source`，按当前绑定 API 开奖源和调度封盘提前量计算目标期号。
+  - 同步时目标期不存在则生成，目标期已存在且未开奖则更新为 `open` 并校准开奖/封盘时间。
+  - 同彩种其它 `open/closed` 旧期如果没有待开奖订单会自动取消；如果存在待开奖订单则保留到结果中，避免静默影响资金链路。
+  - 后台彩种控制台 API 彩种卡片新增“立即同步”按钮，执行中显示 loading，成功后用中文 Toast 展示同步结果并刷新控制台。
+  - 同步更新 OpenAPI、架构说明、后端 API 契约规范和前端组件规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml sync_api_draw_source -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml kj_txffc_source -- --nocapture`、完整 `cargo test --manifest-path backend/Cargo.toml -- --nocapture`、管理后台 `npm run build` 和 `git diff --check` 均通过；后端完整测试 272 条通过，后台构建仅保留既有 Vite chunk 体积提示。
+
 ## 2026-06-10 02:10 HKT API开奖旧期号停止过度重试
 
 - 完成任务：给 API 开奖旧期号增加“距离最新期号超过 5 期则停止重试”的自动开奖规则。

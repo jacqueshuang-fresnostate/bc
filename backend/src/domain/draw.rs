@@ -62,6 +62,31 @@ pub struct DrawIssueGenerationPreview {
     pub sale_closed_at: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 外部 API 开奖源同步时返回的开奖源期号快照。
+pub struct ApiDrawSourceIssueSnapshot {
+    pub latest_issue: String,
+    pub latest_draw_time: Option<String>,
+    pub next_issue: Option<String>,
+    pub next_draw_time: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 后台手动同步 API 开奖源后的本地校准结果。
+pub struct DrawSourceSyncResult {
+    pub lottery_id: String,
+    pub lottery_name: String,
+    pub api_snapshot: ApiDrawSourceIssueSnapshot,
+    pub target_issue: DrawIssue,
+    pub generated_issues: Vec<DrawIssue>,
+    pub updated_issues: Vec<DrawIssue>,
+    pub cancelled_issues: Vec<DrawIssue>,
+    pub kept_issues: Vec<DrawIssue>,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 /// 手动开奖或控奖提交的开奖号码请求。

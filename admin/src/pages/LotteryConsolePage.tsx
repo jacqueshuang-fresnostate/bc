@@ -1,4 +1,14 @@
-import { Input, Banner, Button, Card, Select, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
+import {
+  Input,
+  Banner,
+  Button,
+  Card,
+  Select,
+  SideSheet,
+  Spin,
+  Tag,
+  Toast,
+} from '@douyinfe/semi-ui';
 import {
   Activity,
   Clock3,
@@ -83,6 +93,7 @@ export function LotteryConsolePage({
     refresh,
     schedulerStatus,
     saveDrawControl,
+    syncDrawSource,
   } = useLotteryConsole();
   const [now, setNow] = useState(() => new Date());
   const [statusFilter, setStatusFilter] =
@@ -94,6 +105,7 @@ export function LotteryConsolePage({
   );
   const [controlSaving, setControlSaving] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
+  const [syncingLotteryId, setSyncingLotteryId] = useState<string | null>(null);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -215,6 +227,24 @@ export function LotteryConsolePage({
     onDashboardRefresh();
   };
 
+  const syncLotterySource = async (item: LotteryConsoleItem) => {
+    if (item.lottery.drawMode !== 'api') {
+      Toast.warning('只有 API 开奖彩种可以同步开奖源');
+      return;
+    }
+
+    setSyncingLotteryId(item.lottery.id);
+    try {
+      const result = await syncDrawSource(item.lottery.id);
+      Toast.success(result.message || `已同步 ${item.lottery.name} 开奖源`);
+      onDashboardRefresh();
+    } catch (requestError) {
+      Toast.error(errorMessage(requestError));
+    } finally {
+      setSyncingLotteryId(null);
+    }
+  };
+
   if (loading && lotteries.length === 0 && issues.length === 0) {
     return (
       <div className="grid min-h-[420px] place-items-center">
@@ -283,6 +313,8 @@ export function LotteryConsolePage({
               now={now}
               schedulerStatus={schedulerStatus}
               onOpenControl={openControlSheet}
+              onSyncSource={(nextItem) => void syncLotterySource(nextItem)}
+              syncing={syncingLotteryId === item.lottery.id}
             />
           ))}
         </section>
@@ -353,11 +385,15 @@ function LotteryConsoleCard({
   now,
   schedulerStatus,
   onOpenControl,
+  onSyncSource,
+  syncing,
 }: {
   item: LotteryConsoleItem;
   now: Date;
   schedulerStatus: DrawSchedulerStatus | null;
   onOpenControl: (item: LotteryConsoleItem) => void;
+  onSyncSource: (item: LotteryConsoleItem) => void;
+  syncing: boolean;
 }) {
   const { currentIssue, drawControl, lottery, recentDrawnIssue } = item;
   const currentIssueDrawNumber =
@@ -470,13 +506,26 @@ function LotteryConsoleCard({
             </div>
           ) : null}
         </div>
-        <Button
-          icon={<Settings2 size={14} />}
-          size="small"
-          onClick={() => onOpenControl(item)}
-        >
-          控制
-        </Button>
+        <div className="flex shrink-0 flex-col gap-1.5">
+          <Button
+            icon={<Settings2 size={14} />}
+            size="small"
+            onClick={() => onOpenControl(item)}
+          >
+            控制
+          </Button>
+          {lottery.drawMode === 'api' ? (
+            <Button
+              icon={<RefreshCcw size={14} />}
+              loading={syncing}
+              size="small"
+              theme="light"
+              onClick={() => onSyncSource(item)}
+            >
+              立即同步
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">

@@ -40,6 +40,25 @@ export interface DrawIssueGenerationPreview {
   saleClosedAt: string;
 }
 
+export interface ApiDrawSourceIssueSnapshot {
+  latestIssue: string;
+  latestDrawTime: string | null;
+  nextIssue: string | null;
+  nextDrawTime: string | null;
+}
+
+export interface DrawSourceSyncResult {
+  lotteryId: string;
+  lotteryName: string;
+  apiSnapshot: ApiDrawSourceIssueSnapshot;
+  targetIssue: DrawIssue;
+  generatedIssues: DrawIssue[];
+  updatedIssues: DrawIssue[];
+  cancelledIssues: DrawIssue[];
+  keptIssues: DrawIssue[];
+  message: string;
+}
+
 export interface DrawIssueResultRequest {
   drawNumber?: string;
 }

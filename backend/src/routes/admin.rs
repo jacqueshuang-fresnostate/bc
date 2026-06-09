@@ -15,7 +15,11 @@ use axum::{
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{cmp::Ordering, collections::BTreeMap, time::Duration};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 
 use crate::{
     app::AppState,
@@ -25,8 +29,9 @@ use crate::{
         draw::{
             CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest,
             DrawControlTargetScope, DrawIssue, DrawIssueGenerationPreview, DrawIssuePage,
-            DrawIssueResultRequest, DrawIssueStatus, GenerateDrawIssueRequest,
-            GenerateDrawIssuesRequest, LotteryDrawControl, SaveLotteryDrawControlRequest,
+            DrawIssueResultRequest, DrawIssueStatus, DrawSourceSyncResult,
+            GenerateDrawIssueRequest, GenerateDrawIssuesRequest, LotteryDrawControl,
+            SaveLotteryDrawControlRequest,
         },
         finance::{
             AdminFinancialAccountSummary, FinanceOverview, FinancePage, FinancialAccountSummary,
@@ -237,6 +242,10 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(get_lottery).put(update_lottery).delete(delete_lottery),
         )
         .route("/lotteries/{id}/sale", patch(set_lottery_sale))
+        .route(
+            "/lotteries/{id}/sync-draw-source",
+            post(sync_lottery_draw_source),
+        )
         .route(
             "/lottery-categories",
             get(list_lottery_categories).post(create_lottery_category),
@@ -2605,6 +2614,50 @@ async fn set_lottery_sale(
     }
 
     Ok(Json(ApiEnvelope::success(lottery)))
+}
+
+/// 手动按 API 开奖源校准指定彩种的下一期开奖期号。
+async fn sync_lottery_draw_source(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<DrawSourceSyncResult>>> {
+    let lottery = state.lotteries.get(&id).await?;
+    let config = state.scheduler.config()?;
+    let now = Local::now()
+        .naive_local()
+        .format(TIMESTAMP_FORMAT)
+        .to_string();
+    let protected_issues = pending_order_issues_for_lottery(&state, &lottery.id).await?;
+    let result = state
+        .draws
+        .sync_api_draw_source(
+            &lottery,
+            &now,
+            config.sale_close_lead_seconds,
+            &protected_issues,
+        )
+        .await?;
+
+    state
+        .realtime
+        .publish_public(issue_opened_event(&result.target_issue));
+
+    Ok(Json(ApiEnvelope::success(result)))
+}
+
+/// 读取有待开奖订单的期号，同步开奖源时不能静默取消这些期号。
+async fn pending_order_issues_for_lottery(
+    state: &AppState,
+    lottery_id: &str,
+) -> ApiResult<BTreeSet<String>> {
+    Ok(state
+        .orders
+        .list()
+        .await?
+        .into_iter()
+        .filter(|order| order.lottery_id == lottery_id && order.status == OrderStatus::PendingDraw)
+        .map(|order| order.issue)
+        .collect())
 }
 
 /// 判断彩种开售后是否需要立即补齐未来期号。

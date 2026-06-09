@@ -1,7 +1,7 @@
 //! 开奖期号与开奖控制领域模型，定义状态与开奖请求参数
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -12,8 +12,9 @@ use sqlx::Row;
 use crate::{
     domain::{
         draw::{
-            CreateDrawIssueRequest, DrawControlTargetScope, DrawIssue, DrawIssueResultRequest,
-            DrawIssueStatus, LotteryDrawControl, SaveLotteryDrawControlRequest,
+            ApiDrawSourceIssueSnapshot, CreateDrawIssueRequest, DrawControlTargetScope, DrawIssue,
+            DrawIssueGenerationPreview, DrawIssueResultRequest, DrawIssueStatus,
+            DrawSourceSyncResult, LotteryDrawControl, SaveLotteryDrawControlRequest,
         },
         lottery::{DrawMode, DrawSource, LotteryKind, LotteryNumberType, SaveDrawSourceRequest},
     },
@@ -23,6 +24,7 @@ use crate::{
 use super::{
     business_database::{enum_from_string, enum_to_string, BusinessDatabase},
     draw_api::{ApiDrawSourceLatestIssue, ApiDrawSourceRepository},
+    draw_generation::plan_api_draw_source_target,
 };
 
 #[derive(Clone)]
@@ -263,6 +265,56 @@ impl DrawRepository {
         lottery_id: &str,
     ) -> ApiResult<Option<ApiDrawSourceLatestIssue>> {
         self.api_sources.latest_issue_for_lottery(lottery_id).await
+    }
+
+    /// 按外部 API 开奖源立即校准指定彩种的当前可销售期号。
+    pub async fn sync_api_draw_source(
+        &self,
+        lottery: &LotteryKind,
+        now: &str,
+        sale_close_lead_seconds: u32,
+        protected_issues: &BTreeSet<String>,
+    ) -> ApiResult<DrawSourceSyncResult> {
+        if lottery.draw_mode != DrawMode::Api {
+            return Err(ApiError::BadRequest(
+                "只有 API 开奖彩种可以同步开奖源".to_string(),
+            ));
+        }
+
+        let latest_api_issue = self
+            .latest_api_issue_for_lottery(&lottery.id)
+            .await?
+            .ok_or_else(|| ApiError::NotFound("当前彩种没有绑定 API 开奖源".to_string()))?;
+        let target =
+            plan_api_draw_source_target(lottery, &latest_api_issue, now, sale_close_lead_seconds)?;
+        let api_snapshot = ApiDrawSourceIssueSnapshot {
+            latest_draw_time: latest_api_issue.draw_time.clone(),
+            latest_issue: latest_api_issue.issue.clone(),
+            next_draw_time: latest_api_issue.next_draw_time.clone(),
+            next_issue: latest_api_issue.next_issue.clone(),
+        };
+
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
+            let result = store.sync_api_target(lottery, api_snapshot, target, protected_issues)?;
+            (result, store.clone())
+        };
+        self.persist_draws(&snapshot).await?;
+
+        tracing::info!(
+            lottery_id = %result.lottery_id,
+            target_issue = %result.target_issue.issue,
+            generated_count = result.generated_issues.len(),
+            updated_count = result.updated_issues.len(),
+            cancelled_count = result.cancelled_issues.len(),
+            kept_count = result.kept_issues.len(),
+            "手动同步开奖源完成"
+        );
+
+        Ok(result)
     }
 
     async fn resolve_draw_payload(
@@ -699,6 +751,115 @@ impl DrawStore {
         issue.status = DrawIssueStatus::Cancelled;
         Ok(issue.clone())
     }
+
+    /// 按 API 开奖源目标期校准本地未开奖期号。
+    fn sync_api_target(
+        &mut self,
+        lottery: &LotteryKind,
+        api_snapshot: ApiDrawSourceIssueSnapshot,
+        target: DrawIssueGenerationPreview,
+        protected_issues: &BTreeSet<String>,
+    ) -> ApiResult<DrawSourceSyncResult> {
+        let mut generated_issues = Vec::new();
+        let mut updated_issues = Vec::new();
+        let mut cancelled_issues = Vec::new();
+        let mut kept_issues = Vec::new();
+
+        let target_issue_id = self
+            .issues
+            .values()
+            .find(|issue| issue.lottery_id == lottery.id && issue.issue == target.issue)
+            .map(|issue| issue.id.clone());
+
+        let target_issue = if let Some(issue_id) = target_issue_id {
+            let issue = self
+                .issues
+                .get_mut(&issue_id)
+                .ok_or_else(|| ApiError::Internal("目标期号数据不存在".to_string()))?;
+            if issue.status == DrawIssueStatus::Drawn {
+                return Err(ApiError::Conflict(
+                    "开奖源目标期号已在本地开奖，无法自动校准".to_string(),
+                ));
+            }
+
+            issue.lottery_name = lottery.name.clone();
+            issue.number_type = lottery.number_type.clone();
+            issue.draw_mode = lottery.draw_mode.clone();
+            issue.scheduled_at = target.scheduled_at.clone();
+            issue.sale_closed_at = target.sale_closed_at.clone();
+            issue.status = DrawIssueStatus::Open;
+            issue.draw_number = None;
+            issue.drawn_at = None;
+            updated_issues.push(issue.clone());
+            issue.clone()
+        } else {
+            self.next_sequence += 1;
+            let issue = DrawIssue {
+                id: format!("D{:012}", self.next_sequence),
+                lottery_id: lottery.id.clone(),
+                lottery_name: lottery.name.clone(),
+                issue: target.issue.clone(),
+                number_type: lottery.number_type.clone(),
+                draw_mode: lottery.draw_mode.clone(),
+                scheduled_at: target.scheduled_at.clone(),
+                sale_closed_at: target.sale_closed_at.clone(),
+                status: DrawIssueStatus::Open,
+                draw_number: None,
+                drawn_at: None,
+                created_at: current_timestamp_label(),
+            };
+            self.issues.insert(issue.id.clone(), issue.clone());
+            generated_issues.push(issue.clone());
+            issue
+        };
+
+        let stale_issue_ids = self
+            .issues
+            .values()
+            .filter(|issue| {
+                issue.lottery_id == lottery.id
+                    && issue.issue != target.issue
+                    && matches!(
+                        issue.status,
+                        DrawIssueStatus::Open | DrawIssueStatus::Closed
+                    )
+            })
+            .map(|issue| issue.id.clone())
+            .collect::<Vec<_>>();
+
+        for issue_id in stale_issue_ids {
+            let Some(issue) = self.issues.get_mut(&issue_id) else {
+                continue;
+            };
+            if protected_issues.contains(&issue.issue) {
+                kept_issues.push(issue.clone());
+                continue;
+            }
+
+            issue.status = DrawIssueStatus::Cancelled;
+            cancelled_issues.push(issue.clone());
+        }
+
+        let message = sync_result_message(
+            &target_issue,
+            generated_issues.len(),
+            updated_issues.len(),
+            cancelled_issues.len(),
+            kept_issues.len(),
+        );
+
+        Ok(DrawSourceSyncResult {
+            lottery_id: lottery.id.clone(),
+            lottery_name: lottery.name.clone(),
+            api_snapshot,
+            target_issue,
+            generated_issues,
+            updated_issues,
+            cancelled_issues,
+            kept_issues,
+            message,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1040,8 +1201,37 @@ fn current_timestamp_label() -> String {
     format!("unix:{seconds}")
 }
 
+/// 汇总同步动作结果，给后台 Toast 和排查日志直接展示中文说明。
+fn sync_result_message(
+    target_issue: &DrawIssue,
+    generated_count: usize,
+    updated_count: usize,
+    cancelled_count: usize,
+    kept_count: usize,
+) -> String {
+    let action = if generated_count > 0 {
+        "已生成"
+    } else if updated_count > 0 {
+        "已更新"
+    } else {
+        "已确认"
+    };
+    let kept_text = if kept_count > 0 {
+        format!("，{kept_count} 个有待开奖订单的旧期已保留")
+    } else {
+        String::new()
+    };
+
+    format!(
+        "{action}第 {} 期，取消 {} 个无订单旧期{}",
+        target_issue.issue, cancelled_count, kept_text
+    )
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use crate::{
         domain::{
             draw::{
@@ -1065,6 +1255,23 @@ mod tests {
             "data": [
                 { "preDrawIssue": 2026143, "preDrawCode": "3,7,6", "preDrawTime": "2026-06-02 21:15:00" }
             ]
+        }
+    }"#;
+    const KJ_TXFFC_SAMPLE: &str = r#"{
+        "errorCode": 0,
+        "message": "",
+        "result": {
+            "businessCode": "202606031178",
+            "message": "",
+            "data": {
+                "lotKey": "txffc",
+                "lotName": "腾讯分分彩",
+                "preDrawIssue": "202606031178",
+                "preDrawCode": "9,9,8,7,2",
+                "preDrawTime": "2026-06-03 19:38:01",
+                "drawIssue": 202606031179,
+                "drawTime": "2026-06-03 19:39:00"
+            }
         }
     }"#;
 
@@ -1431,6 +1638,61 @@ mod tests {
         assert!(stored.draw_number.is_none());
     }
 
+    #[tokio::test]
+    async fn repository_sync_api_draw_source_generates_target_and_cancels_stale_issue() {
+        let lottery = txffc_lottery();
+        let repository = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::kj_seeded_with_static_response(KJ_TXFFC_SAMPLE),
+        );
+        let stale_issue = repository
+            .create(&lottery, txffc_create_request("202606031170"))
+            .await
+            .expect("stale issue can be created");
+
+        let result = repository
+            .sync_api_draw_source(&lottery, "2026-06-03 19:38:20", 1, &BTreeSet::new())
+            .await
+            .expect("api source can be synced");
+        let stored_stale = repository
+            .get(&stale_issue.id)
+            .await
+            .expect("stale issue still exists");
+
+        assert_eq!(result.target_issue.issue, "202606031179");
+        assert_eq!(result.target_issue.scheduled_at, "2026-06-03 19:39:00");
+        assert_eq!(result.generated_issues.len(), 1);
+        assert_eq!(result.cancelled_issues.len(), 1);
+        assert_eq!(stored_stale.status, DrawIssueStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn repository_sync_api_draw_source_keeps_stale_issue_with_pending_orders() {
+        let lottery = txffc_lottery();
+        let repository = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::kj_seeded_with_static_response(KJ_TXFFC_SAMPLE),
+        );
+        let stale_issue = repository
+            .create(&lottery, txffc_create_request("202606031170"))
+            .await
+            .expect("stale issue can be created");
+        let mut protected_issues = BTreeSet::new();
+        protected_issues.insert("202606031170".to_string());
+
+        let result = repository
+            .sync_api_draw_source(&lottery, "2026-06-03 19:38:20", 1, &protected_issues)
+            .await
+            .expect("api source can be synced");
+        let stored_stale = repository
+            .get(&stale_issue.id)
+            .await
+            .expect("stale issue still exists");
+
+        assert_eq!(result.target_issue.issue, "202606031179");
+        assert_eq!(result.cancelled_issues.len(), 0);
+        assert_eq!(result.kept_issues.len(), 1);
+        assert_eq!(stored_stale.status, DrawIssueStatus::Open);
+    }
+
     /// 处理 create_request 的具体内部流程。
     fn create_request(issue: &str) -> CreateDrawIssueRequest {
         create_request_for("fc3d", issue)
@@ -1468,5 +1730,25 @@ mod tests {
             play_categories: Vec::new(),
             play_configs: Vec::new(),
         }
+    }
+
+    fn txffc_create_request(issue: &str) -> CreateDrawIssueRequest {
+        CreateDrawIssueRequest {
+            lottery_id: "txffc".to_string(),
+            issue: issue.to_string(),
+            scheduled_at: "2026-06-03 19:30:00".to_string(),
+            sale_closed_at: "2026-06-03 19:29:59".to_string(),
+        }
+    }
+
+    fn txffc_lottery() -> LotteryKind {
+        let mut lottery = lottery(DrawMode::Api, LotteryNumberType::FiveDigit);
+        lottery.id = "txffc".to_string();
+        lottery.name = "腾讯分分彩".to_string();
+        lottery.category = "overseas".to_string();
+        lottery.schedule = DrawSchedule::Periodic {
+            interval_seconds: 60,
+        };
+        lottery
     }
 }

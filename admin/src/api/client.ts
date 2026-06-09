@@ -38,6 +38,7 @@ import type {
   DrawIssueQuery,
   DrawIssueGenerationPreview,
   DrawIssueResultRequest,
+  DrawSourceSyncResult,
   GenerateDrawIssueRequest,
   GenerateDrawIssuesRequest,
   LotteryDrawControl,
@@ -735,6 +736,15 @@ export function setLotterySaleStatus(id: string, saleEnabled: boolean) {
     {
       body: { saleEnabled },
       method: 'PATCH',
+    },
+  );
+}
+
+export function syncLotteryDrawSource(id: string) {
+  return requestJson<DrawSourceSyncResult>(
+    `/api/admin/lotteries/${encodeURIComponent(id)}/sync-draw-source`,
+    {
+      method: 'POST',
     },
   );
 }
