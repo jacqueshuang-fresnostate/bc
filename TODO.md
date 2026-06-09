@@ -1,5 +1,29 @@
 # TODO
 
+## 2026-06-09 22:16 HKT 后台合买计划详情与参与记录顺序调整
+
+- 完成任务：将后台合买管理中选中计划后的“参与记录”和“计划详情”展示顺序对换。
+- 解决问题：
+  - 运营查看合买计划时更需要先核对参与用户、金额、份数和备注，原先“计划详情”在前会让参与信息需要向下查找。
+- 实施内容：
+  - 将 `GroupBuyManagementPage` 的“参与记录”卡片移动到“计划详情”卡片之前。
+  - 保留原有参与记录添加、计划状态保存和空状态提示逻辑。
+  - 同步更新架构说明和前端组件规范。
+- 验证结果：`cd admin && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-09 22:35 HKT 合买计划列表按期号倒序
+
+- 完成任务：将合买计划列表统一改为最新期号在最前面。
+- 解决问题：
+  - 后端合买仓储此前依赖 `BTreeMap` 的计划 ID 顺序，后台合买列表、手机端合买大厅和我的合买不一定优先展示最新期号。
+  - 后台分页会先按原始顺序切片，如果排序不在后端完成，最新期号可能被排到后续页面。
+- 实施内容：
+  - `GroupBuyStore::list()` 和 `GroupBuyStore::list_details()` 统一按期号倒序返回。
+  - 期号相同的计划继续按创建时间和计划 ID 倒序稳定排列。
+  - 增加后端测试覆盖摘要列表和详情列表的期号倒序。
+  - 同步更新架构说明、后端接口契约和手机端组件规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml group_buy_repository_lists_latest_issue_first -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml` 和 `git diff --check` 均通过。
+
 ## 2026-06-09 22:20 HKT 订单管理创建投注单改为 SideSheet
 
 - 完成任务：将后台订单管理的“创建投注单”表单改为点击按钮后通过 Semi UI `SideSheet` 打开。

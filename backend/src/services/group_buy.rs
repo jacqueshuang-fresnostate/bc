@@ -496,12 +496,18 @@ impl GroupBuyStore {
 
     /// 返回完整数据列表。
     fn list(&self) -> Vec<GroupBuyPlanSummary> {
-        self.plans.values().map(GroupBuyPlan::summary).collect()
+        sorted_group_buy_plans(self.plans.values())
+            .into_iter()
+            .map(GroupBuyPlan::summary)
+            .collect()
     }
 
     /// 返回完整计划列表。
     fn list_details(&self) -> Vec<GroupBuyPlan> {
-        self.plans.values().cloned().collect()
+        sorted_group_buy_plans(self.plans.values())
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// 按订单 ID 查找已经成单的合买计划。
@@ -880,6 +886,21 @@ impl GroupBuyStore {
     }
 }
 
+/// 按期号倒序返回合买计划，期号相同时再按创建时间和计划 ID 倒序稳定展示。
+fn sorted_group_buy_plans<'a>(
+    plans: impl Iterator<Item = &'a GroupBuyPlan>,
+) -> Vec<&'a GroupBuyPlan> {
+    let mut sorted_plans: Vec<_> = plans.collect();
+    sorted_plans.sort_by(|left, right| {
+        right
+            .issue
+            .cmp(&left.issue)
+            .then_with(|| right.created_at.cmp(&left.created_at))
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    sorted_plans
+}
+
 /// 处理 participant_min_amount 的具体内部流程。
 fn participant_min_amount(plan: &GroupBuyPlan) -> i64 {
     plan.participant_min_amount_minor
@@ -1062,6 +1083,71 @@ mod tests {
         assert_eq!(plan.status, GroupBuyPlanStatus::Open);
         assert_eq!(plan.participants.len(), 1);
         assert_eq!(plan.participants[0].share_count, 100);
+    }
+
+    #[tokio::test]
+    async fn group_buy_repository_lists_latest_issue_first() {
+        let repository = GroupBuyRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let lotteries = lotteries_with_group_buy_enabled("fc3d");
+
+        for (id, issue, title) in [
+            ("G-ORDER-OLDER", "20260602002", "较旧期号"),
+            ("G-ORDER-NEWER", "20260602003", "较新期号"),
+        ] {
+            repository
+                .create(
+                    CreateGroupBuyPlanRequest {
+                        id: id.to_string(),
+                        lottery_id: "fc3d".to_string(),
+                        issue: issue.to_string(),
+                        rule_code: "threeDirect".to_string(),
+                        title: title.to_string(),
+                        numbers: "1,2,3".to_string(),
+                        initiator_user_id: "U90001".to_string(),
+                        total_amount_minor: 100_000,
+                        initiator_amount_minor: 10_000,
+                        note: title.to_string(),
+                    },
+                    &lotteries,
+                    &access.users,
+                )
+                .await
+                .expect("plan can be created");
+        }
+
+        let summaries = repository
+            .list()
+            .await
+            .expect("summary list can load")
+            .into_iter()
+            .collect::<Vec<_>>();
+        let details = repository
+            .list_details()
+            .await
+            .expect("detail list can load")
+            .into_iter()
+            .collect::<Vec<_>>();
+        let summary_issues = summaries
+            .iter()
+            .map(|plan| plan.issue.as_str())
+            .collect::<Vec<_>>();
+        let detail_issues = details
+            .iter()
+            .map(|plan| plan.issue.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            &summary_issues[..3],
+            ["20260602003", "20260602002", "20260602001"]
+        );
+        assert_eq!(
+            &detail_issues[..3],
+            ["20260602003", "20260602002", "20260602001"]
+        );
     }
 
     #[tokio::test]

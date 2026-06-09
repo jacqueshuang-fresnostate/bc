@@ -517,104 +517,6 @@ export function GroupBuyManagementPage({
 
           <div className="space-y-4">
             <Card className="rounded-md border border-line">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold text-ink">计划详情</h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {selectedPlan ? selectedPlan.id : '请选择一个合买计划'}
-                  </p>
-                </div>
-                {selectedPlan ? (
-                  <Tag color={statusColor(selectedPlan.status)}>
-                    {statusText(selectedPlan.status)}
-                  </Tag>
-                ) : null}
-              </div>
-
-              {selectedPlan ? (
-                <div className="space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <InfoLine label="彩种" value={selectedPlan.lotteryName} />
-                    <InfoLine label="期号" value={selectedPlan.issue || '-'} />
-                    <InfoLine
-                      label="玩法"
-                      value={formatRuleCode(selectedPlan.ruleCode as PlayRuleCode)}
-                    />
-                    <InfoLine label="订单号" value={selectedPlan.orderId ?? '未成单'} />
-                    <InfoLine label="发起人" value={selectedPlan.initiatorUsername} />
-                    <InfoLine
-                      label="计划总额"
-                      value={formatMoney(selectedPlan.totalAmountMinor)}
-                    />
-                    <InfoLine
-                      label="已认购"
-                      value={formatMoney(selectedPlan.filledAmountMinor)}
-                    />
-                    <InfoLine label="总份数" value={`${selectedPlan.shareCount} 份`} />
-                    <InfoLine
-                      label="每份金额"
-                      value={formatMoney(selectedPlan.minShareAmountMinor)}
-                    />
-                  </div>
-                  <div className="rounded-md border border-line px-3 py-2">
-                    <div className="text-xs text-slate-500">投注内容</div>
-                    <div className="mt-1 whitespace-pre-wrap break-all text-sm font-medium text-ink">
-                      {selectedPlan.numbers || '-'}
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="状态">
-                      <Select
-                        className="form-input"
-                        value={updateForm.status}
-                        onChange={(value) =>
-                        setUpdateForm((current) => ({
-                          ...current,
-                          status: (value as GroupBuyPlanStatus) || 'draft',
-                        }))
-                      }
-                    >
-                        <Select.Option value="draft">草稿</Select.Option>
-                        <Select.Option value="open">进行中</Select.Option>
-                        <Select.Option value="filled">已满单</Select.Option>
-                        <Select.Option value="cancelled">已取消</Select.Option>
-                        <Select.Option value="settled">已结算</Select.Option>
-                      </Select>
-                    </Field>
-                    <Field label="备注">
-                      <Input
-                        className="form-input"
-                        value={updateForm.note}
-                        onChange={(value) =>
-                          setUpdateForm((current) => ({
-                            ...current,
-                            note: value,
-                          }))
-                        }
-                      />
-                    </Field>
-                  </div>
-                  <div className="flex justify-end">
-                    <Button
-                      disabled={saving}
-                      icon={<Save size={16} />}
-                      loading={saving}
-                      theme="solid"
-                      onClick={() => void submitUpdate()}
-                    >
-                      保存计划状态
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-md border border-line p-4 text-sm text-slate-500">
-                  暂无可维护计划。
-                </div>
-              )}
-            </Card>
-
-            <Card className="rounded-md border border-line">
               <div className="mb-4 flex items-center gap-2">
                 <Users size={17} />
                 <h2 className="text-base font-semibold text-ink">参与记录</h2>
@@ -738,6 +640,104 @@ export function GroupBuyManagementPage({
               ) : (
                 <div className="rounded-md border border-line p-4 text-sm text-slate-500">
                   暂无参与记录。
+                </div>
+              )}
+            </Card>
+
+            <Card className="rounded-md border border-line">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-ink">计划详情</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {selectedPlan ? selectedPlan.id : '请选择一个合买计划'}
+                  </p>
+                </div>
+                {selectedPlan ? (
+                  <Tag color={statusColor(selectedPlan.status)}>
+                    {statusText(selectedPlan.status)}
+                  </Tag>
+                ) : null}
+              </div>
+
+              {selectedPlan ? (
+                <div className="space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <InfoLine label="彩种" value={selectedPlan.lotteryName} />
+                    <InfoLine label="期号" value={selectedPlan.issue || '-'} />
+                    <InfoLine
+                      label="玩法"
+                      value={formatRuleCode(selectedPlan.ruleCode as PlayRuleCode)}
+                    />
+                    <InfoLine label="订单号" value={selectedPlan.orderId ?? '未成单'} />
+                    <InfoLine label="发起人" value={selectedPlan.initiatorUsername} />
+                    <InfoLine
+                      label="计划总额"
+                      value={formatMoney(selectedPlan.totalAmountMinor)}
+                    />
+                    <InfoLine
+                      label="已认购"
+                      value={formatMoney(selectedPlan.filledAmountMinor)}
+                    />
+                    <InfoLine label="总份数" value={`${selectedPlan.shareCount} 份`} />
+                    <InfoLine
+                      label="每份金额"
+                      value={formatMoney(selectedPlan.minShareAmountMinor)}
+                    />
+                  </div>
+                  <div className="rounded-md border border-line px-3 py-2">
+                    <div className="text-xs text-slate-500">投注内容</div>
+                    <div className="mt-1 whitespace-pre-wrap break-all text-sm font-medium text-ink">
+                      {selectedPlan.numbers || '-'}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="状态">
+                      <Select
+                        className="form-input"
+                        value={updateForm.status}
+                        onChange={(value) =>
+                          setUpdateForm((current) => ({
+                            ...current,
+                            status: (value as GroupBuyPlanStatus) || 'draft',
+                          }))
+                        }
+                      >
+                        <Select.Option value="draft">草稿</Select.Option>
+                        <Select.Option value="open">进行中</Select.Option>
+                        <Select.Option value="filled">已满单</Select.Option>
+                        <Select.Option value="cancelled">已取消</Select.Option>
+                        <Select.Option value="settled">已结算</Select.Option>
+                      </Select>
+                    </Field>
+                    <Field label="备注">
+                      <Input
+                        className="form-input"
+                        value={updateForm.note}
+                        onChange={(value) =>
+                          setUpdateForm((current) => ({
+                            ...current,
+                            note: value,
+                          }))
+                        }
+                      />
+                    </Field>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button
+                      disabled={saving}
+                      icon={<Save size={16} />}
+                      loading={saving}
+                      theme="solid"
+                      onClick={() => void submitUpdate()}
+                    >
+                      保存计划状态
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+                  暂无可维护计划。
                 </div>
               )}
             </Card>
