@@ -1,5 +1,18 @@
 # TODO
 
+## 2026-06-09 17:20 HKT 合买注单个人派奖展示修复
+
+- 完成任务：修复手机端合买注单中奖金额显示为整单派奖金额的问题。
+- 解决问题：
+  - 财务结算已经按合买参与比例给每个参与人写入 `payoutCredit` 资金流水，但用户注单接口此前只返回真实合买订单的整单 `payoutMinor`。
+  - 手机端归一化后把整单奖金当作当前用户奖金展示，导致认购金额不同的参与人看到相同中奖金额。
+- 实施内容：
+  - 后端 `GET /api/user/bet/orders` 为合买订单新增 `participationPayoutMinor`，优先读取当前用户真实派奖流水。
+  - 历史缺失派奖流水时，后端按合买参与比例兜底计算，并保持最后一名参与人承接余数的财务规则。
+  - 手机端注单归一化新增个人派奖字段，合买订单展示中奖金额时优先使用 `participationPayoutMinor`。
+  - 同步更新架构说明、后端接口契约和手机端组件规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_visible_bet_orders -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml store_credits_group_buy_settlement_by_participant_share -- --nocapture`、`cd mobile && npm run build`、`cd mobile && npm run test` 和 `git diff --check` 均通过；手机端测试脚本当前显示 0 个测试用例。
+
 ## 2026-06-09 16:42 HKT 后台客服会话列表显示用户 ID
 
 - 完成任务：让后台在线客服“用户会话”列表展示用户 ID。

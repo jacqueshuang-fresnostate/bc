@@ -732,12 +732,21 @@ async fn get_user_bet_page_config(
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-/// 用户端注单列表响应，合买订单会额外带出当前用户的参与金额。
+/// 用户端注单列表响应，合买订单会额外带出当前用户的参与金额和个人派奖金额。
 struct UserBetOrderDetailResponse {
     #[serde(flatten)]
     order: OrderDetail,
     #[serde(skip_serializing_if = "Option::is_none")]
     participation_amount_minor: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    participation_payout_minor: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+/// 当前用户在一张合买真实订单里的个人份额，供注单列表展示使用。
+struct UserGroupBuyOrderShare {
+    amount_minor: i64,
+    payout_minor: Option<i64>,
 }
 
 /// 返回当前用户可见的注单列表。
@@ -747,7 +756,9 @@ async fn list_user_bet_orders(
 ) -> ApiResult<Json<ApiEnvelope<Vec<UserBetOrderDetailResponse>>>> {
     let orders = state.orders.list().await?;
     let group_buy_plans = state.group_buys.list_details().await?;
-    let orders = user_visible_bet_orders(&session.user.id, orders, &group_buy_plans)?;
+    let ledger_entries = state.finance.user_ledger_entries(&session.user.id).await?;
+    let orders =
+        user_visible_bet_orders(&session.user.id, orders, &group_buy_plans, &ledger_entries)?;
 
     Ok(Json(ApiEnvelope::success(orders)))
 }
@@ -757,51 +768,207 @@ fn user_visible_bet_orders(
     user_id: &str,
     orders: Vec<OrderDetail>,
     group_buy_plans: &[GroupBuyPlan],
+    ledger_entries: &[LedgerEntry],
 ) -> ApiResult<Vec<UserBetOrderDetailResponse>> {
-    let participation_amounts = group_buy_plans
+    let mut visible_orders = Vec::new();
+    for order in orders {
+        let group_buy_share = if order.order_source == OrderSource::GroupBuy {
+            user_group_buy_order_share(user_id, &order, group_buy_plans, ledger_entries)?
+        } else {
+            None
+        };
+        if order.user_id == user_id || group_buy_share.is_some() {
+            let participation_amount_minor = group_buy_share.map(|share| share.amount_minor);
+            let participation_payout_minor = group_buy_share.and_then(|share| share.payout_minor);
+            visible_orders.push(UserBetOrderDetailResponse {
+                order,
+                participation_amount_minor,
+                participation_payout_minor,
+            });
+        }
+    }
+
+    Ok(visible_orders)
+}
+
+/// 计算当前用户在合买订单中的展示份额，优先使用真实资金流水里的派奖记录。
+fn user_group_buy_order_share(
+    user_id: &str,
+    order: &OrderDetail,
+    group_buy_plans: &[GroupBuyPlan],
+    ledger_entries: &[LedgerEntry],
+) -> ApiResult<Option<UserGroupBuyOrderShare>> {
+    let Some(plan) = group_buy_plans
         .iter()
-        .filter(|plan| {
-            plan.participants
-                .iter()
-                .any(|participant| participant.user_id == user_id)
-        })
-        .filter_map(|plan| plan.order_id.as_ref().map(|order_id| (order_id, plan)))
-        .try_fold(
-            HashMap::<String, i64>::new(),
-            |mut amounts, (order_id, plan)| {
-                let participation_amount = plan
-                    .participants
-                    .iter()
-                    .filter(|participant| participant.user_id == user_id)
-                    .try_fold(0_i64, |sum, participant| {
-                        sum.checked_add(participant.amount_minor)
-                            .ok_or_else(|| ApiError::Internal("合买参与金额汇总溢出".to_string()))
-                    })?;
-                amounts.insert(order_id.clone(), participation_amount);
-                Ok::<_, ApiError>(amounts)
-            },
-        )?;
+        .find(|plan| plan.order_id.as_deref() == Some(order.id.as_str()))
+    else {
+        return Ok(None);
+    };
+    if !plan
+        .participants
+        .iter()
+        .any(|participant| participant.user_id == user_id)
+    {
+        return Ok(None);
+    }
 
-    let orders = orders
-        .into_iter()
-        .filter_map(|order| {
-            let participation_amount_minor = if order.order_source == OrderSource::GroupBuy {
-                participation_amounts.get(&order.id).copied()
-            } else {
-                None
-            };
-            if order.user_id == user_id || participation_amount_minor.is_some() {
-                Some(UserBetOrderDetailResponse {
-                    order,
-                    participation_amount_minor,
-                })
-            } else {
-                None
-            }
-        })
-        .collect();
+    let amount_minor = group_buy_user_participation_amount_minor(plan, user_id)?;
+    let payout_minor = group_buy_user_participation_payout_minor(
+        plan,
+        user_id,
+        &order.id,
+        order.payout_minor,
+        ledger_entries,
+    )?;
+    Ok(Some(UserGroupBuyOrderShare {
+        amount_minor,
+        payout_minor,
+    }))
+}
 
-    Ok(orders)
+/// 汇总用户在同一合买计划里的多次认购金额。
+fn group_buy_user_participation_amount_minor(plan: &GroupBuyPlan, user_id: &str) -> ApiResult<i64> {
+    plan.participants
+        .iter()
+        .filter(|participant| participant.user_id == user_id)
+        .try_fold(0_i64, |sum, participant| {
+            sum.checked_add(participant.amount_minor)
+                .ok_or_else(|| ApiError::Internal("合买参与金额汇总溢出".to_string()))
+        })
+}
+
+/// 计算用户个人派奖金额，避免手机端把整张合买订单的奖金展示给每个参与人。
+fn group_buy_user_participation_payout_minor(
+    plan: &GroupBuyPlan,
+    user_id: &str,
+    order_id: &str,
+    order_payout_minor: i64,
+    ledger_entries: &[LedgerEntry],
+) -> ApiResult<Option<i64>> {
+    if order_payout_minor <= 0 {
+        return Ok(None);
+    }
+    if let Some(ledger_payout_minor) =
+        group_buy_user_payout_from_ledger(plan, user_id, order_id, ledger_entries)?
+    {
+        return Ok(Some(ledger_payout_minor));
+    }
+
+    Ok(Some(calculated_group_buy_user_payout_minor(
+        plan,
+        user_id,
+        order_payout_minor,
+    )?))
+}
+
+/// 从真实派奖流水里读取用户个人分账金额，保证展示金额与账户实际入账一致。
+fn group_buy_user_payout_from_ledger(
+    plan: &GroupBuyPlan,
+    user_id: &str,
+    order_id: &str,
+    ledger_entries: &[LedgerEntry],
+) -> ApiResult<Option<i64>> {
+    let participant_ids = plan
+        .participants
+        .iter()
+        .filter(|participant| participant.user_id == user_id)
+        .map(|participant| participant.id.as_str())
+        .collect::<Vec<_>>();
+    let payout_minor = ledger_entries
+        .iter()
+        .filter(|entry| entry.kind == LedgerEntryKind::PayoutCredit)
+        .filter(|entry| entry.user_id == user_id)
+        .filter(|entry| {
+            participant_ids.iter().any(|participant_id| {
+                entry
+                    .reference_id
+                    .as_deref()
+                    .map(|reference_id| {
+                        group_buy_payout_reference_matches(reference_id, order_id, participant_id)
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .try_fold(0_i64, |sum, entry| {
+            sum.checked_add(entry.amount_minor)
+                .ok_or_else(|| ApiError::Internal("合买派奖金额汇总溢出".to_string()))
+        })?;
+
+    if payout_minor > 0 {
+        Ok(Some(payout_minor))
+    } else {
+        Ok(None)
+    }
+}
+
+/// 识别合买派奖流水引用，格式为“结算批次:订单号:参与编号”。
+fn group_buy_payout_reference_matches(
+    reference_id: &str,
+    order_id: &str,
+    participant_id: &str,
+) -> bool {
+    let mut parts = reference_id.split(':');
+    let _settlement_id = parts.next();
+    let reference_order_id = parts.next();
+    let reference_participant_id = parts.next();
+    reference_order_id == Some(order_id)
+        && reference_participant_id == Some(participant_id)
+        && parts.next().is_none()
+}
+
+/// 没有历史派奖流水时，按财务服务相同的比例和余数规则计算个人展示金额。
+fn calculated_group_buy_user_payout_minor(
+    plan: &GroupBuyPlan,
+    user_id: &str,
+    order_payout_minor: i64,
+) -> ApiResult<i64> {
+    if plan.total_amount_minor <= 0 {
+        return Err(ApiError::BadRequest("合买总金额无效".to_string()));
+    }
+    let participants = plan
+        .participants
+        .iter()
+        .filter(|participant| participant.amount_minor > 0)
+        .collect::<Vec<_>>();
+    if participants.is_empty() {
+        return Err(ApiError::BadRequest("合买计划没有可派奖参与人".to_string()));
+    }
+
+    let mut remaining_payout = order_payout_minor;
+    let mut user_payout = 0_i64;
+    let participant_count = participants.len();
+    for (index, participant) in participants.into_iter().enumerate() {
+        let payout_minor = if index + 1 == participant_count {
+            remaining_payout
+        } else {
+            proportional_minor(
+                order_payout_minor,
+                participant.amount_minor,
+                plan.total_amount_minor,
+            )?
+        };
+        remaining_payout = remaining_payout
+            .checked_sub(payout_minor)
+            .ok_or_else(|| ApiError::BadRequest("合买派奖金额过大".to_string()))?;
+        if participant.user_id == user_id {
+            user_payout = user_payout
+                .checked_add(payout_minor)
+                .ok_or_else(|| ApiError::Internal("合买个人派奖金额汇总溢出".to_string()))?;
+        }
+    }
+
+    Ok(user_payout)
+}
+
+/// 按比例计算最小货币单位金额，和财务分账逻辑保持一致。
+fn proportional_minor(total_minor: i64, part_minor: i64, base_minor: i64) -> ApiResult<i64> {
+    if total_minor < 0 || part_minor < 0 || base_minor <= 0 {
+        return Err(ApiError::BadRequest("合买派奖比例金额无效".to_string()));
+    }
+    total_minor
+        .checked_mul(part_minor)
+        .map(|amount| amount / base_minor)
+        .ok_or_else(|| ApiError::BadRequest("合买派奖金额过大".to_string()))
 }
 
 /// 用户端批量提交购彩篮订单并扣款。
@@ -2242,6 +2409,7 @@ mod tests {
                 direct_order,
             ],
             &plans,
+            &[],
         )
         .expect("用户注单列表可以合并合买参与金额");
         let visible_ids = visible
@@ -2255,11 +2423,69 @@ mod tests {
             .find(|item| item.order.order_source == OrderSource::GroupBuy)
             .expect("参与的合买订单应进入注单列表");
         assert_eq!(group_buy_item.participation_amount_minor, Some(3_000));
+        assert_eq!(group_buy_item.participation_payout_minor, None);
         let direct_item = visible
             .iter()
             .find(|item| item.order.order_source == OrderSource::Direct)
             .expect("独立订单应进入注单列表");
         assert_eq!(direct_item.participation_amount_minor, None);
+        assert_eq!(direct_item.participation_payout_minor, None);
+    }
+
+    #[test]
+    /// 验证合买中奖注单会按当前用户认购比例展示个人派奖金额。
+    fn user_visible_bet_orders_calculates_group_buy_participation_payout_by_share() {
+        let group_order =
+            test_won_order_with_payout("O000000000005", "U10001", OrderSource::GroupBuy, 1_900);
+        let mut plan = test_group_buy_plan_with_order(
+            "G-USER-ORDER-003",
+            "O000000000005",
+            vec![
+                test_group_buy_participant_with_amount("G-USER-ORDER-003-P001", "U10001", 38_600),
+                test_group_buy_participant_with_amount("G-USER-ORDER-003-P002", "U20002", 30_000),
+            ],
+        );
+        plan.total_amount_minor = 68_600;
+        plan.filled_amount_minor = 68_600;
+
+        let visible = user_visible_bet_orders("U20002", vec![group_order], &[plan], &[])
+            .expect("用户注单列表可以计算合买个人派奖金额");
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].participation_amount_minor, Some(30_000));
+        assert_eq!(visible[0].participation_payout_minor, Some(831));
+        assert_eq!(visible[0].order.payout_minor, 1_900);
+    }
+
+    #[test]
+    /// 验证已有真实派奖流水时，用户注单优先展示流水里的个人入账金额。
+    fn user_visible_bet_orders_uses_ledger_group_buy_participation_payout() {
+        let group_order =
+            test_won_order_with_payout("O000000000006", "U10001", OrderSource::GroupBuy, 1_900);
+        let mut plan = test_group_buy_plan_with_order(
+            "G-USER-ORDER-004",
+            "O000000000006",
+            vec![
+                test_group_buy_participant_with_amount("G-USER-ORDER-004-P001", "U10001", 38_600),
+                test_group_buy_participant_with_amount("G-USER-ORDER-004-P002", "U20002", 30_000),
+            ],
+        );
+        plan.total_amount_minor = 68_600;
+        plan.filled_amount_minor = 68_600;
+        let ledger_entries = vec![test_ledger_entry_for_user(
+            "L-GROUP-PAYOUT-001",
+            "U20002",
+            LedgerEntryKind::PayoutCredit,
+            832,
+            Some("S000001:O000000000006:G-USER-ORDER-004-P002"),
+        )];
+
+        let visible =
+            user_visible_bet_orders("U20002", vec![group_order], &[plan], &ledger_entries)
+                .expect("用户注单列表可以读取合买个人派奖流水");
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].participation_payout_minor, Some(832));
     }
 
     fn test_group_buy_lottery() -> LotteryKind {
@@ -2384,6 +2610,19 @@ mod tests {
         }
     }
 
+    fn test_won_order_with_payout(
+        id: &str,
+        user_id: &str,
+        order_source: OrderSource,
+        payout_minor: i64,
+    ) -> OrderDetail {
+        let mut order = test_order(id, user_id, order_source);
+        order.payout_minor = payout_minor;
+        order.status = OrderStatus::Won;
+        order.settled_at = Some("2026-06-05 20:05:00".to_string());
+        order
+    }
+
     fn test_invitation_user(
         id: &str,
         username: &str,
@@ -2414,13 +2653,23 @@ mod tests {
     }
 
     fn test_ledger_entry(id: &str, kind: LedgerEntryKind, amount_minor: i64) -> LedgerEntry {
+        test_ledger_entry_for_user(id, "U90012", kind, amount_minor, None)
+    }
+
+    fn test_ledger_entry_for_user(
+        id: &str,
+        user_id: &str,
+        kind: LedgerEntryKind,
+        amount_minor: i64,
+        reference_id: Option<&str>,
+    ) -> LedgerEntry {
         LedgerEntry {
             id: id.to_string(),
-            user_id: "U90012".to_string(),
+            user_id: user_id.to_string(),
             kind,
             amount_minor,
             balance_after_minor: amount_minor.max(0),
-            reference_id: None,
+            reference_id: reference_id.map(str::to_string),
             description: "测试流水".to_string(),
             created_at: "2026-06-05 19:00:00".to_string(),
         }

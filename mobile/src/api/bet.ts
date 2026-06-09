@@ -35,6 +35,7 @@ export type UserBetOrderDetail = {
   unitAmountMinor: number
   amountMinor: number
   participationAmountMinor?: number | null
+  participationPayoutMinor?: number | null
   oddsBasisPoints: number
   expandedBets: string[]
   drawNumber?: string | null
@@ -100,6 +101,12 @@ function formatMinorAmount(value: number) {
   return (Number(value || 0) / 100).toFixed(2)
 }
 
+function normalizeOptionalMinor(value?: number | null) {
+  if (value === null || value === undefined) return null
+  const amount = Number(value)
+  return Number.isFinite(amount) ? amount : null
+}
+
 function splitDrawNumber(value?: string | null) {
   const text = String(value || '').trim()
   if (!text) return []
@@ -154,16 +161,17 @@ function positionGridKind(ruleCode: string) {
 export function normalizeUserBetOrder(order: UserBetOrderDetail) {
   const numbers = selectionNumbers(order)
   const isGroupBuy = order.orderSource === 'groupBuy'
-  const rawParticipationAmountMinor = order.participationAmountMinor
-  const parsedParticipationAmountMinor = rawParticipationAmountMinor === null || rawParticipationAmountMinor === undefined
-    ? null
-    : Number(rawParticipationAmountMinor)
-  const participationAmountMinor = parsedParticipationAmountMinor !== null && Number.isFinite(parsedParticipationAmountMinor)
-    ? parsedParticipationAmountMinor
-    : null
+  const participationAmountMinor = normalizeOptionalMinor(order.participationAmountMinor)
+  const participationPayoutMinor = normalizeOptionalMinor(order.participationPayoutMinor)
   const participationAmount = participationAmountMinor !== null
     ? formatMinorAmount(participationAmountMinor)
     : undefined
+  const participationPayout = participationPayoutMinor !== null
+    ? formatMinorAmount(participationPayoutMinor)
+    : undefined
+  const displayPayoutMinor = isGroupBuy && participationPayoutMinor !== null
+    ? participationPayoutMinor
+    : order.payoutMinor
   return {
     ...order,
     order_source: order.orderSource,
@@ -187,9 +195,11 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     amount: formatMinorAmount(order.amountMinor),
     participation_amount_minor: participationAmountMinor,
     participation_amount: participationAmount,
+    participation_payout_minor: participationPayoutMinor,
+    participation_payout: participationPayout,
     display_amount: participationAmount || formatMinorAmount(order.amountMinor),
     odds: formatMinorAmount(order.oddsBasisPoints / 100),
-    payout: formatMinorAmount(order.payoutMinor),
+    payout: formatMinorAmount(displayPayoutMinor),
     created_at: order.createdAt,
     settled_at: order.settledAt,
     position_grid_kind: positionGridKind(order.ruleCode),

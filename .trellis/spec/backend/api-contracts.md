@@ -1002,7 +1002,7 @@ await createOrder({
 - `direct`：用户独立下单。
 - `groupBuy`：合买满单后生成的真实投注订单。
 
-当 `orderSource=groupBuy` 且当前登录用户参与了对应合买计划时，用户注单列表必须额外返回 `participationAmountMinor`，表示当前用户在该合买订单中的实际认购金额；如果同一用户对同一合买计划有多条参与记录，需要按参与记录累加。普通独立订单不返回该字段，手机端不能把合买真实订单的 `amountMinor` 当成当前用户参与金额展示。
+当 `orderSource=groupBuy` 且当前登录用户参与了对应合买计划时，用户注单列表必须额外返回 `participationAmountMinor`，表示当前用户在该合买订单中的实际认购金额；如果同一用户对同一合买计划有多条参与记录，需要按参与记录累加。中奖后还必须返回 `participationPayoutMinor`，表示当前用户按参与比例实际分到的派奖金额；该值优先来自真实 `payoutCredit` 资金流水，历史缺失流水时可按合买参与比例和最后一名承接余数规则计算展示兜底。普通独立订单不返回这两个参与字段，手机端不能把合买真实订单的 `amountMinor` 或整单 `payoutMinor` 当成当前用户实际参与金额或个人中奖金额展示。
 
 用户注单列表的归属口径必须同时覆盖两类数据：
 
@@ -1033,6 +1033,7 @@ await createOrder({
 | 扣款失败 | 回滚本次未入账订单，返回财务错误 |
 | 用户参与合买且计划已成单 | `GET /api/user/bet/orders` 返回对应 `orderSource=groupBuy` 注单 |
 | 用户参与合买且计划已成单 | 返回 `participationAmountMinor` 作为当前用户参与金额 |
+| 用户参与合买且中奖已派奖 | 返回 `participationPayoutMinor` 作为当前用户个人派奖金额 |
 | 用户参与合买但计划未满单 | 不返回注单，继续由“我的合买”展示计划进度 |
 
 ### 5. Good / Base / Bad Cases
@@ -1043,6 +1044,7 @@ await createOrder({
 - Good：玩法配置返回 `positionSelectLimits=[{positionKey:"first",maxSelectCount:7}]` 时，手机端只限制第一位最多 7 个数字，未配置的其它位置保持不限制。
 - Good：用户独立下注后注单记录展示 `orderSource=direct` 和“独立下单”；用户作为参与人认购的合买满单成单后，即使真实订单 `userId` 是发起人，注单记录也展示 `orderSource=groupBuy` 和“合买下单”。
 - Good：用户只认购 30 元合买份额，即使真实合买订单总额是 200 元，手机端注单记录也展示“参与金额 30 元”。
+- Good：合买真实订单总派奖 19 元时，认购 300 元和 20 元的参与人看到的中奖金额必须按各自份额分配，不能都显示 19 元。
 - Good：用户切换彩种或期号变化后，购彩篮不能继续提交旧彩种或旧期号单据。
 - Base：没有 open 期号时，下注页返回 `round.status=opening`，手机端轮询下一期，不允许提交。
 - Bad：手机端继续把 `play_code/numbers/amount` 发到旧 `/bet/place-batch`；该接口不是当前系统契约。
@@ -1055,6 +1057,7 @@ await createOrder({
 - 后端测试需要覆盖普通订单来源为 `direct`，合买满单生成订单来源为 `groupBuy`。
 - 后端测试需要覆盖用户参与别人发起的合买计划后，满单生成的真实投注订单会出现在该用户注单列表。
 - 后端测试需要覆盖合买注单返回当前用户 `participationAmountMinor`，多条参与记录需要累加。
+- 后端测试需要覆盖合买注单返回当前用户 `participationPayoutMinor`，并确认有资金流水时优先按实际入账金额展示。
 - OpenAPI 测试必须包含 `/user/bet/page-config/{lottery_id}` 和 `/user/bet/orders`。
 - 手机端运行 `cd mobile && npm run build`，确认下注页 API 客户端、动态配置归一化和批量提交类型通过。
 
