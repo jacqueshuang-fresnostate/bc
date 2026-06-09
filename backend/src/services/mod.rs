@@ -26,4 +26,5 @@ pub mod recharge;
 pub mod robot;
 pub mod scheduler;
 pub mod support;
+pub mod support_notification;
 pub mod withdrawal;

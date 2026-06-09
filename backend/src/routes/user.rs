@@ -75,6 +75,7 @@ use crate::{
             support_message_created_event, withdrawal_changed_event,
         },
         rebate::credit_recharge_rebate_for_order,
+        support_notification::spawn_support_telegram_notification,
     },
 };
 
@@ -2121,6 +2122,7 @@ fn publish_support_message_created(state: &AppState, conversation: &SupportConve
         .realtime
         .publish_user(&conversation.user_id, event.clone());
     state.realtime.publish_admin(event);
+    spawn_support_telegram_notification(state.access.clone(), conversation);
 }
 
 /// 推送用户提现订单变化事件，供手机端提现记录按需刷新。

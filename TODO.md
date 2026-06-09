@@ -1,5 +1,20 @@
 # TODO
 
+## 2026-06-09 18:15 HKT 客服新消息 Telegram 提醒配置
+
+- 完成任务：为用户发来的新客服消息增加可配置的 Telegram 提醒能力。
+- 解决问题：
+  - 后台客服虽然已有 WebSocket 实时消息，但客服人员离开后台页面时无法通过外部渠道收到新消息提醒。
+  - 提醒配置需要放在后台系统设置中，避免继续使用环境变量或硬编码 Token。
+- 实施内容：
+  - 新增后端 `support_notification` 服务，读取系统设置中的 Telegram 开关、Bot Token 和 Chat ID。
+  - 用户创建客服直充会话或继续回复客服会话后，后端在消息落库并推送实时事件后异步发送 Telegram 文本提醒。
+  - Telegram 请求失败、超时或配置缺失只记录中文 warning，不影响用户发送客服消息。
+  - 系统设置新增 `support_telegram_notification_enabled`、`support_telegram_bot_token` 和 `support_telegram_chat_id` 三个配置项。
+  - 后台系统设置新增“通知设置”分组，Telegram 开关使用 Semi UI `Select` 下拉配置。
+  - 同步更新架构说明和后端接口契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml support_telegram -- --nocapture`、`cd admin && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
 ## 2026-06-09 17:20 HKT 合买注单个人派奖展示修复
 
 - 完成任务：修复手机端合买注单中奖金额显示为整单派奖金额的问题。

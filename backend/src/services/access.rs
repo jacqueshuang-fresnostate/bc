@@ -2570,6 +2570,21 @@ fn seed_settings() -> Vec<SystemSetting> {
             value: "客服已收到您的直充申请，请在会话中确认付款方式和到账信息。".to_string(),
             description: "客服直充创建订单后返回给用户的提示文案".to_string(),
         },
+        SystemSetting {
+            key: "support_telegram_notification_enabled".to_string(),
+            value: "false".to_string(),
+            description: "是否开启新客服消息 Telegram 提醒".to_string(),
+        },
+        SystemSetting {
+            key: "support_telegram_bot_token".to_string(),
+            value: "未配置".to_string(),
+            description: "Telegram Bot Token，仅用于客服新消息提醒".to_string(),
+        },
+        SystemSetting {
+            key: "support_telegram_chat_id".to_string(),
+            value: "未配置".to_string(),
+            description: "Telegram 接收提醒的 Chat ID、群组 ID 或频道用户名".to_string(),
+        },
     ]
 }
 

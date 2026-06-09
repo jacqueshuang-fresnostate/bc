@@ -327,6 +327,66 @@ url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
 
 ---
 
+## 场景：客服新消息 Telegram 提醒
+
+### 1. 范围 / 触发条件
+
+- 触发条件：用户创建客服直充会话，或在用户端继续回复自己的客服会话。
+- 范围：`support_messages` 落库、`support.message_created` 实时事件、后台系统设置、Telegram Bot API 外部提醒。
+- 不触发条件：后台客服回复用户、后台修改会话状态、系统消息。
+
+### 2. 签名
+
+后台系统设置键：
+
+- `support_telegram_notification_enabled`：是否开启 Telegram 提醒，默认 `false`。
+- `support_telegram_bot_token`：Telegram Bot Token，默认 `未配置`。
+- `support_telegram_chat_id`：Telegram 接收提醒的 Chat ID、群组 ID 或频道用户名，默认 `未配置`。
+
+Telegram 请求：
+
+```json
+{
+  "chat_id": "-1001234567890",
+  "text": "新的客服消息提醒\n会话：CS-10001\n用户：demo（U10001）\n主题：充值咨询\n时间：2026-06-09 18:00:00\n内容：请帮我确认充值凭证",
+  "disable_web_page_preview": true
+}
+```
+
+### 3. 契约
+
+- 客服消息必须先通过当前 `SupportRepository` 保存成功，再发布 WebSocket 事件，再异步尝试发送 Telegram 提醒。
+- Telegram 提醒只针对 `SupportMessageAuthor::User`，避免后台回复再次触发外部提醒。
+- 配置未开启时不得请求 Telegram。
+- 配置开启但 Bot Token 或 Chat ID 为空、`未配置`、`请配置`、`please-configure` 时，只记录中文 warning，不影响用户接口响应。
+- Telegram 请求失败、超时或返回非 2xx 时，只记录中文 warning，不回滚客服消息、不影响 WebSocket 推送。
+- 日志 message 必须为中文，结构化字段可包含 `conversation_id`、`user_id`、`message_id` 和原始第三方错误详情，但不能输出 Bot Token。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 用户发送客服消息且开关关闭 | 保存消息并发布实时事件，不请求 Telegram |
+| 用户发送客服消息且配置完整 | 保存消息、发布实时事件、异步发送 Telegram 文本提醒 |
+| 用户发送客服消息但 Token 未配置 | 保存消息并发布实时事件，记录中文 warning |
+| Telegram 返回失败 | 保存消息并发布实时事件，记录中文 warning 和第三方错误详情 |
+| 后台客服回复消息 | 保存消息并发布实时事件，不触发 Telegram |
+
+### 5. Good / Base / Bad Cases
+
+- Good：客服直充用户上传凭证后，后台 WebSocket 收到 `support.message_created`，Telegram 群也收到包含会话、用户、主题和内容摘要的提醒。
+- Base：未配置 Telegram 时，客服流程保持原有 HTTP + WebSocket 行为。
+- Bad：把 Telegram 请求放在消息落库前；第三方失败会导致用户消息无法保存。
+- Bad：把 Bot Token 写入日志或提交到代码。
+
+### 6. 必要测试
+
+- 后端需要覆盖 Telegram 配置解析、只提醒用户消息、提醒文本包含会话上下文。
+- 后端需要运行 `cargo fmt --check`、`cargo check` 和定向 `support_telegram` 测试。
+- 后台需要运行 `npm run build`，确认系统设置分组和开关下拉类型可编译。
+
+---
+
 ## 场景：彩种管理 CRUD 接口
 
 ### 1. 范围 / 触发条件

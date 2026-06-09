@@ -115,6 +115,8 @@ const RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY =
   'recharge_customer_service_enabled';
 const RECHARGE_MIN_AMOUNT_SETTING_KEY = 'recharge_min_amount_minor';
 const RECHARGE_MAX_AMOUNT_SETTING_KEY = 'recharge_max_amount_minor';
+const SUPPORT_TELEGRAM_ENABLED_SETTING_KEY =
+  'support_telegram_notification_enabled';
 const UNCONFIGURED_SETTING_VALUE = '未配置';
 const MOBILE_CUSTOM_SETTING_KEYS = new Set([
   MOBILE_PLATFORM_NAME_SETTING_KEY,
@@ -1968,6 +1970,9 @@ function settingGroupName(key: string): string {
   ) {
     return '充值设置';
   }
+  if (key.startsWith('support_telegram_')) {
+    return '通知设置';
+  }
   if (key.includes('email') || key.includes('registration')) {
     return '注册与安全';
   }
@@ -2027,6 +2032,10 @@ function settingSelectOptions(
       { label: '开启客服直充', value: 'true' },
       { label: '关闭客服直充', value: 'false' },
     ],
+    [SUPPORT_TELEGRAM_ENABLED_SETTING_KEY]: [
+      { label: '开启 Telegram 提醒', value: 'true' },
+      { label: '关闭 Telegram 提醒', value: 'false' },
+    ],
   };
   const options = optionsByKey[key] ?? [];
   const normalizedCurrentValue = currentValue.trim();
@@ -2064,6 +2073,7 @@ function settingsGroups(
     '手机端设置',
     '图床设置',
     '充值设置',
+    '通知设置',
     '注册与安全',
     '返利设置',
     '基础设置',
