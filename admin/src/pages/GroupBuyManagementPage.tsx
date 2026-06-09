@@ -1,4 +1,15 @@
-import { Input, Banner, Button, Card, Select, Spin, Tag, TextArea, Toast } from '@douyinfe/semi-ui';
+import {
+  Input,
+  Banner,
+  Button,
+  Card,
+  Select,
+  Spin,
+  Switch,
+  Tag,
+  TextArea,
+  Toast,
+} from '@douyinfe/semi-ui';
 import { Plus, RefreshCcw, Save, Share2, Users } from 'lucide-react';
 import {
   useEffect,
@@ -55,6 +66,7 @@ interface ParticipantFormState {
 export function GroupBuyManagementPage({
   onDashboardRefresh,
 }: GroupBuyManagementPageProps) {
+  const [includeRobotData, setIncludeRobotData] = useState(false);
   const [planPageNumber, setPlanPageNumber] = useState(1);
   const [planPageSize, setPlanPageSize] = useState(10);
   const {
@@ -73,7 +85,11 @@ export function GroupBuyManagementPage({
     update,
     users,
   } = useGroupBuyPlans({
-    planQuery: { page: planPageNumber, pageSize: planPageSize },
+    planQuery: {
+      includeRobotData,
+      page: planPageNumber,
+      pageSize: planPageSize,
+    },
   });
   const eligibleLotteries = useMemo(
     () => lotteries.filter((lottery) => lottery.groupBuy.enabled),
@@ -229,15 +245,31 @@ export function GroupBuyManagementPage({
             维护合买计划、认购进度、参与记录和计划状态。
           </p>
         </div>
-        <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
-          刷新
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="inline-flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm text-slate-600">
+            <Switch
+              checked={includeRobotData}
+              onChange={(checked) => {
+                setIncludeRobotData(checked);
+                setPlanPageNumber(1);
+              }}
+            />
+            <span>显示机器人数据</span>
+          </label>
+          <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
+            刷新
+          </Button>
+        </div>
       </section>
 
       {error ? <Banner type="danger" title="合买接口错误" description={error} /> : null}
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="合买计划" trend="全部计划" value={`${planPage.totalCount}`} />
+        <MetricCard
+          label="合买计划"
+          trend={includeRobotData ? '包含机器人发起' : '非机器人发起'}
+          value={`${planPage.totalCount}`}
+        />
         <MetricCard label="进行中" trend="当前页 open/draft" value={`${totals.openCount}`} />
         <MetricCard label="已满单" trend="当前页自动满额" value={`${totals.filledCount}`} />
         <MetricCard

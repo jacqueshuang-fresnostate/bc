@@ -93,7 +93,13 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
     return () => {
       controller.abort();
     };
-  }, [planQuery.page, planQuery.pageSize, refreshToken, selectedPlan?.id]);
+  }, [
+    planQuery.includeRobotData,
+    planQuery.page,
+    planQuery.pageSize,
+    refreshToken,
+    selectedPlan?.id,
+  ]);
 
   const loadPlan = useCallback(async (id: string) => {
     setSaving(true);

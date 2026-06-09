@@ -1171,7 +1171,19 @@ async fn list_group_buy_plans(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<GroupBuyPlanSummary>>>> {
-    let plans = state.group_buys.list().await?;
+    let include_robot_data = query.include_robot_data();
+    let plans = state
+        .group_buys
+        .list()
+        .await?
+        .into_iter()
+        .filter(|plan| {
+            should_include_robot_initiated_group_buy_plan(
+                include_robot_data,
+                &plan.initiator_user_id,
+            )
+        })
+        .collect();
 
     Ok(Json(ApiEnvelope::success(page_items(plans, query))))
 }
@@ -2013,6 +2025,14 @@ fn should_include_user_scoped_record(include_robot_data: bool, user_id: &str) ->
     include_robot_data || !is_group_buy_robot_user_id(user_id)
 }
 
+/// 判断后台合买计划列表是否展示机器人发起的计划；机器人只作为参与人补单时不影响展示。
+fn should_include_robot_initiated_group_buy_plan(
+    include_robot_data: bool,
+    initiator_user_id: &str,
+) -> bool {
+    include_robot_data || !is_group_buy_robot_user_id(initiator_user_id)
+}
+
 /// 生成充值订单 CSV 文本，带 UTF-8 BOM 方便表格软件直接识别中文。
 fn recharge_orders_csv(orders: &[RechargeOrderSummary]) -> String {
     let mut csv = String::from(
@@ -2535,8 +2555,8 @@ mod tests {
     use super::{
         align_draw_issue_plan_after_sale_on, finance_overview_for_query,
         normalize_admin_draw_control_target, page_items, required_scope_for_path,
-        should_align_draw_issue_plan_after_sale_on, should_include_user_scoped_record, sort_users,
-        FinancePageQuery, UserListQuery,
+        should_align_draw_issue_plan_after_sale_on, should_include_robot_initiated_group_buy_plan,
+        should_include_user_scoped_record, sort_users, FinancePageQuery, UserListQuery,
     };
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
@@ -2627,6 +2647,22 @@ mod tests {
             ROBOT_GROUP_BUY_USER_ID
         ));
         assert!(should_include_user_scoped_record(false, "U10001"));
+    }
+
+    #[test]
+    /// 后台合买计划列表默认过滤机器人发起的计划，开关打开后才展示。
+    fn group_buy_plan_filter_hides_robot_initiator_by_default() {
+        assert!(!should_include_robot_initiated_group_buy_plan(
+            false,
+            ROBOT_GROUP_BUY_USER_ID
+        ));
+        assert!(should_include_robot_initiated_group_buy_plan(
+            true,
+            ROBOT_GROUP_BUY_USER_ID
+        ));
+        assert!(should_include_robot_initiated_group_buy_plan(
+            false, "U10001"
+        ));
     }
 
     #[test]

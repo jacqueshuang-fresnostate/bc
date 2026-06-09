@@ -1,5 +1,18 @@
 # TODO
 
+## 2026-06-09 22:40 HKT 后台合买计划过滤机器人发起计划
+
+- 完成任务：后台合买计划列表新增非机器人发起计划筛选能力。
+- 解决问题：
+  - 合买机器人发起的计划和真实用户计划混在同一个列表里，运营查看用户发起合买时需要手动辨认发起人。
+  - 只靠前端过滤会影响分页总数和页码，因此需要后端先过滤再分页。
+- 实施内容：
+  - 后端 `GET /api/admin/group-buy/plans` 支持 `includeRobotData` 查询参数，默认隐藏机器人发起计划。
+  - 机器人判断使用发起人 `initiatorUserId`，机器人只是参与人补单的普通用户计划仍会展示。
+  - 后台合买管理新增“显示机器人数据”开关，切换时重置到第 1 页并重新拉取列表。
+  - 同步更新 OpenAPI 描述、架构说明、后端接口契约和前端组件规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml group_buy_plan_filter_hides_robot_initiator_by_default -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、`cd admin && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
 ## 2026-06-09 22:16 HKT 后台合买计划详情与参与记录顺序调整
 
 - 完成任务：将后台合买管理中选中计划后的“参与记录”和“计划详情”展示顺序对换。

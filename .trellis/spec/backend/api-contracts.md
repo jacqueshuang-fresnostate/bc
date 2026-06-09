@@ -2928,7 +2928,7 @@ await createInvitation({
 
 ### 2. 签名
 
-- `GET /api/admin/group-buy/plans?page=1&pageSize=20`
+- `GET /api/admin/group-buy/plans?page=1&pageSize=20&includeRobotData=false`
 - `GET /api/admin/group-buy/plans/{id}`
 - `POST /api/admin/group-buy/plans`
 - `PUT /api/admin/group-buy/plans/{id}`
@@ -3072,6 +3072,7 @@ await createInvitation({
 17. 参与人最低认购金额适用于普通追加认购；如果当前剩余金额已经低于该最低值，允许用户按剩余金额一次性全包尾单。
 18. 新增参与记录后如果仍未满单，剩余金额不能小于参与人最低认购金额；否则该计划会留下无人可认购的小尾巴，后端必须拒绝本次认购并提示用户增加金额或选择全包。
 19. 后台 `GET /api/admin/group-buy/plans`、用户端 `/api/user/group-buy/plans` 和 `/api/user/group-buy/my` 都必须由后端仓储统一按 `issue` 倒序返回；同一期多条计划按 `createdAt`、计划 ID 倒序稳定排列，前端不得改成升序。
+20. 后台 `GET /api/admin/group-buy/plans` 不传 `includeRobotData` 时等同于 `false`，默认过滤 `initiatorUserId` 为系统合买机器人账户的计划；传 `includeRobotData=true` 时才展示机器人发起计划。机器人作为参与人补单的普通用户发起计划不能被过滤掉。
 
 ### 4. 校验与错误矩阵
 
@@ -3108,6 +3109,8 @@ await createInvitation({
 | 后台计划列表 `page <= 0` 或缺失 | 使用第 1 页 |
 | 后台计划列表 `pageSize <= 0` 或缺失 | 使用默认每页 20 条 |
 | 后台计划列表页码超过最大页 | 返回最后一页 |
+| 后台计划列表未传 `includeRobotData` | 默认过滤机器人发起计划 |
+| 后台计划列表传 `includeRobotData=true` | 返回普通用户和机器人发起计划 |
 
 ### 5. Good / Base / Bad Cases
 
@@ -3120,6 +3123,7 @@ await createInvitation({
 - Good：开奖结算时识别合买订单，中奖金额按参与金额比例拆给参与用户，普通订单仍按订单用户派奖。
 - Good：后台合买管理按 `page/pageSize` 请求计划列表，响应 `items` 只包含当前页，`totalCount` 返回全部计划数。
 - Good：后台和手机端合买计划列表都按期号倒序展示，分页前已经完成排序，最新期号优先出现在第一页。
+- Good：后台合买管理默认只展示非机器人发起计划，打开“显示机器人数据”后才纳入机器人发起计划；机器人补单参与的用户计划仍保持可见。
 - Good：普通用户 `regular_user` 发起的用户端合买响应中 `initiatorDisplay` 返回 `r**********r`，机器人计划也返回同样脱敏后的普通会员式展示名。
 - Base：无数据库环境下使用内存合买仓储，服务重启后恢复种子合买计划；数据库模式下使用 `group_buy_plans`、`group_buy_participants` 和 `ledger_entries` 持久化。
 - Bad：前端自行计算 `shareCount` 并提交给后端，后续会与彩种合买配置漂移。
@@ -3142,6 +3146,7 @@ await createInvitation({
 - 后端需要覆盖合买中奖按参与人份额拆分派奖。
 - 后端需要覆盖后台合买计划分页响应的当前页切片、总数和总页数。
 - 后端需要覆盖合买计划摘要列表和详情列表均按期号倒序返回。
+- 后端需要覆盖后台合买计划默认过滤机器人发起计划，打开 `includeRobotData` 后才返回。
 - 后端需要覆盖用户端普通用户和机器人合买计划的 `initiatorDisplay` 脱敏，断言不会返回完整昵称、机器人账号或包含“机器人”的展示名。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`，确认计划状态、请求字段和 API client 类型一致。

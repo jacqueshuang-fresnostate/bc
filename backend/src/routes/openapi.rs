@@ -446,7 +446,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/group-buy/plans",
         "合买管理",
         "合买计划列表",
-        "按 page/pageSize 分页返回后台合买计划列表。",
+        "按 page/pageSize 分页返回后台合买计划列表；默认过滤机器人发起计划，includeRobotData=true 时包含机器人数据。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
