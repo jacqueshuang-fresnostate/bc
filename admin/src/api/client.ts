@@ -440,7 +440,7 @@ export async function fetchUsers(signal?: AbortSignal) {
     page: 1,
     pageSize: 5000,
     sortBy: 'id',
-    sortDirection: 'asc',
+    sortDirection: 'desc',
   });
   return page.items;
 }

@@ -11,12 +11,14 @@ import {
   type SupportMessage,
 } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import { useSupportUnreadStore } from '../stores/supportUnread'
 import type { MobileRealtimeEvent } from '../types/realtime'
 import { formatDateTime } from '../utils/lotteryFormat'
 
 const props = defineProps<{ wsMessage?: MobileRealtimeEvent | null }>()
 const router = useRouter()
 const route = useRoute()
+const supportUnreadStore = useSupportUnreadStore()
 const draft = ref('')
 const loading = ref(false)
 const sending = ref(false)
@@ -73,13 +75,41 @@ function sortedConversations(items: SupportConversation[]) {
   return [...items].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
 }
 
+function replaceConversationInList(conversation: SupportConversation) {
+  conversations.value = sortedConversations([
+    ...conversations.value.filter(item => item.id !== conversation.id),
+    conversation,
+  ])
+  supportUnreadStore.setConversations(conversations.value)
+}
+
+async function markConversationReadIfNeeded(conversation: SupportConversation) {
+  if (!conversation.userUnreadCount) {
+    replaceConversationInList(conversation)
+    return conversation
+  }
+
+  try {
+    const readConversation = await supportUnreadStore.markConversationRead(conversation.id)
+    if (!readConversation) return conversation
+    replaceConversationInList(readConversation)
+    return readConversation
+  } catch {
+    return conversation
+  }
+}
+
 async function loadSupportData(preferredConversationId = activeConversationId.value || routeConversationId.value) {
   loading.value = true
   try {
     conversations.value = sortedConversations(await fetchSupportConversations())
+    supportUnreadStore.setConversations(conversations.value)
     const nextId = preferredConversationId || conversations.value[0]?.id || ''
     activeConversationId.value = nextId
     currentConversation.value = nextId ? await fetchSupportConversation(nextId) : null
+    if (currentConversation.value) {
+      currentConversation.value = await markConversationReadIfNeeded(currentConversation.value)
+    }
   } catch (error) {
     showToast(errorMessage(error, '加载客服会话失败'))
   } finally {
@@ -100,9 +130,7 @@ async function sendMessage() {
     currentConversation.value = updatedConversation
     draft.value = ''
     emojiPickerVisible.value = false
-    conversations.value = conversations.value.map(conversation => (
-      conversation.id === updatedConversation.id ? updatedConversation : conversation
-    ))
+    replaceConversationInList(updatedConversation)
   } catch (error) {
     showToast(errorMessage(error, '发送失败'))
   } finally {
@@ -223,6 +251,7 @@ async function selectConversation(id: string) {
   try {
     activeConversationId.value = id
     currentConversation.value = await fetchSupportConversation(id)
+    currentConversation.value = await markConversationReadIfNeeded(currentConversation.value)
     emojiPickerVisible.value = false
   } catch (error) {
     showToast(errorMessage(error, '加载客服会话失败'))
@@ -281,7 +310,10 @@ onBeforeUnmount(() => {
           :class="{ 'is-active': activeConversationId === conversation.id }"
           @click="selectConversation(conversation.id)"
         >
-          <span>{{ conversation.subject }}</span>
+          <span>
+            {{ conversation.subject }}
+            <i v-if="conversation.userUnreadCount" class="support-chat__conversation-dot" aria-hidden="true"></i>
+          </span>
           <small>{{ conversationStatusText(conversation) }}</small>
         </button>
       </div>
@@ -558,6 +590,17 @@ onBeforeUnmount(() => {
 .support-chat__conversation-tabs span {
   font-size: 12px;
   font-weight: 900;
+}
+
+.support-chat__conversation-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 5px;
+  border-radius: 999px;
+  background: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.14);
+  vertical-align: 1px;
 }
 
 .support-chat__conversation-tabs small {

@@ -540,11 +540,11 @@ export function SupportManagementPage({
                       renderChatBoxAction: () => null,
                       renderChatBoxAvatar: ({ message }) => (
                         <Avatar
-                          color={chatAvatarColor(message?.role)}
+                          color={chatAvatarColor(message as SupportChatMessage | undefined)}
                           shape="square"
                           size="extra-small"
                         >
-                          {chatAvatarText(message?.role)}
+                          {chatAvatarText(message as SupportChatMessage | undefined)}
                         </Avatar>
                       ),
                       renderChatBoxTitle: ({ message, role }) => {
@@ -859,29 +859,29 @@ function supportMessageToChatMessage(message: SupportMessage): SupportChatMessag
 
 function chatRoleForAuthor(author: SupportMessageAuthor): SupportChatRole {
   if (author === 'admin') {
-    return 'assistant';
+    return 'user';
   }
   if (author === 'system') {
     return 'system';
   }
-  return 'user';
+  return 'assistant';
 }
 
-function chatAvatarText(role?: string) {
-  if (role === 'assistant') {
+function chatAvatarText(message?: SupportChatMessage) {
+  if (message?.authorText === '客服') {
     return '客';
   }
-  if (role === 'system') {
+  if (message?.authorText === '系统') {
     return '系';
   }
   return '用';
 }
 
-function chatAvatarColor(role?: string): 'blue' | 'grey' | 'teal' {
-  if (role === 'assistant') {
+function chatAvatarColor(message?: SupportChatMessage): 'blue' | 'grey' | 'teal' {
+  if (message?.authorText === '客服') {
     return 'teal';
   }
-  if (role === 'system') {
+  if (message?.authorText === '系统') {
     return 'grey';
   }
   return 'blue';

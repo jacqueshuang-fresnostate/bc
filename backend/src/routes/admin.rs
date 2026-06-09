@@ -851,11 +851,11 @@ fn user_sort_by(value: Option<&str>) -> ApiResult<UserListSortBy> {
     }
 }
 
-/// 解析用户列表排序方向，默认正序。
+/// 解析用户列表排序方向，默认倒序，优先让最新或编号更靠后的用户显示在前。
 fn user_sort_direction(value: Option<&str>) -> ApiResult<UserListSortDirection> {
-    let value = value.unwrap_or("asc").trim();
+    let value = value.unwrap_or("desc").trim();
     if value.is_empty() {
-        return Ok(UserListSortDirection::Asc);
+        return Ok(UserListSortDirection::Desc);
     }
 
     match value {
@@ -2675,6 +2675,33 @@ mod tests {
         assert_eq!(page.page, 2);
         assert_eq!(page.page_size, 2);
         assert_eq!(page.total_count, 3);
+    }
+
+    #[test]
+    /// 后台用户列表未传排序方向时默认按降序展示，符合运营优先看新用户的习惯。
+    fn user_list_sort_direction_defaults_to_desc() {
+        let mut users = vec![
+            test_user("U10001", "alice", 300),
+            test_user("U10002", "bob", 100),
+            test_user("U10003", "carol", 200),
+        ];
+        let query = UserListQuery {
+            page: Some(1),
+            page_size: Some(2),
+            sort_by: Some("id".to_string()),
+            sort_direction: None,
+        };
+
+        sort_users(&mut users, &query).expect("users can be sorted with default direction");
+        let page = page_items(users, query.page_query());
+
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|user| user.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["U10003", "U10002"]
+        );
     }
 
     #[tokio::test]

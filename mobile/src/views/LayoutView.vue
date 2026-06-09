@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { Home, MessageCircle, Trophy, UserRound, UsersRound } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { useWebSocket } from '../composables/useWebSocket'
+import { useAuthStore } from '../stores/auth'
+import { useSupportUnreadStore } from '../stores/supportUnread'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+const supportUnreadStore = useSupportUnreadStore()
 const { lastMessage } = useWebSocket()
 
-const navItems = [
+const navItems = computed(() => [
   { label: '首页', icon: Home, path: '/' },
   { label: '合买', icon: UsersRound, path: '/group-buy' },
   { label: '聊天', icon: MessageCircle, path: '/chat-hall' },
   { label: '开奖', icon: Trophy, path: '/history' },
-  { label: '我的', icon: UserRound, path: '/me' },
-]
+  { label: '我的', icon: UserRound, path: '/me', unread: supportUnreadStore.hasUnread },
+])
 
 const active = computed(() => {
   if (route.path === '/') return 0
@@ -30,6 +34,31 @@ const hideBottomNav = computed(() => route.path === '/support' || route.path.sta
 function onChange(path: string) {
   router.push(path)
 }
+
+function refreshSupportUnreadSilently(force = false) {
+  void supportUnreadStore.loadConversations({ force, silent: true }).catch(() => {})
+}
+
+watch(() => auth.accessToken, (token) => {
+  if (!token) {
+    supportUnreadStore.clear()
+    return
+  }
+  refreshSupportUnreadSilently(true)
+})
+
+watch(lastMessage, (message) => {
+  if (
+    message?.event === 'support_message_created'
+    || message?.event === 'support_conversation_updated'
+  ) {
+    refreshSupportUnreadSilently(true)
+  }
+})
+
+onMounted(() => {
+  refreshSupportUnreadSilently()
+})
 </script>
 
 <template>
@@ -46,6 +75,7 @@ function onChange(path: string) {
         >
           <span class="relative z-10 mb-0.5 flex h-7 w-7 items-center justify-center rounded-full transition-transform duration-200" :class="active === index ? 'scale-110 text-[#af2829]' : 'text-stone-500'">
             <component :is="item.icon" class="h-5 w-5 mobile-bottom-nav-icon" :stroke-width="2.4" />
+            <span v-if="item.unread" class="absolute right-0 top-0 h-2 w-2 rounded-full border border-white bg-red-600 shadow-[0_0_0_2px_rgba(220,38,38,0.12)]"></span>
           </span>
           <span class="relative z-10 max-w-full truncate" :class="active === index ? 'font-bold text-red-900' : ''">{{ item.label }}</span>
         </button>

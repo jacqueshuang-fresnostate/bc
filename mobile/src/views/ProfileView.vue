@@ -11,13 +11,16 @@ import WalletBentoCard from '../components/mobile/WalletBentoCard.vue'
 import SettingsListGroup from '../components/mobile/SettingsListGroup.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import { useMobileUserDataStore } from '../stores/mobileUserData'
+import { useSupportUnreadStore } from '../stores/supportUnread'
 
 const router = useRouter()
 const auth = useAuthStore()
 const brandingStore = useBrandingStore()
 const userDataStore = useMobileUserDataStore()
+const supportUnreadStore = useSupportUnreadStore()
 const { branding } = storeToRefs(brandingStore)
 const { profile } = storeToRefs(userDataStore)
+const { hasUnread: hasSupportUnread } = storeToRefs(supportUnreadStore)
 const uploadingAvatar = ref(false)
 const avatarInput = ref<HTMLInputElement | null>(null)
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
@@ -39,11 +42,17 @@ const accountItems = computed(() => [
   { key: 'withdrawal', label: '提现管理', icon: 'account_balance', hint: '管理收款信息' },
 ])
 
-const supportItems = [
+const supportItems = computed(() => [
   { key: 'chatHall', label: '聊天大厅', icon: 'chat', value: '会员交流' },
-  { key: 'support', label: '在线客服', icon: 'support_agent', value: '24h 在线' },
+  {
+    key: 'support',
+    label: '在线客服',
+    icon: 'support_agent',
+    value: hasSupportUnread.value ? '有新消息' : '24h 在线',
+    unread: hasSupportUnread.value,
+  },
   { key: 'help', label: '帮助中心', icon: 'help', hint: '查看常见问题' },
-]
+])
 
 const inviteItems = computed(() => [
   ...(canInvite.value ? [{ key: 'invite', label: '邀请中心', icon: 'star', value: inviteText.value, hint: '查看直属下级充值与返利' }] : []),
@@ -59,6 +68,9 @@ const statusTextMap: Record<string, string> = {
 onMounted(async () => {
   try {
     await userDataStore.loadProfile()
+  } catch {}
+  try {
+    await supportUnreadStore.loadConversations({ silent: true })
   } catch {}
 })
 
@@ -117,6 +129,7 @@ async function logout() {
   await showDialog({ title: '确认', message: '确定退出登录？' })
   await auth.logout()
   userDataStore.clearUserScopedState()
+  supportUnreadStore.clear()
   router.push('/login')
 }
 </script>

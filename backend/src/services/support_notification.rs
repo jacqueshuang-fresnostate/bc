@@ -280,6 +280,7 @@ mod tests {
             assigned_admin_id: None,
             assigned_admin_name: None,
             unread_count: 1,
+            user_unread_count: 0,
             created_at: "2026-06-09 18:00:00".to_string(),
             updated_at: "2026-06-09 18:00:00".to_string(),
             messages: vec![test_message(SupportMessageAuthor::User)],

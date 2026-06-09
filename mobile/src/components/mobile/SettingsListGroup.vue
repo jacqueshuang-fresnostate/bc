@@ -8,6 +8,7 @@ type SettingsListItem = {
   value?: string
   hint?: string
   danger?: boolean
+  unread?: boolean
 }
 
 defineProps<{ items: SettingsListItem[] }>()
@@ -37,7 +38,7 @@ const emit = defineEmits<{ select: [item: SettingsListItem] }>()
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-2 pl-3 text-on-surface-variant">
-          <span v-if="item.key === 'support'" class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+          <span v-if="item.unread" class="h-2 w-2 rounded-full bg-red-600 shadow-[0_0_0_3px_rgba(220,38,38,0.12)]"></span>
           <span v-if="item.value" class="text-[9px]">{{ item.value }}</span>
           <span class="text-base leading-none">›</span>
         </div>

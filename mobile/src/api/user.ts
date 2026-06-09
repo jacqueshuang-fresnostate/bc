@@ -228,6 +228,7 @@ export type SupportConversation = {
   assignedAdminId?: string | null
   assignedAdminName?: string | null
   unreadCount: number
+  userUnreadCount: number
   createdAt: string
   updatedAt: string
   messages: SupportMessage[]
@@ -494,5 +495,11 @@ export async function fetchSupportConversation(id: string) {
 export async function replySupportConversation(id: string, content: string) {
   return unwrapApiData<SupportConversation>(
     await http.post(`/user/support/conversations/${encodeURIComponent(id)}/messages`, { content }),
+  )
+}
+
+export async function markSupportConversationRead(id: string) {
+  return unwrapApiData<SupportConversation>(
+    await http.post(`/user/support/conversations/${encodeURIComponent(id)}/read`),
   )
 }

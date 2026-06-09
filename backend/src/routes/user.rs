@@ -72,7 +72,8 @@ use crate::{
         realtime::{
             audience_matches, balance_changed_event, chat_hall_message_created_event,
             heartbeat_event, order_changed_event, recharge_changed_event,
-            support_message_created_event, withdrawal_changed_event,
+            support_conversation_updated_event, support_message_created_event,
+            withdrawal_changed_event,
         },
         rebate::credit_recharge_rebate_for_order,
         support_notification::spawn_support_telegram_notification,
@@ -164,6 +165,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/support/conversations/{id}/messages",
             post(reply_user_support_conversation),
+        )
+        .route(
+            "/support/conversations/{id}/read",
+            post(mark_user_support_conversation_read),
         )
         .route(
             "/withdrawal-methods",
@@ -1987,6 +1992,18 @@ async fn reply_user_support_conversation(
     Ok(Json(ApiEnvelope::success(conversation)))
 }
 
+/// 当前用户打开客服会话后标记为已读，用于清理手机端在线客服红点。
+async fn mark_user_support_conversation_read(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+    let conversation = state.support.mark_user_read(&id, &session.user.id).await?;
+    publish_user_support_conversation_updated(&state, &conversation);
+
+    Ok(Json(ApiEnvelope::success(conversation)))
+}
+
 /// 返回当前用户提现方式列表。
 async fn list_withdrawal_methods(
     State(state): State<AppState>,
@@ -2123,6 +2140,14 @@ fn publish_support_message_created(state: &AppState, conversation: &SupportConve
         .publish_user(&conversation.user_id, event.clone());
     state.realtime.publish_admin(event);
     spawn_support_telegram_notification(state.access.clone(), conversation);
+}
+
+/// 只向会话所属用户推送客服会话已读变化，避免后台客服列表因用户读消息产生无意义刷新。
+fn publish_user_support_conversation_updated(state: &AppState, conversation: &SupportConversation) {
+    state.realtime.publish_user(
+        &conversation.user_id,
+        support_conversation_updated_event(conversation),
+    );
 }
 
 /// 推送用户提现订单变化事件，供手机端提现记录按需刷新。

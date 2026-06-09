@@ -24,6 +24,7 @@ export interface SupportConversation {
   assignedAdminId: string | null;
   assignedAdminName: string | null;
   unreadCount: number;
+  userUnreadCount: number;
   createdAt: string;
   updatedAt: string;
   messages: SupportMessage[];

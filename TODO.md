@@ -1,5 +1,42 @@
 # TODO
 
+## 2026-06-09 22:05 HKT 后台用户列表默认降序
+
+- 完成任务：将后台用户维护列表默认排序方向改为降序。
+- 解决问题：
+  - 用户维护页此前默认按用户 ID 升序展示，运营进入页面后优先看到旧用户，不符合优先查看新用户或编号靠后用户的使用习惯。
+- 实施内容：
+  - 后端 `GET /api/admin/users` 未传 `sortDirection` 或传空值时默认使用 `desc`。
+  - 后台用户维护页排序方向初始值改为“降序”，排序方向下拉也把“降序”放在第一项。
+  - `fetchUsers()` 这类数组拉取场景默认按用户 ID 降序，保证用户下拉和列表默认口径一致。
+  - 同步更新架构说明和后端接口契约。
+- 验证结果：`cd admin && npm run build`、`cd backend && cargo check`、`cd backend && cargo test user_list_sort -- --nocapture`、`cd backend && cargo test admin_users_documents_pagination_and_sort_query_parameters -- --nocapture` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-09 21:45 HKT 手机端在线客服未读红点
+
+- 完成任务：为手机端在线客服增加未读红点提醒。
+- 解决问题：
+  - 原有 `unreadCount` 只表示后台客服侧未读，客服回复用户时会清零，不能用于用户端提醒。
+  - 个人中心“在线客服”旁边此前是固定绿色点，无法表达是否真的有未读客服回复。
+- 实施内容：
+  - 后端客服会话新增 `userUnreadCount`，客服回复时递增，用户回复或打开会话标记已读时清零。
+  - 新增 `POST /api/user/support/conversations/{id}/read`，仅允许当前登录用户清理自己的客服会话未读。
+  - 新增数据库迁移 `20260609213000_add_support_user_unread_count.sql`，给 `support_conversations` 增加用户侧未读字段并补中文字段注释。
+  - 手机端新增 `supportUnread` Pinia 缓存，个人中心“在线客服”、底部“我的”和多会话标签根据未读状态显示小红点。
+  - 手机端收到客服 WebSocket 事件后静默刷新未读状态，打开某个客服会话后只清理该会话未读。
+- 验证结果：`cd backend && cargo fmt --check`、`cd backend && cargo check`、`cd backend && cargo test`、`cd mobile && npm run build`、`cd admin && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-09 21:20 HKT 后台客服消息记录位置对调
+
+- 完成任务：调整后台在线客服“消息记录”中用户消息和客服消息的左右位置。
+- 解决问题：
+  - 后台客服页面使用 Semi UI `Chat` 时，原先把用户消息映射为 `user` 角色、客服消息映射为 `assistant` 角色，导致后台视角下用户和客服气泡位置与期望相反。
+- 实施内容：
+  - 将后台客服消息记录中的客服消息映射到右侧角色，用户消息映射到左侧角色。
+  - 头像文字和颜色改为依据真实消息作者展示，避免位置对调后“用户/客服”头像显示错乱。
+  - 同步更新架构说明和前端组件规范。
+- 验证结果：`cd admin && npm run build` 与 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
 ## 2026-06-09 18:15 HKT 客服新消息 Telegram 提醒配置
 
 - 完成任务：为用户发来的新客服消息增加可配置的 Telegram 提醒能力。

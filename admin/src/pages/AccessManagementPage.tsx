@@ -168,8 +168,8 @@ const USER_SORT_DIRECTION_OPTIONS: Array<{
   label: string;
   value: UserListSortDirection;
 }> = [
-  { label: '升序', value: 'asc' },
   { label: '降序', value: 'desc' },
+  { label: '升序', value: 'asc' },
 ];
 
 export function AccessManagementPage({
@@ -180,7 +180,7 @@ export function AccessManagementPage({
   const [userPageSize, setUserPageSize] = useState(20);
   const [userSortBy, setUserSortBy] = useState<UserListSortBy>('id');
   const [userSortDirection, setUserSortDirection] =
-    useState<UserListSortDirection>('asc');
+    useState<UserListSortDirection>('desc');
   const userQuery = useMemo(
     () => ({
       page: userPageNumber,
@@ -602,7 +602,7 @@ function UserSection({
                 value={sortDirection}
                 onChange={(value) =>
                   onSortDirectionChange(
-                    (value as UserListSortDirection) || 'asc',
+                    (value as UserListSortDirection) || 'desc',
                   )
                 }
               >

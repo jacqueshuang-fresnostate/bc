@@ -89,6 +89,20 @@ impl SupportRepository {
             .get_for_user(id, user_id)
     }
 
+    /// 将指定用户自己的客服会话标记为已读，只清理用户侧未读数。
+    pub async fn mark_user_read(&self, id: &str, user_id: &str) -> ApiResult<SupportConversation> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?;
+            let result = store.mark_user_read(id, user_id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     /// 校验入参并创建一条新记录。
     pub async fn create(
         &self,
@@ -186,7 +200,7 @@ async fn load_support_store(database: &BusinessDatabase) -> ApiResult<SupportSto
 
     for row in sqlx::query(
         "SELECT id, user_id, username, subject, status, priority, assigned_admin_id,
-                assigned_admin_name, unread_count, created_at, updated_at
+                assigned_admin_name, unread_count, user_unread_count, created_at, updated_at
          FROM support_conversations
          ORDER BY id ASC",
     )
@@ -199,6 +213,9 @@ async fn load_support_store(database: &BusinessDatabase) -> ApiResult<SupportSto
             .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?;
         let unread_count: i32 = row
             .try_get("unread_count")
+            .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?;
+        let user_unread_count: i32 = row
+            .try_get("user_unread_count")
             .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?;
         conversations.insert(
             id.clone(),
@@ -229,6 +246,8 @@ async fn load_support_store(database: &BusinessDatabase) -> ApiResult<SupportSto
                     .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
                 unread_count: u16::try_from(unread_count)
                     .map_err(|_| ApiError::Internal("客服未读数量数据无效".to_string()))?,
+                user_unread_count: u16::try_from(user_unread_count)
+                    .map_err(|_| ApiError::Internal("用户客服未读数量数据无效".to_string()))?,
                 created_at: row
                     .try_get("created_at")
                     .map_err(|_| ApiError::Internal("客服会话数据读取失败".to_string()))?,
@@ -313,8 +332,8 @@ async fn save_support_store(database: &BusinessDatabase, store: &SupportStore) -
         sqlx::query(
             "INSERT INTO support_conversations
              (id, user_id, username, subject, status, priority, assigned_admin_id,
-              assigned_admin_name, unread_count, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+              assigned_admin_name, unread_count, user_unread_count, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(&conversation.id)
         .bind(&conversation.user_id)
@@ -325,6 +344,7 @@ async fn save_support_store(database: &BusinessDatabase, store: &SupportStore) -
         .bind(&conversation.assigned_admin_id)
         .bind(&conversation.assigned_admin_name)
         .bind(i32::from(conversation.unread_count))
+        .bind(i32::from(conversation.user_unread_count))
         .bind(&conversation.created_at)
         .bind(&conversation.updated_at)
         .execute(&mut *tx)
@@ -404,6 +424,22 @@ impl SupportStore {
         Ok(conversation)
     }
 
+    /// 用户打开会话后清零自己的未读数，不影响后台客服待处理未读数。
+    fn mark_user_read(&mut self, id: &str, user_id: &str) -> ApiResult<SupportConversation> {
+        let conversation = self
+            .conversations
+            .get_mut(id)
+            .ok_or_else(|| ApiError::NotFound(format!("support conversation `{id}` not found")))?;
+        if conversation.user_id != user_id.trim() {
+            return Err(ApiError::NotFound(format!(
+                "support conversation `{id}` not found"
+            )));
+        }
+
+        conversation.user_unread_count = 0;
+        Ok(conversation.clone())
+    }
+
     /// 校验入参并创建新记录。
     fn create(
         &mut self,
@@ -436,6 +472,7 @@ impl SupportStore {
             assigned_admin_id: None,
             assigned_admin_name: None,
             unread_count: 1,
+            user_unread_count: 0,
             created_at: now.clone(),
             updated_at: now.clone(),
             messages: vec![SupportMessage {
@@ -517,6 +554,7 @@ impl SupportStore {
             conversation.assigned_admin_name = Some(admin.username.clone());
         }
         conversation.unread_count = 0;
+        conversation.user_unread_count = conversation.user_unread_count.saturating_add(1);
         conversation.updated_at = now;
 
         Ok(conversation.clone())
@@ -562,6 +600,7 @@ impl SupportStore {
             conversation.status = SupportConversationStatus::Open;
         }
         conversation.unread_count = conversation.unread_count.saturating_add(1);
+        conversation.user_unread_count = 0;
         conversation.updated_at = now;
 
         Ok(conversation.clone())
@@ -660,6 +699,7 @@ fn seed_conversations() -> Vec<SupportConversation> {
             assigned_admin_id: Some("A10002".to_string()),
             assigned_admin_name: Some("locked_admin".to_string()),
             unread_count: 1,
+            user_unread_count: 1,
             created_at: "2026-06-02 09:20:00".to_string(),
             updated_at: "2026-06-02 09:22:00".to_string(),
             messages: vec![
@@ -695,6 +735,7 @@ fn seed_conversations() -> Vec<SupportConversation> {
             assigned_admin_id: None,
             assigned_admin_name: None,
             unread_count: 2,
+            user_unread_count: 0,
             created_at: "2026-06-02 10:05:00".to_string(),
             updated_at: "2026-06-02 10:05:00".to_string(),
             messages: vec![SupportMessage {
@@ -743,6 +784,7 @@ mod tests {
 
         assert_eq!(created.id, "CS-NEW");
         assert_eq!(created.messages.len(), 1);
+        assert_eq!(created.user_unread_count, 0);
 
         let updated = support
             .update(
@@ -773,6 +815,7 @@ mod tests {
             .expect("reply can be added");
         assert_eq!(replied.messages.len(), 2);
         assert_eq!(replied.unread_count, 0);
+        assert_eq!(replied.user_unread_count, 1);
     }
 
     #[tokio::test]
@@ -878,6 +921,7 @@ mod tests {
         );
         assert_eq!(message.content, "这是充值凭证截图。");
         assert_eq!(replied.unread_count, 0);
+        assert_eq!(replied.user_unread_count, 2);
     }
 
     #[tokio::test]
@@ -907,7 +951,45 @@ mod tests {
 
         assert_eq!(updated.messages.len(), 3);
         assert_eq!(updated.unread_count, 2);
+        assert_eq!(updated.user_unread_count, 0);
         assert_eq!(support.list_for_user("U10001").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn support_repository_marks_user_messages_read() {
+        let support = SupportRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+
+        support
+            .reply(
+                "CS-10001",
+                SupportReplyRequest {
+                    admin_id: "A10001".to_string(),
+                    content: Some("请查看客服回复。".to_string()),
+                    image_url: None,
+                    message_type: None,
+                },
+                &access.admins,
+            )
+            .await
+            .expect("reply can be added");
+
+        let before_read = support
+            .get_for_user("CS-10001", "U10001")
+            .await
+            .expect("conversation can load");
+        assert!(before_read.user_unread_count > 0);
+
+        let after_read = support
+            .mark_user_read("CS-10001", "U10001")
+            .await
+            .expect("user can mark own support conversation read");
+
+        assert_eq!(after_read.user_unread_count, 0);
+        assert_eq!(after_read.unread_count, before_read.unread_count);
     }
 
     #[tokio::test]

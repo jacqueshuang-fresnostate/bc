@@ -255,7 +255,7 @@ WebSocket 消息统一使用当前系统事件信封：
 客服实时事件：
 
 - `support.message_created`：客服会话新增消息，`data` 包含 `conversationId`、`userId`、`conversation` 和 `message`；`message` 需要携带 `messageType`、`content` 和可选 `imageUrl`，方便后台与手机端按文本或图片渲染。该事件必须同时发布给会话所属用户和后台客服连接，不允许发给匿名用户或其他普通用户。
-- `support.conversation_updated`：客服会话状态、优先级或分配客服变化，`data` 包含 `conversationId`、`userId` 和 `conversation`。该事件必须同时发布给会话所属用户和后台客服连接，手机端客服页需要据此刷新“客服已接入”和会话状态。
+- `support.conversation_updated`：客服会话状态、优先级、分配客服或用户侧已读状态变化，`data` 包含 `conversationId`、`userId` 和 `conversation`。后台修改状态、优先级或分配客服时必须同时发布给会话所属用户和后台客服连接，手机端客服页需要据此刷新“客服已接入”和会话状态；用户调用已读接口只发布给会话所属用户，避免后台客服列表出现无意义刷新。
 - 后台连接使用 `/api/admin/realtime?token=...`，因为浏览器 WebSocket 不能设置 `Authorization` 头；后端必须用查询参数 token 校验管理员会话，并要求具备 `customerService` 权限。
 
 聊天大厅接口：
@@ -275,6 +275,7 @@ WebSocket 消息统一使用当前系统事件信封：
 | 事件受众为其他用户 | 当前连接不得收到该事件 |
 | 客服消息新增 | 当前用户和后台客服连接收到 `support.message_created`，其他用户或匿名连接收不到 |
 | 客服状态或分配变更 | 当前用户和后台客服连接收到 `support.conversation_updated`，其他用户或匿名连接收不到 |
+| 用户标记客服会话已读 | 当前用户收到 `support.conversation_updated`，后台客服连接和其他用户收不到 |
 | 聊天大厅消息新增 | 所有在线手机端连接收到 `chat_hall.message_created` |
 | 聊天大厅发送空内容 | 返回业务错误，不保存、不广播 |
 | 聊天大厅发送超过 500 字 | 返回业务错误，不保存、不广播 |
@@ -2586,6 +2587,10 @@ await updateInvitePolicy({
 - `POST /api/admin/support/conversations`
 - `PUT /api/admin/support/conversations/{id}`
 - `POST /api/admin/support/conversations/{id}/messages`
+- `GET /api/user/support/conversations`
+- `GET /api/user/support/conversations/{id}`
+- `POST /api/user/support/conversations/{id}/messages`
+- `POST /api/user/support/conversations/{id}/read`
 
 ### 3. 契约
 
@@ -2602,6 +2607,7 @@ await updateInvitePolicy({
   "assignedAdminId": "A10002",
   "assignedAdminName": "locked_admin",
   "unreadCount": 1,
+  "userUnreadCount": 0,
   "createdAt": "2026-06-02 09:20:00",
   "updatedAt": "2026-06-02 09:22:00",
   "messages": []
@@ -2663,6 +2669,9 @@ await updateInvitePolicy({
 7. 图片消息必须提供 `imageUrl`，且只能保存 `http/https` 图片链接；`content` 是可选说明文字。
 8. 后台客服页面按状态 Tabs 区分会话列表，筛选只影响后台列表展示，不改变后端会话状态。
 9. 客服消息通过 `support.message_created` 实时事件同步到会话所属用户和后台客服连接，手机端按 `messageType` 展示文本或图片。
+10. `unreadCount` 只代表后台客服侧未读消息数，用户发消息时递增，后台客服回复或关闭/解决会话时清零。
+11. `userUnreadCount` 只代表用户侧未读消息数，后台客服回复时递增，用户回复或调用 `POST /api/user/support/conversations/{id}/read` 后清零。
+12. 用户侧已读接口必须校验会话归属，归属不匹配时返回 404；该接口只清理用户侧未读，不影响后台客服侧 `unreadCount`。
 
 ### 4. 校验与错误矩阵
 
@@ -2681,12 +2690,14 @@ await updateInvitePolicy({
 | 图片回复缺少图片链接 | HTTP 400，返回客服图片链接不能为空 |
 | 图片回复链接不是 `http/https` | HTTP 400，返回客服图片链接必须是 `http` 或 `https` 地址 |
 | 查询、更新、回复不存在会话 | HTTP 404，返回会话不存在 |
+| 用户标记他人客服会话已读 | HTTP 404，返回会话不存在 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：创建 `CS-API-001` 绑定 `U10001`，响应自动带上 `username=demo_user` 和首条用户消息。
 - Good：把会话分配给 `A10001`，响应自动带上 `assignedAdminName=admin`。
 - Good：客服回复后消息列表新增 `admin` 消息，`unreadCount` 清零。
+- Good：客服回复后 `userUnreadCount` 递增，手机端在线客服入口显示未读红点；用户打开该会话并调用已读接口后 `userUnreadCount` 清零。
 - Good：后台上传图床图片后用 `messageType=image` 和 `imageUrl` 发送，后台和手机端历史消息都展示图片缩略图。
 - Base：无数据库环境下使用内存客服仓储，服务重启后恢复种子会话。
 - Bad：前端直接提交 `username` 或 `assignedAdminName` 并让后端信任，会导致用户/管理员改名后数据漂移。
@@ -2696,6 +2707,7 @@ await updateInvitePolicy({
 
 - 后端需要覆盖创建、更新分配和后台回复。
 - 后端需要覆盖后台图片回复保存 `messageType=image` 和 `imageUrl`。
+- 后端需要覆盖客服回复增加 `userUnreadCount`，用户标记已读只清理用户侧未读并保留后台侧 `unreadCount`。
 - 后端需要覆盖创建时用户不存在拒绝。
 - 后端需要覆盖分配管理员不存在拒绝。
 - 后端需要覆盖空回复拒绝。
@@ -4175,7 +4187,7 @@ support.get_for_user(conversation_id, &session.user.id).await
 - `GET /api/user/withdrawals`
 - `POST /api/user/withdrawals`
 - `GET/POST/PUT/DELETE /api/user/withdrawal-methods`
-- 后台用户列表：`GET /api/admin/users?page=1&pageSize=20&sortBy=id&sortDirection=asc`
+- 后台用户列表：`GET /api/admin/users?page=1&pageSize=20&sortBy=id&sortDirection=desc`
 - 资金流水类型：`ledger_entries.kind = withdrawalFreeze`
 
 ### 3. 契约
@@ -4219,7 +4231,7 @@ support.get_for_user(conversation_id, &session.user.id).await
 
 - `PUT /api/admin/users/{id}` 必须保留原 `balanceMinor` 和 `inviteCode`。
 - `GET /api/admin/users` 返回分页结构 `items/totalCount/page/pageSize/totalPages`，其中 `items[].balanceMinor` 应以 `financial_accounts.available_balance_minor` 为准。
-- 用户列表支持 `sortBy` 和 `sortDirection` 查询排序；`sortBy` 白名单为 `id`、`username`、`email`、`kind`、`status`、`balanceMinor`、`agentId`、`inviteCode`，`sortDirection` 只允许 `asc` 或 `desc`。
+- 用户列表支持 `sortBy` 和 `sortDirection` 查询排序；`sortBy` 白名单为 `id`、`username`、`email`、`kind`、`status`、`balanceMinor`、`agentId`、`inviteCode`，`sortDirection` 只允许 `asc` 或 `desc`，未传或传空字符串时默认按 `desc` 降序。
 - 用户 ID 仍作为资源 ID 使用，更新时路径 ID 必须与请求体 ID 一致。
 
 ### 4. 校验与错误矩阵

@@ -1560,7 +1560,11 @@ fn query_parameters(route: &RouteDoc) -> Vec<Value> {
                 "排序字段，可选 id、username、email、kind、status、balanceMinor、agentId、inviteCode。",
                 "string",
             ),
-            query_parameter("sortDirection", "排序方向，可选 asc 或 desc。", "string"),
+            query_parameter(
+                "sortDirection",
+                "排序方向，可选 asc 或 desc，默认 desc。",
+                "string",
+            ),
         ];
     }
 

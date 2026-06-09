@@ -53,7 +53,7 @@ pub struct SupportMessage {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 客服会话完整实体，包含分配客服、未读数和消息列表。
+/// 客服会话完整实体，包含分配客服、后台未读数、用户未读数和消息列表。
 pub struct SupportConversation {
     pub id: String,
     pub user_id: String,
@@ -63,7 +63,10 @@ pub struct SupportConversation {
     pub priority: SupportPriority,
     pub assigned_admin_id: Option<String>,
     pub assigned_admin_name: Option<String>,
+    /// 后台客服侧未读消息数，只统计用户发来的待处理消息。
     pub unread_count: u16,
+    /// 用户侧未读消息数，只统计客服发来的未查看消息。
+    pub user_unread_count: u16,
     pub created_at: String,
     pub updated_at: String,
     pub messages: Vec<SupportMessage>,
