@@ -71,6 +71,8 @@ export function GroupBuyManagementPage({
   const [planPageNumber, setPlanPageNumber] = useState(1);
   const [planPageSize, setPlanPageSize] = useState(10);
   const [createSheetVisible, setCreateSheetVisible] = useState(false);
+  const [detailSheetVisible, setDetailSheetVisible] = useState(false);
+  const [detailPlanId, setDetailPlanId] = useState('');
   const {
     addParticipant,
     create,
@@ -122,6 +124,7 @@ export function GroupBuyManagementPage({
     () => selectedLottery?.playConfigs.filter((config) => config.enabled) ?? [],
     [selectedLottery],
   );
+  const detailPlan = selectedPlan?.id === detailPlanId ? selectedPlan : null;
 
   useEffect(() => {
     if (!createForm.lotteryId && eligibleLotteries[0]) {
@@ -190,6 +193,16 @@ export function GroupBuyManagementPage({
   const refreshAll = () => {
     refresh();
     onDashboardRefresh();
+  };
+
+  const openDetailSheet = async (planId: string) => {
+    setDetailPlanId(planId);
+    setDetailSheetVisible(true);
+    try {
+      await loadPlan(planId);
+    } catch {
+      // 错误文案已由 hook 写入 error，这里只避免异步点击产生未处理异常。
+    }
   };
 
   const submitCreate = async () => {
@@ -296,9 +309,8 @@ export function GroupBuyManagementPage({
           </div>
         </Card>
       ) : (
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.95fr)]">
-          <div className="space-y-4">
-            <Card className="rounded-md border border-line">
+        <section className="space-y-4">
+          <Card className="rounded-md border border-line">
               <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-2">
                   <h2 className="text-base font-semibold text-ink">合买计划列表</h2>
@@ -334,7 +346,7 @@ export function GroupBuyManagementPage({
                       {plans.map((plan) => (
                         <tr
                           key={plan.id}
-                          className={selectedPlan?.id === plan.id ? 'bg-teal-50/60' : ''}
+                          className={detailPlanId === plan.id ? 'bg-teal-50/60' : ''}
                         >
                           <td className="py-3 pr-4">
                             <div className="font-semibold text-ink">{plan.id}</div>
@@ -373,9 +385,9 @@ export function GroupBuyManagementPage({
                             <Button
                               disabled={saving}
                               icon={<Eye size={14} />}
-                              loading={saving && selectedPlan?.id === plan.id}
+                              loading={saving && detailPlanId === plan.id}
                               size="small"
-                              onClick={() => void loadPlan(plan.id)}
+                              onClick={() => void openDetailSheet(plan.id)}
                             >
                               查看详情
                             </Button>
@@ -390,15 +402,15 @@ export function GroupBuyManagementPage({
                   暂无合买计划。
                 </div>
               )}
-            </Card>
+          </Card>
 
-            <SideSheet
+          <SideSheet
               aria-label="新增合买计划"
               title="新增合买计划"
               visible={createSheetVisible}
               width={600}
               onCancel={() => setCreateSheetVisible(false)}
-            >
+          >
               <div className="mb-4">
                 <h2 className="text-base font-semibold text-ink">新增合买计划</h2>
                 <p className="mt-1 text-sm text-slate-500">
@@ -568,251 +580,255 @@ export function GroupBuyManagementPage({
                   创建合买计划
                 </Button>
               </div>
-            </SideSheet>
-          </div>
+          </SideSheet>
 
-          <div className="space-y-4">
-            {selectedPlan ? (
-              <>
-            <Card className="rounded-md border border-line">
-              <div className="mb-4 flex items-center gap-2">
-                <Users size={17} />
-                <h2 className="text-base font-semibold text-ink">参与记录</h2>
-              </div>
-              {selectedPlan ? (
-                <div className="space-y-4">
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[520px] text-left text-sm">
-                      <thead className="border-b border-line text-xs text-slate-500">
-                        <tr>
-                          <th className="py-2 pr-4 font-medium">用户</th>
-                          <th className="py-2 pr-4 font-medium">金额</th>
-                          <th className="py-2 pr-4 font-medium">份数</th>
-                          <th className="py-2 pr-4 font-medium">备注</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-line">
-                        {selectedPlan.participants.map((participant) => (
-                          <tr key={participant.id}>
-                            <td className="py-3 pr-4">
-                              <div className="font-medium text-ink">
-                                {participant.username}
-                              </div>
-                              <div className="mt-1 text-xs text-slate-400">
-                                {participant.id}
-                              </div>
-                            </td>
-                            <td className="py-3 pr-4 text-slate-600">
-                              {formatMoney(participant.amountMinor)}
-                            </td>
-                            <td className="py-3 pr-4 text-slate-600">
-                              {participant.shareCount}
-                            </td>
-                            <td className="py-3 pr-4 text-slate-500">
-                              {participant.note || '-'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="参与记录 ID">
-                      <Input
-                        className="form-input"
-                        value={participantForm.id}
-                        onChange={(value) =>
-                          setParticipantFormValue(
-                            setParticipantForm,
-                            'id',
-                            value,
-                          )
-                        }
-                      />
-                    </Field>
-                    <Field label="参与用户">
-                      <Select
-                        className="form-input"
-                        value={participantForm.userId}
-                        onChange={(value) =>
-                          setParticipantFormValue(
-                            setParticipantForm,
-                            'userId',
-                            String(value ?? ''),
-                          )
-                        }
-                      >
-                        {users.map((user) => (
-                          <Select.Option key={user.id} value={user.id}>
-                            {user.username}（{user.id}）
-                          </Select.Option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="参与金额（元）">
-                      <Input
-                        className="form-input"
-                        inputMode="decimal"
-                        placeholder="例如 10 或 10.00"
-                        value={participantForm.amountYuan}
-                        onChange={(value) =>
-                          setParticipantFormValue(
-                            setParticipantForm,
-                            'amountYuan',
-                            value,
-                          )
-                        }
-                      />
-                    </Field>
-                    <Field label="备注">
-                      <Input
-                        className="form-input"
-                        value={participantForm.note}
-                        onChange={(value) =>
-                          setParticipantFormValue(
-                            setParticipantForm,
-                            'note',
-                            value,
-                          )
-                        }
-                      />
-                    </Field>
-                  </div>
-                  <div className="flex justify-end">
-                    <Button
-                      disabled={
-                        saving ||
-                        !['draft', 'open'].includes(selectedPlan.status) ||
-                        users.length === 0
-                      }
-                      icon={<Plus size={16} />}
-                      loading={saving}
-                      theme="solid"
-                      onClick={() => void submitParticipant()}
-                    >
-                      添加参与记录
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-md border border-line p-4 text-sm text-slate-500">
-                  暂无参与记录。
-                </div>
-              )}
-            </Card>
-
-            <Card className="rounded-md border border-line">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold text-ink">计划详情</h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {selectedPlan ? selectedPlan.id : '请选择一个合买计划'}
-                  </p>
-                </div>
-                {selectedPlan ? (
-                  <Tag color={statusColor(selectedPlan.status)}>
-                    {statusText(selectedPlan.status)}
-                  </Tag>
-                ) : null}
-              </div>
-
-              {selectedPlan ? (
-                <div className="space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <InfoLine label="彩种" value={selectedPlan.lotteryName} />
-                    <InfoLine label="期号" value={selectedPlan.issue || '-'} />
-                    <InfoLine
-                      label="玩法"
-                      value={formatRuleCode(selectedPlan.ruleCode as PlayRuleCode)}
-                    />
-                    <InfoLine label="订单号" value={selectedPlan.orderId ?? '未成单'} />
-                    <InfoLine label="发起人" value={selectedPlan.initiatorUsername} />
-                    <InfoLine
-                      label="计划总额"
-                      value={formatMoney(selectedPlan.totalAmountMinor)}
-                    />
-                    <InfoLine
-                      label="已认购"
-                      value={formatMoney(selectedPlan.filledAmountMinor)}
-                    />
-                    <InfoLine label="总份数" value={`${selectedPlan.shareCount} 份`} />
-                    <InfoLine
-                      label="每份金额"
-                      value={formatMoney(selectedPlan.minShareAmountMinor)}
-                    />
-                  </div>
-                  <div className="rounded-md border border-line px-3 py-2">
-                    <div className="text-xs text-slate-500">投注内容</div>
-                    <div className="mt-1 whitespace-pre-wrap break-all text-sm font-medium text-ink">
-                      {selectedPlan.numbers || '-'}
+          <SideSheet
+              aria-label="合买计划详情"
+              title="合买计划详情"
+              visible={detailSheetVisible}
+              width={920}
+              onCancel={() => setDetailSheetVisible(false)}
+          >
+              {detailPlan ? (
+                <div className="space-y-5">
+                  <section className="rounded-md border border-line bg-slate-50 p-4">
+                    <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h2 className="text-base font-semibold text-ink">计划详情</h2>
+                        <p className="mt-1 break-all text-sm text-slate-500">
+                          计划编号：{detailPlan.id}
+                        </p>
+                      </div>
+                      <Tag color={statusColor(detailPlan.status)}>
+                        {statusText(detailPlan.status)}
+                      </Tag>
                     </div>
-                  </div>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="状态">
-                      <Select
-                        className="form-input"
-                        value={updateForm.status}
-                        onChange={(value) =>
-                          setUpdateForm((current) => ({
-                            ...current,
-                            status: (value as GroupBuyPlanStatus) || 'draft',
-                          }))
-                        }
-                      >
-                        <Select.Option value="draft">草稿</Select.Option>
-                        <Select.Option value="open">进行中</Select.Option>
-                        <Select.Option value="filled">已满单</Select.Option>
-                        <Select.Option value="cancelled">已取消</Select.Option>
-                        <Select.Option value="settled">已结算</Select.Option>
-                      </Select>
-                    </Field>
-                    <Field label="备注">
-                      <Input
-                        className="form-input"
-                        value={updateForm.note}
-                        onChange={(value) =>
-                          setUpdateForm((current) => ({
-                            ...current,
-                            note: value,
-                          }))
-                        }
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <InfoLine label="彩种" value={detailPlan.lotteryName} />
+                      <InfoLine label="期号" value={detailPlan.issue || '-'} />
+                      <InfoLine
+                        label="玩法"
+                        value={formatRuleCode(detailPlan.ruleCode as PlayRuleCode)}
                       />
-                    </Field>
-                  </div>
-                  <div className="flex justify-end">
-                    <Button
-                      disabled={saving}
-                      icon={<Save size={16} />}
-                      loading={saving}
-                      theme="solid"
-                      onClick={() => void submitUpdate()}
-                    >
-                      保存计划状态
-                    </Button>
-                  </div>
+                      <InfoLine label="订单号" value={detailPlan.orderId ?? '未成单'} />
+                      <InfoLine label="发起人" value={detailPlan.initiatorUsername} />
+                      <InfoLine
+                        label="计划总额"
+                        value={formatMoney(detailPlan.totalAmountMinor)}
+                      />
+                      <InfoLine
+                        label="已认购"
+                        value={formatMoney(detailPlan.filledAmountMinor)}
+                      />
+                      <InfoLine label="总份数" value={`${detailPlan.shareCount} 份`} />
+                      <InfoLine
+                        label="每份金额"
+                        value={formatMoney(detailPlan.minShareAmountMinor)}
+                      />
+                    </div>
+
+                    <div className="mt-4">
+                      <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+                        <span>合买进度</span>
+                        <span>{progressPercent(detailPlan)}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-white ring-1 ring-line">
+                        <div
+                          className="h-full rounded-full bg-teal-500"
+                          style={{ width: `${progressPercent(detailPlan)}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 rounded-md border border-line bg-white px-3 py-2">
+                      <div className="text-xs text-slate-500">投注内容</div>
+                      <div className="mt-1 whitespace-pre-wrap break-all text-sm font-medium text-ink">
+                        {detailPlan.numbers || '-'}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <Field label="状态">
+                        <Select
+                          className="form-input"
+                          value={updateForm.status}
+                          onChange={(value) =>
+                            setUpdateForm((current) => ({
+                              ...current,
+                              status: (value as GroupBuyPlanStatus) || 'draft',
+                            }))
+                          }
+                        >
+                          <Select.Option value="draft">草稿</Select.Option>
+                          <Select.Option value="open">进行中</Select.Option>
+                          <Select.Option value="filled">已满单</Select.Option>
+                          <Select.Option value="cancelled">已取消</Select.Option>
+                          <Select.Option value="settled">已结算</Select.Option>
+                        </Select>
+                      </Field>
+                      <Field label="备注">
+                        <Input
+                          className="form-input"
+                          value={updateForm.note}
+                          onChange={(value) =>
+                            setUpdateForm((current) => ({
+                              ...current,
+                              note: value,
+                            }))
+                          }
+                        />
+                      </Field>
+                    </div>
+                    <div className="mt-4 flex justify-end">
+                      <Button
+                        disabled={saving}
+                        icon={<Save size={16} />}
+                        loading={saving}
+                        theme="solid"
+                        onClick={() => void submitUpdate()}
+                      >
+                        保存计划状态
+                      </Button>
+                    </div>
+                  </section>
+
+                  <section className="rounded-md border border-line p-4">
+                    <div className="mb-4 flex items-center gap-2">
+                      <Users size={17} />
+                      <h2 className="text-base font-semibold text-ink">参与记录</h2>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[680px] text-left text-sm">
+                          <thead className="border-b border-line text-xs text-slate-500">
+                            <tr>
+                              <th className="py-2 pr-4 font-medium">用户</th>
+                              <th className="py-2 pr-4 font-medium">金额</th>
+                              <th className="py-2 pr-4 font-medium">份数</th>
+                              <th className="py-2 pr-4 font-medium">创建时间</th>
+                              <th className="py-2 pr-4 font-medium">备注</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-line">
+                            {detailPlan.participants.map((participant) => (
+                              <tr key={participant.id}>
+                                <td className="py-3 pr-4">
+                                  <div className="font-medium text-ink">
+                                    {participant.username}
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-400">
+                                    {participant.id}
+                                  </div>
+                                </td>
+                                <td className="py-3 pr-4 text-slate-600">
+                                  {formatMoney(participant.amountMinor)}
+                                </td>
+                                <td className="py-3 pr-4 text-slate-600">
+                                  {participant.shareCount}
+                                </td>
+                                <td className="py-3 pr-4 text-slate-500">
+                                  {participant.createdAt || '-'}
+                                </td>
+                                <td className="py-3 pr-4 text-slate-500">
+                                  {participant.note || '-'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field label="参与记录 ID">
+                          <Input
+                            className="form-input"
+                            value={participantForm.id}
+                            onChange={(value) =>
+                              setParticipantFormValue(
+                                setParticipantForm,
+                                'id',
+                                value,
+                              )
+                            }
+                          />
+                        </Field>
+                        <Field label="参与用户">
+                          <Select
+                            className="form-input"
+                            value={participantForm.userId}
+                            onChange={(value) =>
+                              setParticipantFormValue(
+                                setParticipantForm,
+                                'userId',
+                                String(value ?? ''),
+                              )
+                            }
+                          >
+                            {users.map((user) => (
+                              <Select.Option key={user.id} value={user.id}>
+                                {user.username}（{user.id}）
+                              </Select.Option>
+                            ))}
+                          </Select>
+                        </Field>
+                        <Field label="参与金额（元）">
+                          <Input
+                            className="form-input"
+                            inputMode="decimal"
+                            placeholder="例如 10 或 10.00"
+                            value={participantForm.amountYuan}
+                            onChange={(value) =>
+                              setParticipantFormValue(
+                                setParticipantForm,
+                                'amountYuan',
+                                value,
+                              )
+                            }
+                          />
+                        </Field>
+                        <Field label="备注">
+                          <Input
+                            className="form-input"
+                            value={participantForm.note}
+                            onChange={(value) =>
+                              setParticipantFormValue(
+                                setParticipantForm,
+                                'note',
+                                value,
+                              )
+                            }
+                          />
+                        </Field>
+                      </div>
+                      <div className="flex justify-end">
+                        <Button
+                          disabled={
+                            saving ||
+                            !['draft', 'open'].includes(detailPlan.status) ||
+                            users.length === 0
+                          }
+                          icon={<Plus size={16} />}
+                          loading={saving}
+                          theme="solid"
+                          onClick={() => void submitParticipant()}
+                        >
+                          添加参与记录
+                        </Button>
+                      </div>
+                    </div>
+                  </section>
                 </div>
               ) : (
-                <div className="rounded-md border border-line p-4 text-sm text-slate-500">
-                  暂无可维护计划。
+                <div className="grid min-h-[320px] place-items-center">
+                  {error ? (
+                    <Banner type="danger" title="计划详情加载失败" description={error} />
+                  ) : (
+                    <Spin tip="正在加载合买计划详情" />
+                  )}
                 </div>
               )}
-            </Card>
-              </>
-            ) : (
-              <Card className="rounded-md border border-line">
-                <div className="grid min-h-[260px] place-items-center text-center text-sm text-slate-500">
-                  <div>
-                    <div className="font-medium text-slate-700">请选择合买计划</div>
-                    <p className="mt-2">
-                      在合买计划列表最右侧点击“查看详情”后，再显示参与记录和计划详情。
-                    </p>
-                  </div>
-                </div>
-              </Card>
-            )}
-          </div>
+          </SideSheet>
         </section>
       )}
     </div>
