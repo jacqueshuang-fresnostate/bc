@@ -37,7 +37,7 @@ export function useSupportConversations() {
       fetchAdmins(controller.signal),
     ])
       .then(([nextConversations, nextAdmins]) => {
-        setConversations(nextConversations);
+        setConversations(visibleSupportConversations(nextConversations));
         setAdmins(nextAdmins);
       })
       .catch((requestError: unknown) => {
@@ -93,7 +93,9 @@ export function useSupportConversations() {
             message?.event === 'support.message_created' ||
             message?.event === 'support.conversation_updated'
           ) {
-            setConversations((current) => upsertById(current, message.conversation));
+            setConversations((current) =>
+              upsertVisibleConversation(current, message.conversation),
+            );
           }
         } catch {
           setError('后台实时客服消息解析失败');
@@ -128,7 +130,7 @@ export function useSupportConversations() {
       setError(null);
       try {
         const updated = await updateSupportConversation(id, payload);
-        setConversations((current) => upsertById(current, updated));
+        setConversations((current) => upsertVisibleConversation(current, updated));
         return updated;
       } catch (requestError) {
         setError(errorMessage(requestError));
@@ -145,7 +147,7 @@ export function useSupportConversations() {
     setError(null);
     try {
       const updated = await replySupportConversation(id, payload);
-      setConversations((current) => upsertById(current, updated));
+      setConversations((current) => upsertVisibleConversation(current, updated));
       return updated;
     } catch (requestError) {
       setError(errorMessage(requestError));
@@ -167,10 +169,22 @@ export function useSupportConversations() {
   };
 }
 
-function upsertById<T extends { id: string }>(items: T[], item: T) {
-  return items.some((current) => current.id === item.id)
-    ? items.map((current) => (current.id === item.id ? item : current))
-    : [...items, item];
+function visibleSupportConversations(items: SupportConversation[]) {
+  return items.filter(isVisibleSupportConversation);
+}
+
+function isVisibleSupportConversation(conversation: SupportConversation) {
+  return conversation.status !== 'closed';
+}
+
+function upsertVisibleConversation(
+  items: SupportConversation[],
+  conversation: SupportConversation,
+) {
+  const nextItems = items.filter((current) => current.id !== conversation.id);
+  return isVisibleSupportConversation(conversation)
+    ? [...nextItems, conversation]
+    : nextItems;
 }
 
 function errorMessage(error: unknown) {

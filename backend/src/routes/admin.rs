@@ -13,7 +13,7 @@ use axum::{
     Extension, Json, Router,
 };
 use chrono::Local;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{cmp::Ordering, collections::BTreeMap, time::Duration};
 
@@ -740,11 +740,20 @@ enum UserListSortDirection {
     Desc,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 /// 后台一键清理记录后的统一返回结构。
 struct ClearRecordsResult {
     deleted_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台订单列表展示结构，在订单详情基础上补充当前用户名称快照，便于运营核对下注用户。
+struct AdminOrderDetail {
+    #[serde(flatten)]
+    order: OrderDetail,
+    username: Option<String>,
 }
 
 /// 后台财务、订单、合买等列表通用分页参数。
@@ -2303,8 +2312,9 @@ async fn manual_balance_adjustment(
 async fn list_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
-) -> ApiResult<Json<ApiEnvelope<FinancePage<OrderDetail>>>> {
+) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminOrderDetail>>>> {
     // 订单管理按分页读取；彩种控制台不传分页参数时仍通过同一信封拿到完整订单页。
+    let usernames = admin_order_usernames(&state).await?;
     let orders = state
         .orders
         .list()
@@ -2313,6 +2323,7 @@ async fn list_orders(
         .filter(|order| {
             should_include_user_scoped_record(query.include_robot_data(), &order.user_id)
         })
+        .map(|order| admin_order_detail_with_usernames(order, &usernames))
         .collect::<Vec<_>>();
 
     Ok(Json(ApiEnvelope::success(page_items(orders, query))))
@@ -2333,8 +2344,9 @@ async fn clear_bet_orders(
 async fn get_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> ApiResult<Json<ApiEnvelope<OrderDetail>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminOrderDetail>>> {
     let order = state.orders.get(&id).await?;
+    let order = admin_order_detail(&state, order).await?;
 
     Ok(Json(ApiEnvelope::success(order)))
 }
@@ -2343,7 +2355,7 @@ async fn get_order(
 async fn create_order(
     State(state): State<AppState>,
     Json(payload): Json<CreateOrderRequest>,
-) -> ApiResult<Json<ApiEnvelope<OrderDetail>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminOrderDetail>>> {
     let lottery = state.lotteries.get(&payload.lottery_id).await?;
     let draw_issue = state
         .draws
@@ -2356,6 +2368,7 @@ async fn create_order(
         .await?;
     publish_user_order_changed(&state, &order, "created");
     publish_user_balance_changed(&state, &order.user_id, "order_debit", Some(&order.id)).await;
+    let order = admin_order_detail(&state, order).await?;
 
     Ok(Json(ApiEnvelope::success(order)))
 }
@@ -2364,12 +2377,39 @@ async fn create_order(
 async fn cancel_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> ApiResult<Json<ApiEnvelope<OrderDetail>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminOrderDetail>>> {
     let order = state.orders.cancel_with_refund(&state.finance, &id).await?;
     publish_user_order_changed(&state, &order, "cancelled");
     publish_user_balance_changed(&state, &order.user_id, "order_refund", Some(&order.id)).await;
+    let order = admin_order_detail(&state, order).await?;
 
     Ok(Json(ApiEnvelope::success(order)))
+}
+
+/// 读取用户名称映射，订单列表只需要展示用户名，不把用户维护中的余额等其它字段混进订单领域。
+async fn admin_order_usernames(state: &AppState) -> ApiResult<BTreeMap<String, String>> {
+    Ok(state
+        .access
+        .users()
+        .await?
+        .into_iter()
+        .map(|user| (user.id, user.username))
+        .collect())
+}
+
+/// 为单条后台订单补充用户名，供创建、取消和详情接口复用。
+async fn admin_order_detail(state: &AppState, order: OrderDetail) -> ApiResult<AdminOrderDetail> {
+    let usernames = admin_order_usernames(state).await?;
+    Ok(admin_order_detail_with_usernames(order, &usernames))
+}
+
+/// 使用已加载的用户名映射包装订单，避免分页列表对每条订单重复查询用户。
+fn admin_order_detail_with_usernames(
+    order: OrderDetail,
+    usernames: &BTreeMap<String, String>,
+) -> AdminOrderDetail {
+    let username = usernames.get(&order.user_id).cloned();
+    AdminOrderDetail { order, username }
 }
 
 /// 返回后台彩种列表。

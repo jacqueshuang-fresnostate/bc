@@ -301,10 +301,11 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
             </div>
           ) : orders.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1360px] text-left text-sm">
+              <table className="w-full min-w-[1440px] text-left text-sm">
                 <thead className="border-b border-line text-xs text-slate-500">
                   <tr>
                     <th className="py-2 pr-4 font-medium">订单</th>
+                    <th className="py-2 pr-4 font-medium">期号</th>
                     <th className="py-2 pr-4 font-medium">用户</th>
                     <th className="py-2 pr-4 font-medium">来源</th>
                     <th className="py-2 pr-4 font-medium">彩种</th>
@@ -324,9 +325,18 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                     <tr key={order.id} className="border-b border-slate-100">
                       <td className="py-3 pr-4">
                         <div className="font-semibold text-ink">{order.id}</div>
-                        <div className="mt-1 text-xs text-slate-400">{order.issue}</div>
                       </td>
-                      <td className="py-3 pr-4 text-slate-600">{order.userId}</td>
+                      <td className="py-3 pr-4">
+                        <div className="font-mono text-xs font-semibold text-slate-700">
+                          {order.issue}
+                        </div>
+                      </td>
+                      <td className="py-3 pr-4 text-slate-600">
+                        <div className="font-medium text-slate-700">
+                          {order.username || '未知用户'}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-400">{order.userId}</div>
+                      </td>
                       <td className="py-3 pr-4">
                         <Tag color={order.orderSource === 'groupBuy' ? 'orange' : 'blue'}>
                           {orderSourceText(order.orderSource)}
@@ -338,7 +348,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                       </td>
                       <td className="py-3 pr-4 text-slate-600">{ruleLabel(order.ruleCode, rules)}</td>
                       <td className="py-3 pr-4">
-                        <OrderBetInfo compact expandedLimit={8} order={order} />
+                        <OrderBetInfo compact order={order} showExpandedBets={false} />
                       </td>
                       <td className="py-3 pr-4 text-slate-600">{order.stakeCount} 注</td>
                       <td className="py-3 pr-4 text-slate-600">{formatMoney(order.amountMinor)}</td>

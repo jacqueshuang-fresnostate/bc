@@ -131,21 +131,43 @@ function statusClass() {
     </div>
   </button>
 
-  <button v-else class="flex w-full flex-col gap-2 rounded-xl bg-surface-container-lowest p-3 text-left shadow-sm" @click="emit('open', lottery)">
-    <div class="flex items-start gap-2">
-      <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-9 w-9 flex-shrink-0 rounded-full object-cover" @error="logoLoadFailed = true" />
-      <div v-else class="lottery-card-icon-fallback flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-xs" :class="variant === 'regional' ? 'bg-tertiary/10 text-tertiary' : 'bg-secondary/10 text-secondary'">{{ variant === 'regional' ? '◇' : '★' }}</div>
-      <div class="min-w-0 flex-1">
-        <div class="flex items-start justify-between gap-2">
-          <h5 class="truncate text-xs font-bold">{{ lottery.name }}</h5>
-          <span class="lottery-status-stack inline-flex shrink-0 flex-col items-end gap-1">
+  <button
+    v-else
+    :class="[
+      'group-lottery-card',
+      variant === 'regional' ? 'group-lottery-card--regional' : 'group-lottery-card--classic',
+    ]"
+    @click="emit('open', lottery)"
+  >
+    <div class="group-lottery-card__content">
+      <div class="group-lottery-card__top">
+        <div class="group-lottery-card__copy">
+          <h5>{{ lottery.name }}</h5>
+          <div class="group-lottery-card__meta">
             <span :class="['lottery-state-pill rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
-          </span>
+          </div>
+          <span class="group-lottery-card__issue">{{ issueText }}</span>
+        </div>
+        <div class="group-lottery-card__logo-shell">
+          <img
+            v-if="showImage"
+            :src="logoUrl"
+            :alt="`${lottery.name} 标志`"
+            class="group-lottery-card__logo"
+            @error="logoLoadFailed = true"
+          />
+          <div v-else class="group-lottery-card__fallback">{{ variant === 'regional' ? '◇' : '★' }}</div>
         </div>
       </div>
-    </div>
-    <div class="flex flex-wrap gap-1">
-      <div v-for="(digit, index) in displayDigits" :key="`${lottery.code}-group-${index}`" class="flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[9px] font-bold" :class="variant === 'regional' ? 'bg-tertiary/10 text-tertiary' : 'bg-primary/5 text-primary'">{{ digit }}</div>
+      <div class="group-lottery-card__digits" aria-label="最近开奖号码">
+        <span
+          v-for="(digit, index) in displayDigits"
+          :key="`${lottery.code}-group-${index}`"
+          class="group-lottery-card__digit"
+        >
+          {{ digit }}
+        </span>
+      </div>
     </div>
   </button>
 </template>
@@ -179,6 +201,163 @@ function statusClass() {
   white-space: nowrap;
 }
 
+.group-lottery-card {
+  position: relative;
+  width: 100%;
+  min-height: 5.35rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  border-radius: 1rem;
+  padding: 0.75rem;
+  text-align: left;
+  box-shadow: 0 8px 22px rgba(77, 41, 68, 0.08);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+}
+
+.group-lottery-card--classic {
+  background:
+    radial-gradient(circle at 100% 8%, rgba(255, 204, 89, 0.35), transparent 30%),
+    linear-gradient(135deg, #f7f2ff 0%, #f8f3ff 44%, #fff5ef 100%);
+}
+
+.group-lottery-card--regional {
+  background:
+    radial-gradient(circle at 100% 8%, rgba(255, 177, 196, 0.35), transparent 30%),
+    linear-gradient(135deg, #eef8ff 0%, #f4f2ff 48%, #fff7ed 100%);
+}
+
+.group-lottery-card::after {
+  content: '';
+  position: absolute;
+  right: -1.35rem;
+  bottom: -1.75rem;
+  width: 5.25rem;
+  height: 5.25rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.48);
+  pointer-events: none;
+}
+
+.group-lottery-card:active {
+  transform: scale(0.985);
+  box-shadow: 0 5px 16px rgba(77, 41, 68, 0.1);
+}
+
+.group-lottery-card__content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 3.85rem;
+  gap: 0.5rem;
+}
+
+.group-lottery-card__top {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem;
+}
+
+.group-lottery-card__copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.38rem;
+}
+
+.group-lottery-card__copy h5 {
+  margin: 0;
+  overflow: hidden;
+  color: #2d2630;
+  font-size: 0.92rem;
+  font-weight: 900;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-lottery-card__meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.group-lottery-card__issue {
+  color: rgba(73, 61, 68, 0.68);
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.group-lottery-card__digits {
+  display: flex;
+  max-width: 100%;
+  flex-wrap: nowrap;
+  gap: 0.22rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 1px;
+  scrollbar-width: none;
+}
+
+.group-lottery-card__digits::-webkit-scrollbar {
+  display: none;
+}
+
+.group-lottery-card__digit {
+  display: inline-flex;
+  flex: 0 0 1.12rem;
+  width: 1.12rem;
+  height: 1.12rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #8b1d24;
+  font-size: 0.56rem;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(139, 29, 36, 0.08);
+}
+
+.group-lottery-card__logo-shell {
+  display: flex;
+  width: 3.1rem;
+  height: 3.1rem;
+  flex: 0 0 3.1rem;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: 0 8px 18px rgba(92, 54, 92, 0.12);
+}
+
+.group-lottery-card__logo,
+.group-lottery-card__fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.group-lottery-card__logo {
+  object-fit: cover;
+}
+
+.group-lottery-card__fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #af2829;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
 @media (max-width: 374px) {
   .home-result-ball--featured {
     --home-result-ball-size: 1.95rem;
@@ -186,6 +365,29 @@ function statusClass() {
 
   .home-result-ball--secondary {
     --home-result-ball-size: 1.25rem;
+  }
+
+  .group-lottery-card {
+    min-height: 5rem;
+    padding: 0.65rem;
+  }
+
+  .group-lottery-card__logo-shell {
+    width: 2.75rem;
+    height: 2.75rem;
+    flex-basis: 2.75rem;
+    border-radius: 0.85rem;
+  }
+
+  .group-lottery-card__copy h5 {
+    font-size: 0.84rem;
+  }
+
+  .group-lottery-card__digit {
+    flex-basis: 1.02rem;
+    width: 1.02rem;
+    height: 1.02rem;
+    font-size: 0.52rem;
   }
 }
 </style>

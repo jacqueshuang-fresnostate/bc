@@ -43,4 +43,5 @@ export interface OrderDetail {
   settledAt: string | null;
   unitAmountMinor: number;
   userId: string;
+  username?: string | null;
 }

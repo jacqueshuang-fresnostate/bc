@@ -6,6 +6,7 @@ interface OrderBetInfoProps {
   compact?: boolean;
   expandedLimit?: number;
   order: Pick<OrderDetail, 'expandedBets' | 'matchedBets' | 'selection'>;
+  showExpandedBets?: boolean;
 }
 
 /** 展示后台订单的用户下注选择和展开后的注码，供订单管理与控单页面复用。 */
@@ -13,6 +14,7 @@ export function OrderBetInfo({
   compact = false,
   expandedLimit = compact ? 6 : 10,
   order,
+  showExpandedBets = true,
 }: OrderBetInfoProps) {
   const selectionLines = formatPlaySelection(order.selection);
   const expandedBets = order.expandedBets ?? [];
@@ -36,24 +38,26 @@ export function OrderBetInfo({
         ))}
       </div>
 
-      <div
-        className="mt-2 flex max-w-[320px] flex-wrap gap-1"
-        title={expandedBets.length > 0 ? expandedBets.join('、') : undefined}
-      >
-        {visibleExpandedBets.length > 0 ? (
-          visibleExpandedBets.map((bet, index) => (
-            <Tag
-              key={`${bet}-${index}`}
-              color={matchedBets.has(bet) ? 'green' : 'blue'}
-            >
-              {bet}
-            </Tag>
-          ))
-        ) : (
-          <span className="text-xs text-slate-400">暂无展开注码</span>
-        )}
-        {hiddenCount > 0 ? <Tag color="grey">+{hiddenCount}</Tag> : null}
-      </div>
+      {showExpandedBets ? (
+        <div
+          className="mt-2 flex max-w-[320px] flex-wrap gap-1"
+          title={expandedBets.length > 0 ? expandedBets.join('、') : undefined}
+        >
+          {visibleExpandedBets.length > 0 ? (
+            visibleExpandedBets.map((bet, index) => (
+              <Tag
+                key={`${bet}-${index}`}
+                color={matchedBets.has(bet) ? 'green' : 'blue'}
+              >
+                {bet}
+              </Tag>
+            ))
+          ) : (
+            <span className="text-xs text-slate-400">暂无展开注码</span>
+          )}
+          {hiddenCount > 0 ? <Tag color="grey">+{hiddenCount}</Tag> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

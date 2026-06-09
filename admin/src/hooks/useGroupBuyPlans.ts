@@ -62,20 +62,8 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
         setUsers(nextUsers);
         setDrawIssues(nextDrawIssuePage.items);
 
-        const selectedId =
-          nextPlans.find((plan) => plan.id === selectedPlan?.id)?.id ??
-          nextPlans[0]?.id;
-        if (!selectedId) {
-          setSelectedPlan(null);
-          return;
-        }
-
-        if (nextPlans.some((plan) => plan.id === selectedId)) {
-          const detail = await fetchGroupBuyPlan(selectedId, controller.signal);
-          if (!controller.signal.aborted) {
-            setSelectedPlan(detail);
-          }
-        } else {
+        const selectedId = selectedPlan?.id;
+        if (!selectedId || !nextPlans.some((plan) => plan.id === selectedId)) {
           setSelectedPlan(null);
         }
       })
@@ -98,7 +86,6 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
     planQuery.page,
     planQuery.pageSize,
     refreshToken,
-    selectedPlan?.id,
   ]);
 
   const loadPlan = useCallback(async (id: string) => {
@@ -122,7 +109,6 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
     setError(null);
     try {
       const created = await createGroupBuyPlan(payload);
-      setSelectedPlan(created);
       setPlanPage((current) =>
         upsertPageItem(current, summaryFromPlan(created), true),
       );

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import {
   fetchSupportConversations,
+  isVisibleSupportConversation,
   markSupportConversationRead,
   type SupportConversation,
 } from '../api/user'
@@ -24,7 +25,9 @@ function hasFreshCache(fetchedAt: number) {
 }
 
 function sortedConversations(items: SupportConversation[]) {
-  return [...items].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+  return [...items]
+    .filter(isVisibleSupportConversation)
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
 }
 
 // 手机端在线客服未读缓存：用户进入个人中心或收到客服实时消息时刷新，用于红点提醒。
@@ -71,7 +74,9 @@ export const useSupportUnreadStore = defineStore('supportUnread', () => {
 
   function upsertConversation(conversation: SupportConversation) {
     const next = conversations.value.filter(item => item.id !== conversation.id)
-    next.push(conversation)
+    if (isVisibleSupportConversation(conversation)) {
+      next.push(conversation)
+    }
     setConversations(next)
   }
 

@@ -54,7 +54,7 @@ interface UpdateFormState {
 }
 
 type SupportChatRole = 'assistant' | 'system' | 'user';
-type SupportStatusFilter = 'all' | SupportConversationStatus;
+type SupportStatusFilter = 'all' | Exclude<SupportConversationStatus, 'closed'>;
 
 interface SupportChatMessage {
   authorName: string;
@@ -96,7 +96,6 @@ const SUPPORT_STATUS_FILTERS: Array<{
   { key: 'open', label: '处理中' },
   { key: 'pending', label: '等待用户' },
   { key: 'resolved', label: '已解决' },
-  { key: 'closed', label: '已关闭' },
 ];
 
 export function SupportManagementPage({

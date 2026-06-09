@@ -334,6 +334,100 @@ function formatMinorAmount(value: number) {
   return (Number(value || 0) / 100).toFixed(2)
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function fieldValue(record: Record<string, unknown>, camelKey: string, snakeKey?: string) {
+  return record[camelKey] ?? (snakeKey ? record[snakeKey] : undefined)
+}
+
+function stringField(record: Record<string, unknown>, camelKey: string, snakeKey?: string) {
+  const value = fieldValue(record, camelKey, snakeKey)
+  return String(value ?? '').trim()
+}
+
+function optionalStringField(record: Record<string, unknown>, camelKey: string, snakeKey?: string) {
+  const value = stringField(record, camelKey, snakeKey)
+  return value || null
+}
+
+function numberField(record: Record<string, unknown>, camelKey: string, snakeKey?: string) {
+  return Number(fieldValue(record, camelKey, snakeKey) ?? 0)
+}
+
+function normalizeSupportConversationStatus(value: unknown): SupportConversationStatus {
+  const status = String(value ?? '').trim().toLowerCase()
+  if (status === 'pending' || status === 'resolved' || status === 'closed') return status
+  return 'open'
+}
+
+function normalizeSupportMessageType(value: unknown, imageUrl: string | null): SupportMessageType {
+  const messageType = String(value ?? '').trim().toLowerCase()
+  if (messageType === 'image' || imageUrl) return 'image'
+  return 'text'
+}
+
+function contentLooksLikeImageUrl(value: string) {
+  return /^https?:\/\/\S+\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#]\S*)?$/i.test(value)
+}
+
+function normalizeSupportMessage(raw: unknown): SupportMessage | null {
+  if (!isRecord(raw)) return null
+  const content = stringField(raw, 'content')
+  const explicitImageUrl = optionalStringField(raw, 'imageUrl', 'image_url')
+  const imageUrl = explicitImageUrl || (contentLooksLikeImageUrl(content) ? content : null)
+  const messageType = normalizeSupportMessageType(
+    fieldValue(raw, 'messageType', 'message_type'),
+    imageUrl,
+  )
+
+  return {
+    id: stringField(raw, 'id'),
+    author: stringField(raw, 'author') as SupportMessageAuthor,
+    authorId: stringField(raw, 'authorId', 'author_id'),
+    authorName: stringField(raw, 'authorName', 'author_name'),
+    messageType,
+    content: imageUrl === content ? '' : content,
+    imageUrl,
+    createdAt: stringField(raw, 'createdAt', 'created_at'),
+  }
+}
+
+function normalizeSupportConversation(raw: unknown): SupportConversation {
+  const record = isRecord(raw) ? raw : {}
+  const messages = Array.isArray(record.messages)
+    ? record.messages.map(normalizeSupportMessage).filter((message): message is SupportMessage => Boolean(message))
+    : []
+  const status = normalizeSupportConversationStatus(fieldValue(record, 'status'))
+
+  return {
+    id: stringField(record, 'id'),
+    userId: stringField(record, 'userId', 'user_id'),
+    username: stringField(record, 'username'),
+    subject: stringField(record, 'subject'),
+    status,
+    priority: stringField(record, 'priority') as SupportPriority,
+    assignedAdminId: optionalStringField(record, 'assignedAdminId', 'assigned_admin_id'),
+    assignedAdminName: optionalStringField(record, 'assignedAdminName', 'assigned_admin_name'),
+    unreadCount: numberField(record, 'unreadCount', 'unread_count'),
+    userUnreadCount: numberField(record, 'userUnreadCount', 'user_unread_count'),
+    createdAt: stringField(record, 'createdAt', 'created_at'),
+    updatedAt: stringField(record, 'updatedAt', 'updated_at'),
+    messages,
+  }
+}
+
+export function isVisibleSupportConversation(conversation: SupportConversation) {
+  return conversation.status !== 'closed'
+}
+
+function normalizeSupportConversations(raw: unknown): SupportConversation[] {
+  return Array.isArray(raw)
+    ? raw.map(normalizeSupportConversation).filter(isVisibleSupportConversation)
+    : []
+}
+
 export function normalizeUserProfile(user: UserSummary): MobileUserProfile {
   return {
     ...user,
@@ -483,23 +577,31 @@ export async function shareChatHallGroupBuyPlan(planId: string) {
 }
 
 export async function fetchSupportConversations() {
-  return unwrapApiData<SupportConversation[]>(await http.get('/user/support/conversations'))
+  return normalizeSupportConversations(
+    unwrapApiData<unknown>(await http.get('/user/support/conversations')),
+  )
 }
 
 export async function fetchSupportConversation(id: string) {
-  return unwrapApiData<SupportConversation>(
-    await http.get(`/user/support/conversations/${encodeURIComponent(id)}`),
+  return normalizeSupportConversation(
+    unwrapApiData<unknown>(
+      await http.get(`/user/support/conversations/${encodeURIComponent(id)}`),
+    ),
   )
 }
 
 export async function replySupportConversation(id: string, content: string) {
-  return unwrapApiData<SupportConversation>(
-    await http.post(`/user/support/conversations/${encodeURIComponent(id)}/messages`, { content }),
+  return normalizeSupportConversation(
+    unwrapApiData<unknown>(
+      await http.post(`/user/support/conversations/${encodeURIComponent(id)}/messages`, { content }),
+    ),
   )
 }
 
 export async function markSupportConversationRead(id: string) {
-  return unwrapApiData<SupportConversation>(
-    await http.post(`/user/support/conversations/${encodeURIComponent(id)}/read`),
+  return normalizeSupportConversation(
+    unwrapApiData<unknown>(
+      await http.post(`/user/support/conversations/${encodeURIComponent(id)}/read`),
+    ),
   )
 }

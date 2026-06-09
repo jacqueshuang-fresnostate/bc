@@ -6,6 +6,7 @@ import {
   errorMessage,
   fetchSupportConversation,
   fetchSupportConversations,
+  isVisibleSupportConversation,
   replySupportConversation,
   type SupportConversation,
   type SupportMessage,
@@ -72,10 +73,21 @@ function conversationStatusText(conversation: SupportConversation) {
 }
 
 function sortedConversations(items: SupportConversation[]) {
-  return [...items].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+  return [...items]
+    .filter(isVisibleSupportConversation)
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
 }
 
 function replaceConversationInList(conversation: SupportConversation) {
+  if (!isVisibleSupportConversation(conversation)) {
+    conversations.value = sortedConversations(conversations.value.filter(item => item.id !== conversation.id))
+    supportUnreadStore.setConversations(conversations.value)
+    if (activeConversationId.value === conversation.id) {
+      activeConversationId.value = conversations.value[0]?.id || ''
+      currentConversation.value = null
+    }
+    return
+  }
   conversations.value = sortedConversations([
     ...conversations.value.filter(item => item.id !== conversation.id),
     conversation,
@@ -104,11 +116,19 @@ async function loadSupportData(preferredConversationId = activeConversationId.va
   try {
     conversations.value = sortedConversations(await fetchSupportConversations())
     supportUnreadStore.setConversations(conversations.value)
-    const nextId = preferredConversationId || conversations.value[0]?.id || ''
+    const visibleConversationIds = new Set(conversations.value.map(conversation => conversation.id))
+    const nextId = preferredConversationId && visibleConversationIds.has(preferredConversationId)
+      ? preferredConversationId
+      : conversations.value[0]?.id || ''
     activeConversationId.value = nextId
-    currentConversation.value = nextId ? await fetchSupportConversation(nextId) : null
+    const selectedConversation = nextId ? await fetchSupportConversation(nextId) : null
+    currentConversation.value = selectedConversation && isVisibleSupportConversation(selectedConversation)
+      ? selectedConversation
+      : null
     if (currentConversation.value) {
       currentConversation.value = await markConversationReadIfNeeded(currentConversation.value)
+    } else if (selectedConversation) {
+      replaceConversationInList(selectedConversation)
     }
   } catch (error) {
     showToast(errorMessage(error, '加载客服会话失败'))
@@ -250,7 +270,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function selectConversation(id: string) {
   try {
     activeConversationId.value = id
-    currentConversation.value = await fetchSupportConversation(id)
+    const selectedConversation = await fetchSupportConversation(id)
+    if (!isVisibleSupportConversation(selectedConversation)) {
+      replaceConversationInList(selectedConversation)
+      showToast('该客服会话已关闭')
+      return
+    }
+    currentConversation.value = selectedConversation
     currentConversation.value = await markConversationReadIfNeeded(currentConversation.value)
     emojiPickerVisible.value = false
   } catch (error) {

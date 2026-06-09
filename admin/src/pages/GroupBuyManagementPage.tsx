@@ -4,13 +4,14 @@ import {
   Button,
   Card,
   Select,
+  SideSheet,
   Spin,
   Switch,
   Tag,
   TextArea,
   Toast,
 } from '@douyinfe/semi-ui';
-import { Plus, RefreshCcw, Save, Share2, Users } from 'lucide-react';
+import { Eye, Plus, RefreshCcw, Save, Users } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -69,6 +70,7 @@ export function GroupBuyManagementPage({
   const [includeRobotData, setIncludeRobotData] = useState(false);
   const [planPageNumber, setPlanPageNumber] = useState(1);
   const [planPageSize, setPlanPageSize] = useState(10);
+  const [createSheetVisible, setCreateSheetVisible] = useState(false);
   const {
     addParticipant,
     create,
@@ -209,6 +211,7 @@ export function GroupBuyManagementPage({
       emptyCreateForm(eligibleLotteries[0]?.id, users[0]?.id),
     );
     setParticipantForm(emptyParticipantForm(created.id, users[0]?.id));
+    setCreateSheetVisible(false);
     onDashboardRefresh();
   };
 
@@ -256,6 +259,13 @@ export function GroupBuyManagementPage({
             />
             <span>显示机器人数据</span>
           </label>
+          <Button
+            icon={<Plus size={16} />}
+            theme="solid"
+            onClick={() => setCreateSheetVisible(true)}
+          >
+            新增合买计划
+          </Button>
           <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
             刷新
           </Button>
@@ -309,7 +319,7 @@ export function GroupBuyManagementPage({
               </div>
               {plans.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[860px] text-left text-sm">
+                  <table className="w-full min-w-[960px] text-left text-sm">
                     <thead className="border-b border-line text-xs text-slate-500">
                       <tr>
                         <th className="py-2 pr-4 font-medium">计划</th>
@@ -317,6 +327,7 @@ export function GroupBuyManagementPage({
                         <th className="py-2 pr-4 font-medium">成单</th>
                         <th className="py-2 pr-4 font-medium">进度</th>
                         <th className="py-2 pr-4 font-medium">状态</th>
+                        <th className="py-2 pr-4 font-medium">操作</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-line">
@@ -326,13 +337,7 @@ export function GroupBuyManagementPage({
                           className={selectedPlan?.id === plan.id ? 'bg-teal-50/60' : ''}
                         >
                           <td className="py-3 pr-4">
-                            <button
-                              className="text-left font-semibold text-ink hover:text-teal-700"
-                              type="button"
-                              onClick={() => void loadPlan(plan.id)}
-                            >
-                              {plan.id}
-                            </button>
+                            <div className="font-semibold text-ink">{plan.id}</div>
                             <div className="mt-1 text-xs text-slate-400">
                               发起人：{plan.initiatorUsername}
                             </div>
@@ -364,6 +369,17 @@ export function GroupBuyManagementPage({
                               {statusText(plan.status)}
                             </Tag>
                           </td>
+                          <td className="py-3 pr-4">
+                            <Button
+                              disabled={saving}
+                              icon={<Eye size={14} />}
+                              loading={saving && selectedPlan?.id === plan.id}
+                              size="small"
+                              onClick={() => void loadPlan(plan.id)}
+                            >
+                              查看详情
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -376,10 +392,18 @@ export function GroupBuyManagementPage({
               )}
             </Card>
 
-            <Card className="rounded-md border border-line">
-              <div className="mb-4 flex items-center gap-2">
-                <Share2 size={17} />
+            <SideSheet
+              aria-label="新增合买计划"
+              title="新增合买计划"
+              visible={createSheetVisible}
+              width={600}
+              onCancel={() => setCreateSheetVisible(false)}
+            >
+              <div className="mb-4">
                 <h2 className="text-base font-semibold text-ink">新增合买计划</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  选择开放期号和玩法后创建合买计划，创建成功后会自动关闭抽屉并刷新列表。
+                </p>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <Field label="计划 ID">
@@ -544,10 +568,12 @@ export function GroupBuyManagementPage({
                   创建合买计划
                 </Button>
               </div>
-            </Card>
+            </SideSheet>
           </div>
 
           <div className="space-y-4">
+            {selectedPlan ? (
+              <>
             <Card className="rounded-md border border-line">
               <div className="mb-4 flex items-center gap-2">
                 <Users size={17} />
@@ -773,6 +799,19 @@ export function GroupBuyManagementPage({
                 </div>
               )}
             </Card>
+              </>
+            ) : (
+              <Card className="rounded-md border border-line">
+                <div className="grid min-h-[260px] place-items-center text-center text-sm text-slate-500">
+                  <div>
+                    <div className="font-medium text-slate-700">请选择合买计划</div>
+                    <p className="mt-2">
+                      在合买计划列表最右侧点击“查看详情”后，再显示参与记录和计划详情。
+                    </p>
+                  </div>
+                </div>
+              </Card>
+            )}
           </div>
         </section>
       )}
