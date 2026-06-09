@@ -369,7 +369,9 @@ mod tests {
             author: crate::domain::support::SupportMessageAuthor::User,
             author_id: "U10001".to_string(),
             author_name: "demo_user".to_string(),
+            message_type: crate::domain::support::SupportMessageType::Text,
             content: "我已提交客服直充。".to_string(),
+            image_url: None,
             created_at: "2026-06-05 18:20:00".to_string(),
         };
         let conversation = SupportConversation {

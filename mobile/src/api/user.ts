@@ -201,6 +201,7 @@ export type LedgerEntry = {
 }
 
 export type SupportMessageAuthor = 'user' | 'admin' | 'system'
+export type SupportMessageType = 'text' | 'image'
 
 export type SupportConversationStatus = 'open' | 'pending' | 'resolved' | 'closed'
 
@@ -211,7 +212,9 @@ export type SupportMessage = {
   author: SupportMessageAuthor
   authorId: string
   authorName: string
+  messageType?: SupportMessageType
   content: string
+  imageUrl?: string | null
   createdAt: string
 }
 

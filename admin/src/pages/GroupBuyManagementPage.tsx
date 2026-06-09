@@ -1,4 +1,4 @@
-import { Input, Banner, Button, Card, Select, Spin, Tag, TextArea } from '@douyinfe/semi-ui';
+import { Input, Banner, Button, Card, Select, Spin, Tag, TextArea, Toast } from '@douyinfe/semi-ui';
 import { Plus, RefreshCcw, Save, Share2, Users } from 'lucide-react';
 import {
   useEffect,
@@ -21,6 +21,7 @@ import type {
 } from '../types/groupBuy';
 import type { PlayRuleCode } from '../types/playRules';
 import { formatMoney } from '../utils/format';
+import { yuanInputToMinor } from '../utils/moneyInput';
 
 interface GroupBuyManagementPageProps {
   onDashboardRefresh: () => void;
@@ -28,7 +29,7 @@ interface GroupBuyManagementPageProps {
 
 interface CreateFormState {
   id: string;
-  initiatorAmountMinor: string;
+  initiatorAmountYuan: string;
   initiatorUserId: string;
   issue: string;
   lotteryId: string;
@@ -36,7 +37,7 @@ interface CreateFormState {
   numbers: string;
   ruleCode: string;
   title: string;
-  totalAmountMinor: string;
+  totalAmountYuan: string;
 }
 
 interface UpdateFormState {
@@ -45,7 +46,7 @@ interface UpdateFormState {
 }
 
 interface ParticipantFormState {
-  amountMinor: string;
+  amountYuan: string;
   id: string;
   note: string;
   userId: string;
@@ -174,7 +175,20 @@ export function GroupBuyManagementPage({
   };
 
   const submitCreate = async () => {
-    const created = await create(createPayload(createForm));
+    const totalAmountMinor = positiveYuanToMinor(
+      createForm.totalAmountYuan,
+      '计划总金额',
+    );
+    const initiatorAmountMinor = positiveYuanToMinor(
+      createForm.initiatorAmountYuan,
+      '发起人认购',
+    );
+    if (totalAmountMinor === null || initiatorAmountMinor === null) {
+      return;
+    }
+    const created = await create(
+      createPayload(createForm, totalAmountMinor, initiatorAmountMinor),
+    );
     setCreateForm(
       emptyCreateForm(eligibleLotteries[0]?.id, users[0]?.id),
     );
@@ -194,9 +208,13 @@ export function GroupBuyManagementPage({
     if (!selectedPlan) {
       return;
     }
+    const amountMinor = positiveYuanToMinor(participantForm.amountYuan, '参与金额');
+    if (amountMinor === null) {
+      return;
+    }
     const updated = await addParticipant(
       selectedPlan.id,
-      participantPayload(participantForm),
+      participantPayload(participantForm, amountMinor),
     );
     setParticipantForm(emptyParticipantForm(updated.id, users[0]?.id));
     onDashboardRefresh();
@@ -407,31 +425,31 @@ export function GroupBuyManagementPage({
                     ))}
                   </Select>
                 </Field>
-                <Field label="计划总金额（分）">
+                <Field label="计划总金额（元）">
                   <Input
                     className="form-input"
-                    min="1"
-                    type="number"
-                    value={createForm.totalAmountMinor}
+                    inputMode="decimal"
+                    placeholder="例如 1000 或 1000.00"
+                    value={createForm.totalAmountYuan}
                     onChange={(value) =>
                       setCreateFormValue(
                         setCreateForm,
-                        'totalAmountMinor',
+                        'totalAmountYuan',
                         value,
                       )
                     }
                   />
                 </Field>
-                <Field label="发起人认购（分）">
+                <Field label="发起人认购（元）">
                   <Input
                     className="form-input"
-                    min="1"
-                    type="number"
-                    value={createForm.initiatorAmountMinor}
+                    inputMode="decimal"
+                    placeholder="例如 100 或 100.00"
+                    value={createForm.initiatorAmountYuan}
                     onChange={(value) =>
                       setCreateFormValue(
                         setCreateForm,
-                        'initiatorAmountMinor',
+                        'initiatorAmountYuan',
                         value,
                       )
                     }
@@ -653,35 +671,35 @@ export function GroupBuyManagementPage({
                         }
                       />
                     </Field>
-                <Field label="参与用户">
-                  <Select
-                    className="form-input"
-                    value={participantForm.userId}
-                    onChange={(value) =>
-                      setParticipantFormValue(
-                        setParticipantForm,
-                        'userId',
-                        String(value ?? ''),
-                      )
-                    }
-                  >
-                    {users.map((user) => (
-                      <Select.Option key={user.id} value={user.id}>
-                        {user.username}（{user.id}）
-                      </Select.Option>
-                    ))}
-                  </Select>
-                </Field>
-                    <Field label="参与金额（分）">
-                      <Input
+                    <Field label="参与用户">
+                      <Select
                         className="form-input"
-                        min="1"
-                        type="number"
-                        value={participantForm.amountMinor}
+                        value={participantForm.userId}
                         onChange={(value) =>
                           setParticipantFormValue(
                             setParticipantForm,
-                            'amountMinor',
+                            'userId',
+                            String(value ?? ''),
+                          )
+                        }
+                      >
+                        {users.map((user) => (
+                          <Select.Option key={user.id} value={user.id}>
+                            {user.username}（{user.id}）
+                          </Select.Option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="参与金额（元）">
+                      <Input
+                        className="form-input"
+                        inputMode="decimal"
+                        placeholder="例如 10 或 10.00"
+                        value={participantForm.amountYuan}
+                        onChange={(value) =>
+                          setParticipantFormValue(
+                            setParticipantForm,
+                            'amountYuan',
                             value,
                           )
                         }
@@ -764,7 +782,7 @@ function emptyCreateForm(
 ): CreateFormState {
   return {
     id: 'G-NEW-001',
-    initiatorAmountMinor: '10000',
+    initiatorAmountYuan: '100.00',
     initiatorUserId,
     issue: '',
     lotteryId,
@@ -772,7 +790,7 @@ function emptyCreateForm(
     numbers: '1|2|3',
     ruleCode: '',
     title: '后台合买计划',
-    totalAmountMinor: '100000',
+    totalAmountYuan: '1000.00',
   };
 }
 
@@ -785,7 +803,7 @@ function emptyUpdateForm(): UpdateFormState {
 
 function emptyParticipantForm(planId = 'G-NEW-001', userId = ''): ParticipantFormState {
   return {
-    amountMinor: '1000',
+    amountYuan: '10.00',
     id: `${planId}-P002`,
     note: '后台添加参与记录',
     userId,
@@ -799,10 +817,14 @@ function formFromPlan(plan: GroupBuyPlan): UpdateFormState {
   };
 }
 
-function createPayload(form: CreateFormState): CreateGroupBuyPlanRequest {
+function createPayload(
+  form: CreateFormState,
+  totalAmountMinor: number,
+  initiatorAmountMinor: number,
+): CreateGroupBuyPlanRequest {
   return {
     id: form.id.trim(),
-    initiatorAmountMinor: numberField(form.initiatorAmountMinor),
+    initiatorAmountMinor,
     initiatorUserId: form.initiatorUserId.trim(),
     issue: form.issue.trim(),
     lotteryId: form.lotteryId.trim(),
@@ -810,7 +832,7 @@ function createPayload(form: CreateFormState): CreateGroupBuyPlanRequest {
     numbers: form.numbers.trim(),
     ruleCode: form.ruleCode.trim(),
     title: form.title.trim(),
-    totalAmountMinor: numberField(form.totalAmountMinor),
+    totalAmountMinor,
   };
 }
 
@@ -823,9 +845,10 @@ function updatePayload(form: UpdateFormState): UpdateGroupBuyPlanRequest {
 
 function participantPayload(
   form: ParticipantFormState,
+  amountMinor: number,
 ): AddGroupBuyParticipantRequest {
   return {
-    amountMinor: numberField(form.amountMinor),
+    amountMinor,
     id: form.id.trim(),
     note: form.note.trim(),
     userId: form.userId.trim(),
@@ -862,9 +885,13 @@ function nextParticipantId(plan: GroupBuyPlan) {
   return `${plan.id}-P${String(plan.participants.length + 1).padStart(3, '0')}`;
 }
 
-function numberField(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+function positiveYuanToMinor(value: string, label: string) {
+  const amountMinor = yuanInputToMinor(value);
+  if (amountMinor === null || amountMinor <= 0) {
+    Toast.warning(`${label}必须大于 0 元且最多保留两位小数`);
+    return null;
+  }
+  return amountMinor;
 }
 
 function setCreateFormValue<K extends keyof CreateFormState>(

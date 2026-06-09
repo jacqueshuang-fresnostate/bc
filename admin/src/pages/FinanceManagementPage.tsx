@@ -39,13 +39,14 @@ import type {
   WithdrawalOrderStatus,
 } from '../types/finance';
 import { formatMoney, formatSignedMoney } from '../utils/format';
+import { yuanInputToMinor } from '../utils/moneyInput';
 
 interface FinanceManagementPageProps {
   onDashboardRefresh: () => void;
 }
 
 interface AdjustmentFormState {
-  amountMinor: string;
+  amountYuan: string;
   description: string;
   userId: string;
 }
@@ -86,7 +87,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
     withdrawalQuery: { page: withdrawalPage, pageSize: withdrawalPageSize },
   });
   const [form, setForm] = useState<AdjustmentFormState>({
-    amountMinor: '1000',
+    amountYuan: '10.00',
     description: '后台手动补款',
     userId: 'U10001',
   });
@@ -101,8 +102,17 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
   };
 
   const submit = async () => {
+    const amountMinor = yuanInputToMinor(form.amountYuan);
+    if (amountMinor === null) {
+      Toast.warning('请输入正确的调账金额，最多保留两位小数');
+      return;
+    }
+    if (amountMinor === 0) {
+      Toast.warning('调账金额不能为 0 元');
+      return;
+    }
     const payload: ManualBalanceAdjustmentRequest = {
-      amountMinor: numberField(form.amountMinor),
+      amountMinor,
       description: form.description.trim(),
       userId: form.userId.trim(),
     };
@@ -316,7 +326,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
             <div>
               <h2 className="text-base font-semibold text-ink">手动调账</h2>
               <p className="mt-1 text-sm text-slate-500">
-                金额使用分，负数表示扣减可用余额。
+                金额使用元，负数表示扣减可用余额，最多保留两位小数。
               </p>
             </div>
           </div>
@@ -335,12 +345,13 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
               />
             </Field>
 
-            <Field label="调账金额（分）">
+            <Field label="调账金额（元）">
               <Input
                 className="form-input"
-                type="number"
-                value={form.amountMinor}
-                onChange={(value) => setFormValue(setForm, 'amountMinor', value)}
+                inputMode="decimal"
+                placeholder="例如 10 或 -5.50"
+                value={form.amountYuan}
+                onChange={(value) => setFormValue(setForm, 'amountYuan', value)}
               />
             </Field>
 
@@ -737,11 +748,6 @@ function setFormValue<K extends keyof AdjustmentFormState>(
   value: AdjustmentFormState[K],
 ) {
   setForm((current) => ({ ...current, [key]: value }));
-}
-
-function numberField(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function downloadBlob(blob: Blob, fileName: string) {

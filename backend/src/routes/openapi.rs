@@ -131,7 +131,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/users",
         "用户管理",
         "用户列表",
-        "返回后台用户列表。",
+        "分页返回后台用户列表，支持 page、pageSize、sortBy 和 sortDirection 查询排序。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -590,7 +590,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/support/conversations/{id}/messages",
         "在线客服",
         "回复客服消息",
-        "管理员回复用户发来的客服消息。",
+        "管理员回复用户发来的客服消息，支持文本消息和已上传图床的图片消息。",
         AuthMode::Admin,
         RequestBodyKind::Json,
     ),
@@ -1382,7 +1382,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/user/support/conversations/{id}/messages",
         "用户端客服",
         "用户发送客服消息",
-        "当前用户向自己的客服会话追加消息。",
+        "当前用户向自己的客服会话追加文本消息；后台发送的图片消息会在会话详情中通过 messageType/imageUrl 返回。",
         AuthMode::User,
         RequestBodyKind::Json,
     ),
@@ -1507,7 +1507,8 @@ fn route_operation(route: &RouteDoc) -> Value {
     operation.insert("description".to_string(), json!(route.description));
     operation.insert("operationId".to_string(), json!(operation_id(route)));
 
-    let parameters = path_parameters(route.path);
+    let mut parameters = path_parameters(route.path);
+    parameters.extend(query_parameters(route));
     if !parameters.is_empty() {
         operation.insert("parameters".to_string(), Value::Array(parameters));
     }
@@ -1546,6 +1547,35 @@ fn path_parameters(path: &str) -> Vec<Value> {
     }
 
     parameters
+}
+
+/// 根据具体接口补充查询参数说明，让 OpenAPI 可以准确表达分页、排序等查询契约。
+fn query_parameters(route: &RouteDoc) -> Vec<Value> {
+    if route.method == "get" && route.path == "/admin/users" {
+        return vec![
+            query_parameter("page", "页码，从 1 开始。", "integer"),
+            query_parameter("pageSize", "每页数量，默认 20。", "integer"),
+            query_parameter(
+                "sortBy",
+                "排序字段，可选 id、username、email、kind、status、balanceMinor、agentId、inviteCode。",
+                "string",
+            ),
+            query_parameter("sortDirection", "排序方向，可选 asc 或 desc。", "string"),
+        ];
+    }
+
+    Vec::new()
+}
+
+/// 构造 OpenAPI 查询参数对象，查询参数默认都是可选。
+fn query_parameter(name: &str, description: &str, value_type: &str) -> Value {
+    json!({
+        "name": name,
+        "in": "query",
+        "required": false,
+        "description": description,
+        "schema": { "type": value_type }
+    })
 }
 
 /// 生成请求体描述；具体字段由领域类型维护，这里先给接口工具提供可提交的通用结构。
@@ -1831,5 +1861,27 @@ mod tests {
         assert_eq!(parameters.len(), 1);
         assert_eq!(parameters[0]["name"].as_str(), Some("lottery_id"));
         assert_eq!(parameters[0]["in"].as_str(), Some("path"));
+    }
+
+    #[test]
+    /// 验证后台用户列表在 OpenAPI 中声明分页和排序查询参数。
+    fn admin_users_documents_pagination_and_sort_query_parameters() {
+        let document = openapi_document();
+        let parameters = document["paths"]["/admin/users"]["get"]["parameters"]
+            .as_array()
+            .expect("admin users should document query parameters");
+
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("page")));
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("pageSize")));
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("sortBy")));
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("sortDirection")));
     }
 }

@@ -19,6 +19,8 @@ import type {
   StatusUpdateRequest,
   SystemSetting,
   UpdateSystemSettingRequest,
+  UserListQuery,
+  UserPage,
   UserSummary,
 } from '../types/access';
 import type {
@@ -315,6 +317,24 @@ function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery)
   return queryString ? `${path}?${queryString}` : path;
 }
 
+function userQueryPath(path: string, query?: UserListQuery) {
+  const params = new URLSearchParams();
+  if (query?.page && query.page > 0) {
+    params.set('page', String(query.page));
+  }
+  if (query?.pageSize && query.pageSize > 0) {
+    params.set('pageSize', String(query.pageSize));
+  }
+  if (query?.sortBy) {
+    params.set('sortBy', query.sortBy);
+  }
+  if (query?.sortDirection) {
+    params.set('sortDirection', query.sortDirection);
+  }
+  const queryString = params.toString();
+  return queryString ? `${path}?${queryString}` : path;
+}
+
 export function fetchGroupBuyPlans(signal?: AbortSignal, query?: FinancePageQuery) {
   return requestJson<FinancePage<GroupBuyPlanSummary>>(
     adminQueryPath('/api/admin/group-buy/plans', query),
@@ -415,8 +435,18 @@ export function replySupportConversation(id: string, payload: SupportReplyReques
   );
 }
 
-export function fetchUsers(signal?: AbortSignal) {
-  return requestJson<UserSummary[]>('/api/admin/users', { signal });
+export async function fetchUsers(signal?: AbortSignal) {
+  const page = await fetchUserPage(signal, {
+    page: 1,
+    pageSize: 5000,
+    sortBy: 'id',
+    sortDirection: 'asc',
+  });
+  return page.items;
+}
+
+export function fetchUserPage(signal?: AbortSignal, query?: UserListQuery) {
+  return requestJson<UserPage>(userQueryPath('/api/admin/users', query), { signal });
 }
 
 export function createUser(payload: UserSummary) {

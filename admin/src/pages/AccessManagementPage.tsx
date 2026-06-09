@@ -8,6 +8,7 @@ import {
   Spin,
   Tabs,
   Tag,
+  Toast,
 } from '@douyinfe/semi-ui';
 import {
   Image as ImageIcon,
@@ -33,8 +34,13 @@ import {
 import { fetchLotteries } from '../api/client';
 import { ImageUploadAvatar } from '../components/ImageUploadAvatar';
 import { MetricCard } from '../components/MetricCard';
+import { PageControls } from '../components/PageControls';
 import { useAccessManagement } from '../hooks/useAccessManagement';
-import type { AdminSaveRequest } from '../types/access';
+import type {
+  AdminSaveRequest,
+  UserListSortBy,
+  UserListSortDirection,
+} from '../types/access';
 import type {
   AdminRole,
   AdminSummary,
@@ -46,6 +52,7 @@ import type {
   UserSummary,
 } from '../types/dashboard';
 import { formatMoney } from '../utils/format';
+import { minorToYuanInput, yuanInputToMinor } from '../utils/moneyInput';
 
 type AccessSection = 'admins' | 'roles' | 'settings' | 'users';
 
@@ -106,6 +113,8 @@ const RECHARGE_RAINBOW_ENABLED_SETTING_KEY = 'recharge_rainbow_epay_enabled';
 const RECHARGE_RAINBOW_PAY_TYPES_SETTING_KEY = 'recharge_rainbow_epay_pay_types';
 const RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY =
   'recharge_customer_service_enabled';
+const RECHARGE_MIN_AMOUNT_SETTING_KEY = 'recharge_min_amount_minor';
+const RECHARGE_MAX_AMOUNT_SETTING_KEY = 'recharge_max_amount_minor';
 const UNCONFIGURED_SETTING_VALUE = '未配置';
 const MOBILE_CUSTOM_SETTING_KEYS = new Set([
   MOBILE_PLATFORM_NAME_SETTING_KEY,
@@ -119,6 +128,10 @@ const RECHARGE_PAYMENT_SETTING_KEYS = new Set([
   RECHARGE_RAINBOW_ENABLED_SETTING_KEY,
   RECHARGE_RAINBOW_PAY_TYPES_SETTING_KEY,
   RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY,
+]);
+const MINOR_MONEY_SETTING_KEYS = new Set([
+  RECHARGE_MIN_AMOUNT_SETTING_KEY,
+  RECHARGE_MAX_AMOUNT_SETTING_KEY,
 ]);
 const RECHARGE_PAY_TYPE_OPTIONS: SettingSelectOption[] = [
   { label: '支付宝充值', value: 'alipay' },
@@ -138,10 +151,43 @@ const PERMISSION_SCOPE_OPTIONS: Array<{ label: string; value: PermissionScope }>
   { label: '返利', value: 'rebates' },
 ];
 
+const USER_SORT_OPTIONS: Array<{ label: string; value: UserListSortBy }> = [
+  { label: '用户 ID', value: 'id' },
+  { label: '用户名', value: 'username' },
+  { label: '邮箱', value: 'email' },
+  { label: '用户类型', value: 'kind' },
+  { label: '账户状态', value: 'status' },
+  { label: '账户余额', value: 'balanceMinor' },
+  { label: '上级代理', value: 'agentId' },
+  { label: '邀请码', value: 'inviteCode' },
+];
+
+const USER_SORT_DIRECTION_OPTIONS: Array<{
+  label: string;
+  value: UserListSortDirection;
+}> = [
+  { label: '升序', value: 'asc' },
+  { label: '降序', value: 'desc' },
+];
+
 export function AccessManagementPage({
   activeModuleKey,
   onDashboardRefresh,
 }: AccessManagementPageProps) {
+  const [userPageNumber, setUserPageNumber] = useState(1);
+  const [userPageSize, setUserPageSize] = useState(20);
+  const [userSortBy, setUserSortBy] = useState<UserListSortBy>('id');
+  const [userSortDirection, setUserSortDirection] =
+    useState<UserListSortDirection>('asc');
+  const userQuery = useMemo(
+    () => ({
+      page: userPageNumber,
+      pageSize: userPageSize,
+      sortBy: userSortBy,
+      sortDirection: userSortDirection,
+    }),
+    [userPageNumber, userPageSize, userSortBy, userSortDirection],
+  );
   const {
     admins,
     changeAdminStatus,
@@ -160,8 +206,9 @@ export function AccessManagementPage({
     saveUser,
     saving,
     settings,
+    userPage,
     users,
-  } = useAccessManagement();
+  } = useAccessManagement({ userQuery });
   const [section, setSection] = useState<AccessSection>(
     sectionForModule(activeModuleKey),
   );
@@ -201,7 +248,7 @@ export function AccessManagementPage({
   useEffect(() => {
     setSettingDrafts(
       settings.reduce<Record<string, string>>((drafts, setting) => {
-        drafts[setting.key] = setting.value;
+        drafts[setting.key] = settingDraftValue(setting);
         return drafts;
       }, {}),
     );
@@ -310,12 +357,12 @@ export function AccessManagementPage({
           <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard
               label="用户总数"
-              trend={`${totals.agentCount} 个代理`}
-              value={`${users.length}`}
+              trend={`当前页 ${totals.agentCount} 个代理`}
+              value={`${userPage.totalCount}`}
             />
             <MetricCard
               label="活跃用户"
-              trend="可参与投注"
+              trend="当前页可参与投注"
               value={`${totals.activeUserCount}`}
             />
             <MetricCard
@@ -354,8 +401,15 @@ export function AccessManagementPage({
         <UserSection
           editingId={editingUserId}
           form={userForm}
+          loading={loading}
+          page={userPage.page}
+          pageSize={userPageSize}
           saving={saving}
           sheetVisible={userSheetVisible}
+          sortBy={userSortBy}
+          sortDirection={userSortDirection}
+          totalCount={userPage.totalCount}
+          totalPages={userPage.totalPages}
           users={users}
           onClose={() => setUserSheetVisible(false)}
           onEdit={(user) => {
@@ -369,6 +423,19 @@ export function AccessManagementPage({
             setUserSheetVisible(true);
           }}
           onSetForm={setUserForm}
+          onPageChange={setUserPageNumber}
+          onPageSizeChange={(pageSize) => {
+            setUserPageSize(pageSize);
+            setUserPageNumber(1);
+          }}
+          onSortByChange={(sortBy) => {
+            setUserSortBy(sortBy);
+            setUserPageNumber(1);
+          }}
+          onSortDirectionChange={(sortDirection) => {
+            setUserSortDirection(sortDirection);
+            setUserPageNumber(1);
+          }}
           onStatus={(id, status) => {
             void changeUserStatus(id, status).then(onDashboardRefresh);
           }}
@@ -434,8 +501,11 @@ export function AccessManagementPage({
           onRegistrationChange={setRegistrationForm}
           onSaveRegistration={() => void submitRegistration()}
           onSaveSetting={(key) => {
-            const value = settingDrafts[key] ?? '';
-            void saveSetting(key, value).then(onDashboardRefresh);
+            const submitValue = settingSubmitValue(key, settingDrafts[key] ?? '');
+            if (submitValue === null) {
+              return;
+            }
+            void saveSetting(key, submitValue).then(onDashboardRefresh);
           }}
         />
       )}
@@ -446,43 +516,110 @@ export function AccessManagementPage({
 function UserSection({
   editingId,
   form,
+  loading,
   onClose,
   onEdit,
   onNew,
+  onPageChange,
+  onPageSizeChange,
   onSetForm,
+  onSortByChange,
+  onSortDirectionChange,
   onStatus,
   onSubmit,
+  page,
+  pageSize,
   saving,
   sheetVisible,
+  sortBy,
+  sortDirection,
+  totalCount,
+  totalPages,
   users,
 }: {
   editingId: string | null;
   form: UserFormState;
+  loading: boolean;
   onClose: () => void;
   onEdit: (user: UserSummary) => void;
   onNew: () => void;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
   onSetForm: Dispatch<SetStateAction<UserFormState>>;
+  onSortByChange: (sortBy: UserListSortBy) => void;
+  onSortDirectionChange: (sortDirection: UserListSortDirection) => void;
   onStatus: (id: string, status: UserStatus) => void;
   onSubmit: () => void;
+  page: number;
+  pageSize: number;
   saving: boolean;
   sheetVisible: boolean;
+  sortBy: UserListSortBy;
+  sortDirection: UserListSortDirection;
+  totalCount: number;
+  totalPages: number;
   users: UserSummary[];
 }) {
   return (
     <section className="space-y-4">
       <Card className="rounded-md border border-line">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-ink">用户列表</h2>
-          <div className="flex items-center gap-2">
-            <Tag color="cyan">{users.length} 个用户</Tag>
-            <Button
-              icon={<UserPlus size={15} />}
-              size="small"
-              theme="solid"
-              onClick={onNew}
-            >
-              新建用户
-            </Button>
+        <div className="mb-3 flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-ink">用户列表</h2>
+            <div className="flex items-center gap-2">
+              <Tag color="cyan">当前页 {users.length} 个用户</Tag>
+              <Button
+                icon={<UserPlus size={15} />}
+                size="small"
+                theme="solid"
+                onClick={onNew}
+              >
+                新建用户
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+              <span className="text-xs font-medium text-slate-500">排序</span>
+              <Select
+                className="form-input min-w-[132px]"
+                value={sortBy}
+                onChange={(value) =>
+                  onSortByChange((value as UserListSortBy) || 'id')
+                }
+              >
+                {USER_SORT_OPTIONS.map((option) => (
+                  <Select.Option key={option.value} value={option.value}>
+                    {option.label}
+                  </Select.Option>
+                ))}
+              </Select>
+              <Select
+                className="form-input min-w-[104px]"
+                value={sortDirection}
+                onChange={(value) =>
+                  onSortDirectionChange(
+                    (value as UserListSortDirection) || 'asc',
+                  )
+                }
+              >
+                {USER_SORT_DIRECTION_OPTIONS.map((option) => (
+                  <Select.Option key={option.value} value={option.value}>
+                    {option.label}
+                  </Select.Option>
+                ))}
+              </Select>
+            </div>
+            <PageControls
+              loading={loading}
+              page={page}
+              pageSize={pageSize}
+              totalCount={totalCount}
+              totalPages={totalPages}
+              onPageChange={onPageChange}
+              onPageSizeChange={onPageSizeChange}
+            />
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -1228,6 +1365,7 @@ function SettingFields({
       {items.map((setting) => {
         const draftValue = drafts[setting.key] ?? setting.value;
         const selectOptions = settingSelectOptions(setting.key, draftValue);
+        const usesYuanInput = isMinorMoneySetting(setting.key);
 
         return (
           <div
@@ -1240,7 +1378,7 @@ function SettingFields({
                   {setting.key}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  {setting.description}
+                  {settingDescription(setting)}
                 </p>
               </div>
               <Button
@@ -1268,6 +1406,8 @@ function SettingFields({
             ) : (
               <Input
                 className="form-input"
+                inputMode={usesYuanInput ? 'decimal' : undefined}
+                placeholder={usesYuanInput ? '例如 100 或 100.00' : undefined}
                 value={draftValue}
                 onChange={(value) => onDraftChange(setting.key, value)}
               />
@@ -1823,8 +1963,8 @@ function settingGroupName(key: string): string {
   if (
     key.startsWith('recharge_rainbow_epay_') ||
     key.startsWith('recharge_customer_service_') ||
-    key === 'recharge_min_amount_minor' ||
-    key === 'recharge_max_amount_minor'
+    key === RECHARGE_MIN_AMOUNT_SETTING_KEY ||
+    key === RECHARGE_MAX_AMOUNT_SETTING_KEY
   ) {
     return '充值设置';
   }
@@ -1835,6 +1975,35 @@ function settingGroupName(key: string): string {
     return '返利设置';
   }
   return '基础设置';
+}
+
+function isMinorMoneySetting(key: string) {
+  return MINOR_MONEY_SETTING_KEYS.has(key);
+}
+
+function settingDraftValue(setting: SystemSettingItem) {
+  return isMinorMoneySetting(setting.key)
+    ? minorToYuanInput(setting.value)
+    : setting.value;
+}
+
+function settingSubmitValue(key: string, value: string) {
+  if (!isMinorMoneySetting(key)) {
+    return value;
+  }
+  const amountMinor = yuanInputToMinor(value);
+  if (amountMinor === null || amountMinor <= 0) {
+    Toast.warning('充值金额设置必须大于 0 元且最多保留两位小数');
+    return null;
+  }
+  return String(amountMinor);
+}
+
+function settingDescription(setting: SystemSettingItem) {
+  if (!isMinorMoneySetting(setting.key)) {
+    return setting.description;
+  }
+  return setting.description.replace('（分）', '（元）');
 }
 
 function settingSelectOptions(

@@ -15,7 +15,7 @@ use axum::{
 use chrono::Local;
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, time::Duration};
+use std::{cmp::Ordering, collections::BTreeMap, time::Duration};
 
 use crate::{
     app::AppState,
@@ -710,6 +710,36 @@ struct FinancePageQuery {
     include_robot_data: Option<bool>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台用户列表分页和排序查询参数。
+struct UserListQuery {
+    page: Option<usize>,
+    page_size: Option<usize>,
+    sort_by: Option<String>,
+    sort_direction: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// 后台用户列表允许排序的字段白名单。
+enum UserListSortBy {
+    AgentId,
+    BalanceMinor,
+    Email,
+    Id,
+    InviteCode,
+    Kind,
+    Status,
+    Username,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// 后台用户列表排序方向。
+enum UserListSortDirection {
+    Asc,
+    Desc,
+}
+
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 /// 后台一键清理记录后的统一返回结构。
@@ -722,6 +752,18 @@ impl FinancePageQuery {
     /// 后台列表默认隐藏机器人账户和机器人流水，只有显式打开开关时才返回。
     fn include_robot_data(&self) -> bool {
         self.include_robot_data.unwrap_or(false)
+    }
+}
+
+/// 后台用户列表查询参数。
+impl UserListQuery {
+    /// 复用后台通用分页结构，用户列表不涉及机器人数据开关。
+    fn page_query(&self) -> FinancePageQuery {
+        FinancePageQuery {
+            include_robot_data: None,
+            page: self.page,
+            page_size: self.page_size,
+        }
     }
 }
 
@@ -769,6 +811,101 @@ fn page_items<T>(items: Vec<T>, query: FinancePageQuery) -> FinancePage<T> {
         page_size,
         total_count,
         total_pages,
+    }
+}
+
+/// 按用户列表查询参数排序，排序字段必须来自白名单。
+fn sort_users(users: &mut [UserSummary], query: &UserListQuery) -> ApiResult<()> {
+    let sort_by = user_sort_by(query.sort_by.as_deref())?;
+    let direction = user_sort_direction(query.sort_direction.as_deref())?;
+    users.sort_by(|left, right| {
+        let ordering = compare_users(left, right, sort_by).then_with(|| left.id.cmp(&right.id));
+        match direction {
+            UserListSortDirection::Asc => ordering,
+            UserListSortDirection::Desc => ordering.reverse(),
+        }
+    });
+
+    Ok(())
+}
+
+/// 解析用户列表排序字段，默认按用户 ID 排序。
+fn user_sort_by(value: Option<&str>) -> ApiResult<UserListSortBy> {
+    let value = value.unwrap_or("id").trim();
+    if value.is_empty() {
+        return Ok(UserListSortBy::Id);
+    }
+
+    match value {
+        "agentId" => Ok(UserListSortBy::AgentId),
+        "balance" | "balanceMinor" => Ok(UserListSortBy::BalanceMinor),
+        "email" => Ok(UserListSortBy::Email),
+        "id" | "userId" => Ok(UserListSortBy::Id),
+        "inviteCode" => Ok(UserListSortBy::InviteCode),
+        "kind" | "userKind" => Ok(UserListSortBy::Kind),
+        "status" => Ok(UserListSortBy::Status),
+        "username" => Ok(UserListSortBy::Username),
+        _ => Err(ApiError::BadRequest(format!(
+            "不支持的用户排序字段：{value}"
+        ))),
+    }
+}
+
+/// 解析用户列表排序方向，默认正序。
+fn user_sort_direction(value: Option<&str>) -> ApiResult<UserListSortDirection> {
+    let value = value.unwrap_or("asc").trim();
+    if value.is_empty() {
+        return Ok(UserListSortDirection::Asc);
+    }
+
+    match value {
+        "asc" | "ascending" => Ok(UserListSortDirection::Asc),
+        "desc" | "descending" => Ok(UserListSortDirection::Desc),
+        _ => Err(ApiError::BadRequest(format!(
+            "不支持的用户排序方向：{value}"
+        ))),
+    }
+}
+
+/// 根据用户排序字段比较两条用户摘要。
+fn compare_users(left: &UserSummary, right: &UserSummary, sort_by: UserListSortBy) -> Ordering {
+    match sort_by {
+        UserListSortBy::AgentId => {
+            optional_text(left.agent_id.as_ref()).cmp(optional_text(right.agent_id.as_ref()))
+        }
+        UserListSortBy::BalanceMinor => left.balance_minor.cmp(&right.balance_minor),
+        UserListSortBy::Email => {
+            optional_text(left.email.as_ref()).cmp(optional_text(right.email.as_ref()))
+        }
+        UserListSortBy::Id => left.id.cmp(&right.id),
+        UserListSortBy::InviteCode => left.invite_code.cmp(&right.invite_code),
+        UserListSortBy::Kind => user_kind_order(&left.kind).cmp(&user_kind_order(&right.kind)),
+        UserListSortBy::Status => {
+            user_status_order(&left.status).cmp(&user_status_order(&right.status))
+        }
+        UserListSortBy::Username => left.username.cmp(&right.username),
+    }
+}
+
+/// 空值排序时放在非空文本之前，保证查询结果稳定。
+fn optional_text(value: Option<&String>) -> &str {
+    value.map(String::as_str).unwrap_or("")
+}
+
+/// 用户类型排序顺序：普通用户在前，代理在后。
+fn user_kind_order(kind: &crate::domain::user::UserKind) -> u8 {
+    match kind {
+        crate::domain::user::UserKind::Regular => 0,
+        crate::domain::user::UserKind::Agent => 1,
+    }
+}
+
+/// 用户状态排序顺序：启用、停用、锁定。
+fn user_status_order(status: &crate::domain::user::UserStatus) -> u8 {
+    match status {
+        crate::domain::user::UserStatus::Active => 0,
+        crate::domain::user::UserStatus::Suspended => 1,
+        crate::domain::user::UserStatus::Locked => 2,
     }
 }
 
@@ -1381,10 +1518,15 @@ async fn reply_support_conversation(
 /// 返回后台用户列表。
 async fn list_users(
     State(state): State<AppState>,
-) -> ApiResult<Json<ApiEnvelope<Vec<UserSummary>>>> {
-    let users = users_with_financial_balances(&state).await?;
+    Query(query): Query<UserListQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<UserSummary>>>> {
+    let mut users = users_with_financial_balances(&state).await?;
+    sort_users(&mut users, &query)?;
 
-    Ok(Json(ApiEnvelope::success(users)))
+    Ok(Json(ApiEnvelope::success(page_items(
+        users,
+        query.page_query(),
+    ))))
 }
 
 /// 返回指定用户详情。
@@ -2393,8 +2535,8 @@ mod tests {
     use super::{
         align_draw_issue_plan_after_sale_on, finance_overview_for_query,
         normalize_admin_draw_control_target, page_items, required_scope_for_path,
-        should_align_draw_issue_plan_after_sale_on, should_include_user_scoped_record,
-        FinancePageQuery,
+        should_align_draw_issue_plan_after_sale_on, should_include_user_scoped_record, sort_users,
+        FinancePageQuery, UserListQuery,
     };
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
@@ -2405,6 +2547,7 @@ mod tests {
             order::CreateOrderRequest,
             permission::PermissionScope,
             play::{PlayRuleCode, PlaySelection},
+            user::{UserKind, UserStatus, UserSummary},
         },
         services::{
             access::AccessRepository,
@@ -2507,6 +2650,31 @@ mod tests {
         assert_eq!(page.page_size, 2);
         assert_eq!(page.total_count, 3);
         assert_eq!(page.total_pages, 2);
+    }
+
+    #[test]
+    /// 后台用户列表支持先按白名单字段排序，再返回请求页码对应的数据。
+    fn user_list_sorting_runs_before_pagination() {
+        let mut users = vec![
+            test_user("U10001", "alice", 300),
+            test_user("U10002", "bob", 100),
+            test_user("U10003", "carol", 200),
+        ];
+        let query = UserListQuery {
+            page: Some(2),
+            page_size: Some(2),
+            sort_by: Some("balanceMinor".to_string()),
+            sort_direction: Some("desc".to_string()),
+        };
+
+        sort_users(&mut users, &query).expect("users can be sorted");
+        let page = page_items(users, query.page_query());
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, "U10002");
+        assert_eq!(page.page, 2);
+        assert_eq!(page.page_size, 2);
+        assert_eq!(page.total_count, 3);
     }
 
     #[tokio::test]
@@ -2619,6 +2787,20 @@ mod tests {
             }),
             support: SupportRepository::memory_seeded(),
             withdrawals: WithdrawalRepository::memory(),
+        }
+    }
+
+    fn test_user(id: &str, username: &str, balance_minor: i64) -> UserSummary {
+        UserSummary {
+            agent_id: None,
+            avatar_url: String::new(),
+            balance_minor,
+            email: None,
+            id: id.to_string(),
+            invite_code: format!("{id}CODE"),
+            kind: UserKind::Regular,
+            status: UserStatus::Active,
+            username: username.to_string(),
         }
     }
 }

@@ -321,7 +321,13 @@ onBeforeUnmount(() => {
             <span>{{ messageAuthorText(item) }}</span>
             <time>{{ formatTime(item.createdAt) }}</time>
           </div>
-          <div class="support-chat__content">{{ item.content }}</div>
+          <div v-if="item.messageType === 'image' && item.imageUrl" class="support-chat__content">
+            <a :href="item.imageUrl" target="_blank" rel="noreferrer">
+              <img class="support-chat__image" :src="item.imageUrl" alt="客服图片消息">
+            </a>
+            <p v-if="item.content" class="support-chat__file-name">{{ item.content }}</p>
+          </div>
+          <div v-else class="support-chat__content">{{ item.content }}</div>
         </div>
       </div>
     </main>

@@ -254,7 +254,7 @@ WebSocket 消息统一使用当前系统事件信封：
 
 客服实时事件：
 
-- `support.message_created`：客服会话新增消息，`data` 包含 `conversationId`、`userId`、`conversation` 和 `message`。该事件必须同时发布给会话所属用户和后台客服连接，不允许发给匿名用户或其他普通用户。
+- `support.message_created`：客服会话新增消息，`data` 包含 `conversationId`、`userId`、`conversation` 和 `message`；`message` 需要携带 `messageType`、`content` 和可选 `imageUrl`，方便后台与手机端按文本或图片渲染。该事件必须同时发布给会话所属用户和后台客服连接，不允许发给匿名用户或其他普通用户。
 - `support.conversation_updated`：客服会话状态、优先级或分配客服变化，`data` 包含 `conversationId`、`userId` 和 `conversation`。该事件必须同时发布给会话所属用户和后台客服连接，手机端客服页需要据此刷新“客服已接入”和会话状态。
 - 后台连接使用 `/api/admin/realtime?token=...`，因为浏览器 WebSocket 不能设置 `Authorization` 头；后端必须用查询参数 token 校验管理员会话，并要求具备 `customerService` 权限。
 
@@ -2572,7 +2572,20 @@ await updateInvitePolicy({
 ```json
 {
   "adminId": "A10001",
-  "content": "已为您核对订单。"
+  "content": "已为您核对订单。",
+  "messageType": "text",
+  "imageUrl": null
+}
+```
+
+后台图片回复字段：
+
+```json
+{
+  "adminId": "A10001",
+  "content": "请查看这张凭证截图。",
+  "messageType": "image",
+  "imageUrl": "https://oss.example.test/support-proof.png"
 }
 ```
 
@@ -2583,7 +2596,10 @@ await updateInvitePolicy({
 3. 创建会话时 `userId` 必须引用用户仓储中的已有用户，后端根据用户仓储回填 `username`。
 4. 更新会话时 `assignedAdminId` 可以为空；非空时必须引用管理员仓储中的已有管理员，后端回填 `assignedAdminName`。
 5. 后台回复时 `adminId` 必须引用已有管理员，消息作者为 `admin`。
-6. 本阶段只做后台会话/工单记录，不实现实时聊天、WebSocket、文件上传、站内推送或手机端客服入口。
+6. 客服消息返回 `messageType`，文本消息为 `text`，图片消息为 `image`。
+7. 图片消息必须提供 `imageUrl`，且只能保存 `http/https` 图片链接；`content` 是可选说明文字。
+8. 后台客服页面按状态 Tabs 区分会话列表，筛选只影响后台列表展示，不改变后端会话状态。
+9. 客服消息通过 `support.message_created` 实时事件同步到会话所属用户和后台客服连接，手机端按 `messageType` 展示文本或图片。
 
 ### 4. 校验与错误矩阵
 
@@ -2598,7 +2614,9 @@ await updateInvitePolicy({
 | 更新时分配管理员不存在 | HTTP 404，返回管理员不存在 |
 | 回复时管理员 ID 为空 | HTTP 400，返回 `support reply admin id is required` |
 | 回复时管理员不存在 | HTTP 404，返回管理员不存在 |
-| 回复内容为空 | HTTP 400，返回 `support reply content is required` |
+| 文本回复内容为空 | HTTP 400，返回 `support reply content is required` |
+| 图片回复缺少图片链接 | HTTP 400，返回客服图片链接不能为空 |
+| 图片回复链接不是 `http/https` | HTTP 400，返回客服图片链接必须是 `http` 或 `https` 地址 |
 | 查询、更新、回复不存在会话 | HTTP 404，返回会话不存在 |
 
 ### 5. Good / Base / Bad Cases
@@ -2606,13 +2624,15 @@ await updateInvitePolicy({
 - Good：创建 `CS-API-001` 绑定 `U10001`，响应自动带上 `username=demo_user` 和首条用户消息。
 - Good：把会话分配给 `A10001`，响应自动带上 `assignedAdminName=admin`。
 - Good：客服回复后消息列表新增 `admin` 消息，`unreadCount` 清零。
+- Good：后台上传图床图片后用 `messageType=image` 和 `imageUrl` 发送，后台和手机端历史消息都展示图片缩略图。
 - Base：无数据库环境下使用内存客服仓储，服务重启后恢复种子会话。
 - Bad：前端直接提交 `username` 或 `assignedAdminName` 并让后端信任，会导致用户/管理员改名后数据漂移。
-- Bad：把在线客服基础阶段扩展成实时 IM 或 WebSocket，会把本阶段配置管理和复杂消息系统混在一起。
+- Bad：只把图片 URL 拼进文本内容，导致手机端无法按图片消息渲染，也无法区分图片说明文字。
 
 ### 6. 必要测试
 
 - 后端需要覆盖创建、更新分配和后台回复。
+- 后端需要覆盖后台图片回复保存 `messageType=image` 和 `imageUrl`。
 - 后端需要覆盖创建时用户不存在拒绝。
 - 后端需要覆盖分配管理员不存在拒绝。
 - 后端需要覆盖空回复拒绝。
@@ -4092,7 +4112,7 @@ support.get_for_user(conversation_id, &session.user.id).await
 - `GET /api/user/withdrawals`
 - `POST /api/user/withdrawals`
 - `GET/POST/PUT/DELETE /api/user/withdrawal-methods`
-- 后台用户列表：`GET /api/admin/users`
+- 后台用户列表：`GET /api/admin/users?page=1&pageSize=20&sortBy=id&sortDirection=asc`
 - 资金流水类型：`ledger_entries.kind = withdrawalFreeze`
 
 ### 3. 契约
@@ -4135,7 +4155,8 @@ support.get_for_user(conversation_id, &session.user.id).await
 后台用户维护接口不得作为余额或邀请码编辑入口：
 
 - `PUT /api/admin/users/{id}` 必须保留原 `balanceMinor` 和 `inviteCode`。
-- `GET /api/admin/users` 返回的 `balanceMinor` 应以 `financial_accounts.available_balance_minor` 为准。
+- `GET /api/admin/users` 返回分页结构 `items/totalCount/page/pageSize/totalPages`，其中 `items[].balanceMinor` 应以 `financial_accounts.available_balance_minor` 为准。
+- 用户列表支持 `sortBy` 和 `sortDirection` 查询排序；`sortBy` 白名单为 `id`、`username`、`email`、`kind`、`status`、`balanceMinor`、`agentId`、`inviteCode`，`sortDirection` 只允许 `asc` 或 `desc`。
 - 用户 ID 仍作为资源 ID 使用，更新时路径 ID 必须与请求体 ID 一致。
 
 ### 4. 校验与错误矩阵
@@ -4150,11 +4171,14 @@ support.get_for_user(conversation_id, &session.user.id).await
 | 重复冻结同一个提现申请 ID | 保持幂等，返回既有 `withdrawalFreeze` 流水 |
 | 用户维护请求修改 `inviteCode` | 后端忽略，保留原邀请码 |
 | 用户维护请求修改 `balanceMinor` | 后端忽略，余额仅由财务账户决定 |
+| 用户列表 `sortBy` 不在白名单 | HTTP 400，返回不支持的用户排序字段 |
+| 用户列表 `sortDirection` 不是 `asc/desc` | HTTP 400，返回不支持的用户排序方向 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：用户先绑定银行卡提现方式，再提交 `POST /api/user/withdrawals`，返回 `pending` 提现申请，资金账户可用余额减少、冻结余额增加。
 - Good：后台用户维护列表中余额来自财务账户；财务手动调账后刷新用户维护页能看到新余额。
+- Good：后台用户维护页请求 `GET /api/admin/users?page=1&pageSize=20&sortBy=balanceMinor&sortDirection=desc`，按余额倒序展示第一页用户，总数来自 `totalCount`。
 - Base：提现审核、打款、驳回和解冻流程后续再接入；当前接口只负责申请和冻结。
 - Bad：手机端提交 `method_id` 或 `amount` 字段；后端当前契约只接受 `methodId` 和 `amountMinor`。
 - Bad：通过用户维护直接改 `balanceMinor`；这会绕过财务流水，破坏审计链路。

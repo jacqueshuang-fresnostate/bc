@@ -8,7 +8,7 @@ import {
   fetchRegistrationConfig,
   fetchRoles,
   fetchSystemSettings,
-  fetchUsers,
+  fetchUserPage,
   resetAdminPassword,
   setAdminStatus,
   setUserStatus,
@@ -25,16 +25,22 @@ import type {
   AdminPasswordResetRequest,
   RegistrationConfig,
   SystemSetting,
+  UserListQuery,
+  UserPage,
   UserStatus,
   UserSummary,
 } from '../types/access';
 
-export function useAccessManagement() {
+interface UseAccessManagementOptions {
+  userQuery: UserListQuery;
+}
+
+export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
   const [admins, setAdmins] = useState<AdminSummary[]>([]);
   const [registration, setRegistration] = useState<RegistrationConfig | null>(null);
   const [roles, setRoles] = useState<AdminRole[]>([]);
   const [settings, setSettings] = useState<SystemSetting[]>([]);
-  const [users, setUsers] = useState<UserSummary[]>([]);
+  const [userPage, setUserPage] = useState<UserPage>(emptyUserPage);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +57,7 @@ export function useAccessManagement() {
     setError(null);
 
     Promise.all([
-      fetchUsers(controller.signal),
+      fetchUserPage(controller.signal, userQuery),
       fetchAdmins(controller.signal),
       fetchRoles(controller.signal),
       fetchSystemSettings(controller.signal),
@@ -59,13 +65,13 @@ export function useAccessManagement() {
     ])
       .then(
         ([
-          nextUsers,
+          nextUserPage,
           nextAdmins,
           nextRoles,
           nextSettings,
           nextRegistration,
         ]) => {
-          setUsers(nextUsers);
+          setUserPage(nextUserPage);
           setAdmins(nextAdmins);
           setRoles(nextRoles);
           setSettings(nextSettings);
@@ -86,7 +92,13 @@ export function useAccessManagement() {
     return () => {
       controller.abort();
     };
-  }, [refreshToken]);
+  }, [
+    refreshToken,
+    userQuery.page,
+    userQuery.pageSize,
+    userQuery.sortBy,
+    userQuery.sortDirection,
+  ]);
 
   const saveUser = useCallback(async (payload: UserSummary, existingId?: string) => {
     setSaving(true);
@@ -95,7 +107,8 @@ export function useAccessManagement() {
       const saved = existingId
         ? await updateUser(existingId, payload)
         : await createUser(payload);
-      setUsers((current) => upsertById(current, saved));
+      setUserPage((current) => replacePageUser(current, saved));
+      refresh();
       return saved;
     } catch (requestError) {
       setError(errorMessage(requestError));
@@ -103,14 +116,15 @@ export function useAccessManagement() {
     } finally {
       setSaving(false);
     }
-  }, []);
+  }, [refresh]);
 
   const changeUserStatus = useCallback(async (id: string, status: UserStatus) => {
     setSaving(true);
     setError(null);
     try {
       const saved = await setUserStatus(id, { status });
-      setUsers((current) => upsertById(current, saved));
+      setUserPage((current) => replacePageUser(current, saved));
+      refresh();
       return saved;
     } catch (requestError) {
       setError(errorMessage(requestError));
@@ -118,7 +132,7 @@ export function useAccessManagement() {
     } finally {
       setSaving(false);
     }
-  }, []);
+  }, [refresh]);
 
   const saveAdmin = useCallback(
     async (payload: AdminSaveRequest, existingId?: string) => {
@@ -255,7 +269,25 @@ export function useAccessManagement() {
     saveUser,
     saving,
     settings,
-    users,
+    userPage,
+    users: userPage.items,
+  };
+}
+
+const emptyUserPage: UserPage = {
+  items: [],
+  page: 1,
+  pageSize: 20,
+  totalCount: 0,
+  totalPages: 0,
+};
+
+function replacePageUser(page: UserPage, user: UserSummary): UserPage {
+  return {
+    ...page,
+    items: page.items.some((current) => current.id === user.id)
+      ? page.items.map((current) => (current.id === user.id ? user : current))
+      : page.items,
   };
 }
 

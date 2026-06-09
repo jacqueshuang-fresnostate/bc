@@ -33,6 +33,7 @@ import type {
   PlaySelection,
 } from '../types/playRules';
 import { formatMoney } from '../utils/format';
+import { yuanInputToMinor } from '../utils/moneyInput';
 import {
   formatOdds,
   isBankerRule,
@@ -58,7 +59,7 @@ interface OrderFormState {
   positionC: string;
   ruleCode: PlayRuleCode | '';
   tensAttributes: DigitAttribute[];
-  unitAmountMinor: string;
+  unitAmountYuan: string;
   userId: string;
 }
 
@@ -148,7 +149,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
         issue: current.issue,
         lotteryId: current.lotteryId,
         ruleCode: selectedRule.code,
-        unitAmountMinor: current.unitAmountMinor,
+        unitAmountYuan: current.unitAmountYuan,
         userId: current.userId,
       }));
     }
@@ -177,12 +178,17 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
     if (!selectedLottery || !selectedRule || !selectedDrawIssue) {
       return;
     }
+    const unitAmountMinor = yuanInputToMinor(form.unitAmountYuan);
+    if (unitAmountMinor === null || unitAmountMinor <= 0) {
+      Toast.warning('请输入正确的单注金额，金额必须大于 0 元且最多保留两位小数');
+      return;
+    }
     const payload: CreateOrderRequest = {
       issue: form.issue.trim(),
       lotteryId: selectedLottery.id,
       ruleCode: selectedRule.code,
       selection: selectionFromForm(selectedRule.code, form),
-      unitAmountMinor: numberField(form.unitAmountMinor),
+      unitAmountMinor,
       userId: form.userId.trim(),
     };
     const order = await create(payload);
@@ -466,13 +472,13 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
 
             {selectedRule ? renderSelectionFields(selectedRule.code, form, setForm) : null}
 
-            <Field label="单注金额（分）">
+            <Field label="单注金额（元）">
               <Input
                 className="form-input"
-                min="1"
-                type="number"
-                value={form.unitAmountMinor}
-                onChange={(value) => setFormValue(setForm, 'unitAmountMinor', value)}
+                inputMode="decimal"
+                placeholder="例如 2 或 2.00"
+                value={form.unitAmountYuan}
+                onChange={(value) => setFormValue(setForm, 'unitAmountYuan', value)}
               />
             </Field>
 
@@ -638,7 +644,7 @@ function emptyForm(): OrderFormState {
     issue: '2026155',
     lotteryId: '',
     ruleCode: '',
-    unitAmountMinor: '200',
+    unitAmountYuan: '2.00',
     userId: 'U10001',
   };
 }

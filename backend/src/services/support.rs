@@ -13,8 +13,8 @@ use crate::{
     domain::{
         support::{
             CreateSupportConversationRequest, SupportConversation, SupportConversationStatus,
-            SupportMessage, SupportMessageAuthor, SupportPriority, SupportReplyRequest,
-            UpdateSupportConversationRequest, UserSupportReplyRequest,
+            SupportMessage, SupportMessageAuthor, SupportMessageType, SupportPriority,
+            SupportReplyRequest, UpdateSupportConversationRequest, UserSupportReplyRequest,
         },
         user::{AdminSummary, UserSummary},
     },
@@ -241,7 +241,8 @@ async fn load_support_store(database: &BusinessDatabase) -> ApiResult<SupportSto
     }
 
     for row in sqlx::query(
-        "SELECT id, conversation_id, author, author_id, author_name, content, created_at
+        "SELECT id, conversation_id, author, author_id, author_name, message_type, content,
+                image_url, created_at
          FROM support_messages
          ORDER BY conversation_id ASC, id ASC",
     )
@@ -267,8 +268,15 @@ async fn load_support_store(database: &BusinessDatabase) -> ApiResult<SupportSto
                 author_name: row
                     .try_get("author_name")
                     .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?,
+                message_type: enum_from_string(
+                    row.try_get("message_type")
+                        .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?,
+                )?,
                 content: row
                     .try_get("content")
+                    .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?,
+                image_url: row
+                    .try_get("image_url")
                     .map_err(|_| ApiError::Internal("客服消息数据读取失败".to_string()))?,
                 created_at: row
                     .try_get("created_at")
@@ -326,15 +334,18 @@ async fn save_support_store(database: &BusinessDatabase, store: &SupportStore) -
         for message in &conversation.messages {
             sqlx::query(
                 "INSERT INTO support_messages
-                 (id, conversation_id, author, author_id, author_name, content, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                 (id, conversation_id, author, author_id, author_name, message_type, content,
+                  image_url, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .bind(&message.id)
             .bind(&conversation.id)
             .bind(enum_to_string(&message.author)?)
             .bind(&message.author_id)
             .bind(&message.author_name)
+            .bind(enum_to_string(&message.message_type)?)
             .bind(&message.content)
+            .bind(&message.image_url)
             .bind(&message.created_at)
             .execute(&mut *tx)
             .await
@@ -432,7 +443,9 @@ impl SupportStore {
                 author: SupportMessageAuthor::User,
                 author_id: user.id.clone(),
                 author_name: user.username.clone(),
+                message_type: SupportMessageType::Text,
                 content,
+                image_url: None,
                 created_at: now,
             }],
         };
@@ -480,12 +493,12 @@ impl SupportStore {
             .conversations
             .get_mut(id)
             .ok_or_else(|| ApiError::NotFound(format!("support conversation `{id}` not found")))?;
-        let admin_id = required_trimmed(request.admin_id, "support reply admin id")?;
+        let admin_id = required_trimmed(request.admin_id.clone(), "support reply admin id")?;
         let admin = admins
             .iter()
             .find(|admin| admin.id == admin_id)
             .ok_or_else(|| ApiError::NotFound(format!("admin `{admin_id}` not found")))?;
-        let content = required_trimmed(request.content, "support reply content")?;
+        let (message_type, content, image_url) = normalize_reply_content(request)?;
         let next_index = conversation.messages.len() + 1;
         let now = current_time_label();
 
@@ -494,7 +507,9 @@ impl SupportStore {
             author: SupportMessageAuthor::Admin,
             author_id: admin.id.clone(),
             author_name: admin.username.clone(),
+            message_type,
             content,
+            image_url,
             created_at: now.clone(),
         });
         if conversation.assigned_admin_id.is_none() {
@@ -533,7 +548,9 @@ impl SupportStore {
             author: SupportMessageAuthor::User,
             author_id: user.id.clone(),
             author_name: user.username.clone(),
+            message_type: SupportMessageType::Text,
             content,
+            image_url: None,
             created_at: now.clone(),
         });
         if matches!(
@@ -580,6 +597,46 @@ fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     Ok(value)
 }
 
+/// 标准化后台客服回复，文本消息要求内容非空，图片消息要求提供 http/https 图片链接。
+fn normalize_reply_content(
+    request: SupportReplyRequest,
+) -> ApiResult<(SupportMessageType, String, Option<String>)> {
+    let message_type = request.message_type.unwrap_or(SupportMessageType::Text);
+    let content = request
+        .content
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+
+    match message_type {
+        SupportMessageType::Text => {
+            if content.is_empty() {
+                return Err(ApiError::BadRequest(
+                    "support reply content is required".to_string(),
+                ));
+            }
+            Ok((SupportMessageType::Text, content, None))
+        }
+        SupportMessageType::Image => {
+            let image_url = request
+                .image_url
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| ApiError::BadRequest("客服图片链接不能为空".to_string()))?;
+            if !is_http_image_url(&image_url) {
+                return Err(ApiError::BadRequest(
+                    "客服图片链接必须是 http 或 https 地址".to_string(),
+                ));
+            }
+            Ok((SupportMessageType::Image, content, Some(image_url)))
+        }
+    }
+}
+
+/// 校验图片链接是否适合作为客服图片消息保存。
+fn is_http_image_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
 /// 返回当前时间的展示文本。
 fn current_time_label() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
@@ -611,7 +668,9 @@ fn seed_conversations() -> Vec<SupportConversation> {
                     author: SupportMessageAuthor::User,
                     author_id: "U10001".to_string(),
                     author_name: "demo_user".to_string(),
+                    message_type: SupportMessageType::Text,
                     content: "我的中奖订单还没有看到派奖。".to_string(),
+                    image_url: None,
                     created_at: "2026-06-02 09:20:00".to_string(),
                 },
                 SupportMessage {
@@ -619,7 +678,9 @@ fn seed_conversations() -> Vec<SupportConversation> {
                     author: SupportMessageAuthor::Admin,
                     author_id: "A10002".to_string(),
                     author_name: "locked_admin".to_string(),
+                    message_type: SupportMessageType::Text,
                     content: "已经为您核对订单，请稍后查看资金流水。".to_string(),
+                    image_url: None,
                     created_at: "2026-06-02 09:22:00".to_string(),
                 },
             ],
@@ -641,7 +702,9 @@ fn seed_conversations() -> Vec<SupportConversation> {
                 author: SupportMessageAuthor::User,
                 author_id: "U10004".to_string(),
                 author_name: "risk_watch".to_string(),
+                message_type: SupportMessageType::Text,
                 content: "账号为什么不能继续投注？".to_string(),
+                image_url: None,
                 created_at: "2026-06-02 10:05:00".to_string(),
             }],
         },
@@ -700,7 +763,9 @@ mod tests {
                 "CS-NEW",
                 SupportReplyRequest {
                     admin_id: "A10001".to_string(),
-                    content: "请查看最新流水。".to_string(),
+                    content: Some("请查看最新流水。".to_string()),
+                    image_url: None,
+                    message_type: None,
                 },
                 &access.admins,
             )
@@ -771,7 +836,9 @@ mod tests {
                 "CS-10001",
                 SupportReplyRequest {
                     admin_id: "A10001".to_string(),
-                    content: " ".to_string(),
+                    content: Some(" ".to_string()),
+                    image_url: None,
+                    message_type: None,
                 },
                 &access.admins,
             )
@@ -779,6 +846,38 @@ mod tests {
             .expect_err("empty reply must be rejected");
 
         assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn support_repository_allows_admin_image_reply() {
+        let support = SupportRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+
+        let replied = support
+            .reply(
+                "CS-10001",
+                SupportReplyRequest {
+                    admin_id: "A10001".to_string(),
+                    content: Some("这是充值凭证截图。".to_string()),
+                    image_url: Some("https://oss.example.test/support-proof.png".to_string()),
+                    message_type: Some(SupportMessageType::Image),
+                },
+                &access.admins,
+            )
+            .await
+            .expect("image reply can be added");
+        let message = replied.messages.last().expect("reply message exists");
+
+        assert_eq!(message.message_type, SupportMessageType::Image);
+        assert_eq!(
+            message.image_url.as_deref(),
+            Some("https://oss.example.test/support-proof.png")
+        );
+        assert_eq!(message.content, "这是充值凭证截图。");
+        assert_eq!(replied.unread_count, 0);
     }
 
     #[tokio::test]

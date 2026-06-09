@@ -7,6 +7,7 @@ import {
   SideSheet,
   Spin,
   Tag,
+  Toast,
 } from '@douyinfe/semi-ui';
 import {
   Calculator,
@@ -36,6 +37,7 @@ import {
   lotteryNumberTypeSupportsPlayRules,
   lotteryNumberTypeText,
 } from '../utils/lotteries';
+import { minorToYuanInput, yuanInputToMinor } from '../utils/moneyInput';
 import { playCategoryForRule } from '../utils/playRules';
 
 interface LotteryManagementPageProps {
@@ -54,10 +56,10 @@ interface LotteryFormState {
   logoUrl: string;
   initiatorMinPercent: string;
   intervalSeconds: string;
-  minShareAmountMinor: string;
+  minShareAmountYuan: string;
   name: string;
   numberType: LotteryNumberType;
-  participantMinAmountMinor: string;
+  participantMinAmountYuan: string;
   playCategories: PlayCategory[];
   playConfigs: LotteryPlayConfig[];
   saleEnabled: boolean;
@@ -180,7 +182,22 @@ export function LotteryManagementPage({
   };
 
   const saveLottery = async () => {
-    const payload = lotteryFromForm(form);
+    const minShareAmountMinor = positiveYuanToMinor(
+      form.minShareAmountYuan,
+      '每份最低金额',
+    );
+    const participantMinAmountMinor = positiveYuanToMinor(
+      form.participantMinAmountYuan,
+      '参与最低金额',
+    );
+    if (minShareAmountMinor === null || participantMinAmountMinor === null) {
+      return;
+    }
+    const payload = lotteryFromForm(
+      form,
+      minShareAmountMinor,
+      participantMinAmountMinor,
+    );
     if (selectedId) {
       await update(selectedId, payload);
     } else {
@@ -605,14 +622,14 @@ export function LotteryManagementPage({
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3">
-              <Field label="每份最低金额">
+              <Field label="每份最低金额（元）">
                 <Input
                   className="form-input"
-                  min="1"
-                  type="number"
-                  value={form.minShareAmountMinor}
+                  inputMode="decimal"
+                  placeholder="例如 1 或 1.00"
+                  value={form.minShareAmountYuan}
                   onChange={(value) =>
-                    setFormValue(setForm, 'minShareAmountMinor', value)
+                    setFormValue(setForm, 'minShareAmountYuan', value)
                   }
                 />
               </Field>
@@ -628,14 +645,14 @@ export function LotteryManagementPage({
                   }
                 />
               </Field>
-              <Field label="参与最低金额">
+              <Field label="参与最低金额（元）">
                 <Input
                   className="form-input"
-                  min="1"
-                  type="number"
-                  value={form.participantMinAmountMinor}
+                  inputMode="decimal"
+                  placeholder="例如 10 或 10.00"
+                  value={form.participantMinAmountYuan}
                   onChange={(value) =>
-                    setFormValue(setForm, 'participantMinAmountMinor', value)
+                    setFormValue(setForm, 'participantMinAmountYuan', value)
                   }
                 />
               </Field>
@@ -825,11 +842,11 @@ function emptyForm(): LotteryFormState {
     id: '',
     initiatorMinPercent: '10',
     intervalSeconds: '60',
-    minShareAmountMinor: '100',
+    minShareAmountYuan: '1.00',
     name: '',
     logoUrl: '',
     numberType: 'threeDigit',
-    participantMinAmountMinor: '1000',
+    participantMinAmountYuan: '10.00',
     playCategories: ['direct'],
     playConfigs: [],
     saleEnabled: true,
@@ -850,10 +867,12 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
     id: lottery.id,
     initiatorMinPercent: String(lottery.groupBuy.initiatorMinPercent),
     intervalSeconds: schedule.intervalSeconds,
-    minShareAmountMinor: String(lottery.groupBuy.minShareAmountMinor),
+    minShareAmountYuan: minorToYuanInput(lottery.groupBuy.minShareAmountMinor),
     name: lottery.name,
     numberType: lottery.numberType,
-    participantMinAmountMinor: String(lottery.groupBuy.participantMinAmountMinor),
+    participantMinAmountYuan: minorToYuanInput(
+      lottery.groupBuy.participantMinAmountMinor,
+    ),
     playCategories: lottery.playCategories,
     playConfigs: lottery.playConfigs,
     saleEnabled: lottery.saleEnabled,
@@ -863,15 +882,19 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
   };
 }
 
-function lotteryFromForm(form: LotteryFormState): LotteryKind {
+function lotteryFromForm(
+  form: LotteryFormState,
+  minShareAmountMinor: number,
+  participantMinAmountMinor: number,
+): LotteryKind {
   return {
     category: form.category,
     drawMode: form.drawMode,
     groupBuy: {
       enabled: form.groupBuyEnabled,
       initiatorMinPercent: numberField(form.initiatorMinPercent),
-      minShareAmountMinor: numberField(form.minShareAmountMinor),
-      participantMinAmountMinor: numberField(form.participantMinAmountMinor),
+      minShareAmountMinor,
+      participantMinAmountMinor,
     },
     id: form.id.trim(),
     name: form.name.trim(),
@@ -884,6 +907,15 @@ function lotteryFromForm(form: LotteryFormState): LotteryKind {
     saleEnabled: form.saleEnabled,
     schedule: scheduleFromForm(form),
   };
+}
+
+function positiveYuanToMinor(value: string, label: string) {
+  const amountMinor = yuanInputToMinor(value);
+  if (amountMinor === null || amountMinor <= 0) {
+    Toast.warning(`${label}必须大于 0 元且最多保留两位小数`);
+    return null;
+  }
+  return amountMinor;
 }
 
 function playConfigsForForm(form: LotteryFormState): LotteryPlayConfig[] {

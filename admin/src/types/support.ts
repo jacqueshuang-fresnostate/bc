@@ -1,13 +1,16 @@
 export type SupportConversationStatus = 'open' | 'pending' | 'resolved' | 'closed';
 export type SupportPriority = 'normal' | 'urgent';
 export type SupportMessageAuthor = 'user' | 'admin' | 'system';
+export type SupportMessageType = 'text' | 'image';
 
 export interface SupportMessage {
   id: string;
   author: SupportMessageAuthor;
   authorId: string;
   authorName: string;
+  messageType: SupportMessageType;
   content: string;
+  imageUrl: string | null;
   createdAt: string;
 }
 
@@ -43,4 +46,6 @@ export interface UpdateSupportConversationRequest {
 export interface SupportReplyRequest {
   adminId: string;
   content: string;
+  imageUrl?: string | null;
+  messageType?: SupportMessageType;
 }

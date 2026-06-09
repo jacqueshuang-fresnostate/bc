@@ -378,7 +378,7 @@ function formatFileSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function extractImageUrlFromUploadResult(result: unknown): string {
+export function extractImageUrlFromUploadResult(result: unknown): string {
   if (typeof result === 'string') {
     return result.trim();
   }

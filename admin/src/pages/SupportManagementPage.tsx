@@ -7,17 +7,30 @@ import {
   Popover,
   Select,
   Spin,
+  Tabs,
   Tag,
+  Toast,
 } from '@douyinfe/semi-ui';
-import { MessageCircle, RefreshCcw, Save, Send, Smile } from 'lucide-react';
+import {
+  Image as ImageIcon,
+  MessageCircle,
+  RefreshCcw,
+  Save,
+  Send,
+  Smile,
+  X,
+} from 'lucide-react';
 import {
   useEffect,
   useMemo,
   useRef,
   useState,
   type ComponentType,
+  type KeyboardEvent,
   type ReactNode,
 } from 'react';
+import { uploadImageBedFile } from '../api/client';
+import { extractImageUrlFromUploadResult } from '../components/ImageUploadAvatar';
 import { MetricCard } from '../components/MetricCard';
 import { useSupportConversations } from '../hooks/useSupportConversations';
 import type {
@@ -25,6 +38,7 @@ import type {
   SupportConversationStatus,
   SupportMessage,
   SupportMessageAuthor,
+  SupportMessageType,
   SupportPriority,
   UpdateSupportConversationRequest,
 } from '../types/support';
@@ -40,6 +54,7 @@ interface UpdateFormState {
 }
 
 type SupportChatRole = 'assistant' | 'system' | 'user';
+type SupportStatusFilter = 'all' | SupportConversationStatus;
 
 interface SupportChatMessage {
   authorName: string;
@@ -48,6 +63,8 @@ interface SupportChatMessage {
   createAt?: number;
   createdAtLabel: string;
   id: string;
+  imageUrl?: string;
+  messageType: SupportMessageType;
   role: SupportChatRole;
   status: 'complete';
 }
@@ -71,6 +88,17 @@ interface EmojiPickerRuntime {
   i18n: unknown;
 }
 
+const SUPPORT_STATUS_FILTERS: Array<{
+  key: SupportStatusFilter;
+  label: string;
+}> = [
+  { key: 'all', label: '全部' },
+  { key: 'open', label: '处理中' },
+  { key: 'pending', label: '等待用户' },
+  { key: 'resolved', label: '已解决' },
+  { key: 'closed', label: '已关闭' },
+];
+
 export function SupportManagementPage({
   onDashboardRefresh,
 }: SupportManagementPageProps) {
@@ -92,15 +120,27 @@ export function SupportManagementPage({
   const [emojiPickerRuntime, setEmojiPickerRuntime] =
     useState<EmojiPickerRuntime | null>(null);
   const replyTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
+  const replyImageInputRef = useRef<HTMLInputElement | null>(null);
+  const [statusFilter, setStatusFilter] = useState<SupportStatusFilter>('all');
+  const [replyImageUrl, setReplyImageUrl] = useState('');
+  const [replyImageName, setReplyImageName] = useState('');
+  const [replyImageUploading, setReplyImageUploading] = useState(false);
   const [updateForm, setUpdateForm] = useState<UpdateFormState>(() =>
     emptyUpdateForm(),
   );
+  const visibleConversations = useMemo(
+    () =>
+      statusFilter === 'all'
+        ? conversations
+        : conversations.filter((conversation) => conversation.status === statusFilter),
+    [conversations, statusFilter],
+  );
   const selectedConversation = useMemo(
     () =>
-      conversations.find((conversation) => conversation.id === selectedId) ??
-      conversations[0] ??
+      visibleConversations.find((conversation) => conversation.id === selectedId) ??
+      visibleConversations[0] ??
       null,
-    [conversations, selectedId],
+    [selectedId, visibleConversations],
   );
   const totals = useMemo(() => supportTotals(conversations), [conversations]);
   const selectedChatMessages = useMemo(
@@ -110,6 +150,11 @@ export function SupportManagementPage({
         : [],
     [selectedConversation],
   );
+  const canSubmitReply =
+    Boolean(selectedConversation) &&
+    !saving &&
+    !replyImageUploading &&
+    Boolean(replyContent.trim() || replyImageUrl);
   useEffect(() => {
     if (selectedConversation && selectedConversation.id !== selectedId) {
       setSelectedId(selectedConversation.id);
@@ -180,15 +225,69 @@ export function SupportManagementPage({
     if (!selectedConversation) {
       return;
     }
+    const trimmedContent = replyContent.trim();
+    if (!trimmedContent && !replyImageUrl) {
+      Toast.warning('请输入回复内容或上传图片');
+      return;
+    }
     const adminId = updateForm.assignedAdminId || admins[0]?.id || '';
     const updated = await reply(selectedConversation.id, {
       adminId,
-      content: replyContent,
+      content: trimmedContent,
+      imageUrl: replyImageUrl || null,
+      messageType: replyImageUrl ? 'image' : 'text',
     });
     setSelectedId(updated.id);
     setReplyContent('');
+    setReplyImageUrl('');
+    setReplyImageName('');
     setEmojiPickerVisible(false);
     onDashboardRefresh();
+  };
+
+  const submitReplyByEnter = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      event.key !== 'Enter' ||
+      event.shiftKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      event.nativeEvent.isComposing
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    if (canSubmitReply || (selectedConversation && !saving && !replyImageUploading)) {
+      void submitReply();
+    }
+  };
+
+  const selectReplyImage = () => {
+    replyImageInputRef.current?.click();
+  };
+
+  const uploadReplyImage = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      Toast.warning('请选择图片文件');
+      return;
+    }
+
+    setReplyImageUploading(true);
+    try {
+      const response = await uploadImageBedFile(file);
+      const uploadedUrl = extractImageUrlFromUploadResult(response);
+      if (!uploadedUrl) {
+        throw new Error('图床返回未提供可用图片链接');
+      }
+      setReplyImageUrl(uploadedUrl);
+      setReplyImageName(file.name);
+      Toast.success('客服图片上传成功');
+    } catch (uploadError: unknown) {
+      Toast.error(uploadError instanceof Error ? uploadError.message : '客服图片上传失败');
+    } finally {
+      setReplyImageUploading(false);
+    }
   };
 
   const insertEmoji = (emoji: unknown) => {
@@ -251,9 +350,31 @@ export function SupportManagementPage({
       ) : (
         <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.95fr)]">
           <Card className="rounded-md border border-line">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-base font-semibold text-ink">用户会话</h2>
-              <Tag color="teal">{conversations.length} 条</Tag>
+            <div className="mb-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-semibold text-ink">用户会话</h2>
+                <Tag color="teal">{visibleConversations.length} 条</Tag>
+              </div>
+              <Tabs
+                activeKey={statusFilter}
+                collapsible
+                onChange={(key) => setStatusFilter(String(key) as SupportStatusFilter)}
+              >
+                {SUPPORT_STATUS_FILTERS.map((filter) => (
+                  <Tabs.TabPane
+                    key={filter.key}
+                    itemKey={filter.key}
+                    tab={
+                      <span className="inline-flex items-center gap-2">
+                        <span>{filter.label}</span>
+                        <Tag color={filter.key === statusFilter ? 'teal' : 'grey'}>
+                          {statusFilterCount(conversations, filter.key)}
+                        </Tag>
+                      </span>
+                    }
+                  />
+                ))}
+              </Tabs>
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">
@@ -267,7 +388,7 @@ export function SupportManagementPage({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
-                  {conversations.map((conversation) => (
+                  {visibleConversations.map((conversation) => (
                     <tr
                       key={conversation.id}
                       className={
@@ -289,7 +410,12 @@ export function SupportManagementPage({
                         </div>
                       </td>
                       <td className="py-3 pr-4 text-slate-600">
-                        {conversation.username}
+                        <div className="font-medium text-slate-700">
+                          {conversation.username}
+                        </div>
+                        <div className="mt-1 font-mono text-xs text-slate-400">
+                          {conversation.userId}
+                        </div>
                       </td>
                       <td className="py-3 pr-4">
                         <Tag color={statusColor(conversation.status)}>
@@ -306,6 +432,13 @@ export function SupportManagementPage({
                       </td>
                     </tr>
                   ))}
+                  {visibleConversations.length === 0 ? (
+                    <tr>
+                      <td className="py-8 text-center text-sm text-slate-500" colSpan={5}>
+                        当前状态下暂无客服会话。
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>
@@ -428,6 +561,37 @@ export function SupportManagementPage({
                           </span>
                         );
                       },
+                      renderChatBoxContent: ({ defaultContent, message }) => {
+                        const chatMessage = message as SupportChatMessage | undefined;
+                        if (
+                          chatMessage?.messageType !== 'image' ||
+                          !chatMessage.imageUrl
+                        ) {
+                          return defaultContent;
+                        }
+
+                        return (
+                          <div className="space-y-2">
+                            <a
+                              className="block"
+                              href={chatMessage.imageUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <img
+                                alt="客服图片消息"
+                                className="max-h-60 max-w-[280px] rounded-md border border-slate-200 object-contain"
+                                src={chatMessage.imageUrl}
+                              />
+                            </a>
+                            {chatMessage.content ? (
+                              <p className="whitespace-pre-wrap text-sm leading-6">
+                                {chatMessage.content}
+                              </p>
+                            ) : null}
+                          </div>
+                        );
+                      },
                     }}
                     className="rounded-md border border-line bg-white"
                     enableUpload={false}
@@ -447,11 +611,67 @@ export function SupportManagementPage({
                     <textarea
                       ref={replyTextAreaRef}
                       className="min-h-28 w-full rounded-md border border-line px-3 py-2 text-sm outline-none focus:border-teal-500"
+                      placeholder={replyImageUrl ? '可选填写图片说明' : '输入回复内容'}
                       value={replyContent}
                       onChange={(event) => setReplyContent(event.target.value)}
+                      onKeyDown={submitReplyByEnter}
                     />
                   </Field>
+                  <input
+                    ref={replyImageInputRef}
+                    accept="image/*"
+                    className="hidden"
+                    type="file"
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      event.currentTarget.value = '';
+                      if (file) {
+                        void uploadReplyImage(file);
+                      }
+                    }}
+                  />
+                  {replyImageUrl ? (
+                    <div className="mt-3 flex items-start gap-3 rounded-md border border-teal-100 bg-teal-50 p-3">
+                      <img
+                        alt="待发送客服图片"
+                        className="h-24 w-24 rounded-md border border-teal-100 bg-white object-cover"
+                        src={replyImageUrl}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-teal-800">
+                          {replyImageName || '客服图片'}
+                        </p>
+                        <a
+                          className="mt-1 block break-all text-xs text-teal-700 hover:text-teal-800"
+                          href={replyImageUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {replyImageUrl}
+                        </a>
+                        <Button
+                          className="mt-2"
+                          icon={<X size={14} />}
+                          size="small"
+                          onClick={() => {
+                            setReplyImageUrl('');
+                            setReplyImageName('');
+                          }}
+                        >
+                          移除图片
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      disabled={saving || !selectedConversation || replyImageUploading}
+                      icon={<ImageIcon size={16} />}
+                      loading={replyImageUploading}
+                      onClick={selectReplyImage}
+                    >
+                      图片
+                    </Button>
                     <Popover
                       content={
                         <div className="max-w-[min(352px,calc(100vw-48px))] overflow-hidden rounded-md bg-white">
@@ -495,9 +715,9 @@ export function SupportManagementPage({
                       </Button>
                     </Popover>
                     <Button
-                      disabled={saving || !selectedConversation || !replyContent.trim()}
+                      disabled={!canSubmitReply}
                       icon={<Send size={16} />}
-                      loading={saving}
+                      loading={saving || replyImageUploading}
                       onClick={() => void submitReply()}
                       theme="solid"
                     >
@@ -578,6 +798,16 @@ function supportTotals(conversations: SupportConversation[]) {
   };
 }
 
+function statusFilterCount(
+  conversations: SupportConversation[],
+  filter: SupportStatusFilter,
+) {
+  if (filter === 'all') {
+    return conversations.length;
+  }
+  return conversations.filter((conversation) => conversation.status === filter).length;
+}
+
 function statusText(status: SupportConversationStatus) {
   const labels: Record<SupportConversationStatus, string> = {
     closed: '已关闭',
@@ -612,6 +842,7 @@ function priorityColor(priority: SupportPriority) {
 
 function supportMessageToChatMessage(message: SupportMessage): SupportChatMessage {
   const createAt = Date.parse(message.createdAt);
+  const messageType = message.messageType ?? 'text';
   return {
     authorName: message.authorName,
     authorText: authorText(message.author),
@@ -619,6 +850,8 @@ function supportMessageToChatMessage(message: SupportMessage): SupportChatMessag
     createAt: Number.isNaN(createAt) ? undefined : createAt,
     createdAtLabel: message.createdAt,
     id: message.id,
+    imageUrl: message.imageUrl ?? undefined,
+    messageType,
     role: chatRoleForAuthor(message.author),
     status: 'complete',
   };

@@ -2518,12 +2518,12 @@ fn seed_settings() -> Vec<SystemSetting> {
         SystemSetting {
             key: "recharge_min_amount_minor".to_string(),
             value: "100".to_string(),
-            description: "用户单笔充值最小金额（分）".to_string(),
+            description: "用户单笔充值最小金额（元）".to_string(),
         },
         SystemSetting {
             key: "recharge_max_amount_minor".to_string(),
             value: "10000000".to_string(),
-            description: "用户单笔充值最大金额（分）".to_string(),
+            description: "用户单笔充值最大金额（元）".to_string(),
         },
         SystemSetting {
             key: "recharge_rainbow_epay_enabled".to_string(),

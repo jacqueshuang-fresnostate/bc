@@ -1,5 +1,84 @@
 # TODO
 
+## 2026-06-09 16:42 HKT 后台客服会话列表显示用户 ID
+
+- 完成任务：让后台在线客服“用户会话”列表展示用户 ID。
+- 解决问题：
+  - 客服列表此前只显示用户名，处理同名用户、充值核验或账户排查时不够明确。
+- 实施内容：
+  - 在用户列中保留用户名，并在用户名下方显示 `userId`。
+  - 用户 ID 使用小号等宽文本展示，避免新增宽列影响会话列表扫描。
+- 验证结果：`npm run build`（admin）和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-09 16:40 HKT 后台客服回车发送回复
+
+- 完成任务：为后台在线客服回复框增加回车发送能力。
+- 解决问题：
+  - 客服回复用户消息时必须点击“发送回复”，高频沟通效率不够顺手。
+  - 普通回车发送如果不处理输入法组合态，中文选词时可能误发消息。
+- 实施内容：
+  - 后台客服回复输入框新增键盘事件处理，`Enter` 触发发送。
+  - `Shift+Enter`、`Ctrl+Enter`、`Alt+Enter`、`Meta+Enter` 保留默认输入行为，方便客服换行或使用系统组合键。
+  - 发送前检查 `nativeEvent.isComposing`，中文输入法组合输入期间不触发发送。
+- 验证结果：`npm run build`（admin）和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-09 17:30 HKT 后台用户列表分页和排序
+
+- 完成任务：为后台用户维护列表增加分页能力，并支持按配置的排序规则查询。
+- 解决问题：
+  - 用户维护此前一次性拉取全部用户，用户量增长后页面加载、渲染和扫描效率会下降。
+  - 用户列表只能按后端默认顺序展示，运营无法按余额、状态、类型等字段快速排序排查。
+- 实施内容：
+  - 后端 `GET /api/admin/users` 改为返回分页结构 `items/totalCount/page/pageSize/totalPages`。
+  - 用户列表支持 `page`、`pageSize`、`sortBy`、`sortDirection` 查询参数，并对白名单排序字段做校验。
+  - 管理后台用户维护页接入公共 `PageControls`，新增排序字段和升降序下拉框，切换排序规则时回到第 1 页。
+  - `fetchUsers()` 保留数组返回形态，内部从分页响应中提取 `items`，避免影响邀请、合买等用户下拉场景。
+- 验证结果：`npm run build`（admin）、`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_list_sorting_runs_before_pagination -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml admin_users_documents_pagination_and_sort_query_parameters -- --nocapture` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-09 17:00 HKT 后台客服图片回复和状态筛选
+
+- 完成任务：增强后台在线客服，支持图片回复和按状态区分用户会话。
+- 解决问题：
+  - 客服此前只能发送文本，处理充值凭证、截图说明时无法直接给用户发送图片。
+  - 后台会话列表只展示全部会话，客服无法按处理中、等待用户、已解决、已关闭快速区分处理队列。
+- 实施内容：
+  - 后端客服消息新增 `messageType` 和 `imageUrl`，并新增数据库迁移保存消息类型和图片链接。
+  - 后台客服回复接口支持 `messageType=image` 图片回复，图片链接必须是 `http/https` 地址，说明文字可选。
+  - 管理后台在线客服列表新增状态 Tabs，按全部、处理中、等待用户、已解决、已关闭筛选会话。
+  - 管理后台回复区接入图床上传，图片上传成功后展示预览，发送后在 Semi UI `Chat` 中展示图片消息。
+  - 手机端客服会话支持渲染后台发送的图片消息。
+- 验证结果：`npm run build`（admin）、`npm run build`（mobile）、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml` 和 `git diff --check` 均通过；后端 257 个测试全部通过，前端构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-09 15:58 HKT 后台金额输入统一改用元
+
+- 完成任务：把管理后台仍要求运营输入“分”的金额表单统一改为输入“元”。
+- 解决问题：
+  - 调账、订单创建、合买计划、合买参与、彩种合买配置和系统充值上下限原本存在直接填写分的入口，容易把 10 元误填成 10 分。
+  - 后端订单、账务、充值、提现和合买仍以最小货币单位保存，需要在前端提交前完成可靠换算。
+- 实施内容：
+  - 新增 `admin/src/utils/moneyInput.ts`，统一处理“元”输入和最小货币单位之间的换算。
+  - 财务管理手动调账改为“调账金额（元）”，支持正数补款和负数扣减。
+  - 订单管理单注金额、合买管理计划总金额、发起人认购金额和参与金额全部改为元输入。
+  - 彩种管理合买配置里的每份最低金额、参与最低金额改为元输入。
+  - 系统设置里的用户单笔充值最小金额、最大金额改为元展示和元输入，保存时仍写回最小货币单位。
+  - 输入格式错误、金额小于等于 0 或调账金额为 `0` 时用中文提示阻止提交。
+- 验证结果：`npm run build`（admin）、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml` 和 `git diff --check` 均通过；后端 256 个测试全部通过，后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-09 01:08 HKT 手机端 iOS 模拟器打包
+
+- 完成任务：初始化手机端 Tauri iOS 工程，并成功打出 iOS Simulator 可运行的 `HongFu.app`。
+- 解决问题：
+  - 手机端此前只有 Android、桌面应用和 DMG 打包脚本，没有 iOS 初始化和构建入口。
+  - 本机缺少 iOS Rust 编译目标和 iOS Simulator 运行时，无法直接执行 iOS 构建。
+  - 真机/IPA 构建需要 Apple Developer Team 和 provisioning profile，当前 Xcode 未配置开发团队签名。
+- 实施内容：
+  - 执行 Tauri iOS 初始化，生成 `mobile/src-tauri/gen/apple/` Xcode 工程和 `iOS-schema.json`。
+  - 安装 iOS Rust targets，并通过 Xcode 安装 iOS 26.3.1 Simulator runtime。
+  - 手机端 `package.json` 新增 `tauri:ios:init`、`tauri:build:ios-sim` 和 `tauri:build:ios` 脚本。
+  - 生成模拟器构建产物：`mobile/src-tauri/gen/apple/build/arm64-sim/HongFu.app`。
+  - 生成模拟器压缩包：`mobile/src-tauri/gen/apple/build/arm64-sim/HongFu-ios-simulator-arm64.zip`。
+- 验证结果：`cd mobile && npm run build` 通过；`cd mobile && npm run tauri -- ios build --ci --target aarch64-sim` 通过；真机/IPA 构建执行到 Xcode 签名阶段失败，错误为未配置开发团队，后续需要在 Xcode 中为 `com.hongfu.app` 配置 Apple Developer Team 后再构建真机包。
+
 ## 2026-06-08 16:10 HKT 机器人配置禁止删除
 
 - 完成任务：把合买机器人和购彩机器人调整为不能删除的系统配置，只能通过暂停或禁用停止执行。

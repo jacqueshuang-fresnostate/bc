@@ -31,13 +31,23 @@ pub enum SupportMessageAuthor {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 单条客服消息，保存作者快照和消息内容。
+/// 客服消息内容类型，决定前后台按文本还是图片进行展示。
+pub enum SupportMessageType {
+    Text,
+    Image,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 单条客服消息，保存作者快照、内容类型、文本内容和可选图片链接。
 pub struct SupportMessage {
     pub id: String,
     pub author: SupportMessageAuthor,
     pub author_id: String,
     pub author_name: String,
+    pub message_type: SupportMessageType,
     pub content: String,
+    pub image_url: Option<String>,
     pub created_at: String,
 }
 
@@ -81,10 +91,12 @@ pub struct UpdateSupportConversationRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 后台客服回复会话时提交的客服编号和内容。
+/// 后台客服回复会话时提交的客服编号、内容类型、文本内容和图片链接。
 pub struct SupportReplyRequest {
     pub admin_id: String,
-    pub content: String,
+    pub content: Option<String>,
+    pub message_type: Option<SupportMessageType>,
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
