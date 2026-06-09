@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Select,
+  SideSheet,
   Spin,
   Switch,
   Tag,
@@ -103,6 +104,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
   } = useDraws();
   const { error: rulesError, loading: rulesLoading, rules } = usePlayRules();
   const [createdOrder, setCreatedOrder] = useState<OrderDetail | null>(null);
+  const [createSheetVisible, setCreateSheetVisible] = useState(false);
   const [form, setForm] = useState<OrderFormState>(() => emptyForm());
 
   const selectedLottery = useMemo(
@@ -193,6 +195,8 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
     };
     const order = await create(payload);
     setCreatedOrder(order);
+    setCreateSheetVisible(false);
+    Toast.success(`投注单 ${order.id} 创建成功`);
     onDashboardRefresh();
   };
 
@@ -243,6 +247,13 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
             刷新
           </Button>
           <Button
+            icon={<Plus size={16} />}
+            theme="solid"
+            onClick={() => setCreateSheetVisible(true)}
+          >
+            创建投注单
+          </Button>
+          <Button
             disabled={saving || loading || orderPage.totalCount === 0}
             icon={<Trash2 size={16} />}
             theme="solid"
@@ -256,7 +267,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
 
       {error ? <Banner type="danger" title="订单接口错误" description={error} /> : null}
 
-      <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
+      <section>
         <Card className="rounded-md border border-line">
           <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-2">
@@ -276,6 +287,14 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
               }}
             />
           </div>
+          {createdOrder ? (
+            <div className="mb-3 rounded-md border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">
+              <div className="font-semibold text-emerald-950">最近创建：{createdOrder.id}</div>
+              <div className="mt-1">
+                {createdOrder.stakeCount} 注，金额 {formatMoney(createdOrder.amountMinor)}
+              </div>
+            </div>
+          ) : null}
           {loading ? (
             <div className="grid min-h-[280px] place-items-center">
               <Spin tip="正在加载订单" />
@@ -380,12 +399,18 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
             </div>
           ) : (
             <div className="rounded-md border border-line p-4 text-sm text-slate-500">
-              暂无订单，先在右侧创建一笔测试投注单。
+              暂无订单，点击上方“创建投注单”创建一笔测试投注单。
             </div>
           )}
         </Card>
 
-        <Card className="rounded-md border border-line">
+        <SideSheet
+          aria-label="创建投注单"
+          title="创建投注单"
+          visible={createSheetVisible}
+          width={560}
+          onCancel={() => setCreateSheetVisible(false)}
+        >
           <div className="mb-4">
             <h2 className="text-base font-semibold text-ink">创建投注单</h2>
             <p className="mt-1 text-sm text-slate-500">
@@ -409,11 +434,11 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
               </Field>
               <Field label="期号">
                 <Select
-                className="form-input"
-                disabled={availableDrawIssues.length === 0}
-                value={form.issue}
-                onChange={(value) => setFormValue(setForm, 'issue', String(value ?? ''))}
-              >
+                  className="form-input"
+                  disabled={availableDrawIssues.length === 0}
+                  value={form.issue}
+                  onChange={(value) => setFormValue(setForm, 'issue', String(value ?? ''))}
+                >
                   {availableDrawIssues.length > 0 ? (
                     availableDrawIssues.map((issue) => (
                       <Select.Option key={issue.id} value={issue.issue}>
@@ -508,7 +533,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
               </div>
             </div>
           ) : null}
-        </Card>
+        </SideSheet>
       </section>
     </div>
   );
