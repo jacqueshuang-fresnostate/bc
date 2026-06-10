@@ -1044,6 +1044,7 @@ mod tests {
             logo_url: String::new(),
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode: DrawMode::Api,
+            api_draw_delay_seconds: 0,
             schedule,
             sale_enabled: true,
             group_buy: GroupBuyConfig {

@@ -132,6 +132,9 @@ pub struct LotteryKind {
     pub logo_url: String,
     pub number_type: LotteryNumberType,
     pub draw_mode: DrawMode,
+    /// API 开奖源延迟秒数；只影响 API 模式到点后多久请求第三方开奖号码。
+    #[serde(default)]
+    pub api_draw_delay_seconds: u32,
     pub schedule: DrawSchedule,
     pub sale_enabled: bool,
     pub group_buy: GroupBuyConfig,

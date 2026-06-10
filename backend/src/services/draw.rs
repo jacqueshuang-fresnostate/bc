@@ -1792,6 +1792,7 @@ mod tests {
             logo_url: String::new(),
             number_type,
             draw_mode,
+            api_draw_delay_seconds: 0,
             schedule: DrawSchedule::Daily {
                 time: "21:00:15".to_string(),
             },

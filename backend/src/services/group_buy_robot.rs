@@ -1473,6 +1473,7 @@ mod tests {
             logo_url: String::new(),
             number_type: LotteryNumberType::FiveDigit,
             draw_mode: crate::domain::lottery::DrawMode::Platform,
+            api_draw_delay_seconds: 0,
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 60,
             },

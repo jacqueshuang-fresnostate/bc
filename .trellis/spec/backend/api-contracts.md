@@ -5015,6 +5015,8 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 - API 开奖号码读取失败只跳过对应期号，并写入 `skippedIssues`，不得中断其它候选期号。
 - 开奖期状态写入、订单结算、派奖入账、合买状态更新必须按候选期号原顺序串行执行。
 - 后台控奖号码优先级必须高于并发预取的 API 开奖号码。
+- API 彩种可通过 `LotteryKind.apiDrawDelaySeconds` 配置开奖源延迟秒数；该延迟只影响“是否进入 API 开奖请求候选”，不能改变 `scheduledAt`、`saleClosedAt` 或移动端倒计时。
+- 未到 `scheduledAt + apiDrawDelaySeconds` 时，调度器仍可正常封盘，但不得请求第三方 API，也不得把“等待延迟到点”写成跳过明细。
 
 ### 3. 错误与边界
 
@@ -5024,9 +5026,11 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 | 某个 API 开奖号码读取失败 | 该期写入跳过原因，其它期继续开奖 |
 | API 期号超过最新期号 5 期 | 不预取旧期开奖号码，直接跳过旧期 |
 | 后台控奖号码已启用 | 不预取 API 开奖号码，开奖时使用控奖号码 |
+| API 彩种配置延迟且尚未到延迟后时间 | 只做封盘等到期动作，不进入 API 最新期号或开奖号码预取 |
 | 非 API 彩种 | 不进入 API 预取流程 |
 
 ### 4. 必要测试
 
 - 后端需要覆盖 API 旧期跳过、API 缺失当前期跳过、已预取号码可完成 API 开奖。
+- 后端需要覆盖配置开奖源延迟时“先封盘不开奖、延迟到点后再请求 API 并开奖”。
 - 后端完整测试必须继续通过，确保并发读取没有破坏资金、订单和派奖串行一致性。

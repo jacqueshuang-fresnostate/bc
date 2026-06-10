@@ -84,6 +84,7 @@ export interface LotteryKind {
   logoUrl: string;
   numberType: LotteryNumberType;
   drawMode: DrawMode;
+  apiDrawDelaySeconds: number;
   schedule: DrawSchedule;
   saleEnabled: boolean;
   groupBuy: GroupBuyConfig;

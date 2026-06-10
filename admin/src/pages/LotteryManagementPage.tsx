@@ -53,6 +53,7 @@ type ScheduleKind = 'periodic' | 'daily' | 'weekly';
 type LotterySaleFilter = 'all' | 'selling' | 'stopped';
 
 interface LotteryFormState {
+  apiDrawDelaySeconds: string;
   category: LotteryCategory;
   drawMode: DrawMode;
   groupBuyEnabled: boolean;
@@ -602,6 +603,19 @@ export function LotteryManagementPage({
                   <Select.Option value="manual">指定号码</Select.Option>
                 </Select>
               </Field>
+              {form.drawMode === 'api' ? (
+                <Field label="API开奖延迟秒数">
+                  <Input
+                    className="form-input"
+                    min="0"
+                    type="number"
+                    value={form.apiDrawDelaySeconds}
+                    onChange={(value) =>
+                      setFormValue(setForm, 'apiDrawDelaySeconds', value)
+                    }
+                  />
+                </Field>
+              ) : null}
               <Field label="彩种分类">
                 <Select
                   className="form-input"
@@ -938,6 +952,7 @@ function Field({ children, label }: FieldProps) {
 
 function emptyForm(): LotteryFormState {
   return {
+    apiDrawDelaySeconds: '0',
     category: 'regional',
     drawMode: 'platform',
     groupBuyEnabled: true,
@@ -962,6 +977,7 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
   const schedule = scheduleFormFields(lottery.schedule);
 
   return {
+    apiDrawDelaySeconds: String(lottery.apiDrawDelaySeconds ?? 0),
     category: lottery.category,
     logoUrl: lottery.logoUrl,
     drawMode: lottery.drawMode,
@@ -990,6 +1006,10 @@ function lotteryFromForm(
   participantMinAmountMinor: number,
 ): LotteryKind {
   return {
+    apiDrawDelaySeconds:
+      form.drawMode === 'api'
+        ? nonNegativeIntegerField(form.apiDrawDelaySeconds)
+        : 0,
     category: form.category,
     drawMode: form.drawMode,
     groupBuy: {
@@ -1090,6 +1110,10 @@ function scheduleFromForm(form: LotteryFormState): DrawSchedule {
 function numberField(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function nonNegativeIntegerField(value: string) {
+  return Math.floor(Math.max(0, numberField(value)));
 }
 
 function readSettingValue(settings: SystemSetting[], key: string) {

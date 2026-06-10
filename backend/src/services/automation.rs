@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use chrono::{Duration, NaiveDateTime};
+
 use crate::{
     domain::{
         draw::{
@@ -18,6 +20,7 @@ use crate::{
 };
 
 const API_DRAW_RETRY_MAX_LATEST_ISSUE_DISTANCE: u64 = 5;
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 #[derive(Clone)]
 enum ApiLatestIssueLookup {
@@ -28,6 +31,12 @@ enum ApiLatestIssueLookup {
 enum ApiDrawNumberLookup {
     Ready(Option<String>),
     Failed(String),
+}
+
+#[derive(Clone, Copy)]
+struct LotteryAutomationConfig {
+    sale_enabled: bool,
+    api_draw_delay_seconds: u32,
 }
 
 /// 触发自动化开奖一轮任务并返回执行结果。
@@ -55,9 +64,9 @@ pub async fn run_draw_automation(
         skipped_issues: Vec::new(),
     };
 
-    let lottery_sale_status = lottery_sale_status(lotteries).await?;
+    let lottery_configs = lottery_automation_configs(lotteries).await?;
     for issue in draws.list().await? {
-        if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_sale_status) {
+        if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_configs) {
             run.skipped_issues.push(skipped_issue(&issue, &reason));
             continue;
         }
@@ -79,7 +88,7 @@ pub async fn run_draw_automation(
 
     let mut draw_candidates = Vec::new();
     for issue in draws.list().await? {
-        if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_sale_status) {
+        if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_configs) {
             if !run
                 .skipped_issues
                 .iter()
@@ -90,7 +99,7 @@ pub async fn run_draw_automation(
             continue;
         }
 
-        if !should_draw(&issue, &now) {
+        if !should_draw(&issue, &now, &lottery_configs) {
             continue;
         }
         if issue.draw_mode == DrawMode::Manual && !draws.has_active_draw_control(&issue).await? {
@@ -275,17 +284,48 @@ fn should_close(issue: &DrawIssue, now: &str) -> bool {
 }
 
 /// 判断期号是否已经到达开奖时间。
-fn should_draw(issue: &DrawIssue, now: &str) -> bool {
+fn should_draw(
+    issue: &DrawIssue,
+    now: &str,
+    lottery_configs: &HashMap<String, LotteryAutomationConfig>,
+) -> bool {
+    let delay_seconds = if issue.draw_mode == DrawMode::Api {
+        lottery_configs
+            .get(&issue.lottery_id)
+            .map(|config| config.api_draw_delay_seconds)
+            .unwrap_or_default()
+    } else {
+        0
+    };
+
     matches!(
         issue.status,
         DrawIssueStatus::Open | DrawIssueStatus::Closed
-    ) && is_due_at(&issue.scheduled_at, now)
+    ) && is_due_at_with_delay(&issue.scheduled_at, now, delay_seconds)
 }
 
 /// 判断排期时间是否已经早于或等于本轮调度时间。
 fn is_due_at(value: &str, now: &str) -> bool {
     let value = value.trim();
     !value.is_empty() && value <= now
+}
+
+/// 判断排期时间加上开奖源延迟后是否已经早于或等于本轮调度时间。
+fn is_due_at_with_delay(value: &str, now: &str, delay_seconds: u32) -> bool {
+    if delay_seconds == 0 {
+        return is_due_at(value, now);
+    }
+
+    match (parse_timestamp(value), parse_timestamp(now)) {
+        (Some(scheduled_at), Some(now)) => {
+            scheduled_at + Duration::seconds(i64::from(delay_seconds)) <= now
+        }
+        _ => is_due_at(value, now),
+    }
+}
+
+fn parse_timestamp(value: &str) -> Option<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(value.trim(), TIMESTAMP_FORMAT).ok()
 }
 
 /// 构造调度跳过期号明细，供后台调度历史展示。
@@ -337,25 +377,31 @@ fn stale_api_issue_retry_reason(
     ))
 }
 
-async fn lottery_sale_status(
+async fn lottery_automation_configs(
     lotteries: &crate::services::lottery::LotteryRepository,
-) -> ApiResult<HashMap<String, bool>> {
-    let mut sale_status = HashMap::new();
+) -> ApiResult<HashMap<String, LotteryAutomationConfig>> {
+    let mut configs = HashMap::new();
 
     for lottery in lotteries.list().await? {
-        sale_status.insert(lottery.id, lottery.sale_enabled);
+        configs.insert(
+            lottery.id,
+            LotteryAutomationConfig {
+                sale_enabled: lottery.sale_enabled,
+                api_draw_delay_seconds: lottery.api_draw_delay_seconds,
+            },
+        );
     }
 
-    Ok(sale_status)
+    Ok(configs)
 }
 
 /// 判断彩种停售或配置缺失时是否需要跳过自动封盘开奖。
 fn skip_issue_if_lottery_disabled(
     issue: &DrawIssue,
-    lottery_sale_status: &HashMap<String, bool>,
+    lottery_configs: &HashMap<String, LotteryAutomationConfig>,
 ) -> Option<&'static str> {
-    let sale_enabled = match lottery_sale_status.get(&issue.lottery_id) {
-        Some(enabled) => *enabled,
+    let sale_enabled = match lottery_configs.get(&issue.lottery_id) {
+        Some(config) => config.sale_enabled,
         None => {
             return Some("未找到彩种配置，跳过自动任务");
         }
@@ -779,6 +825,65 @@ mod tests {
         assert_eq!(run.ledger_entries[0].kind, LedgerEntryKind::GroupBuyRefund);
     }
 
+    #[tokio::test]
+    async fn automation_waits_for_api_draw_delay_before_requesting_source() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let lotteries = LotteryRepository::memory_seeded();
+        let mut api_lottery = lottery(DrawMode::Api);
+        api_lottery.api_draw_delay_seconds = 30;
+        lotteries
+            .update(&api_lottery.id, api_lottery.clone())
+            .await
+            .expect("api lottery delay can be saved");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let issue = draws
+            .create(&api_lottery, create_request("2026143"))
+            .await
+            .expect("issue can be created");
+
+        let early_run = run_draw_automation(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            DrawAutomationRunRequest {
+                now: "2026-06-02 21:00:30".to_string(),
+            },
+        )
+        .await
+        .expect("automation can run before api delay is reached");
+        let early_issue = draws.get(&issue.id).await.expect("issue exists");
+
+        assert_eq!(early_run.closed_issues.len(), 1);
+        assert!(early_run.drawn_issues.is_empty());
+        assert!(early_run.skipped_issues.is_empty());
+        assert_eq!(early_issue.status, DrawIssueStatus::Closed);
+
+        let due_run = run_draw_automation(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            DrawAutomationRunRequest {
+                now: "2026-06-02 21:00:45".to_string(),
+            },
+        )
+        .await
+        .expect("automation can draw after api delay is reached");
+
+        assert_eq!(due_run.drawn_issues.len(), 1);
+        assert_eq!(
+            due_run.drawn_issues[0].draw_number.as_deref(),
+            Some("3,7,6")
+        );
+    }
+
     /// 处理 create_request 的具体内部流程。
     fn create_request(issue: &str) -> CreateDrawIssueRequest {
         CreateDrawIssueRequest {
@@ -798,6 +903,7 @@ mod tests {
             logo_url: String::new(),
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode,
+            api_draw_delay_seconds: 0,
             schedule: DrawSchedule::Daily {
                 time: "21:00:15".to_string(),
             },
