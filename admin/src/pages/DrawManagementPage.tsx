@@ -1569,19 +1569,8 @@ function AutomationResultSummary({ run }: { run: DrawAutomationRun }) {
         <ResultMetric label="开奖" value={`${run.drawnIssues.length} 期`} />
         <ResultMetric label="结算" value={`${run.settlementRuns.length} 批`} />
         <ResultMetric label="入账" value={`${run.ledgerEntries.length} 笔`} />
+        <ResultMetric label="跳过" value={`${run.skippedIssues.length} 项`} />
       </div>
-      {run.skippedIssues.length > 0 ? (
-        <div className="mt-3 space-y-2">
-          {run.skippedIssues.map((issue) => (
-            <div
-              key={`${issue.drawIssueId}-${issue.reason}`}
-              className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700"
-            >
-              {issue.issue}：{issue.reason}
-            </div>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -1732,9 +1721,6 @@ function SchedulerConfigForm({
 }
 
 function SchedulerLastRunSummary({ run }: { run: DrawSchedulerRunRecord }) {
-  const skippedIssues = run.skippedIssues ?? [];
-  const skippedLotteries = run.skippedLotteries ?? [];
-
   return (
     <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
       <div className="flex items-start justify-between gap-3">
@@ -1764,27 +1750,6 @@ function SchedulerLastRunSummary({ run }: { run: DrawSchedulerRunRecord }) {
       {run.error ? (
         <div className="mt-3 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600">
           {run.error}
-        </div>
-      ) : null}
-
-      {skippedIssues.length > 0 || skippedLotteries.length > 0 ? (
-        <div className="mt-3 space-y-2">
-          {skippedIssues.map((issue) => (
-            <div
-              key={`${issue.drawIssueId}-${issue.reason}`}
-              className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700"
-            >
-              期号 {issue.issue}（{issue.lotteryId}）：{issue.reason}
-            </div>
-          ))}
-          {skippedLotteries.map((lottery) => (
-            <div
-              key={`${lottery.lotteryId}-${lottery.reason}`}
-              className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700"
-            >
-              彩种 {lottery.lotteryId}：{lottery.reason}
-            </div>
-          ))}
         </div>
       ) : null}
     </div>

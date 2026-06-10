@@ -6,7 +6,9 @@ import {
   Select,
   SideSheet,
   Spin,
+  Switch,
   Tag,
+  Tabs,
   Toast,
 } from '@douyinfe/semi-ui';
 import {
@@ -19,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ImageUploadAvatar } from '../components/ImageUploadAvatar';
+import { PageControls } from '../components/PageControls';
 import { useLotteries } from '../hooks/useLotteries';
 import { useLotteryCategories } from '../hooks/useLotteryCategories';
 import type {
@@ -47,6 +50,7 @@ interface LotteryManagementPageProps {
 }
 
 type ScheduleKind = 'periodic' | 'daily' | 'weekly';
+type LotterySaleFilter = 'all' | 'selling' | 'stopped';
 
 interface LotteryFormState {
   category: LotteryCategory;
@@ -110,6 +114,10 @@ export function LotteryManagementPage({
   const [lotterySheetVisible, setLotterySheetVisible] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState<LotteryFormState>(() => emptyForm());
+  const [saleUpdatingId, setSaleUpdatingId] = useState<string | null>(null);
+  const [saleFilter, setSaleFilter] = useState<LotterySaleFilter>('all');
+  const [lotteryPage, setLotteryPage] = useState(1);
+  const [lotteryPageSize, setLotteryPageSize] = useState(10);
   const imageBedUploadField =
     readSettingValue(settings, 'image_bed_upload_field').trim() || 'file';
   const selectedLottery = useMemo(
@@ -123,6 +131,36 @@ export function LotteryManagementPage({
         .sort((a, b) => a.label.localeCompare(b.label)),
     [categories],
   );
+  const saleCounts = useMemo(() => {
+    const selling = lotteries.filter((lottery) => lottery.saleEnabled).length;
+    const stopped = lotteries.length - selling;
+
+    return {
+      all: lotteries.length,
+      selling,
+      stopped,
+    };
+  }, [lotteries]);
+  const filteredLotteries = useMemo(() => {
+    if (saleFilter === 'selling') {
+      return lotteries.filter((lottery) => lottery.saleEnabled);
+    }
+    if (saleFilter === 'stopped') {
+      return lotteries.filter((lottery) => !lottery.saleEnabled);
+    }
+    return lotteries;
+  }, [lotteries, saleFilter]);
+  const lotteryTotalPages = Math.ceil(filteredLotteries.length / lotteryPageSize);
+  const normalizedLotteryPage =
+    lotteryTotalPages === 0 ? 0 : Math.min(lotteryPage, lotteryTotalPages);
+  const paginatedLotteries = useMemo(() => {
+    if (normalizedLotteryPage === 0) {
+      return [];
+    }
+
+    const start = (normalizedLotteryPage - 1) * lotteryPageSize;
+    return filteredLotteries.slice(start, start + lotteryPageSize);
+  }, [filteredLotteries, lotteryPageSize, normalizedLotteryPage]);
 
   const allError = categoryError || error;
 
@@ -240,15 +278,20 @@ export function LotteryManagementPage({
     onDashboardRefresh();
   };
 
-  const toggleSale = async (lottery: LotteryKind) => {
-    await setSaleStatus(lottery.id, !lottery.saleEnabled);
-    if (selectedId === lottery.id) {
-      setForm((current) => ({
-        ...current,
-        saleEnabled: !lottery.saleEnabled,
-      }));
+  const toggleSale = async (lottery: LotteryKind, saleEnabled: boolean) => {
+    setSaleUpdatingId(lottery.id);
+    try {
+      await setSaleStatus(lottery.id, saleEnabled);
+      if (selectedId === lottery.id) {
+        setForm((current) => ({
+          ...current,
+          saleEnabled,
+        }));
+      }
+      onDashboardRefresh();
+    } finally {
+      setSaleUpdatingId((current) => (current === lottery.id ? null : current));
     }
-    onDashboardRefresh();
   };
 
   return (
@@ -285,15 +328,65 @@ export function LotteryManagementPage({
 
       <section>
         <Card className="rounded-md border border-line">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">彩种列表</h2>
-            <Tag color="cyan">{lotteries.length} 个彩种</Tag>
+          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-ink">彩种列表</h2>
+              <Tag color="cyan">{filteredLotteries.length} 个彩种</Tag>
+            </div>
+            <PageControls
+              loading={loading}
+              page={normalizedLotteryPage}
+              pageSize={lotteryPageSize}
+              totalCount={filteredLotteries.length}
+              totalPages={lotteryTotalPages}
+              onPageChange={setLotteryPage}
+              onPageSizeChange={(nextPageSize) => {
+                setLotteryPage(1);
+                setLotteryPageSize(nextPageSize);
+              }}
+            />
           </div>
+          <Tabs
+            activeKey={saleFilter}
+            collapsible
+            onChange={(key) => {
+              setSaleFilter(key as LotterySaleFilter);
+              setLotteryPage(1);
+            }}
+          >
+            <Tabs.TabPane
+              itemKey="all"
+              tab={
+                <span className="inline-flex items-center gap-2">
+                  <span>全部</span>
+                  <Tag color="cyan">{saleCounts.all}</Tag>
+                </span>
+              }
+            />
+            <Tabs.TabPane
+              itemKey="selling"
+              tab={
+                <span className="inline-flex items-center gap-2">
+                  <span>销售中</span>
+                  <Tag color="green">{saleCounts.selling}</Tag>
+                </span>
+              }
+            />
+            <Tabs.TabPane
+              itemKey="stopped"
+              tab={
+                <span className="inline-flex items-center gap-2">
+                  <span>已停售</span>
+                  <Tag color="grey">{saleCounts.stopped}</Tag>
+                </span>
+              }
+            />
+          </Tabs>
           {loading ? (
             <div className="grid min-h-[260px] place-items-center">
               <Spin tip="正在加载彩种" />
             </div>
-          ) : (
+          ) : paginatedLotteries.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-sm">
                 <thead className="border-b border-line text-xs text-slate-500">
@@ -310,7 +403,7 @@ export function LotteryManagementPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {lotteries.map((lottery) => (
+                  {paginatedLotteries.map((lottery) => (
                     <tr
                       key={lottery.id}
                       className={`border-b border-slate-100 ${
@@ -382,13 +475,17 @@ export function LotteryManagementPage({
                         {scheduleText(lottery.schedule)}
                       </td>
                       <td className="py-3 pr-4">
-                        <button
-                          className="rounded-md border border-line px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-                          type="button"
-                          onClick={() => toggleSale(lottery)}
-                        >
-                          {lottery.saleEnabled ? '销售中' : '已停售'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={lottery.saleEnabled}
+                            disabled={saving && saleUpdatingId !== lottery.id}
+                            loading={saleUpdatingId === lottery.id}
+                            onChange={(checked) => void toggleSale(lottery, checked)}
+                          />
+                          <Tag color={lottery.saleEnabled ? 'green' : 'grey'}>
+                            {lottery.saleEnabled ? '销售中' : '已停售'}
+                          </Tag>
+                        </div>
                       </td>
                       <td className="py-3 pr-4">
                         <Button size="small" onClick={() => selectLottery(lottery)}>
@@ -399,6 +496,14 @@ export function LotteryManagementPage({
                   ))}
                 </tbody>
               </table>
+            </div>
+          ) : (
+            <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+              {saleFilter === 'selling'
+                ? '暂无销售中的彩种。'
+                : saleFilter === 'stopped'
+                  ? '暂无停售彩种。'
+                  : '暂无彩种。'}
             </div>
           )}
         </Card>
@@ -596,16 +701,13 @@ export function LotteryManagementPage({
 
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="销售状态">
-                <label className="flex h-10 items-center gap-2 text-sm">
-                  <input
+                <div className="flex h-10 items-center gap-2 text-sm text-slate-700">
+                  <Switch
                     checked={form.saleEnabled}
-                    type="checkbox"
-                    onChange={(event) =>
-                      setFormValue(setForm, 'saleEnabled', event.target.checked)
-                    }
+                    onChange={(checked) => setFormValue(setForm, 'saleEnabled', checked)}
                   />
-                  {form.saleEnabled ? '销售中' : '停售'}
-                </label>
+                  <span>{form.saleEnabled ? '销售中' : '停售'}</span>
+                </div>
               </Field>
               <Field label="合买状态">
                 <label className="flex h-10 items-center gap-2 text-sm">
