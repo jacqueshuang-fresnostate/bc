@@ -682,21 +682,21 @@ pub fn spawn_draw_scheduler(
                     {
                         tracing::error!(error = %error.log_message(), "开奖调度器历史记录写入失败");
                     }
-                    tracing::info!(
-                        "当前时间" = %run.now,
-                        "封盘期数" = run.automation_run.closed_issues.len(),
-                        "开奖期数" = run.automation_run.drawn_issues.len(),
-                        "结算批次" = run.automation_run.settlement_runs.len(),
-                        "入账笔数" = run.automation_run.ledger_entries.len(),
-                        "新增期号" = run.generated_issues.len(),
-                        "机器人新增合买" = run.robot_run.created_plans.len(),
-                        "机器人满单" = run.robot_run.filled_plans.len(),
-                        "机器人生成订单" = run.robot_run.created_orders.len(),
-                        "机器人跳过项" = run.robot_run.skipped_items.len(),
-                        "跳过彩种" = run.skipped_lotteries.len(),
-                        "跳过期号" = run.automation_run.skipped_issues.len(),
-                        "开奖调度器本轮执行完成"
-                    );
+                    // tracing::info!(
+                    //     "当前时间" = %run.now,
+                    //     "封盘期数" = run.automation_run.closed_issues.len(),
+                    //     "开奖期数" = run.automation_run.drawn_issues.len(),
+                    //     "结算批次" = run.automation_run.settlement_runs.len(),
+                    //     "入账笔数" = run.automation_run.ledger_entries.len(),
+                    //     "新增期号" = run.generated_issues.len(),
+                    //     "机器人新增合买" = run.robot_run.created_plans.len(),
+                    //     "机器人满单" = run.robot_run.filled_plans.len(),
+                    //     "机器人生成订单" = run.robot_run.created_orders.len(),
+                    //     "机器人跳过项" = run.robot_run.skipped_items.len(),
+                    //     "跳过彩种" = run.skipped_lotteries.len(),
+                    //     "跳过期号" = run.automation_run.skipped_issues.len(),
+                    //     "开奖调度器本轮执行完成"
+                    // );
                 }
                 Err(error) => {
                     let finished_at = current_scheduler_timestamp();
