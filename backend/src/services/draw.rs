@@ -153,6 +153,28 @@ impl DrawRepository {
         Ok(result)
     }
 
+    /// 使用已经并发预取的 API 开奖号码完成开奖，避免自动调度阶段重复等待外部接口。
+    pub async fn draw_with_prefetched_api_number(
+        &self,
+        id: &str,
+        api_draw_number: Option<String>,
+    ) -> ApiResult<DrawIssue> {
+        let (payload, uses_control_number) = self
+            .resolve_prefetched_api_draw_payload(id, api_draw_number)
+            .await?;
+
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
+            let result = store.draw(id, payload, uses_control_number)?;
+            (result, store.clone())
+        };
+        self.persist_draws(&snapshot).await?;
+        Ok(result)
+    }
+
     /// 取消开奖期并回退相关状态。
     pub async fn cancel(&self, id: &str) -> ApiResult<DrawIssue> {
         let (result, snapshot) = {
@@ -267,6 +289,11 @@ impl DrawRepository {
         self.api_sources.latest_issue_for_lottery(lottery_id).await
     }
 
+    /// 按期号所属 API 开奖源预取开奖号码，不修改本地期号状态。
+    pub async fn api_draw_number_for_issue(&self, issue: &DrawIssue) -> ApiResult<Option<String>> {
+        self.api_sources.draw_number_for(issue).await
+    }
+
     /// 按外部 API 开奖源立即校准指定彩种的当前可销售期号。
     pub async fn sync_api_draw_source(
         &self,
@@ -341,6 +368,34 @@ impl DrawRepository {
             return Ok((
                 DrawIssueResultRequest {
                     draw_number: Some(draw_number),
+                },
+                false,
+            ));
+        }
+
+        Ok((DrawIssueResultRequest::default(), false))
+    }
+
+    async fn resolve_prefetched_api_draw_payload(
+        &self,
+        id: &str,
+        api_draw_number: Option<String>,
+    ) -> ApiResult<(DrawIssueResultRequest, bool)> {
+        let issue = self.get(id).await?;
+
+        if let Some(draw_number) = self.active_draw_control_number(&issue).await? {
+            return Ok((
+                DrawIssueResultRequest {
+                    draw_number: Some(draw_number),
+                },
+                true,
+            ));
+        }
+
+        if issue.draw_mode == DrawMode::Api {
+            return Ok((
+                DrawIssueResultRequest {
+                    draw_number: api_draw_number,
                 },
                 false,
             ));
@@ -1636,6 +1691,26 @@ mod tests {
         assert!(error.to_string().contains("not found"));
         assert_eq!(stored.status, DrawIssueStatus::Open);
         assert!(stored.draw_number.is_none());
+    }
+
+    #[tokio::test]
+    async fn repository_draws_api_issue_with_prefetched_number_without_refetching_source() {
+        let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
+        let repository = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let issue = repository
+            .create(&lottery, create_request("2099999"))
+            .await
+            .expect("issue can be created");
+
+        let drawn = repository
+            .draw_with_prefetched_api_number(&issue.id, Some("1,2,3".to_string()))
+            .await
+            .expect("prefetched draw number can be used");
+
+        assert_eq!(drawn.status, DrawIssueStatus::Drawn);
+        assert_eq!(drawn.draw_number.as_deref(), Some("1,2,3"));
     }
 
     #[tokio::test]

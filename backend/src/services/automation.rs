@@ -1,6 +1,6 @@
 //! 开奖自动化服务，统一编排手动/自动开奖执行链路
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     domain::{
@@ -23,6 +23,11 @@ const API_DRAW_RETRY_MAX_LATEST_ISSUE_DISTANCE: u64 = 5;
 enum ApiLatestIssueLookup {
     Found(String),
     Missing,
+}
+
+enum ApiDrawNumberLookup {
+    Ready(Option<String>),
+    Failed(String),
 }
 
 /// 触发自动化开奖一轮任务并返回执行结果。
@@ -51,8 +56,6 @@ pub async fn run_draw_automation(
     };
 
     let lottery_sale_status = lottery_sale_status(lotteries).await?;
-    let mut api_latest_issue_cache = HashMap::new();
-
     for issue in draws.list().await? {
         if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_sale_status) {
             run.skipped_issues.push(skipped_issue(&issue, &reason));
@@ -74,6 +77,7 @@ pub async fn run_draw_automation(
         }
     }
 
+    let mut draw_candidates = Vec::new();
     for issue in draws.list().await? {
         if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_sale_status) {
             if !run
@@ -89,22 +93,51 @@ pub async fn run_draw_automation(
         if !should_draw(&issue, &now) {
             continue;
         }
-        if let Some(reason) =
-            stale_api_issue_retry_reason(draws, &mut api_latest_issue_cache, &issue).await
-        {
-            run.skipped_issues.push(skipped_issue(&issue, &reason));
-            continue;
-        }
         if issue.draw_mode == DrawMode::Manual && !draws.has_active_draw_control(&issue).await? {
             run.skipped_issues
                 .push(skipped_issue(&issue, "手动开奖需要管理员录入开奖号码"));
             continue;
         }
 
-        let drawn = match draws
-            .draw(&issue.id, DrawIssueResultRequest::default())
-            .await
-        {
+        draw_candidates.push(issue);
+    }
+
+    let api_latest_issue_cache = prefetch_api_latest_issue_lookups(draws, &draw_candidates).await;
+    let mut executable_issues = Vec::new();
+    let mut api_draw_prefetch_issues = Vec::new();
+    for issue in draw_candidates {
+        if let Some(reason) = stale_api_issue_retry_reason(&api_latest_issue_cache, &issue) {
+            run.skipped_issues.push(skipped_issue(&issue, &reason));
+            continue;
+        }
+        if issue.draw_mode == DrawMode::Api && !draws.has_active_draw_control(&issue).await? {
+            api_draw_prefetch_issues.push(issue.clone());
+        }
+
+        executable_issues.push(issue);
+    }
+    let api_draw_number_cache = prefetch_api_draw_numbers(draws, api_draw_prefetch_issues).await;
+
+    for issue in executable_issues {
+        let api_draw_number = match api_draw_number_cache.get(&issue.id) {
+            Some(ApiDrawNumberLookup::Ready(draw_number)) => draw_number.clone(),
+            Some(ApiDrawNumberLookup::Failed(reason)) => {
+                run.skipped_issues.push(skipped_issue(&issue, reason));
+                continue;
+            }
+            None => None,
+        };
+
+        let draw_result = if issue.draw_mode == DrawMode::Api {
+            draws
+                .draw_with_prefetched_api_number(&issue.id, api_draw_number)
+                .await
+        } else {
+            draws
+                .draw(&issue.id, DrawIssueResultRequest::default())
+                .await
+        };
+        let drawn = match draw_result {
             Ok(drawn) => drawn,
             Err(error) => {
                 let reason = automation_error_reason(&error);
@@ -139,6 +172,103 @@ pub async fn run_draw_automation(
     Ok(run)
 }
 
+/// 并发预取本轮涉及的 API 彩种最新期号，避免多个彩种串行等待第三方接口。
+async fn prefetch_api_latest_issue_lookups(
+    draws: &DrawRepository,
+    issues: &[DrawIssue],
+) -> HashMap<String, ApiLatestIssueLookup> {
+    let mut seen_lotteries = HashSet::new();
+    let mut handles = Vec::new();
+
+    for issue in issues {
+        if issue.draw_mode != DrawMode::Api || !seen_lotteries.insert(issue.lottery_id.clone()) {
+            continue;
+        }
+
+        let draws = draws.clone();
+        let lottery_id = issue.lottery_id.clone();
+        let issue_label = issue.issue.clone();
+        handles.push(tokio::spawn(async move {
+            let lookup = match draws.latest_api_issue_for_lottery(&lottery_id).await {
+                Ok(Some(latest_issue)) => ApiLatestIssueLookup::Found(latest_issue.issue),
+                Ok(None) => ApiLatestIssueLookup::Missing,
+                Err(error) => {
+                    tracing::warn!(
+                        lottery_id = %lottery_id,
+                        issue = %issue_label,
+                        error = %error.log_message(),
+                        "API开奖旧期号重试上限判断读取最新期号失败"
+                    );
+                    ApiLatestIssueLookup::Missing
+                }
+            };
+            (lottery_id, lookup)
+        }));
+    }
+
+    let mut lookups = HashMap::new();
+    for handle in handles {
+        match handle.await {
+            Ok((lottery_id, lookup)) => {
+                lookups.insert(lottery_id, lookup);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "API开奖最新期号并发任务执行失败"
+                );
+            }
+        }
+    }
+
+    lookups
+}
+
+/// 并发预取 API 开奖号码，后续写库和结算仍按期号顺序串行执行。
+async fn prefetch_api_draw_numbers(
+    draws: &DrawRepository,
+    issues: Vec<DrawIssue>,
+) -> HashMap<String, ApiDrawNumberLookup> {
+    let mut handles = Vec::new();
+    for issue in issues {
+        let draws = draws.clone();
+        handles.push(tokio::spawn(async move {
+            let lookup = match draws.api_draw_number_for_issue(&issue).await {
+                Ok(draw_number) => ApiDrawNumberLookup::Ready(draw_number),
+                Err(error) => {
+                    let reason = automation_error_reason(&error);
+                    tracing::warn!(
+                        draw_issue_id = %issue.id,
+                        lottery_id = %issue.lottery_id,
+                        issue = %issue.issue,
+                        error = %error.log_message(),
+                        "自动开奖并发预取 API 开奖号码失败"
+                    );
+                    ApiDrawNumberLookup::Failed(reason)
+                }
+            };
+            (issue.id, lookup)
+        }));
+    }
+
+    let mut lookups = HashMap::new();
+    for handle in handles {
+        match handle.await {
+            Ok((draw_issue_id, lookup)) => {
+                lookups.insert(draw_issue_id, lookup);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "API开奖号码并发任务执行失败"
+                );
+            }
+        }
+    }
+
+    lookups
+}
+
 /// 判断期号是否已经到达封盘时间。
 fn should_close(issue: &DrawIssue, now: &str) -> bool {
     issue.status == DrawIssueStatus::Open && is_due_at(&issue.sale_closed_at, now)
@@ -169,9 +299,8 @@ fn skipped_issue(issue: &DrawIssue, reason: &str) -> DrawAutomationSkippedIssue 
 }
 
 /// 对 API 开奖旧期号做重试上限判断，超过最新期号 5 期后不再请求旧期号开奖号码。
-async fn stale_api_issue_retry_reason(
-    draws: &DrawRepository,
-    latest_issue_cache: &mut HashMap<String, ApiLatestIssueLookup>,
+fn stale_api_issue_retry_reason(
+    latest_issue_cache: &HashMap<String, ApiLatestIssueLookup>,
     issue: &DrawIssue,
 ) -> Option<String> {
     if issue.draw_mode != DrawMode::Api {
@@ -179,7 +308,7 @@ async fn stale_api_issue_retry_reason(
     }
 
     let issue_sequence = parse_api_sequence_issue(&issue.issue)?;
-    let latest_lookup = cached_latest_api_issue_lookup(draws, latest_issue_cache, issue).await;
+    let latest_lookup = latest_issue_cache.get(&issue.lottery_id)?;
     let ApiLatestIssueLookup::Found(latest_issue) = latest_lookup else {
         return None;
     };
@@ -206,34 +335,6 @@ async fn stale_api_issue_retry_reason(
     Some(format!(
         "距离开奖源最新期号 {latest_issue} 已超过 {API_DRAW_RETRY_MAX_LATEST_ISSUE_DISTANCE} 期，停止重试旧期号"
     ))
-}
-
-/// 单轮自动开奖内缓存 API 最新期号，避免同一彩种多个旧期号重复请求开奖源。
-async fn cached_latest_api_issue_lookup(
-    draws: &DrawRepository,
-    latest_issue_cache: &mut HashMap<String, ApiLatestIssueLookup>,
-    issue: &DrawIssue,
-) -> ApiLatestIssueLookup {
-    if let Some(lookup) = latest_issue_cache.get(&issue.lottery_id) {
-        return lookup.clone();
-    }
-
-    let lookup = match draws.latest_api_issue_for_lottery(&issue.lottery_id).await {
-        Ok(Some(latest_issue)) => ApiLatestIssueLookup::Found(latest_issue.issue),
-        Ok(None) => ApiLatestIssueLookup::Missing,
-        Err(error) => {
-            tracing::warn!(
-                lottery_id = %issue.lottery_id,
-                issue = %issue.issue,
-                error = %error.log_message(),
-                "API开奖旧期号重试上限判断读取最新期号失败"
-            );
-            ApiLatestIssueLookup::Missing
-        }
-    };
-
-    latest_issue_cache.insert(issue.lottery_id.clone(), lookup.clone());
-    lookup
 }
 
 async fn lottery_sale_status(

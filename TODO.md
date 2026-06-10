@@ -1,5 +1,17 @@
 # TODO
 
+## 2026-06-10 17:54 HKT 开奖调度 API 读取并发化
+
+- 完成任务：把开奖调度中的外部 API 最新期号和开奖号码读取改为并发预取。
+- 解决问题：调度器此前一轮内部按期号串行请求 API，某个彩种或旧期号接口慢时会拖住整轮调度，导致其它彩种也长时间停留在“等待调度”或“等待开奖源”。
+- 实施内容：
+  - `run_draw_automation` 先收集本轮到期开奖候选，再并发预取 API 最新期号，用于旧期号重试上限判断。
+  - 对未被旧期上限跳过、且没有后台控奖号码的 API 期号，并发预取开奖号码。
+  - 开奖写库、订单结算、派奖入账和合买状态更新仍按原期号顺序串行执行，避免重复开奖或重复派奖。
+  - `DrawRepository` 新增预取开奖号码读取入口和“使用已预取 API 号码开奖”的内部入口；后台控奖号码仍优先于预取 API 号码。
+  - 同步更新架构说明和后端 API 契约规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml automation_ -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml prefetched -- --nocapture`、完整 `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过；后端完整测试 273 条通过。
+
 ## 2026-06-10 04:02 HKT 彩种控制台立即同步开奖源
 
 - 完成任务：后台彩种控制台新增 API 彩种“立即同步开奖源”按钮，并补齐后端手动校准接口。
