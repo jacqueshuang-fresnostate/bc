@@ -84,6 +84,7 @@ import type {
 import type { DrawSchedulerConfig, DrawSchedulerStatus } from '../types/scheduler';
 import type {
   GroupBuyRobotRun,
+  RobotConfigPayload,
   RobotConfigSummary,
   RobotStatusUpdateRequest,
 } from '../types/robots';
@@ -652,17 +653,23 @@ export function fetchRobots(signal?: AbortSignal) {
   return requestJson<RobotConfigSummary[]>('/api/admin/robots', { signal });
 }
 
-export function createRobot(payload: RobotConfigSummary) {
+export function createRobot(payload: RobotConfigPayload) {
   return requestJson<RobotConfigSummary>('/api/admin/robots', {
     body: payload,
     method: 'POST',
   });
 }
 
-export function updateRobot(id: string, payload: RobotConfigSummary) {
+export function updateRobot(id: string, payload: RobotConfigPayload) {
   return requestJson<RobotConfigSummary>(`/api/admin/robots/${encodeURIComponent(id)}`, {
     body: payload,
     method: 'PUT',
+  });
+}
+
+export function deleteRobot(id: string) {
+  return requestJson<RobotConfigSummary>(`/api/admin/robots/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
   });
 }
 

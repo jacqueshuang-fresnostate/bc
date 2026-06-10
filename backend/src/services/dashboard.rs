@@ -417,8 +417,8 @@ fn module_groups() -> Vec<ModuleGroup> {
             modules: vec![
                 module(
                     "registration",
-                    "用户注册",
-                    "用户名注册与邮箱注册开关",
+                    "系统配置",
+                    "注册方式与邀请要求",
                     ModuleStatus::Scaffolded,
                 ),
                 module(
@@ -641,6 +641,7 @@ mod tests {
                 lottery_ids: vec!["fc3d".to_string()],
                 status: RobotStatus::Enabled,
                 description: "测试机器人".to_string(),
+                deletable: true,
             }],
         )
     }

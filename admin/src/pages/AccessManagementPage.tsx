@@ -33,7 +33,6 @@ import {
 } from 'react';
 import { fetchLotteries } from '../api/client';
 import { ImageUploadAvatar } from '../components/ImageUploadAvatar';
-import { MetricCard } from '../components/MetricCard';
 import { PageControls } from '../components/PageControls';
 import { useAccessManagement } from '../hooks/useAccessManagement';
 import type {
@@ -232,7 +231,6 @@ export function AccessManagementPage({
   const [roleForm, setRoleForm] = useState<RoleFormState>(() => emptyRoleForm());
   const [settingDrafts, setSettingDrafts] = useState<Record<string, string>>({});
   const [userForm, setUserForm] = useState<UserFormState>(() => emptyUserForm());
-  const totals = useMemo(() => accessTotals(users, admins), [admins, users]);
 
   useEffect(() => {
     setSection(sectionForModule(activeModuleKey));
@@ -359,29 +357,6 @@ export function AccessManagementPage({
 
       {!isSettingsPage ? (
         <>
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard
-              label="用户总数"
-              trend={`当前页 ${totals.agentCount} 个代理`}
-              value={`${userPage.totalCount}`}
-            />
-            <MetricCard
-              label="活跃用户"
-              trend="当前页可参与投注"
-              value={`${totals.activeUserCount}`}
-            />
-            <MetricCard
-              label="后台账号"
-              trend={`${totals.lockedAdminCount} 个锁定`}
-              value={`${admins.length}`}
-            />
-            <MetricCard
-              label="角色数量"
-              trend="权限范围绑定"
-              value={`${roles.length}`}
-            />
-          </section>
-
           <section className="flex flex-wrap gap-2">
             {ACCESS_SECTIONS.map((item) => (
               <Button
@@ -2224,14 +2199,6 @@ function readSettingValue(
   key: string,
 ) {
   return settings.find((item) => item.key === key)?.value ?? '';
-}
-
-function accessTotals(users: UserSummary[], admins: AdminSummary[]) {
-  return {
-    activeUserCount: users.filter((user) => user.status === 'active').length,
-    agentCount: users.filter((user) => user.kind === 'agent').length,
-    lockedAdminCount: admins.filter((admin) => admin.status === 'locked').length,
-  };
 }
 
 function emptyUserForm(): UserFormState {

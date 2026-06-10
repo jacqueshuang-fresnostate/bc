@@ -528,9 +528,11 @@ function normalizeDisplayDateTime(value: string) {
 export function parseChinaDateTime(value: unknown) {
   if (value == null || value === '') return NaN
   if (value instanceof Date) return value.getTime()
-  if (typeof value === 'number') return value
+  if (typeof value === 'number') return value < 1_000_000_000_000 ? value * 1000 : value
   const text = String(value).trim()
   if (!text) return NaN
+  const unixMatch = text.match(/^unix:(\d+)$/i)
+  if (unixMatch) return Number(unixMatch[1]) * 1000
   const match = text.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/)
   if (match && !/(?:z|[+-]\d{2}:?\d{2})$/i.test(text)) {
     return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]) - 8, Number(match[5]), Number(match[6] || 0))

@@ -53,7 +53,7 @@ const iconByKey: Record<string, ReactNode> = {
   settlements: <CircleDollarSign size={18} />,
   'group-buy-robot': <Bot size={18} />,
   'purchase-robot': <Bot size={18} />,
-  registration: <UserRound size={18} />,
+  registration: <Settings size={18} />,
   invite: <UsersRound size={18} />,
   rebate: <Banknote size={18} />,
 };

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   createRobot,
+  deleteRobot,
   fetchLotteries,
   fetchRobots,
   runGroupBuyRobots,
@@ -8,7 +9,12 @@ import {
   updateRobot,
 } from '../api/client';
 import type { LotteryKind } from '../types/dashboard';
-import type { GroupBuyRobotRun, RobotConfigSummary, RobotStatus } from '../types/robots';
+import type {
+  GroupBuyRobotRun,
+  RobotConfigPayload,
+  RobotConfigSummary,
+  RobotStatus,
+} from '../types/robots';
 
 export function useRobots() {
   const [lotteries, setLotteries] = useState<LotteryKind[]>([]);
@@ -52,7 +58,7 @@ export function useRobots() {
   }, [refreshToken]);
 
   const save = useCallback(
-    async (payload: RobotConfigSummary, existingId?: string) => {
+    async (payload: RobotConfigPayload, existingId?: string) => {
       setSaving(true);
       setError(null);
       try {
@@ -70,6 +76,21 @@ export function useRobots() {
     },
     [],
   );
+
+  const remove = useCallback(async (id: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const deleted = await deleteRobot(id);
+      setRobots((current) => current.filter((robot) => robot.id !== id));
+      return deleted;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
 
   const changeStatus = useCallback(async (id: string, status: RobotStatus) => {
     setSaving(true);
@@ -109,6 +130,7 @@ export function useRobots() {
     lastGroupBuyRun,
     loading,
     lotteries,
+    remove,
     refresh,
     robots,
     running,

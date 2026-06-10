@@ -5,6 +5,8 @@ import type { OrderDetail } from './orders';
 
 export type { RobotConfigSummary, RobotKind, RobotStatus };
 
+export type RobotConfigPayload = Omit<RobotConfigSummary, 'deletable'>;
+
 export interface RobotStatusUpdateRequest {
   status: RobotStatus;
 }

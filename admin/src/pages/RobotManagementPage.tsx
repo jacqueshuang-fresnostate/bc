@@ -7,8 +7,9 @@ import {
   SideSheet,
   Spin,
   Tag,
+  Toast,
 } from '@douyinfe/semi-ui';
-import { Bot, PlayCircle, Plus, RefreshCcw, Save } from 'lucide-react';
+import { Bot, PlayCircle, Plus, RefreshCcw, Save, Trash2 } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -23,6 +24,7 @@ import type { LotteryKind } from '../types/dashboard';
 import type {
   GroupBuyRobotRun,
   RobotConfigSummary,
+  RobotConfigPayload,
   RobotKind,
   RobotStatus,
 } from '../types/robots';
@@ -53,6 +55,7 @@ export function RobotManagementPage({
     lastGroupBuyRun,
     loading,
     lotteries,
+    remove,
     refresh,
     robots,
     running,
@@ -70,6 +73,10 @@ export function RobotManagementPage({
   const filteredRobots = useMemo(
     () => robots.filter((robot) => robot.kind === filterKind),
     [filterKind, robots],
+  );
+  const editingRobot = useMemo(
+    () => robots.find((robot) => robot.id === editingId) ?? null,
+    [editingId, robots],
   );
   const totals = useMemo(() => robotTotals(robots), [robots]);
 
@@ -106,13 +113,36 @@ export function RobotManagementPage({
     onDashboardRefresh();
   };
 
+  const deleteRobotConfig = async (robot: RobotConfigSummary) => {
+    if (!robot.deletable) {
+      Toast.warning('内置机器人配置不能删除，请改为暂停或禁用');
+      return;
+    }
+    if (
+      !window.confirm(
+        `确定删除机器人配置【${robot.name}】吗？删除后不会影响已生成的订单、流水或合买计划。`,
+      )
+    ) {
+      return;
+    }
+
+    await remove(robot.id);
+    if (editingId === robot.id) {
+      setEditingId(null);
+      setRobotSheetVisible(false);
+      setForm(emptyRobotForm(filterKind));
+    }
+    Toast.success('机器人配置已删除');
+    onDashboardRefresh();
+  };
+
   return (
     <div className="space-y-5">
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-ink">机器人配置</h1>
           <p className="mt-1 text-sm text-slate-500">
-            维护合买机器人和购彩机器人适用彩种、状态和说明；机器人配置不能删除，只能暂停或禁用。
+            维护合买机器人和购彩机器人适用彩种、状态和说明；普通配置可删除，核心内置配置只能暂停或禁用。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -282,6 +312,20 @@ export function RobotManagementPage({
                             >
                               暂停
                             </Button>
+                            <Button
+                              disabled={saving || !robot.deletable}
+                              icon={<Trash2 size={14} />}
+                              size="small"
+                              type="danger"
+                              onClick={() => void deleteRobotConfig(robot)}
+                              title={
+                                robot.deletable
+                                  ? '删除机器人配置'
+                                  : '内置机器人不能删除'
+                              }
+                            >
+                              {robot.deletable ? '删除' : '内置不可删'}
+                            </Button>
                           </div>
                         </td>
                       </tr>
@@ -314,7 +358,7 @@ export function RobotManagementPage({
               {editingId ? '维护已有机器人配置' : '新增机器人配置'}
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              保存后会同步机器人列表和工作台概览；不再使用的机器人请改为暂停或禁用。
+              保存后会同步机器人列表和工作台概览；核心内置配置不允许删除。
             </p>
           </div>
         </div>
@@ -405,6 +449,21 @@ export function RobotManagementPage({
             >
               新建
             </Button>
+            {editingRobot ? (
+              <Button
+                disabled={saving || !editingRobot.deletable}
+                icon={<Trash2 size={16} />}
+                type="danger"
+                onClick={() => void deleteRobotConfig(editingRobot)}
+                title={
+                  editingRobot.deletable
+                    ? '删除机器人配置'
+                    : '内置机器人不能删除'
+                }
+              >
+                {editingRobot.deletable ? '删除配置' : '内置不可删'}
+              </Button>
+            ) : null}
             <Button onClick={() => setRobotSheetVisible(false)}>取消</Button>
           </div>
         </form>
@@ -516,7 +575,7 @@ function robotFormFromSummary(robot: RobotConfigSummary): RobotFormState {
   };
 }
 
-function robotPayload(form: RobotFormState): RobotConfigSummary {
+function robotPayload(form: RobotFormState): RobotConfigPayload {
   return {
     description: form.description.trim(),
     id: form.id.trim(),

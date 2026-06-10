@@ -187,7 +187,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/robots", get(list_robots).post(create_robot))
         .route("/robots/run", post(run_group_buy_robots_request))
-        .route("/robots/{id}", get(get_robot).put(update_robot))
+        .route(
+            "/robots/{id}",
+            get(get_robot).put(update_robot).delete(delete_robot),
+        )
         .route("/robots/{id}/status", patch(set_robot_status))
         .route(
             "/draw-sources",
@@ -904,6 +907,20 @@ fn compare_admin_time_desc(
         .cmp(&parse_admin_list_timestamp_seconds(left_created_at))
         .then_with(|| right_created_at.cmp(left_created_at))
         .then_with(|| right_id.cmp(left_id))
+}
+
+/// 解析用户编号中的序号，供后台列表按最新用户稳定排序。
+fn user_id_sequence_for_sort(user_id: &str) -> Option<u64> {
+    user_id.trim().strip_prefix('U')?.parse().ok()
+}
+
+/// 资金账户按用户编号倒序展示，让最新创建的用户优先进入第一页。
+fn sort_financial_accounts_by_latest_user_desc(accounts: &mut [AdminFinancialAccountSummary]) {
+    accounts.sort_by(|left, right| {
+        user_id_sequence_for_sort(&right.user_id)
+            .cmp(&user_id_sequence_for_sort(&left.user_id))
+            .then_with(|| right.user_id.cmp(&left.user_id))
+    });
 }
 
 /// 资金流水列表按创建时间倒序展示，避免依赖仓储内部插入顺序。
@@ -2076,6 +2093,16 @@ async fn update_robot(
     Ok(Json(ApiEnvelope::success(robot)))
 }
 
+/// 后台删除普通机器人配置；核心内置机器人由仓储层保护。
+async fn delete_robot(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<RobotConfigSummary>>> {
+    let robot = state.robots.delete(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(robot)))
+}
+
 /// 后台切换机器人运行状态。
 async fn set_robot_status(
     State(state): State<AppState>,
@@ -2306,7 +2333,7 @@ async fn list_financial_accounts(
         .into_iter()
         .map(|user| (user.id, user.username))
         .collect();
-    let accounts = accounts
+    let mut accounts = accounts
         .into_iter()
         .map(|account| AdminFinancialAccountSummary {
             username: usernames.get(&account.user_id).cloned(),
@@ -2315,6 +2342,7 @@ async fn list_financial_accounts(
             frozen_balance_minor: account.frozen_balance_minor,
         })
         .collect::<Vec<_>>();
+    sort_financial_accounts_by_latest_user_desc(&mut accounts);
 
     Ok(Json(ApiEnvelope::success(page_items(accounts, query))))
 }
@@ -2871,16 +2899,16 @@ mod tests {
         finance_overview_for_query, normalize_admin_draw_control_target, page_items,
         required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
         should_include_robot_initiated_group_buy_plan, should_include_user_scoped_record,
-        sort_ledger_entries_by_time_desc, sort_recharge_orders_by_time_desc, sort_users,
-        sort_withdrawal_orders_by_time_desc, username_map_from_users, FinancePageQuery,
-        UserListQuery,
+        sort_financial_accounts_by_latest_user_desc, sort_ledger_entries_by_time_desc,
+        sort_recharge_orders_by_time_desc, sort_users, sort_withdrawal_orders_by_time_desc,
+        username_map_from_users, FinancePageQuery, UserListQuery,
     };
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
         app::AppState,
         domain::{
             draw::{DrawControlTargetScope, DrawIssueStatus, SaveLotteryDrawControlRequest},
-            finance::{LedgerEntry, LedgerEntryKind},
+            finance::{AdminFinancialAccountSummary, LedgerEntry, LedgerEntryKind},
             lottery::DrawMode,
             order::CreateOrderRequest,
             permission::PermissionScope,
@@ -3079,6 +3107,34 @@ mod tests {
     }
 
     #[test]
+    /// 资金账户列表按用户编号倒序后再分页，最新用户优先展示。
+    fn financial_accounts_sort_latest_user_before_pagination() {
+        let mut accounts = vec![
+            test_financial_account("U10001"),
+            test_financial_account("U10003"),
+            test_financial_account("U10002"),
+        ];
+
+        sort_financial_accounts_by_latest_user_desc(&mut accounts);
+        let page = page_items(
+            accounts,
+            FinancePageQuery {
+                include_robot_data: None,
+                page: Some(1),
+                page_size: Some(2),
+            },
+        );
+
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|account| account.user_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["U10003", "U10002"]
+        );
+    }
+
+    #[test]
     /// 财务列表按创建时间倒序后再分页，同一秒的数据按业务编号倒序保持稳定。
     fn finance_lists_sort_by_created_time_desc_before_pagination() {
         let mut ledger_entries = vec![
@@ -3256,6 +3312,15 @@ mod tests {
             kind: LedgerEntryKind::ManualAdjustment,
             reference_id: None,
             user_id: "U10001".to_string(),
+        }
+    }
+
+    fn test_financial_account(user_id: &str) -> AdminFinancialAccountSummary {
+        AdminFinancialAccountSummary {
+            available_balance_minor: 1000,
+            frozen_balance_minor: 0,
+            user_id: user_id.to_string(),
+            username: Some(format!("user_{user_id}")),
         }
     }
 

@@ -1502,6 +1502,7 @@ mod tests {
             lottery_ids: vec!["robot-test".to_string()],
             status: RobotStatus::Enabled,
             description: "测试机器人".to_string(),
+            deletable: true,
         }
     }
 

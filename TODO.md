@@ -1,5 +1,44 @@
 # TODO
 
+## 2026-06-11 04:24 HKT 侧边栏注册配置入口更名
+
+- 完成任务：把后台侧边栏里的“用户注册”入口更名为“系统配置”。
+- 解决问题：原名称容易让运营误以为该入口是用户端注册页面，而实际功能是维护注册方式、邮箱注册和邀请码要求。
+- 实施内容：
+  - 后端 dashboard 模块 `registration` 的展示名改为“系统配置”，说明改为“注册方式与邀请要求”。
+  - 管理后台侧边栏 `registration` 图标改为设置图标。
+  - 模块 key、权限映射和注册配置接口保持不变。
+  - 同步更新架构说明和前端组件规范。
+- 验证结果：`cargo check --manifest-path backend/Cargo.toml`、`cd admin && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-11 04:18 HKT 机器人配置删除能力修复
+
+- 完成任务：修复后台机器人配置无法删除普通机器人配置的问题。
+- 解决问题：
+  - 旧实现为了保护合买机器人和购彩机器人，把机器人删除接口和前端删除入口全部移除，导致后台新建或测试类普通机器人配置也无法删除。
+  - 页面说明仍写着“机器人配置不能删除”，和当前运营需要不一致。
+- 实施内容：
+  - 后端机器人响应新增 `deletable` 字段，由仓储根据机器人 ID 计算删除权限。
+  - 新增 `DELETE /api/admin/robots/{id}`，普通机器人配置可删除，核心内置机器人返回“内置机器人配置不能删除，请改为暂停或禁用”。
+  - 管理后台 API client 和 `useRobots` 接入删除能力，机器人列表与编辑抽屉新增删除按钮。
+  - 后台页面删除普通机器人后关闭对应抽屉、刷新工作台；核心内置机器人删除按钮禁用并保留暂停/禁用能力。
+  - 同步更新 OpenAPI、架构说明、后端 API 契约和前端组件规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml robot -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cd admin && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-11 04:09 HKT 财务时间展示转换
+
+- 完成任务：把资金流水等财务记录中的 `unix:秒` 原始时间标签转换为可读时间展示。
+- 解决问题：
+  - 后台财务管理资金流水直接渲染 `createdAt`，当历史数据或接口返回 `unix:1781104790` 时，运营会看到内部时间编码。
+  - 同一财务页的充值、提现时间字段也存在直接展示原始值的风险。
+  - 手机端公共时间解析没有识别 `unix:秒`，我的账户资金流水等页面可能继续露出原始标签。
+- 实施内容：
+  - 后台公共格式化工具新增财务时间格式化能力，支持标准日期、`unix:秒` 和秒级时间戳，统一展示为北京时间 `YYYY-MM-DD HH:mm:ss`。
+  - 财务管理充值订单、提现管理和资金流水时间字段统一调用 `formatDateTime`。
+  - 手机端 `parseChinaDateTime` 支持 `unix:秒` 与秒级时间戳，复用 `formatDateTime` 的资金页面同步受益。
+  - 同步更新架构说明和前端组件规范。
+- 验证结果：`cd admin && npm run build`、`cd mobile && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
 ## 2026-06-10 21:02 HKT 手机端下注页封盘后轮询修复
 
 - 完成任务：修复手机端下注页封盘时间到达后长期停在“开奖中”且不进入下一期的问题。
@@ -2909,3 +2948,17 @@
 - 解决问题：用户列表此前只显示 `agentId`，运营需要额外记忆或查询代理 ID 才能识别上级代理。
 - 实施内容：后端后台用户响应新增 `agentUsername` 派生字段，列表、详情、创建、更新和状态变更响应统一返回；后台类型和用户表格同步展示代理用户名，并保留代理 ID。
 - 验证结果：后端 `cargo fmt --check`、`cargo check`、上级代理用户名定向单测、后台 `npm run build` 和 `git diff --check` 均通过。
+
+## 2026-06-11 04:00 HKT 资金账户最新用户优先
+
+- 完成任务：财务管理“资金账户”列表改为按用户编号倒序展示。
+- 解决问题：资金账户分页此前依赖仓储返回顺序，第一页可能优先展示旧用户，不符合财务人员优先查看最新用户的习惯。
+- 实施内容：后端 `GET /api/admin/financial-accounts` 在分页前按用户编号倒序排序；机器人过滤仍先执行，过滤后的账户再排序分页；补充后端排序单测和接口契约说明。
+- 验证结果：后端 `cargo fmt --check`、`cargo check`、资金账户排序定向单测和 `git diff --check` 均通过。
+
+## 2026-06-11 04:05 HKT 用户权限管理移除统计卡片
+
+- 完成任务：移除用户权限管理顶部四个统计卡片。
+- 解决问题：用户管理、管理员管理和角色权限主页面需要优先服务列表扫描，`grid gap-3 sm:grid-cols-2 xl:grid-cols-4` 统计区占用页面空间且当前不需要。
+- 实施内容：删除 `AccessManagementPage` 中用户总数、活跃用户、后台账号、角色数量四个 `MetricCard`；清理 `totals` 派生值和 `accessTotals` 辅助函数；同步更新前端组件规范和架构说明。
+- 验证结果：后台 `npm run build` 和 `git diff --check` 均通过。

@@ -38,7 +38,7 @@ import type {
   WithdrawalMethodType,
   WithdrawalOrderStatus,
 } from '../types/finance';
-import { formatMoney, formatSignedMoney } from '../utils/format';
+import { formatDateTime, formatMoney, formatSignedMoney } from '../utils/format';
 import { yuanInputToMinor } from '../utils/moneyInput';
 
 interface FinanceManagementPageProps {
@@ -449,8 +449,10 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                     <td className="py-3 pr-4">
                       <div className="font-semibold text-ink">{order.id}</div>
                       <div className="mt-1 text-xs text-slate-400">
-                        {order.createdAt}
-                        {order.paidAt ? ` · ${order.paidAt}` : ''}
+                        {formatDateTime(order.createdAt, order.createdAt || '-')}
+                        {order.paidAt
+                          ? ` · ${formatDateTime(order.paidAt, order.paidAt)}`
+                          : ''}
                       </div>
                     </td>
                     <td className="py-3 pr-4">
@@ -571,7 +573,9 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                   <tr key={order.id} className="border-b border-slate-100">
                     <td className="py-3 pr-4">
                       <div className="font-semibold text-ink">{order.id}</div>
-                      <div className="mt-1 text-xs text-slate-400">{order.createdAt}</div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        {formatDateTime(order.createdAt, order.createdAt || '-')}
+                      </div>
                     </td>
                     <td className="py-3 pr-4">
                       <div className="font-medium text-slate-700">{order.username}</div>
@@ -596,7 +600,9 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                       </div>
                     </td>
                     <td className="py-3 pr-4 text-slate-600">
-                      {order.reviewedAt ?? '-'}
+                      {order.reviewedAt
+                        ? formatDateTime(order.reviewedAt, order.reviewedAt)
+                        : '-'}
                     </td>
                     <td className="py-3 pr-4">
                       {order.status === 'pending' ? (
@@ -689,7 +695,9 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                   <tr key={entry.id} className="border-b border-slate-100">
                     <td className="py-3 pr-4">
                       <div className="font-semibold text-ink">{entry.id}</div>
-                      <div className="mt-1 text-xs text-slate-400">{entry.createdAt}</div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        {formatDateTime(entry.createdAt, entry.createdAt || '-')}
+                      </div>
                     </td>
                     <td className="py-3 pr-4">
                       <div className="font-medium text-slate-700">

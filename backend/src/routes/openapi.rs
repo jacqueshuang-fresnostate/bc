@@ -640,6 +640,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Json,
     ),
     doc(
+        "delete",
+        "/admin/robots/{id}",
+        "机器人配置",
+        "删除机器人",
+        "删除普通机器人配置；核心内置机器人不能删除，只能暂停或禁用。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
         "patch",
         "/admin/robots/{id}/status",
         "机器人配置",
@@ -1815,7 +1824,7 @@ mod tests {
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["get"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["put"].is_object());
-        assert!(document["paths"]["/admin/robots/{id}"]["delete"].is_null());
+        assert!(document["paths"]["/admin/robots/{id}"]["delete"].is_object());
         assert!(document["paths"]["/lottery/home"]["get"].is_object());
         assert!(document["paths"]["/lottery/groups"]["get"].is_object());
         assert!(document["paths"]["/lottery/history/latest"]["get"].is_object());

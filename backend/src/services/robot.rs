@@ -18,6 +18,8 @@ use crate::{
 
 use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
 
+const PROTECTED_ROBOT_IDS: &[&str] = &["R-GROUP-001", "R-BUY-001"];
+
 #[derive(Clone)]
 /// 机器人配置仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct RobotRepository {
@@ -111,6 +113,20 @@ impl RobotRepository {
         Ok(result)
     }
 
+    /// 删除普通机器人配置；核心内置机器人只能暂停或禁用，不能删除。
+    pub async fn delete(&self, id: &str) -> ApiResult<RobotConfigSummary> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("robot store lock poisoned".to_string()))?;
+            let result = store.delete(id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     async fn persist(&self, store: &RobotStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_robot_store(persistence, store).await?;
@@ -196,6 +212,7 @@ async fn load_robot_store(database: &BusinessDatabase) -> ApiResult<RobotStore> 
                 description: row
                     .try_get("description")
                     .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?,
+                deletable: is_robot_deletable(&id),
             },
         );
     }
@@ -329,6 +346,24 @@ impl RobotStore {
         robot.status = status;
         Ok(robot.clone())
     }
+
+    /// 删除普通机器人配置，内置核心机器人返回冲突错误。
+    fn delete(&mut self, id: &str) -> ApiResult<RobotConfigSummary> {
+        let id = required_trimmed(id.to_string(), "robot id")?;
+        let robot = self
+            .robots
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound(format!("robot `{id}` not found")))?;
+        if !robot.deletable {
+            return Err(ApiError::Conflict(
+                "内置机器人配置不能删除，请改为暂停或禁用".to_string(),
+            ));
+        }
+
+        self.robots.remove(&id);
+        Ok(robot)
+    }
 }
 
 /// 标准化输入并返回规范值。
@@ -370,8 +405,14 @@ fn normalize_robot(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    robot.deletable = is_robot_deletable(&robot.id);
 
     Ok(robot)
+}
+
+/// 根据机器人 ID 判断是否允许后台删除。
+fn is_robot_deletable(id: &str) -> bool {
+    !PROTECTED_ROBOT_IDS.contains(&id)
 }
 
 /// 去除空白并校验必填字段。
@@ -393,6 +434,7 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
             lottery_ids: vec!["fc3d".to_string(), "ssc60".to_string()],
             status: RobotStatus::Enabled,
             description: "开盘期间发起合买并辅助满单".to_string(),
+            deletable: false,
         },
         RobotConfigSummary {
             id: "R-BUY-001".to_string(),
@@ -401,6 +443,7 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
             lottery_ids: vec!["ssc60".to_string()],
             status: RobotStatus::Paused,
             description: "按彩种开盘时间模拟普通用户购彩".to_string(),
+            deletable: false,
         },
         RobotConfigSummary {
             id: "R-BUY-002".to_string(),
@@ -409,6 +452,7 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
             lottery_ids: vec!["manual-test".to_string()],
             status: RobotStatus::Disabled,
             description: "指定号码测试彩暂停机器人执行".to_string(),
+            deletable: true,
         },
     ]
 }
@@ -431,6 +475,7 @@ mod tests {
                     lottery_ids: vec!["fc3d".to_string(), "fc3d".to_string()],
                     status: RobotStatus::Paused,
                     description: "测试机器人".to_string(),
+                    deletable: true,
                 },
                 &lotteries,
             )
@@ -439,6 +484,7 @@ mod tests {
 
         assert_eq!(created.id, "R-NEW");
         assert_eq!(created.lottery_ids, vec!["fc3d".to_string()]);
+        assert!(created.deletable);
 
         let updated = robots
             .set_status("R-NEW", RobotStatus::Enabled)
@@ -460,6 +506,7 @@ mod tests {
                     lottery_ids: Vec::new(),
                     status: RobotStatus::Paused,
                     description: "测试机器人".to_string(),
+                    deletable: true,
                 },
                 &lotteries,
             )
@@ -482,6 +529,7 @@ mod tests {
                     lottery_ids: vec!["missing".to_string()],
                     status: RobotStatus::Paused,
                     description: "测试机器人".to_string(),
+                    deletable: true,
                 },
                 &lotteries,
             )
@@ -489,5 +537,44 @@ mod tests {
             .expect_err("unknown lottery must be rejected");
 
         assert!(matches!(error, ApiError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn robot_repository_deletes_only_deletable_robots() {
+        let robots = RobotRepository::memory_seeded();
+        let lotteries = seed_lotteries();
+        robots
+            .create(
+                RobotConfigSummary {
+                    id: "R-DELETE-ME".to_string(),
+                    name: "可删除机器人".to_string(),
+                    kind: RobotKind::Purchase,
+                    lottery_ids: vec!["fc3d".to_string()],
+                    status: RobotStatus::Paused,
+                    description: "测试删除".to_string(),
+                    deletable: true,
+                },
+                &lotteries,
+            )
+            .await
+            .expect("robot can be created");
+
+        let deleted = robots
+            .delete("R-DELETE-ME")
+            .await
+            .expect("deletable robot can be deleted");
+        assert_eq!(deleted.id, "R-DELETE-ME");
+        assert!(robots.get("R-DELETE-ME").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn robot_repository_rejects_deleting_protected_robot() {
+        let robots = RobotRepository::memory_seeded();
+        let error = robots
+            .delete("R-GROUP-001")
+            .await
+            .expect_err("protected robot cannot be deleted");
+
+        assert!(matches!(error, ApiError::Conflict(_)));
     }
 }

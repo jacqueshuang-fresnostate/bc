@@ -149,6 +149,7 @@ export interface RobotConfigSummary {
   lotteryIds: string[];
   status: RobotStatus;
   description: string;
+  deletable: boolean;
 }
 
 export interface UserSummary {

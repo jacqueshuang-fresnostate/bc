@@ -31,6 +31,8 @@ pub struct RobotConfigSummary {
     pub lottery_ids: Vec<String>,
     pub status: RobotStatus,
     pub description: String,
+    #[serde(default)]
+    pub deletable: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
