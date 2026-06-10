@@ -601,6 +601,19 @@ impl AccessRepository {
         self.persist(&snapshot).await
     }
 
+    /// 从数据库重新加载用户、管理员、角色、会话和系统设置快照，供后台缓存维护使用。
+    pub async fn reload_from_database(&self) -> ApiResult<bool> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(false);
+        };
+        let store = load_access_store(persistence).await?;
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("访问控制缓存刷新失败".to_string()))? = store;
+        Ok(true)
+    }
+
     async fn persist(&self, store: &AccessStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_access_store(persistence, store).await?;

@@ -70,6 +70,7 @@ impl GroupBuyPlan {
             filled_amount_minor: self.filled_amount_minor,
             share_count: self.share_count,
             status: self.status.clone(),
+            created_at: self.created_at.clone(),
         }
     }
 }
@@ -91,6 +92,7 @@ pub struct GroupBuyPlanSummary {
     pub filled_amount_minor: i64,
     pub share_count: u32,
     pub status: GroupBuyPlanStatus,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

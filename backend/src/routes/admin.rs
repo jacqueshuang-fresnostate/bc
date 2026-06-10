@@ -12,7 +12,7 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Extension, Json, Router,
 };
-use chrono::Local;
+use chrono::{Local, NaiveDateTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -22,7 +22,7 @@ use std::{
 };
 
 use crate::{
-    app::AppState,
+    app::{AppState, MemoryCacheReloadResult},
     domain::{
         advertisement::{AdvertisementSummary, SaveAdvertisementRequest},
         auth::{AdminAuthSession, AdminLoginRequest, AdminLogoutResponse, CurrentAdminProfile},
@@ -164,6 +164,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(get_role).put(update_role).delete(delete_role),
         )
         .route("/system-settings", get(list_system_settings))
+        .route("/system-settings/cache/reload", post(reload_memory_cache))
         .route("/system-settings/{key}", patch(update_system_setting))
         .route("/image-bed/upload", post(upload_image_bed_file))
         .route(
@@ -758,6 +759,15 @@ struct ClearRecordsResult {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台用户列表展示结构，在用户基础信息外补充上级代理用户名。
+struct AdminUserSummary {
+    #[serde(flatten)]
+    user: UserSummary,
+    agent_username: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 /// 后台订单列表展示结构，在订单详情基础上补充当前用户名称快照，便于运营核对下注用户。
 struct AdminOrderDetail {
     #[serde(flatten)]
@@ -866,6 +876,55 @@ fn page_items<T>(items: Vec<T>, query: FinancePageQuery) -> FinancePage<T> {
         total_count,
         total_pages,
     }
+}
+
+/// 解析后台列表使用的业务时间，兼容标准本地时间和历史 `unix:` 秒级标签。
+fn parse_admin_list_timestamp_seconds(value: &str) -> Option<i64> {
+    let value = value.trim();
+    if let Some(seconds) = value.strip_prefix("unix:") {
+        return seconds.parse::<i64>().ok();
+    }
+
+    let parsed = NaiveDateTime::parse_from_str(value, TIMESTAMP_FORMAT).ok()?;
+    Local
+        .from_local_datetime(&parsed)
+        .single()
+        .map(|value| value.timestamp())
+        .or_else(|| Some(parsed.and_utc().timestamp()))
+}
+
+/// 按时间倒序比较后台财务记录，同秒数据继续按业务编号倒序保证分页稳定。
+fn compare_admin_time_desc(
+    left_created_at: &str,
+    left_id: &str,
+    right_created_at: &str,
+    right_id: &str,
+) -> Ordering {
+    parse_admin_list_timestamp_seconds(right_created_at)
+        .cmp(&parse_admin_list_timestamp_seconds(left_created_at))
+        .then_with(|| right_created_at.cmp(left_created_at))
+        .then_with(|| right_id.cmp(left_id))
+}
+
+/// 资金流水列表按创建时间倒序展示，避免依赖仓储内部插入顺序。
+fn sort_ledger_entries_by_time_desc(entries: &mut [LedgerEntry]) {
+    entries.sort_by(|left, right| {
+        compare_admin_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
+    });
+}
+
+/// 充值订单列表按创建时间倒序展示，最新充值优先进入第一页。
+fn sort_recharge_orders_by_time_desc(orders: &mut [RechargeOrderSummary]) {
+    orders.sort_by(|left, right| {
+        compare_admin_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
+    });
+}
+
+/// 提现申请列表按创建时间倒序展示，最新申请优先进入第一页。
+fn sort_withdrawal_orders_by_time_desc(orders: &mut [WithdrawalOrderSummary]) {
+    orders.sort_by(|left, right| {
+        compare_admin_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
+    });
 }
 
 /// 按用户列表查询参数排序，排序字段必须来自白名单。
@@ -1599,9 +1658,14 @@ async fn reply_support_conversation(
 async fn list_users(
     State(state): State<AppState>,
     Query(query): Query<UserListQuery>,
-) -> ApiResult<Json<ApiEnvelope<FinancePage<UserSummary>>>> {
+) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminUserSummary>>>> {
     let mut users = users_with_financial_balances(&state).await?;
     sort_users(&mut users, &query)?;
+    let usernames = username_map_from_users(&users);
+    let users = users
+        .into_iter()
+        .map(|user| admin_user_summary_with_usernames(user, &usernames))
+        .collect::<Vec<_>>();
 
     Ok(Json(ApiEnvelope::success(page_items(
         users,
@@ -1613,8 +1677,9 @@ async fn list_users(
 async fn get_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminUserSummary>>> {
     let user = user_with_financial_balance(&state, &id).await?;
+    let user = admin_user_summary(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -1623,10 +1688,11 @@ async fn get_user(
 async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<UserSummary>,
-) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminUserSummary>>> {
     let user = state.access.create_user(payload).await?;
     let account = state.finance.account_or_create(&user.id).await?;
     let user = user_with_account_balance(user, Some(&account));
+    let user = admin_user_summary(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -1636,9 +1702,10 @@ async fn update_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(payload): Json<UserSummary>,
-) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminUserSummary>>> {
     let user = state.access.update_user(&id, payload).await?;
     let user = user_with_financial_balance_from_summary(&state, user).await?;
+    let user = admin_user_summary(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -1648,9 +1715,10 @@ async fn set_user_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(payload): Json<UserStatusRequest>,
-) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminUserSummary>>> {
     let user = state.access.set_user_status(&id, payload.status).await?;
     let user = user_with_financial_balance_from_summary(&state, user).await?;
+    let user = admin_user_summary(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
 }
@@ -1697,6 +1765,27 @@ fn user_with_account_balance(
         user.balance_minor = account.available_balance_minor;
     }
     user
+}
+
+/// 为后台用户展示项补充上级代理用户名。
+async fn admin_user_summary(state: &AppState, user: UserSummary) -> ApiResult<AdminUserSummary> {
+    let usernames = admin_usernames(state).await?;
+    Ok(admin_user_summary_with_usernames(user, &usernames))
+}
+
+/// 使用已加载的用户名映射包装用户，避免列表页重复查询代理账号。
+fn admin_user_summary_with_usernames(
+    user: UserSummary,
+    usernames: &BTreeMap<String, String>,
+) -> AdminUserSummary {
+    let agent_username = user
+        .agent_id
+        .as_ref()
+        .and_then(|agent_id| usernames.get(agent_id).cloned());
+    AdminUserSummary {
+        user,
+        agent_username,
+    }
 }
 
 /// 返回后台管理员账号列表。
@@ -1827,6 +1916,22 @@ async fn update_system_setting(
     let setting = state.access.update_setting(&key, payload).await?;
 
     Ok(Json(ApiEnvelope::success(setting)))
+}
+
+/// 手动从数据库刷新后端快照型内存缓存，供清表或直接改库后的维护使用。
+async fn reload_memory_cache(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<MemoryCacheReloadResult>>> {
+    let result = state.reload_memory_cache_from_database().await?;
+    tracing::info!(
+        refreshed_at = %result.refreshed_at,
+        reloaded_module_count = result.reloaded_modules.len(),
+        database_direct_module_count = result.database_direct_modules.len(),
+        skipped_module_count = result.skipped_modules.len(),
+        "后台手动刷新内存缓存完成"
+    );
+
+    Ok(Json(ApiEnvelope::success(result)))
 }
 
 /// 处理管理员图片上传请求：读取图床配置后透传 multipart 文件到第三方服务。
@@ -2220,7 +2325,7 @@ async fn list_ledger_entries(
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminLedgerEntry>>>> {
     let usernames = admin_usernames(&state).await?;
-    let entries = state
+    let mut entries = state
         .finance
         .ledger_entries()
         .await?
@@ -2228,6 +2333,10 @@ async fn list_ledger_entries(
         .filter(|entry| {
             should_include_user_scoped_record(query.include_robot_data(), &entry.user_id)
         })
+        .collect::<Vec<_>>();
+    sort_ledger_entries_by_time_desc(&mut entries);
+    let entries = entries
+        .into_iter()
         .map(|entry| admin_ledger_entry_with_usernames(entry, &usernames))
         .collect::<Vec<_>>();
 
@@ -2239,14 +2348,16 @@ async fn list_recharge_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<RechargeOrderSummary>>>> {
-    let orders = state.recharges.list().await?;
+    let mut orders = state.recharges.list().await?;
+    sort_recharge_orders_by_time_desc(&mut orders);
 
     Ok(Json(ApiEnvelope::success(page_items(orders, query))))
 }
 
 /// 导出全部充值订单为 CSV 文件，供后台财务留档或离线核对。
 async fn export_recharge_orders(State(state): State<AppState>) -> ApiResult<Response> {
-    let orders = state.recharges.list().await?;
+    let mut orders = state.recharges.list().await?;
+    sort_recharge_orders_by_time_desc(&mut orders);
     let csv = recharge_orders_csv(&orders);
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -2277,7 +2388,8 @@ async fn list_withdrawal_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<WithdrawalOrderSummary>>>> {
-    let orders = state.withdrawals.list().await?;
+    let mut orders = state.withdrawals.list().await?;
+    sort_withdrawal_orders_by_time_desc(&mut orders);
 
     Ok(Json(ApiEnvelope::success(page_items(orders, query))))
 }
@@ -2755,21 +2867,27 @@ struct SaleStatusRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        align_draw_issue_plan_after_sale_on, finance_overview_for_query,
-        normalize_admin_draw_control_target, page_items, required_scope_for_path,
-        should_align_draw_issue_plan_after_sale_on, should_include_robot_initiated_group_buy_plan,
-        should_include_user_scoped_record, sort_users, FinancePageQuery, UserListQuery,
+        admin_user_summary_with_usernames, align_draw_issue_plan_after_sale_on,
+        finance_overview_for_query, normalize_admin_draw_control_target, page_items,
+        required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
+        should_include_robot_initiated_group_buy_plan, should_include_user_scoped_record,
+        sort_ledger_entries_by_time_desc, sort_recharge_orders_by_time_desc, sort_users,
+        sort_withdrawal_orders_by_time_desc, username_map_from_users, FinancePageQuery,
+        UserListQuery,
     };
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
         app::AppState,
         domain::{
             draw::{DrawControlTargetScope, DrawIssueStatus, SaveLotteryDrawControlRequest},
+            finance::{LedgerEntry, LedgerEntryKind},
             lottery::DrawMode,
             order::CreateOrderRequest,
             permission::PermissionScope,
             play::{PlayRuleCode, PlaySelection},
-            user::{UserKind, UserStatus, UserSummary},
+            recharge::{RechargeChannel, RechargeOrderStatus, RechargeOrderSummary},
+            user::{UserKind, UserStatus, UserSummary, WithdrawalMethodType},
+            withdrawal::{WithdrawalOrderStatus, WithdrawalOrderSummary},
         },
         services::{
             access::AccessRepository,
@@ -2813,6 +2931,10 @@ mod tests {
         );
         assert_eq!(
             required_scope_for_path("/image-bed/upload"),
+            Some(PermissionScope::SystemSettings)
+        );
+        assert_eq!(
+            required_scope_for_path("/system-settings/cache/reload"),
             Some(PermissionScope::SystemSettings)
         );
         assert_eq!(
@@ -2942,6 +3064,61 @@ mod tests {
         );
     }
 
+    #[test]
+    /// 后台用户展示项会把上级代理 ID 解析成用户名，方便运营直接识别代理。
+    fn admin_user_summary_includes_agent_username() {
+        let agent = test_user("U90001", "agent_alpha", 0);
+        let mut invitee = test_user("U10001", "demo_user", 0);
+        invitee.agent_id = Some(agent.id.clone());
+        let usernames = username_map_from_users(&[agent, invitee.clone()]);
+
+        let summary = admin_user_summary_with_usernames(invitee, &usernames);
+
+        assert_eq!(summary.user.agent_id.as_deref(), Some("U90001"));
+        assert_eq!(summary.agent_username.as_deref(), Some("agent_alpha"));
+    }
+
+    #[test]
+    /// 财务列表按创建时间倒序后再分页，同一秒的数据按业务编号倒序保持稳定。
+    fn finance_lists_sort_by_created_time_desc_before_pagination() {
+        let mut ledger_entries = vec![
+            test_ledger_entry("L000000000001", "2026-06-10 10:00:00"),
+            test_ledger_entry("L000000000002", "2026-06-10 12:00:00"),
+            test_ledger_entry("L000000000003", "2026-06-10 12:00:00"),
+        ];
+        sort_ledger_entries_by_time_desc(&mut ledger_entries);
+        let ledger_page = page_items(
+            ledger_entries,
+            FinancePageQuery {
+                include_robot_data: None,
+                page: Some(1),
+                page_size: Some(2),
+            },
+        );
+        assert_eq!(
+            ledger_page
+                .items
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["L000000000003", "L000000000002"]
+        );
+
+        let mut recharge_orders = vec![
+            test_recharge_order("R000000000001", "2026-06-10 09:00:00"),
+            test_recharge_order("R000000000002", "2026-06-10 13:00:00"),
+        ];
+        sort_recharge_orders_by_time_desc(&mut recharge_orders);
+        assert_eq!(recharge_orders[0].id, "R000000000002");
+
+        let mut withdrawal_orders = vec![
+            test_withdrawal_order("W000000000001", "2026-06-10 08:00:00"),
+            test_withdrawal_order("W000000000002", "2026-06-10 14:00:00"),
+        ];
+        sort_withdrawal_orders_by_time_desc(&mut withdrawal_orders);
+        assert_eq!(withdrawal_orders[0].id, "W000000000002");
+    }
+
     #[tokio::test]
     /// 财务总览默认剔除机器人账户余额，开关打开后才纳入机器人自动授信和扣款口径。
     async fn finance_overview_hides_robot_account_by_default() {
@@ -3066,6 +3243,53 @@ mod tests {
             kind: UserKind::Regular,
             status: UserStatus::Active,
             username: username.to_string(),
+        }
+    }
+
+    fn test_ledger_entry(id: &str, created_at: &str) -> LedgerEntry {
+        LedgerEntry {
+            amount_minor: 100,
+            balance_after_minor: 1000,
+            created_at: created_at.to_string(),
+            description: "测试流水".to_string(),
+            id: id.to_string(),
+            kind: LedgerEntryKind::ManualAdjustment,
+            reference_id: None,
+            user_id: "U10001".to_string(),
+        }
+    }
+
+    fn test_recharge_order(id: &str, created_at: &str) -> RechargeOrderSummary {
+        RechargeOrderSummary {
+            amount_minor: 1000,
+            channel: RechargeChannel::CustomerService,
+            created_at: created_at.to_string(),
+            id: id.to_string(),
+            paid_at: None,
+            pay_type: None,
+            payment_url: None,
+            provider_trade_no: None,
+            status: RechargeOrderStatus::Pending,
+            support_conversation_id: None,
+            user_id: "U10001".to_string(),
+            username: "alice".to_string(),
+        }
+    }
+
+    fn test_withdrawal_order(id: &str, created_at: &str) -> WithdrawalOrderSummary {
+        WithdrawalOrderSummary {
+            account_holder: "alice".to_string(),
+            account_number: "13800000000".to_string(),
+            amount_minor: 1000,
+            bank_name: None,
+            created_at: created_at.to_string(),
+            id: id.to_string(),
+            method_id: "WM10001".to_string(),
+            method_type: WithdrawalMethodType::Alipay,
+            reviewed_at: None,
+            status: WithdrawalOrderStatus::Pending,
+            user_id: "U10001".to_string(),
+            username: "alice".to_string(),
         }
     }
 }

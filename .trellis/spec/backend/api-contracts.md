@@ -2186,6 +2186,7 @@ let robot_run = run_group_buy_robots(
   "status": "active",
   "balanceMinor": 12000,
   "agentId": "U90001",
+  "agentUsername": "agent_alpha",
   "inviteCode": "USER10001"
 }
 ```
@@ -2239,8 +2240,9 @@ let robot_run = run_group_buy_robots(
 3. 角色权限范围使用后端枚举的 `camelCase` 值：`users`、`orders`、`finance`、`customerService`、`admins`、`roles`、`systemSettings`、`lotteries`、`robots`、`rebates`。
 4. 用户余额字段仍是 `balanceMinor` 最小货币单位。本阶段用户摘要余额不强制和财务账户仓储同步。
 5. 每个用户摘要都有单个 `inviteCode`。代理用户的邀请码可用于创建邀请关系，普通用户的邀请码只展示，使用时返回“邀请码无效”。
-6. 用户管理接口只需要 `users` 权限，不允许让用户管理页额外依赖需要 `rebates` 权限的邀请管理接口。
-7. 本阶段不保存管理员密码，不提供真实登录、JWT、菜单拦截或权限鉴权。
+6. 后台用户列表、详情、创建、更新和状态变更响应在 `agentId` 外补充 `agentUsername`，用于用户维护页直接展示上级代理用户名；没有上级代理或代理账号不存在时返回 `null`。
+7. 用户管理接口只需要 `users` 权限，不允许让用户管理页额外依赖需要 `rebates` 权限的邀请管理接口。
+8. 本阶段不保存管理员密码，不提供真实登录、JWT、菜单拦截或权限鉴权。
 
 ### 4. 校验与错误矩阵
 
@@ -3013,7 +3015,24 @@ await createInvitation({
 
 ```json
 {
-  "items": [],
+  "items": [
+    {
+      "id": "G202606020001",
+      "lotteryId": "fc3d",
+      "lotteryName": "福彩 3D",
+      "orderId": null,
+      "issue": "20260605001",
+      "ruleCode": "threeDirect",
+      "title": "福彩 3D 第20260605001期合买",
+      "initiatorUserId": "U90001",
+      "initiatorUsername": "agent_alpha",
+      "totalAmountMinor": 100000,
+      "filledAmountMinor": 72000,
+      "shareCount": 1000,
+      "status": "open",
+      "createdAt": "2026-06-02 09:00:00"
+    }
+  ],
   "totalCount": 0,
   "page": 1,
   "pageSize": 20,
@@ -3102,6 +3121,7 @@ await createInvitation({
 18. 新增参与记录后如果仍未满单，剩余金额不能小于参与人最低认购金额；否则该计划会留下无人可认购的小尾巴，后端必须拒绝本次认购并提示用户增加金额或选择全包。
 19. 后台 `GET /api/admin/group-buy/plans`、用户端 `/api/user/group-buy/plans` 和 `/api/user/group-buy/my` 都必须由后端仓储统一按 `issue` 倒序返回；同一期多条计划按 `createdAt`、计划 ID 倒序稳定排列，前端不得改成升序。
 20. 后台 `GET /api/admin/group-buy/plans` 不传 `includeRobotData` 时等同于 `false`，默认过滤 `initiatorUserId` 为系统合买机器人账户的计划；传 `includeRobotData=true` 时才展示机器人发起计划。机器人作为参与人补单的普通用户发起计划不能被过滤掉。
+21. 后台计划列表摘要必须返回 `createdAt`，后台合买计划列表需要直接显示该创建时间，方便运营核对计划生成顺序。
 
 ### 4. 校验与错误矩阵
 
@@ -3152,6 +3172,7 @@ await createInvitation({
 - Good：开奖结算时识别合买订单，中奖金额按参与金额比例拆给参与用户，普通订单仍按订单用户派奖。
 - Good：后台合买管理按 `page/pageSize` 请求计划列表，响应 `items` 只包含当前页，`totalCount` 返回全部计划数。
 - Good：后台和手机端合买计划列表都按期号倒序展示，分页前已经完成排序，最新期号优先出现在第一页。
+- Good：后台合买计划列表显示每条计划的创建时间，且详情加载、创建计划和新增参与人后本地摘要仍保留 `createdAt`。
 - Good：后台合买管理默认只展示非机器人发起计划，打开“显示机器人数据”后才纳入机器人发起计划；机器人补单参与的用户计划仍保持可见。
 - Good：普通用户 `regular_user` 发起的用户端合买响应中 `initiatorDisplay` 返回 `r**********r`，机器人计划也返回同样脱敏后的普通会员式展示名。
 - Base：无数据库环境下使用内存合买仓储，服务重启后恢复种子合买计划；数据库模式下使用 `group_buy_plans`、`group_buy_participants` 和 `ledger_entries` 持久化。
@@ -4268,6 +4289,7 @@ support.get_for_user(conversation_id, &session.user.id).await
 
 - `PUT /api/admin/users/{id}` 必须保留原 `balanceMinor` 和 `inviteCode`。
 - `GET /api/admin/users` 返回分页结构 `items/totalCount/page/pageSize/totalPages`，其中 `items[].balanceMinor` 应以 `financial_accounts.available_balance_minor` 为准。
+- `GET /api/admin/users`、`GET /api/admin/users/{id}`、用户创建、更新和状态变更响应必须返回 `agentUsername` 派生字段；该字段只供后台展示，不作为保存请求字段。
 - 用户列表支持 `sortBy` 和 `sortDirection` 查询排序；`sortBy` 白名单为 `id`、`username`、`email`、`kind`、`status`、`balanceMinor`、`agentId`、`inviteCode`，`sortDirection` 只允许 `asc` 或 `desc`，未传或传空字符串时默认按 `desc` 降序。
 - 用户 ID 仍作为资源 ID 使用，更新时路径 ID 必须与请求体 ID 一致。
 
@@ -4291,6 +4313,7 @@ support.get_for_user(conversation_id, &session.user.id).await
 - Good：用户先绑定银行卡提现方式，再提交 `POST /api/user/withdrawals`，返回 `pending` 提现申请，资金账户可用余额减少、冻结余额增加。
 - Good：后台用户维护列表中余额来自财务账户；财务手动调账后刷新用户维护页能看到新余额。
 - Good：后台用户维护页请求 `GET /api/admin/users?page=1&pageSize=20&sortBy=balanceMinor&sortDirection=desc`，按余额倒序展示第一页用户，总数来自 `totalCount`。
+- Good：用户存在 `agentId=U90001` 时，后台用户维护列表的上级代理列展示 `agent_alpha` 和 `U90001`，不再只显示代理 ID。
 - Base：提现审核、打款、驳回和解冻流程后续再接入；当前接口只负责申请和冻结。
 - Bad：手机端提交 `method_id` 或 `amount` 字段；后端当前契约只接受 `methodId` 和 `amountMinor`。
 - Bad：通过用户维护直接改 `balanceMinor`；这会绕过财务流水，破坏审计链路。
@@ -4607,6 +4630,8 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 
 不传 `page/pageSize` 时允许返回全量列表，用于兼容内部调试；管理后台页面必须显式传入分页参数。
 
+充值订单、资金流水和提现申请必须在分页前按创建时间倒序排序；同一秒产生的记录按业务编号倒序兜底，保证第一页永远优先展示最新财务事件。时间排序需要兼容标准 `YYYY-MM-DD HH:mm:ss` 和历史 `unix:秒` 两种格式。资金账户没有创建时间字段，不参与该时间排序。
+
 不传 `includeRobotData` 时等同于 `false`，财务总览、资金账户和资金流水必须排除 `U90001` 等系统机器人账户；开关打开时才纳入机器人自动授信、合买扣款和机器人订单相关流水，方便审计。
 
 资金账户列表项必须包含用户名：
@@ -4640,7 +4665,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 ### 5. Good / Base / Bad Cases
 
 - Good：财务管理页按分页请求资金账户，表格同时展示用户名和用户 ID。
-- Good：充值订单、资金流水、提现申请都有分页控件，翻页不会一次性拉取所有历史记录。
+- Good：充值订单、资金流水、提现申请都有分页控件，并且第一页按创建时间展示最新记录，翻页不会一次性拉取所有历史记录。
 - Good：默认进入财务管理页时，财务总览、资金账户和资金流水都不包含机器人账户；打开“显示机器人数据”后再纳入机器人流水。
 - Good：待审核提现点击“通过”后状态变为已通过，冻结余额减少，资金流水出现提现打款。
 - Good：待审核提现点击“驳回”后状态变为已驳回，冻结余额退回可用余额，资金流水出现提现驳回解冻。
@@ -5106,3 +5131,52 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 - 后端需要覆盖首页当前期不会被历史 `closed` 旧期压住。
 - 后端需要覆盖封盘流单退款仍会在完整自动化链路中执行。
 - 本地联调需要至少观察 `魔力分分彩` 和 `腾讯分分彩` 跨过一次封盘点，确认 `/api/lottery/home` 与 `/api/user/bet/page-config/{lottery_id}` 都返回下一期 `selling`。
+
+---
+
+## 场景：后台手动刷新内存缓存
+
+### 1. 范围 / 触发条件
+
+- 触发条件：管理员手动清空或直接修改 PostgreSQL 业务表后，需要让运行中的后端快照型仓储重新读取数据库。
+- 范围：后台系统设置页、`AppState` 仓储刷新入口、各快照型仓储的 `reload_from_database` 方法。
+- 不适用场景：普通业务变更仍应通过后台或用户端 API 完成，不应依赖直接改库加刷新缓存。
+
+### 2. 签名
+
+- 接口：`POST /api/admin/system-settings/cache/reload`
+- 权限：`PermissionScope::SystemSettings`
+- 响应：
+
+```json
+{
+  "reloadedModules": ["用户权限与系统设置"],
+  "databaseDirectModules": ["彩种配置"],
+  "skippedModules": [],
+  "refreshedAt": "2026-06-10 22:46:00"
+}
+```
+
+### 3. 契约
+
+- 后端必须重新加载所有配置了 `BusinessDatabase` 的快照型仓储，并用数据库内容替换当前内存快照。
+- 彩种配置在 PostgreSQL 模式下是数据库直读，返回到 `databaseDirectModules`，不得伪装为已替换内存。
+- 访问控制仓储必须最后刷新，避免当前维护接口执行中途先替换管理员会话。
+- 未配置 `DATABASE_URL` 时返回业务错误“当前服务未启用数据库持久化，无法刷新内存缓存”。
+- 刷新成功后后台页面需要重新拉取系统设置、用户、管理员、角色等数据。
+
+### 4. 错误与边界
+
+| 条件 | 预期行为 |
+|------|----------|
+| 数据库模式运行 | 返回已刷新模块和数据库直读模块 |
+| 内存模式运行 | 返回业务错误，不显示成功 Toast |
+| 某个仓储加载失败 | 接口返回该仓储的中文错误，不继续提示成功 |
+| 管理员会话表被手动清空 | 本次请求可返回，后续请求可能需要重新登录 |
+| 调度器正在运行 | 刷新只替换仓储快照，不主动暂停调度 |
+
+### 5. 必要测试
+
+- 后端需要运行 `cargo fmt --check`、`cargo check` 和相关路由或仓储测试。
+- 后台需要运行 `npm run build`，确认接口类型和按钮交互编译通过。
+- 本地联调时应在 PostgreSQL 模式调用接口，确认返回 `reloadedModules` 和 `databaseDirectModules`。

@@ -37,7 +37,9 @@ import { MetricCard } from '../components/MetricCard';
 import { PageControls } from '../components/PageControls';
 import { useAccessManagement } from '../hooks/useAccessManagement';
 import type {
+  AdminUserSummary,
   AdminSaveRequest,
+  MemoryCacheReloadResult,
   UserListSortBy,
   UserListSortDirection,
 } from '../types/access';
@@ -199,6 +201,7 @@ export function AccessManagementPage({
     refresh,
     registration,
     removeRole,
+    reloadMemoryCache,
     resetPassword,
     roles,
     saveAdmin,
@@ -501,6 +504,11 @@ export function AccessManagementPage({
             setSettingDrafts((current) => ({ ...current, [key]: value }))
           }
           onRegistrationChange={setRegistrationForm}
+          onReloadMemoryCache={async () => {
+            const result = await reloadMemoryCache();
+            onDashboardRefresh();
+            return result;
+          }}
           onSaveRegistration={() => void submitRegistration()}
           onSaveSetting={(key) => {
             const submitValue = settingSubmitValue(key, settingDrafts[key] ?? '');
@@ -543,7 +551,7 @@ function UserSection({
   form: UserFormState;
   loading: boolean;
   onClose: () => void;
-  onEdit: (user: UserSummary) => void;
+  onEdit: (user: AdminUserSummary) => void;
   onNew: () => void;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
@@ -560,7 +568,7 @@ function UserSection({
   sortDirection: UserListSortDirection;
   totalCount: number;
   totalPages: number;
-  users: UserSummary[];
+  users: AdminUserSummary[];
 }) {
   return (
     <section className="space-y-4">
@@ -667,7 +675,18 @@ function UserSection({
                     {formatMoney(user.balanceMinor)}
                   </td>
                   <td className="py-3 pr-4 text-slate-600">
-                    {user.agentId ?? '无'}
+                    {user.agentId ? (
+                      <div>
+                        <div className="font-medium text-ink">
+                          {user.agentUsername ?? '未知代理'}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-400">
+                          {user.agentId}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-slate-400">无</span>
+                    )}
                   </td>
                   <td className="py-3 pr-4">
                     {user.inviteCode ? (
@@ -1168,6 +1187,7 @@ function SettingsSection({
   lotteries,
   onDraftChange,
   onRegistrationChange,
+  onReloadMemoryCache,
   onSaveRegistration,
   onSaveSetting,
   registration,
@@ -1178,6 +1198,7 @@ function SettingsSection({
   lotteries: LotteryKind[];
   onDraftChange: (key: string, value: string) => void;
   onRegistrationChange: Dispatch<SetStateAction<RegistrationConfig | null>>;
+  onReloadMemoryCache: () => Promise<MemoryCacheReloadResult>;
   onSaveRegistration: () => void;
   onSaveSetting: (key: string) => void;
   registration: RegistrationConfig | null;
@@ -1195,6 +1216,9 @@ function SettingsSection({
     readSettingValue(settings, 'image_bed_result_url_field') ||
     'links.download';
   const [settingKeyword, setSettingKeyword] = useState('');
+  const [cacheRefreshing, setCacheRefreshing] = useState(false);
+  const [lastCacheReloadResult, setLastCacheReloadResult] =
+    useState<MemoryCacheReloadResult | null>(null);
   const imageBedMissingConfigs = [
     imageBedUploadUrl.trim() ? null : '上传地址',
     imageBedUploadToken.trim() ? null : 'Token',
@@ -1226,13 +1250,66 @@ function SettingsSection({
     }
   }, [activeSettingGroup, groupedSettings]);
 
+  const handleReloadMemoryCache = async () => {
+    const confirmed = window.confirm(
+      '确定从数据库重新刷新后端内存缓存吗？如果你刚刚手动清表或改库，刷新后内存会以数据库当前内容为准。',
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setCacheRefreshing(true);
+    try {
+      const result = await onReloadMemoryCache();
+      setLastCacheReloadResult(result);
+      Toast.success(`内存缓存已刷新：${result.reloadedModules.length} 个模块`);
+    } catch (error) {
+      Toast.error(error instanceof Error ? error.message : '内存缓存刷新失败');
+    } finally {
+      setCacheRefreshing(false);
+    }
+  };
+
   return (
     <section className="space-y-4">
       <Card className="rounded-md border border-line">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-ink">系统设置</h2>
-          <Tag color="cyan">{settings.length} 项</Tag>
+          <div>
+            <h2 className="text-base font-semibold text-ink">系统设置</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              手动清表或直接改库后，可用维护按钮让后端重新读取数据库快照。
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Tag color="cyan">{settings.length} 项</Tag>
+            <Button
+              disabled={saving || cacheRefreshing}
+              icon={<RefreshCcw size={15} />}
+              loading={cacheRefreshing}
+              size="small"
+              onClick={() => void handleReloadMemoryCache()}
+            >
+              刷新内存缓存
+            </Button>
+          </div>
         </div>
+        {lastCacheReloadResult ? (
+          <div className="mb-3 rounded border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-800">
+            <div className="flex flex-wrap items-center gap-2">
+              <Tag color="green">已刷新 {lastCacheReloadResult.reloadedModules.length}</Tag>
+              <Tag color="blue">
+                数据库直读 {lastCacheReloadResult.databaseDirectModules.length}
+              </Tag>
+              <Tag color="grey">跳过 {lastCacheReloadResult.skippedModules.length}</Tag>
+              <span>时间：{lastCacheReloadResult.refreshedAt}</span>
+            </div>
+            {lastCacheReloadResult.reloadedModules.length > 0 ? (
+              <p className="mt-2 leading-5">
+                已刷新模块：{lastCacheReloadResult.reloadedModules.join('、')}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <div className="mb-3">
           <Input
             className="form-input"

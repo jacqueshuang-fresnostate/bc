@@ -183,6 +183,11 @@ impl LotteryRepository {
             }
         }
     }
+
+    /// 返回彩种仓储是否已经使用数据库直读模式，直读模式无需额外刷新内存快照。
+    pub fn is_database_backed(&self) -> bool {
+        matches!(self.inner.as_ref(), LotteryRepositoryKind::Postgres(_))
+    }
 }
 
 #[derive(Debug, Clone)]

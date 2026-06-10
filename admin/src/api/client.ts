@@ -11,10 +11,12 @@ import type {
   SaveAdvertisementRequest,
 } from '../types/advertisements';
 import type {
+  AdminUserSummary,
   AdminPasswordResetRequest,
   AdminRole,
   AdminSaveRequest,
   AdminSummary,
+  MemoryCacheReloadResult,
   RegistrationConfig,
   StatusUpdateRequest,
   SystemSetting,
@@ -451,21 +453,21 @@ export function fetchUserPage(signal?: AbortSignal, query?: UserListQuery) {
 }
 
 export function createUser(payload: UserSummary) {
-  return requestJson<UserSummary>('/api/admin/users', {
+  return requestJson<AdminUserSummary>('/api/admin/users', {
     body: payload,
     method: 'POST',
   });
 }
 
 export function updateUser(id: string, payload: UserSummary) {
-  return requestJson<UserSummary>(`/api/admin/users/${encodeURIComponent(id)}`, {
+  return requestJson<AdminUserSummary>(`/api/admin/users/${encodeURIComponent(id)}`, {
     body: payload,
     method: 'PUT',
   });
 }
 
 export function setUserStatus(id: string, payload: StatusUpdateRequest) {
-  return requestJson<UserSummary>(
+  return requestJson<AdminUserSummary>(
     `/api/admin/users/${encodeURIComponent(id)}/status`,
     {
       body: payload,
@@ -549,6 +551,15 @@ export function updateSystemSetting(
     {
       body: payload,
       method: 'PATCH',
+    },
+  );
+}
+
+export function reloadBackendMemoryCache() {
+  return requestJson<MemoryCacheReloadResult>(
+    '/api/admin/system-settings/cache/reload',
+    {
+      method: 'POST',
     },
   );
 }

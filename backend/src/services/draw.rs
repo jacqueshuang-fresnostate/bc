@@ -406,6 +406,25 @@ impl DrawRepository {
             .map(|store| store.active_draw_number(issue))
     }
 
+    /// 从数据库重新加载期号、开奖控制和 API 开奖源缓存，供后台缓存维护使用。
+    pub async fn reload_from_database(&self) -> ApiResult<bool> {
+        let Some(persistence) = &self.persistence else {
+            self.api_sources.reload_from_database().await?;
+            return Ok(false);
+        };
+        let (store, controls) = load_draw_store(persistence).await?;
+        self.api_sources.reload_from_database().await?;
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("开奖期号缓存刷新失败".to_string()))? = store;
+        *self
+            .controls
+            .write()
+            .map_err(|_| ApiError::Internal("开奖控制缓存刷新失败".to_string()))? = controls;
+        Ok(true)
+    }
+
     async fn persist_draws(&self, store: &DrawStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_draw_issues(persistence, store).await?;

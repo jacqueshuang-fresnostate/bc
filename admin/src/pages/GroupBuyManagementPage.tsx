@@ -20,7 +20,6 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
-import { MetricCard } from '../components/MetricCard';
 import { PageControls } from '../components/PageControls';
 import { useGroupBuyPlans } from '../hooks/useGroupBuyPlans';
 import type {
@@ -108,7 +107,6 @@ export function GroupBuyManagementPage({
   const [participantForm, setParticipantForm] = useState<ParticipantFormState>(
     () => emptyParticipantForm(),
   );
-  const totals = useMemo(() => groupBuyTotals(plans), [plans]);
   const selectedLottery = useMemo(
     () => eligibleLotteries.find((lottery) => lottery.id === createForm.lotteryId),
     [createForm.lotteryId, eligibleLotteries],
@@ -287,21 +285,6 @@ export function GroupBuyManagementPage({
 
       {error ? <Banner type="danger" title="合买接口错误" description={error} /> : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          label="合买计划"
-          trend={includeRobotData ? '包含机器人发起' : '非机器人发起'}
-          value={`${planPage.totalCount}`}
-        />
-        <MetricCard label="进行中" trend="当前页 open/draft" value={`${totals.openCount}`} />
-        <MetricCard label="已满单" trend="当前页自动满额" value={`${totals.filledCount}`} />
-        <MetricCard
-          label="已认购"
-          trend={`当前页 ${formatMoney(totals.totalAmountMinor)}`}
-          value={formatMoney(totals.filledAmountMinor)}
-        />
-      </section>
-
       {loading ? (
         <Card className="rounded-md border border-line">
           <div className="grid min-h-[320px] place-items-center">
@@ -331,12 +314,13 @@ export function GroupBuyManagementPage({
               </div>
               {plans.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[960px] text-left text-sm">
+                  <table className="w-full min-w-[1080px] text-left text-sm">
                     <thead className="border-b border-line text-xs text-slate-500">
                       <tr>
                         <th className="py-2 pr-4 font-medium">计划</th>
                         <th className="py-2 pr-4 font-medium">彩种/期号</th>
                         <th className="py-2 pr-4 font-medium">成单</th>
+                        <th className="py-2 pr-4 font-medium">创建时间</th>
                         <th className="py-2 pr-4 font-medium">进度</th>
                         <th className="py-2 pr-4 font-medium">状态</th>
                         <th className="py-2 pr-4 font-medium">操作</th>
@@ -366,6 +350,9 @@ export function GroupBuyManagementPage({
                             ) : (
                               <Tag color="grey">未成单</Tag>
                             )}
+                          </td>
+                          <td className="py-3 pr-4 text-xs text-slate-500">
+                            {plan.createdAt || '-'}
                           </td>
                           <td className="py-3 pr-4">
                             <div className="font-medium text-ink">
@@ -939,21 +926,6 @@ function participantPayload(
     id: form.id.trim(),
     note: form.note.trim(),
     userId: form.userId.trim(),
-  };
-}
-
-function groupBuyTotals(plans: GroupBuyPlanSummary[]) {
-  return {
-    filledAmountMinor: plans.reduce(
-      (total, plan) => total + plan.filledAmountMinor,
-      0,
-    ),
-    filledCount: plans.filter((plan) => plan.status === 'filled').length,
-    openCount: plans.filter((plan) => ['draft', 'open'].includes(plan.status)).length,
-    totalAmountMinor: plans.reduce(
-      (total, plan) => total + plan.totalAmountMinor,
-      0,
-    ),
   };
 }
 

@@ -379,6 +379,16 @@ impl OrderRepository {
         Ok(())
     }
 
+    /// 从数据库重新加载注单、结算和派奖记录快照，供后台缓存维护使用。
+    pub async fn reload_from_database(&self) -> ApiResult<bool> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(false);
+        };
+        let store = load_order_store(persistence).await?;
+        self.replace_store(store)?;
+        Ok(true)
+    }
+
     pub(crate) fn replace_store(&self, store: OrderStore) -> ApiResult<()> {
         *self
             .inner

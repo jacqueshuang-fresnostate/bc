@@ -9,6 +9,7 @@ import {
   fetchRoles,
   fetchSystemSettings,
   fetchUserPage,
+  reloadBackendMemoryCache,
   resetAdminPassword,
   setAdminStatus,
   setUserStatus,
@@ -19,10 +20,12 @@ import {
   updateUser,
 } from '../api/client';
 import type {
+  AdminUserSummary,
   AdminSaveRequest,
   AdminRole,
   AdminSummary,
   AdminPasswordResetRequest,
+  MemoryCacheReloadResult,
   RegistrationConfig,
   SystemSetting,
   UserListQuery,
@@ -251,6 +254,21 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     }
   }, []);
 
+  const reloadMemoryCache = useCallback(async (): Promise<MemoryCacheReloadResult> => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await reloadBackendMemoryCache();
+      refresh();
+      return result;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
   return {
     admins,
     changeAdminStatus,
@@ -260,6 +278,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     refresh,
     registration,
     removeRole,
+    reloadMemoryCache,
     resetPassword,
     roles,
     saveAdmin,
@@ -282,7 +301,7 @@ const emptyUserPage: UserPage = {
   totalPages: 0,
 };
 
-function replacePageUser(page: UserPage, user: UserSummary): UserPage {
+function replacePageUser(page: UserPage, user: AdminUserSummary): UserPage {
   return {
     ...page,
     items: page.items.some((current) => current.id === user.id)

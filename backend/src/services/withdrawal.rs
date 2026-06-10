@@ -173,6 +173,16 @@ impl WithdrawalRepository {
         Ok(())
     }
 
+    /// 从数据库重新加载提现申请快照，供后台缓存维护使用。
+    pub async fn reload_from_database(&self) -> ApiResult<bool> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(false);
+        };
+        let store = load_withdrawal_store(persistence).await?;
+        self.replace_store(store)?;
+        Ok(true)
+    }
+
     async fn persist(&self, store: &WithdrawalStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             let mut tx = persistence

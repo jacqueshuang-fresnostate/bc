@@ -35,6 +35,17 @@ export interface UpdateSystemSettingRequest {
   value: string;
 }
 
+export interface AdminUserSummary extends UserSummary {
+  agentUsername?: string | null;
+}
+
+export interface MemoryCacheReloadResult {
+  reloadedModules: string[];
+  databaseDirectModules: string[];
+  skippedModules: string[];
+  refreshedAt: string;
+}
+
 export type UserListSortBy =
   | 'agentId'
   | 'balanceMinor'
@@ -54,4 +65,4 @@ export interface UserListQuery {
   sortDirection?: UserListSortDirection;
 }
 
-export type UserPage = FinancePage<UserSummary>;
+export type UserPage = FinancePage<AdminUserSummary>;

@@ -234,6 +234,16 @@ impl RechargeRepository {
         Ok(())
     }
 
+    /// 从数据库重新加载充值订单快照，供后台缓存维护使用。
+    pub async fn reload_from_database(&self) -> ApiResult<bool> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(false);
+        };
+        let store = load_recharge_store(persistence).await?;
+        self.replace_store(store)?;
+        Ok(true)
+    }
+
     /// 用事务提交后的快照替换当前充值订单内存状态。
     pub(crate) fn replace_store(&self, store: RechargeStore) -> ApiResult<()> {
         *self

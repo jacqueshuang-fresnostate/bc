@@ -258,6 +258,20 @@ impl DrawSchedulerRepository {
         Ok(result)
     }
 
+    /// 从数据库重新加载开奖调度配置和最近运行历史，供后台缓存维护使用。
+    pub async fn reload_from_database(&self) -> ApiResult<bool> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(false);
+        };
+        let current_config = self.config()?;
+        let store = load_scheduler_store(persistence, current_config).await?;
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("开奖调度缓存刷新失败".to_string()))? = store;
+        Ok(true)
+    }
+
     async fn persist(&self, store: &DrawSchedulerStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_scheduler_store(persistence, store).await?;

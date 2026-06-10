@@ -212,6 +212,16 @@ impl GroupBuyRepository {
         Ok(())
     }
 
+    /// 从数据库重新加载合买计划和参与记录快照，供后台缓存维护使用。
+    pub async fn reload_from_database(&self) -> ApiResult<bool> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(false);
+        };
+        let store = load_group_buy_store(persistence).await?;
+        self.replace_store(store)?;
+        Ok(true)
+    }
+
     /// 用事务提交后的快照替换当前合买计划和参与记录内存状态。
     pub(crate) fn replace_store(&self, store: GroupBuyStore) -> ApiResult<()> {
         *self

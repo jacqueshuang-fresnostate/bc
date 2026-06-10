@@ -3,9 +3,12 @@
 use std::{env::VarError, error::Error, io};
 
 use axum::Router;
+use chrono::Local;
+use serde::Serialize;
 use tower_http::cors::CorsLayer;
 
 use crate::{
+    error::{ApiError, ApiResult},
     routes,
     services::{
         access::AccessRepository,
@@ -48,6 +51,49 @@ pub struct AppState {
     pub scheduler: DrawSchedulerRepository,
     pub support: SupportRepository,
     pub withdrawals: WithdrawalRepository,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台手动刷新内存缓存后的结果摘要，用于提示哪些模块已经重新读取数据库。
+pub struct MemoryCacheReloadResult {
+    pub reloaded_modules: Vec<String>,
+    pub database_direct_modules: Vec<String>,
+    pub skipped_modules: Vec<String>,
+    pub refreshed_at: String,
+}
+
+/// 手动刷新内存缓存的结果构建方法。
+impl MemoryCacheReloadResult {
+    /// 初始化空结果，等待各仓储按真实刷新结果填充。
+    fn new() -> Self {
+        Self {
+            reloaded_modules: Vec::new(),
+            database_direct_modules: Vec::new(),
+            skipped_modules: Vec::new(),
+            refreshed_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        }
+    }
+
+    /// 按仓储返回值记录刷新成功或内存模式跳过。
+    fn record_reload(&mut self, module_name: &str, reloaded: bool) {
+        if reloaded {
+            self.reloaded_modules.push(module_name.to_string());
+        } else {
+            self.skipped_modules
+                .push(format!("{module_name}（内存模式，无数据库快照）"));
+        }
+    }
+
+    /// 记录数据库直读模块，这类模块每次查询都会读取数据库。
+    fn record_database_direct(&mut self, module_name: &str) {
+        self.database_direct_modules.push(module_name.to_string());
+    }
+
+    /// 判断本次维护动作是否真正触达了数据库。
+    fn touched_database(&self) -> bool {
+        !self.reloaded_modules.is_empty() || !self.database_direct_modules.is_empty()
+    }
 }
 
 /// 应用状态构造和环境初始化方法。
@@ -114,6 +160,46 @@ impl AppState {
             support: SupportRepository::persistent(business_database.clone()).await?,
             withdrawals: WithdrawalRepository::persistent(business_database).await?,
         })
+    }
+
+    /// 重新从数据库加载所有快照型业务仓储，供后台手动清表或改库后的维护按钮使用。
+    pub async fn reload_memory_cache_from_database(&self) -> ApiResult<MemoryCacheReloadResult> {
+        let mut result = MemoryCacheReloadResult::new();
+
+        if self.lotteries.is_database_backed() {
+            result.record_database_direct("彩种配置");
+        } else {
+            result.record_reload("彩种配置", false);
+        }
+
+        result.record_reload(
+            "广告管理",
+            self.advertisements.reload_from_database().await?,
+        );
+        result.record_reload("聊天大厅", self.chat_hall.reload_from_database().await?);
+        result.record_reload("开奖期号与控制", self.draws.reload_from_database().await?);
+        result.record_reload("资金账户与流水", self.finance.reload_from_database().await?);
+        result.record_reload("合买管理", self.group_buys.reload_from_database().await?);
+        result.record_reload("邀请记录", self.invites.reload_from_database().await?);
+        result.record_reload("注单与计奖派奖", self.orders.reload_from_database().await?);
+        result.record_reload("邀请返利策略", self.rebates.reload_from_database().await?);
+        result.record_reload("充值订单", self.recharges.reload_from_database().await?);
+        result.record_reload("机器人配置", self.robots.reload_from_database().await?);
+        result.record_reload("开奖调度配置", self.scheduler.reload_from_database().await?);
+        result.record_reload("客服会话", self.support.reload_from_database().await?);
+        result.record_reload("提现申请", self.withdrawals.reload_from_database().await?);
+        result.record_reload(
+            "用户权限与系统设置",
+            self.access.reload_from_database().await?,
+        );
+
+        if !result.touched_database() {
+            return Err(ApiError::BadRequest(
+                "当前服务未启用数据库持久化，无法刷新内存缓存".to_string(),
+            ));
+        }
+
+        Ok(result)
     }
 }
 

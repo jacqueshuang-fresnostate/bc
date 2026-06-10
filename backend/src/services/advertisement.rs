@@ -120,6 +120,19 @@ impl AdvertisementRepository {
         Ok(result)
     }
 
+    /// 从数据库重新加载广告和手机端轮播快照，供后台缓存维护使用。
+    pub async fn reload_from_database(&self) -> ApiResult<bool> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(false);
+        };
+        let store = load_advertisement_store(persistence).await?;
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("广告缓存刷新失败".to_string()))? = store;
+        Ok(true)
+    }
+
     /// 在数据库模式下保存广告仓储快照。
     async fn persist(&self, store: &AdvertisementStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {

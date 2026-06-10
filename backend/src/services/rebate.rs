@@ -77,6 +77,19 @@ impl RebateRepository {
 
         Ok(())
     }
+
+    /// 从数据库重新加载邀请返利策略快照，供后台缓存维护使用。
+    pub async fn reload_from_database(&self) -> ApiResult<bool> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(false);
+        };
+        let store = load_rebate_store(persistence).await?;
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("返利策略缓存刷新失败".to_string()))? = store;
+        Ok(true)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

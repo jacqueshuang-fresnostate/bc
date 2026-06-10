@@ -613,6 +613,7 @@ mod tests {
                 filled_amount_minor: 72_000,
                 share_count: 1_000,
                 status: GroupBuyPlanStatus::Open,
+                created_at: "2026-06-02 09:00:00".to_string(),
             }],
             FinanceOverview {
                 total_balance_minor: 684_000,

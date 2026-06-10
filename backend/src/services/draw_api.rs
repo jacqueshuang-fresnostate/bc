@@ -386,6 +386,19 @@ impl ApiDrawSourceRepository {
         parse_kj_latest_issue(&response_body)
     }
 
+    /// 从数据库重新加载 API 开奖源配置，供后台缓存维护和手动改库后校准使用。
+    pub async fn reload_from_database(&self) -> ApiResult<bool> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(false);
+        };
+        let store = load_draw_source_store(persistence).await?;
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("API 开奖源缓存刷新失败".to_string()))? = store;
+        Ok(true)
+    }
+
     async fn persist(&self, store: &ApiDrawSourceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_draw_source_store(persistence, store).await?;

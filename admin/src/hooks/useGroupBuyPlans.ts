@@ -200,6 +200,7 @@ function summaryFromPlan(plan: GroupBuyPlan): GroupBuyPlanSummary {
     issue: plan.issue,
     ruleCode: plan.ruleCode,
     title: plan.title,
+    createdAt: plan.createdAt,
   };
 }
 

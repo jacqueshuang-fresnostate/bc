@@ -29,6 +29,7 @@ export interface GroupBuyPlanSummary {
   filledAmountMinor: number;
   shareCount: number;
   status: GroupBuyPlanStatus;
+  createdAt: string;
 }
 
 export interface GroupBuyPlan extends GroupBuyPlanSummary {
