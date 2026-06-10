@@ -75,6 +75,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端通过 Tauri 打包 APK 时，`mobile/src-tauri/capabilities` 必须显式声明主窗口需要的能力；凡是前端使用 `@tauri-apps/plugin-store`、剪贴板插件或自定义 `invoke` 命令，都要同步维护 capability，并在 Android 构建后检查目标目录生成的 `capabilities.json` 不为空。
 - 手机端邀请中心必须使用当前系统的 `GET /api/user/invitations/summary` 当前用户接口，不再请求旧 `/auth/invitations/summary`；页面消费 `canInvite`、`invitationCode`、`directUsers` 等 `camelCase` 字段，普通用户只展示邀请码标识和无可用邀请权限提示，不允许自行把普通用户邀请码当成有效邀请入口。
 - 手机端下注页必须使用 `/api/user/bet/page-config/{lottery_id}`、`POST /api/user/bet/orders` 和 `GET /api/user/bet/orders`，不再调用旧 `/api/bet/*`。提交时前端只负责把位置宫格、胆拖、直选组合和大小单双转换成后端 `selection`，订单金额仍由后端按玩法展开注数和单注金额计算。
+- 手机端下注页不能只依赖 `round.status=opening` 才刷新下一期；如果 `round.status=selling` 但 `sale_stop_at` 已经小于等于当前时间，也必须视为封盘中并启动静默轮询，同时禁用加入购彩篮、普通投注和发起合买，避免调度短暂滞后时页面卡在“开奖中”或继续提交旧期号。轮询拿到下一期 `selling` 后必须恢复倒计时和投注按钮，不得继续保留旧期的“开奖中”遮罩。
 - 手机端下注页顶部的最近开奖号码球必须比开奖历史页更紧凑，默认直径控制在 20-24px，号码容器必须 `flex-wrap` 且设置最大宽度；360px 以下不能使用固定不换行的一排大球，极窄屏需要允许“上期开奖”和号码分成上下两行，避免 5 位开奖号码跑出屏幕。
 - 手机端下注页读取玩法 `positionSelectLimits` 时必须按 `positionKey` 精准限制对应位置的选号数量；未配置的位置不限制。不要只用全局 `maxSelectPerPosition` 套到所有位置，例如前 3 直选只配置 `first=7` 时，第二位和第三位仍应保持不限制。
 - 手机端下注页普通投注或发起合买成功后必须清空本地购彩篮，并用 `router.replace({ name: 'Home' })` 自动返回首页；接口失败时才停留在下注页并刷新余额、期号状态，方便用户继续处理。

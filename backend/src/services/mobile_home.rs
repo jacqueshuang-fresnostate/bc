@@ -76,7 +76,7 @@ pub fn build_mobile_lottery_home(
     featured_config: MobileLotteryFeaturedConfig,
 ) -> MobileLotteryHomeResponse {
     let now = Local::now().naive_local();
-    let snapshots = issue_snapshots(&issues);
+    let snapshots = issue_snapshots(&issues, now);
     let selling_cards = lotteries
         .into_iter()
         .filter(|lottery| lottery.sale_enabled)
@@ -117,7 +117,10 @@ pub fn build_mobile_lottery_home(
 }
 
 /// 按彩种整理当前期号和最近期开奖，避免页面层重复扫描期号列表。
-fn issue_snapshots(issues: &[DrawIssue]) -> BTreeMap<String, LotteryIssueSnapshot> {
+fn issue_snapshots(
+    issues: &[DrawIssue],
+    now: NaiveDateTime,
+) -> BTreeMap<String, LotteryIssueSnapshot> {
     let mut grouped: BTreeMap<String, Vec<DrawIssue>> = BTreeMap::new();
     for issue in issues {
         grouped
@@ -132,7 +135,7 @@ fn issue_snapshots(issues: &[DrawIssue]) -> BTreeMap<String, LotteryIssueSnapsho
             (
                 lottery_id,
                 LotteryIssueSnapshot {
-                    current: current_issue(&issues),
+                    current: current_issue(&issues, now),
                     latest_drawn: latest_drawn_issue(&issues),
                 },
             )
@@ -141,17 +144,26 @@ fn issue_snapshots(issues: &[DrawIssue]) -> BTreeMap<String, LotteryIssueSnapsho
 }
 
 /// 选择首页当前期：优先展示可售期，其次展示已封盘待开奖期，再退回最近期开奖期。
-fn current_issue(issues: &[DrawIssue]) -> Option<DrawIssue> {
+fn current_issue(issues: &[DrawIssue], now: NaiveDateTime) -> Option<DrawIssue> {
     issues
         .iter()
-        .filter(|issue| issue.status == DrawIssueStatus::Open)
-        .min_by_key(|issue| scheduled_time_value(issue).unwrap_or(i64::MAX))
+        .filter(|issue| {
+            issue.status == DrawIssueStatus::Open
+                && parse_timestamp(&issue.sale_closed_at)
+                    .is_some_and(|sale_closed_at| sale_closed_at > now)
+        })
+        .min_by_key(|issue| sale_closed_time_value(issue).unwrap_or(i64::MAX))
         .cloned()
         .or_else(|| {
             issues
                 .iter()
-                .filter(|issue| issue.status == DrawIssueStatus::Closed)
-                .min_by_key(|issue| scheduled_time_value(issue).unwrap_or(i64::MAX))
+                .filter(|issue| {
+                    issue.status == DrawIssueStatus::Closed
+                        || (issue.status == DrawIssueStatus::Open
+                            && parse_timestamp(&issue.sale_closed_at)
+                                .is_some_and(|sale_closed_at| sale_closed_at <= now))
+                })
+                .max_by_key(|issue| scheduled_time_value(issue).unwrap_or(0))
                 .cloned()
         })
         .or_else(|| latest_drawn_issue(issues))
@@ -428,6 +440,11 @@ fn scheduled_time_value(issue: &DrawIssue) -> Option<i64> {
     parse_timestamp(&issue.scheduled_at).map(|value| value.and_utc().timestamp())
 }
 
+/// 返回期号封盘时间排序值。
+fn sale_closed_time_value(issue: &DrawIssue) -> Option<i64> {
+    parse_timestamp(&issue.sale_closed_at).map(|value| value.and_utc().timestamp())
+}
+
 /// 返回已开奖期号排序值，优先使用实际开奖时间。
 fn drawn_time_value(issue: &DrawIssue) -> Option<i64> {
     issue
@@ -567,6 +584,53 @@ mod tests {
         assert!(!response.settings.featured_enabled);
         assert!(!response.featured_section.enabled);
         assert!(response.featured_section.lotteries.is_empty());
+    }
+
+    #[test]
+    /// 多个封盘待开奖期并存时，首页应展示最近一期，不能回退到最老的开奖中期号。
+    fn mobile_home_uses_latest_closed_issue_as_current_round() {
+        let response = build_mobile_lottery_home(
+            vec![sample_lottery("ssc60", "魔力分分彩", "welfare", true)],
+            vec![LotteryCategoryConfig {
+                code: "welfare".to_string(),
+                name: "福利彩种".to_string(),
+            }],
+            vec![
+                sample_issue(
+                    "D000000000001",
+                    "ssc60",
+                    "魔力分分彩",
+                    "20260610205859",
+                    DrawIssueStatus::Closed,
+                    None,
+                    "2026-06-10 20:58:59",
+                ),
+                sample_issue(
+                    "D000000000002",
+                    "ssc60",
+                    "魔力分分彩",
+                    "20260610211959",
+                    DrawIssueStatus::Closed,
+                    None,
+                    "2026-06-10 21:19:59",
+                ),
+                sample_issue(
+                    "D000000000003",
+                    "ssc60",
+                    "魔力分分彩",
+                    "20260610205759",
+                    DrawIssueStatus::Drawn,
+                    Some("1,2,3"),
+                    "2026-06-10 20:57:59",
+                ),
+            ],
+            MobileLotteryFeaturedConfig::default(),
+        );
+
+        let lottery = &response.groups[0].lotteries[0];
+        assert_eq!(lottery.issue.as_deref(), Some("20260610211959"));
+        assert_eq!(lottery.status, "sealed");
+        assert_eq!(lottery.latest_result, vec!["1", "2", "3"]);
     }
 
     #[test]

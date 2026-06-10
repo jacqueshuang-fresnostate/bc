@@ -9,26 +9,33 @@ use std::{
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tokio::task::JoinHandle;
+use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle};
 
 use crate::{
     domain::{
         draw::{
-            DrawAutomationRun, DrawAutomationRunRequest, DrawAutomationSkippedIssue, DrawIssue,
-            DrawIssueStatus, GenerateDrawIssuesRequest,
+            CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest,
+            DrawAutomationSkippedIssue, DrawIssue, DrawIssueGenerationPreview, DrawIssueStatus,
+            GenerateDrawIssuesRequest,
         },
-        lottery::LotteryKind,
+        lottery::{DrawMode, LotteryKind},
         robot::GroupBuyRobotRun,
     },
     error::{ApiError, ApiResult},
     services::{
         access::AccessRepository,
-        automation::{close_due_draw_issues, draw_due_issues, merge_draw_automation_runs},
+        automation::{
+            close_due_draw_issues, draw_due_issues, merge_draw_automation_runs,
+            refund_closed_unfilled_group_buys,
+        },
         business_database::{
             enum_from_string, enum_to_string, from_json, to_json, BusinessDatabase,
         },
         draw::DrawRepository,
-        draw_generation::{generate_draw_issue_batch, DEFAULT_SALE_CLOSE_LEAD_SECONDS},
+        draw_generation::{
+            generate_draw_issue_batch, preview_draw_issue_generation,
+            DEFAULT_SALE_CLOSE_LEAD_SECONDS,
+        },
         finance::FinanceRepository,
         group_buy::GroupBuyRepository,
         group_buy_robot::run_group_buy_robots,
@@ -48,6 +55,11 @@ const DISABLED_SCHEDULER_POLL_SECONDS: u64 = 1;
 const MAX_SCHEDULER_HISTORY: usize = 20;
 const MAX_FUTURE_ISSUE_COUNT: u32 = 50;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+struct PendingApiIssueGeneration {
+    lottery: LotteryKind,
+    count: u32,
+}
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -637,6 +649,8 @@ pub fn spawn_draw_scheduler(
         "开奖调度器后台任务已启动"
     );
 
+    let slow_phase_lock = Arc::new(AsyncMutex::new(()));
+
     tokio::spawn(async move {
         let mut next_run_at = tokio::time::Instant::now();
         loop {
@@ -666,14 +680,9 @@ pub fn spawn_draw_scheduler(
             next_run_at += interval;
             let run_started = Instant::now();
 
-            match run_draw_scheduler_once_with_realtime(
+            match run_draw_scheduler_opening_once_with_realtime(
                 &draws,
                 &lotteries,
-                &orders,
-                &finance,
-                &group_buys,
-                &robots,
-                &access,
                 &current_config,
                 now.clone(),
                 Some(&realtime),
@@ -698,27 +707,64 @@ pub fn spawn_draw_scheduler(
                         "当前时间" = %run.now,
                         "本轮耗时毫秒" = run_elapsed_ms,
                         "封盘期数" = run.automation_run.closed_issues.len(),
-                        "开奖期数" = run.automation_run.drawn_issues.len(),
                         "新增期号" = run.generated_issues.len(),
-                        "机器人新增合买" = run.robot_run.created_plans.len(),
-                        "机器人满单" = run.robot_run.filled_plans.len(),
-                        "开奖调度器本轮执行完成"
+                        "开奖调度器开盘阶段执行完成"
                     );
-                    // tracing::info!(
-                    //     "当前时间" = %run.now,
-                    //     "封盘期数" = run.automation_run.closed_issues.len(),
-                    //     "开奖期数" = run.automation_run.drawn_issues.len(),
-                    //     "结算批次" = run.automation_run.settlement_runs.len(),
-                    //     "入账笔数" = run.automation_run.ledger_entries.len(),
-                    //     "新增期号" = run.generated_issues.len(),
-                    //     "机器人新增合买" = run.robot_run.created_plans.len(),
-                    //     "机器人满单" = run.robot_run.filled_plans.len(),
-                    //     "机器人生成订单" = run.robot_run.created_orders.len(),
-                    //     "机器人跳过项" = run.robot_run.skipped_items.len(),
-                    //     "跳过彩种" = run.skipped_lotteries.len(),
-                    //     "跳过期号" = run.automation_run.skipped_issues.len(),
-                    //     "开奖调度器本轮执行完成"
-                    // );
+
+                    let slow_lock = slow_phase_lock.clone();
+                    match slow_lock.try_lock_owned() {
+                        Ok(guard) => {
+                            let draws = draws.clone();
+                            let lotteries = lotteries.clone();
+                            let orders = orders.clone();
+                            let finance = finance.clone();
+                            let group_buys = group_buys.clone();
+                            let robots = robots.clone();
+                            let access = access.clone();
+                            let realtime = realtime.clone();
+                            let current_config = current_config.clone();
+                            let slow_now = now.clone();
+                            tokio::spawn(async move {
+                                let _guard = guard;
+                                let slow_started = Instant::now();
+                                match run_draw_scheduler_slow_once_with_realtime(
+                                    &draws,
+                                    &lotteries,
+                                    &orders,
+                                    &finance,
+                                    &group_buys,
+                                    &robots,
+                                    &access,
+                                    &current_config,
+                                    slow_now.clone(),
+                                    Some(&realtime),
+                                )
+                                .await
+                                {
+                                    Ok(slow_run) => tracing::info!(
+                                        "当前时间" = %slow_run.now,
+                                        "慢阶段耗时毫秒" = slow_started.elapsed().as_millis(),
+                                        "开奖期数" = slow_run.automation_run.drawn_issues.len(),
+                                        "机器人新增合买" = slow_run.robot_run.created_plans.len(),
+                                        "机器人满单" = slow_run.robot_run.filled_plans.len(),
+                                        "开奖调度器慢阶段后台任务完成"
+                                    ),
+                                    Err(error) => tracing::error!(
+                                        now = %slow_now,
+                                        "慢阶段耗时毫秒" = slow_started.elapsed().as_millis(),
+                                        error = %error.log_message(),
+                                        "开奖调度器慢阶段后台任务失败"
+                                    ),
+                                }
+                            });
+                        }
+                        Err(_) => {
+                            tracing::debug!(
+                                "当前时间" = %now,
+                                "开奖调度器慢阶段仍在执行，本轮不重复启动慢阶段"
+                            );
+                        }
+                    }
                 }
                 Err(error) => {
                     let run_elapsed_ms = run_started.elapsed().as_millis();
@@ -843,6 +889,38 @@ async fn run_draw_scheduler_once_with_realtime(
     now: String,
     realtime: Option<&RealtimeHub>,
 ) -> ApiResult<DrawSchedulerRun> {
+    let opening_run = run_draw_scheduler_opening_once_with_realtime(
+        draws,
+        lotteries,
+        config,
+        now.clone(),
+        realtime,
+    )
+    .await?;
+    let slow_run = run_draw_scheduler_slow_once_with_realtime(
+        draws, lotteries, orders, finance, group_buys, robots, access, config, now, realtime,
+    )
+    .await?;
+
+    Ok(DrawSchedulerRun {
+        now: opening_run.now,
+        automation_run: merge_draw_automation_runs(
+            opening_run.automation_run,
+            slow_run.automation_run,
+        ),
+        generated_issues: opening_run.generated_issues,
+        robot_run: slow_run.robot_run,
+        skipped_lotteries: opening_run.skipped_lotteries,
+    })
+}
+
+async fn run_draw_scheduler_opening_once_with_realtime(
+    draws: &DrawRepository,
+    lotteries: &LotteryRepository,
+    config: &DrawSchedulerConfig,
+    now: String,
+    realtime: Option<&RealtimeHub>,
+) -> ApiResult<DrawSchedulerRun> {
     config.validate()?;
     let now = now.trim().to_string();
     if now.is_empty() {
@@ -855,17 +933,15 @@ async fn run_draw_scheduler_once_with_realtime(
     let close_run = close_due_draw_issues(
         draws,
         lotteries,
-        finance,
-        group_buys,
         DrawAutomationRunRequest { now: now.clone() },
     )
     .await?;
     let close_phase_ms = close_phase_started.elapsed().as_millis();
 
     let generation_phase_started = Instant::now();
-    let (generated_issues, skipped_lotteries) =
-        ensure_future_draw_issues(draws, lotteries, config, &now).await?;
-    let generation_phase_ms = generation_phase_started.elapsed().as_millis();
+    let (mut generated_issues, mut skipped_lotteries, pending_api_generations) =
+        ensure_non_api_future_draw_issues(draws, lotteries, config, &now).await?;
+    let local_generation_phase_ms = generation_phase_started.elapsed().as_millis();
 
     if let Some(realtime) = realtime {
         publish_scheduler_opening_events(realtime, &close_run.closed_issues, &generated_issues);
@@ -874,11 +950,68 @@ async fn run_draw_scheduler_once_with_realtime(
     tracing::info!(
         "当前时间" = %now,
         "封盘耗时毫秒" = close_phase_ms,
-        "补期耗时毫秒" = generation_phase_ms,
+        "本地补期耗时毫秒" = local_generation_phase_ms,
         "封盘期数" = close_run.closed_issues.len(),
         "新增期号" = generated_issues.len(),
         "开奖调度器快阶段完成，已释放下一期开盘"
     );
+
+    let api_generation_phase_started = Instant::now();
+    let (mut api_generated_issues, mut api_skipped_lotteries) =
+        ensure_api_future_draw_issues(draws, config, &now, pending_api_generations).await?;
+    let api_generation_phase_ms = api_generation_phase_started.elapsed().as_millis();
+    if let Some(realtime) = realtime {
+        publish_scheduler_opening_events(realtime, &[], &api_generated_issues);
+    }
+    tracing::info!(
+        "当前时间" = %now,
+        "API补期耗时毫秒" = api_generation_phase_ms,
+        "API新增期号" = api_generated_issues.len(),
+        "API跳过彩种" = api_skipped_lotteries.len(),
+        "开奖调度器 API 补期阶段完成"
+    );
+    generated_issues.append(&mut api_generated_issues);
+    skipped_lotteries.append(&mut api_skipped_lotteries);
+
+    Ok(DrawSchedulerRun {
+        now: now.clone(),
+        automation_run: close_run,
+        generated_issues,
+        robot_run: empty_group_buy_robot_run(now),
+        skipped_lotteries,
+    })
+}
+
+async fn run_draw_scheduler_slow_once_with_realtime(
+    draws: &DrawRepository,
+    lotteries: &LotteryRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    robots: &RobotRepository,
+    access: &AccessRepository,
+    config: &DrawSchedulerConfig,
+    now: String,
+    realtime: Option<&RealtimeHub>,
+) -> ApiResult<DrawSchedulerRun> {
+    config.validate()?;
+    let now = now.trim().to_string();
+    if now.is_empty() {
+        return Err(ApiError::BadRequest(
+            "draw scheduler time is required".to_string(),
+        ));
+    }
+
+    let refund_phase_started = Instant::now();
+    let refund_run = refund_closed_unfilled_group_buys(
+        draws,
+        lotteries,
+        finance,
+        group_buys,
+        DrawAutomationRunRequest { now: now.clone() },
+    )
+    .await?;
+    let refund_phase_ms = refund_phase_started.elapsed().as_millis();
 
     let draw_phase_started = Instant::now();
     let draw_run = draw_due_issues(
@@ -891,8 +1024,6 @@ async fn run_draw_scheduler_once_with_realtime(
     )
     .await?;
     let draw_phase_ms = draw_phase_started.elapsed().as_millis();
-
-    let automation_run = merge_draw_automation_runs(close_run, draw_run);
 
     let robot_phase_started = Instant::now();
     let robot_run = run_group_buy_robots(
@@ -908,12 +1039,13 @@ async fn run_draw_scheduler_once_with_realtime(
     .await?;
     let robot_phase_ms = robot_phase_started.elapsed().as_millis();
 
+    let automation_run = merge_draw_automation_runs(refund_run, draw_run);
     let run = DrawSchedulerRun {
         now,
         automation_run,
-        generated_issues,
+        generated_issues: Vec::new(),
         robot_run,
-        skipped_lotteries,
+        skipped_lotteries: Vec::new(),
     };
 
     if let Some(realtime) = realtime {
@@ -922,6 +1054,7 @@ async fn run_draw_scheduler_once_with_realtime(
 
     tracing::info!(
         "当前时间" = %run.now,
+        "封盘流单退款耗时毫秒" = refund_phase_ms,
         "开奖结算耗时毫秒" = draw_phase_ms,
         "机器人耗时毫秒" = robot_phase_ms,
         "开奖期数" = run.automation_run.drawn_issues.len(),
@@ -935,15 +1068,31 @@ async fn run_draw_scheduler_once_with_realtime(
     Ok(run)
 }
 
-async fn ensure_future_draw_issues(
+fn empty_group_buy_robot_run(now: String) -> GroupBuyRobotRun {
+    GroupBuyRobotRun {
+        now,
+        created_plans: Vec::new(),
+        filled_plans: Vec::new(),
+        created_orders: Vec::new(),
+        ledger_entries: Vec::new(),
+        skipped_items: Vec::new(),
+    }
+}
+
+async fn ensure_non_api_future_draw_issues(
     draws: &DrawRepository,
     lotteries: &LotteryRepository,
     config: &DrawSchedulerConfig,
     now: &str,
-) -> ApiResult<(Vec<DrawIssue>, Vec<DrawSchedulerSkippedLottery>)> {
+) -> ApiResult<(
+    Vec<DrawIssue>,
+    Vec<DrawSchedulerSkippedLottery>,
+    Vec<PendingApiIssueGeneration>,
+)> {
     let existing_issues = draws.list().await?;
     let mut generated_issues = Vec::new();
     let mut skipped_lotteries = Vec::new();
+    let mut pending_api_generations = Vec::new();
 
     for lottery in lotteries.list().await? {
         if !lottery.sale_enabled {
@@ -960,6 +1109,11 @@ async fn ensure_future_draw_issues(
         }
 
         let count = config.future_issue_count - existing_future_count;
+        if lottery.draw_mode == DrawMode::Api {
+            pending_api_generations.push(PendingApiIssueGeneration { lottery, count });
+            continue;
+        }
+
         let result = generate_draw_issue_batch(
             draws,
             &lottery,
@@ -988,7 +1142,106 @@ async fn ensure_future_draw_issues(
         }
     }
 
+    Ok((generated_issues, skipped_lotteries, pending_api_generations))
+}
+
+async fn ensure_api_future_draw_issues(
+    draws: &DrawRepository,
+    config: &DrawSchedulerConfig,
+    now: &str,
+    pending_generations: Vec<PendingApiIssueGeneration>,
+) -> ApiResult<(Vec<DrawIssue>, Vec<DrawSchedulerSkippedLottery>)> {
+    let mut handles = Vec::new();
+    for pending in pending_generations {
+        let draws = draws.clone();
+        let now = now.to_string();
+        let sale_close_lead_seconds = config.sale_close_lead_seconds;
+        handles.push(tokio::spawn(async move {
+            let lottery = pending.lottery;
+            let result = preview_draw_issue_generation(
+                &draws,
+                &lottery,
+                GenerateDrawIssuesRequest {
+                    lottery_id: lottery.id.clone(),
+                    now,
+                    count: pending.count,
+                    sale_close_lead_seconds: Some(sale_close_lead_seconds),
+                },
+            )
+            .await;
+            (lottery, result)
+        }));
+    }
+
+    let mut planned = Vec::new();
+    let mut skipped_lotteries = Vec::new();
+    for handle in handles {
+        match handle.await {
+            Ok((lottery, Ok(plans))) => planned.push((lottery, plans)),
+            Ok((lottery, Err(error))) => {
+                tracing::warn!(
+                    lottery_id = %lottery.id,
+                    error = %error.log_message(),
+                    "开奖调度器因 API 期号计划生成失败跳过彩种"
+                );
+                skipped_lotteries.push(DrawSchedulerSkippedLottery {
+                    lottery_id: lottery.id,
+                    reason: error.to_string(),
+                });
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "开奖调度器 API 期号计划并发任务执行失败"
+                );
+                skipped_lotteries.push(DrawSchedulerSkippedLottery {
+                    lottery_id: "unknown".to_string(),
+                    reason: "API期号计划并发任务执行失败".to_string(),
+                });
+            }
+        }
+    }
+
+    let mut generated_issues = Vec::new();
+    for (lottery, plans) in planned {
+        for plan in plans {
+            match create_draw_issue_from_plan(draws, &lottery, plan).await {
+                Ok(issue) => generated_issues.push(issue),
+                Err(error) => {
+                    tracing::warn!(
+                        lottery_id = %lottery.id,
+                        error = %error.log_message(),
+                        "开奖调度器因 API 期号写入失败跳过彩种"
+                    );
+                    skipped_lotteries.push(DrawSchedulerSkippedLottery {
+                        lottery_id: lottery.id.clone(),
+                        reason: error.to_string(),
+                    });
+                    break;
+                }
+            }
+        }
+    }
+
     Ok((generated_issues, skipped_lotteries))
+}
+
+async fn create_draw_issue_from_plan(
+    draws: &DrawRepository,
+    lottery: &LotteryKind,
+    plan: DrawIssueGenerationPreview,
+) -> ApiResult<DrawIssue> {
+    draws
+        .create(
+            lottery,
+            CreateDrawIssueRequest {
+                lottery_id: lottery.id.clone(),
+                issue: plan.issue,
+                scheduled_at: plan.scheduled_at,
+                sale_closed_at: plan.sale_closed_at,
+            },
+        )
+        .await
 }
 
 /// 统计未来待处理期号数量。
@@ -1118,6 +1371,38 @@ mod tests {
             .generated_issues
             .iter()
             .any(|issue| issue.lottery_id == "ssc60"));
+    }
+
+    #[tokio::test]
+    async fn scheduler_generates_non_api_issues_before_api_generation() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(
+                r#"{"errorCode":0,"result":{"businessCode":0,"data":[]}}"#,
+            ),
+        );
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
+        enable_lottery_sale(&lotteries, "txffc").await;
+        enable_lottery_sale(&lotteries, "ssc60").await;
+        let config = enabled_config(1);
+
+        let (generated, skipped, pending_api) = super::ensure_non_api_future_draw_issues(
+            &draws,
+            &lotteries,
+            &config,
+            "2026-06-02 20:00:00",
+        )
+        .await
+        .expect("non api generation can run without waiting api sources");
+
+        assert!(generated.iter().any(|issue| issue.lottery_id == "ssc60"));
+        assert!(pending_api
+            .iter()
+            .any(|pending| pending.lottery.id == "fc3d"));
+        assert!(pending_api
+            .iter()
+            .any(|pending| pending.lottery.id == "txffc"));
+        assert!(!skipped.iter().any(|lottery| lottery.lottery_id == "ssc60"));
     }
 
     #[tokio::test]

@@ -116,9 +116,18 @@ const groupBuySelfSharesHint = computed(() => {
 })
 const groupBuyPaymentAmount = computed(() => (Number(groupBuyShareAmount.value) * groupBuySafeSelfShares.value).toFixed(2))
 const roundOpening = computed(() => config.value?.round.status === 'opening')
+const roundSaleClosed = computed(() => {
+  const saleStopAt = config.value?.round.sale_stop_at
+  if (!saleStopAt) return false
+  const target = parseChinaDateTime(saleStopAt)
+  return Number.isFinite(target) && target <= currentTime.value
+})
 const roundSelling = computed(() => config.value?.round.status === 'selling' && Boolean(config.value.round.issue))
-const canAddCurrentDraft = computed(() => roundSelling.value && engine.draftBetCount.value > 0)
-const canSubmitCurrentOrder = computed(() => roundSelling.value && (engine.draftBetCount.value > 0 || engine.cartTotalCount.value > 0))
+const roundAcceptingBet = computed(() => roundSelling.value && !roundSaleClosed.value)
+// 后端短暂未把过期 open 期关盘时，前端也要进入轮询，避免页面停在“开奖中”。
+const roundNeedsOpeningRefresh = computed(() => roundOpening.value || (roundSelling.value && roundSaleClosed.value))
+const canAddCurrentDraft = computed(() => roundAcceptingBet.value && engine.draftBetCount.value > 0)
+const canSubmitCurrentOrder = computed(() => roundAcceptingBet.value && (engine.draftBetCount.value > 0 || engine.cartTotalCount.value > 0))
 const addButtonText = computed(() => {
   if (selectedPlay.value?.option_groups.length) return '加入购彩篮'
   if (selectedPlay.value?.input_mode === 'fixed-option') return '加入购彩篮'
@@ -161,11 +170,11 @@ function stopOpeningRefresh() {
 }
 
 async function refreshOpeningRoundConfig() {
-  if (openingRefreshInFlight || config.value?.round.status !== 'opening' || !lotteryCode.value) return
+  if (openingRefreshInFlight || !roundNeedsOpeningRefresh.value || !lotteryCode.value) return
   openingRefreshInFlight = true
   try {
     await loadBetPageConfig(lotteryCode.value, { silent: true })
-    if (config.value?.round.status !== 'opening') await loadBalance({ force: true, silent: true })
+    if (!roundNeedsOpeningRefresh.value) await loadBalance({ force: true, silent: true })
   } catch {
     // 开盘轮询允许短暂失败，下一轮继续探测期号状态。
   } finally {
@@ -175,7 +184,7 @@ async function refreshOpeningRoundConfig() {
 }
 
 function syncOpeningRefresh() {
-  if (!roundOpening.value || !lotteryCode.value) {
+  if (!roundNeedsOpeningRefresh.value || !lotteryCode.value) {
     stopOpeningRefresh()
     return
   }
@@ -435,7 +444,7 @@ watch(() => engine.multiple.value, (value) => {
   multipleInputValue.value = String(value || engine.minMultiple.value)
 }, { immediate: true })
 
-watch(() => config.value?.round.status, syncOpeningRefresh, { immediate: true })
+watch(roundNeedsOpeningRefresh, syncOpeningRefresh, { immediate: true })
 
 watch(groupBuyMode, (enabled) => {
   if (!enabled) return

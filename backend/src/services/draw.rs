@@ -111,29 +111,27 @@ impl DrawRepository {
         lottery: &LotteryKind,
         payload: CreateDrawIssueRequest,
     ) -> ApiResult<DrawIssue> {
-        let (result, snapshot) = {
+        let result = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
-            let result = store.create(lottery, payload)?;
-            (result, store.clone())
+            store.create(lottery, payload)?
         };
-        self.persist_draws(&snapshot).await?;
+        self.persist_draw_issue(&result).await?;
         Ok(result)
     }
 
     /// 将开奖期状态设置为关闭。
     pub async fn close(&self, id: &str) -> ApiResult<DrawIssue> {
-        let (result, snapshot) = {
+        let result = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
-            let result = store.close(id)?;
-            (result, store.clone())
+            store.close(id)?
         };
-        self.persist_draws(&snapshot).await?;
+        self.persist_draw_issue(&result).await?;
         Ok(result)
     }
 
@@ -141,15 +139,14 @@ impl DrawRepository {
     pub async fn draw(&self, id: &str, payload: DrawIssueResultRequest) -> ApiResult<DrawIssue> {
         let (payload, uses_control_number) = self.resolve_draw_payload(id, payload).await?;
 
-        let (result, snapshot) = {
+        let result = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
-            let result = store.draw(id, payload, uses_control_number)?;
-            (result, store.clone())
+            store.draw(id, payload, uses_control_number)?
         };
-        self.persist_draws(&snapshot).await?;
+        self.persist_draw_issue(&result).await?;
         Ok(result)
     }
 
@@ -163,29 +160,27 @@ impl DrawRepository {
             .resolve_prefetched_api_draw_payload(id, api_draw_number)
             .await?;
 
-        let (result, snapshot) = {
+        let result = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
-            let result = store.draw(id, payload, uses_control_number)?;
-            (result, store.clone())
+            store.draw(id, payload, uses_control_number)?
         };
-        self.persist_draws(&snapshot).await?;
+        self.persist_draw_issue(&result).await?;
         Ok(result)
     }
 
     /// 取消开奖期并回退相关状态。
     pub async fn cancel(&self, id: &str) -> ApiResult<DrawIssue> {
-        let (result, snapshot) = {
+        let result = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
-            let result = store.cancel(id)?;
-            (result, store.clone())
+            store.cancel(id)?
         };
-        self.persist_draws(&snapshot).await?;
+        self.persist_draw_issue(&result).await?;
         Ok(result)
     }
 
@@ -419,6 +414,14 @@ impl DrawRepository {
         Ok(())
     }
 
+    async fn persist_draw_issue(&self, issue: &DrawIssue) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            upsert_draw_issue(persistence, issue).await?;
+        }
+
+        Ok(())
+    }
+
     async fn persist_controls(&self, store: &DrawControlStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_draw_controls(persistence, store).await?;
@@ -541,6 +544,45 @@ async fn load_draw_store(database: &BusinessDatabase) -> ApiResult<(DrawStore, D
         },
         DrawControlStore { controls },
     ))
+}
+
+/// 高频期号状态变更使用单行 upsert，避免调度时反复重写整张期号表。
+async fn upsert_draw_issue(database: &BusinessDatabase, issue: &DrawIssue) -> ApiResult<()> {
+    sqlx::query(
+        "INSERT INTO draw_issues
+         (id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+          sale_closed_at, status, draw_number, drawn_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (id) DO UPDATE SET
+          lottery_id = EXCLUDED.lottery_id,
+          lottery_name = EXCLUDED.lottery_name,
+          issue = EXCLUDED.issue,
+          number_type = EXCLUDED.number_type,
+          draw_mode = EXCLUDED.draw_mode,
+          scheduled_at = EXCLUDED.scheduled_at,
+          sale_closed_at = EXCLUDED.sale_closed_at,
+          status = EXCLUDED.status,
+          draw_number = EXCLUDED.draw_number,
+          drawn_at = EXCLUDED.drawn_at,
+          created_at = EXCLUDED.created_at",
+    )
+    .bind(&issue.id)
+    .bind(&issue.lottery_id)
+    .bind(&issue.lottery_name)
+    .bind(&issue.issue)
+    .bind(enum_to_string(&issue.number_type)?)
+    .bind(enum_to_string(&issue.draw_mode)?)
+    .bind(&issue.scheduled_at)
+    .bind(&issue.sale_closed_at)
+    .bind(enum_to_string(&issue.status)?)
+    .bind(&issue.draw_number)
+    .bind(&issue.drawn_at)
+    .bind(&issue.created_at)
+    .execute(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖期号数据保存失败".to_string()))?;
+
+    Ok(())
 }
 
 /// 保存开奖期号运行时快照，重写期号表和运行序号。

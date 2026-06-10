@@ -48,19 +48,22 @@ pub async fn run_draw_automation(
     group_buys: &GroupBuyRepository,
     payload: DrawAutomationRunRequest,
 ) -> ApiResult<DrawAutomationRun> {
-    let close_run =
-        close_due_draw_issues(draws, lotteries, finance, group_buys, payload.clone()).await?;
+    let close_run = close_due_draw_issues(draws, lotteries, payload.clone()).await?;
+    let refund_run =
+        refund_closed_unfilled_group_buys(draws, lotteries, finance, group_buys, payload.clone())
+            .await?;
     let draw_run = draw_due_issues(draws, lotteries, orders, finance, group_buys, payload).await?;
 
-    Ok(merge_draw_automation_runs(close_run, draw_run))
+    Ok(merge_draw_automation_runs(
+        merge_draw_automation_runs(close_run, refund_run),
+        draw_run,
+    ))
 }
 
-/// 只处理到期封盘和未满员合买流单退款，供调度器优先释放下一期开盘。
+/// 只处理到期封盘，供调度器优先释放下一期开盘。
 pub async fn close_due_draw_issues(
     draws: &DrawRepository,
     lotteries: &crate::services::lottery::LotteryRepository,
-    finance: &FinanceRepository,
-    group_buys: &GroupBuyRepository,
     payload: DrawAutomationRunRequest,
 ) -> ApiResult<DrawAutomationRun> {
     let now = normalize_automation_now(&payload)?;
@@ -76,8 +79,33 @@ pub async fn close_due_draw_issues(
 
         if should_close(&issue, &now) {
             let closed = draws.close(&issue.id).await?;
+            run.closed_issues.push(closed);
+        }
+    }
+
+    Ok(run)
+}
+
+/// 后台慢阶段处理已经封盘的未满员合买流单退款，避免资金写入阻塞下一期开盘。
+pub async fn refund_closed_unfilled_group_buys(
+    draws: &DrawRepository,
+    lotteries: &crate::services::lottery::LotteryRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    payload: DrawAutomationRunRequest,
+) -> ApiResult<DrawAutomationRun> {
+    let now = normalize_automation_now(&payload)?;
+    let mut run = empty_draw_automation_run(&now);
+    let lottery_configs = lottery_automation_configs(lotteries).await?;
+
+    for issue in draws.list().await? {
+        if skip_issue_if_lottery_disabled(&issue, &lottery_configs).is_some() {
+            continue;
+        }
+
+        if should_refund_unfilled_group_buy(&issue, &now) {
             let cancelled_plans = group_buys
-                .cancel_unfilled_for_issue(&closed.lottery_id, &closed.issue)
+                .cancel_unfilled_for_issue(&issue.lottery_id, &issue.issue)
                 .await?;
             for plan in cancelled_plans {
                 let entries = finance
@@ -85,7 +113,6 @@ pub async fn close_due_draw_issues(
                     .await?;
                 run.ledger_entries.extend(entries);
             }
-            run.closed_issues.push(closed);
         }
     }
 
@@ -336,6 +363,14 @@ async fn prefetch_api_draw_numbers(
 /// 判断期号是否已经到达封盘时间。
 fn should_close(issue: &DrawIssue, now: &str) -> bool {
     issue.status == DrawIssueStatus::Open && is_due_at(&issue.sale_closed_at, now)
+}
+
+/// 判断是否需要处理封盘后未满员合买退款。
+fn should_refund_unfilled_group_buy(issue: &DrawIssue, now: &str) -> bool {
+    matches!(
+        issue.status,
+        DrawIssueStatus::Closed | DrawIssueStatus::Drawn
+    ) && is_due_at(&issue.sale_closed_at, now)
 }
 
 /// 判断期号是否已经到达开奖时间。

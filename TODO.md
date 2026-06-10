@@ -1,5 +1,18 @@
 # TODO
 
+## 2026-06-10 21:02 HKT 手机端下注页封盘后轮询修复
+
+- 完成任务：修复手机端下注页封盘时间到达后长期停在“开奖中”且不进入下一期的问题。
+- 解决问题：
+  - 后端下注页配置此前只按期号状态 `open` 返回 `round.status=selling`，没有排除已经超过 `sale_closed_at` 的旧期号。
+  - 前端倒计时会根据过期封盘时间显示“开奖中”，但轮询逻辑只在接口状态为 `opening` 时启动，导致页面显示与刷新状态脱节。
+- 实施内容：
+  - 后端下注页配置新增当前时间判断，只有 `open` 且 `sale_closed_at` 未过的期号才返回 `selling`。
+  - 已过封盘时间但仍为 `open` 的期号改为 `opening` 候选返回，保留期号展示并触发手机端开盘轮询。
+  - 手机端动态下注页把 `selling + sale_stop_at 已过` 也视为需要轮询下一期，并在本地封盘后禁用加入购彩篮和提交按钮。
+  - 新增后端测试覆盖过期 `open` 期号进入 `opening` 状态，以及存在下一期可售期时优先展示下一期。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml mobile_bet -- --nocapture`、完整 `cargo test --manifest-path backend/Cargo.toml -- --nocapture`、手机端 `npm run build`、手机端 `npm run test` 和 `git diff --check` 均通过；后端完整测试 278 条通过，手机端测试脚本当前显示 0 个测试用例。
+
 ## 2026-06-10 20:32 HKT 开奖调度快慢阶段拆分
 
 - 完成任务：把开奖调度拆成封盘补期快阶段和开奖结算慢阶段，并修复周期彩种晚调度时的期号节拍漂移。
@@ -2854,3 +2867,10 @@
 - 解决问题：官方 Nginx 镜像默认把访问日志输出到 stdout、错误日志输出到 stderr，部署后 `docker logs` 容易被静态资源、健康检查和代理请求刷屏，不便观察后端业务日志。
 - 实施内容：`docker/nginx.conf` 增加 `access_log off;` 并把 `error_log` 指向 `/dev/null`；同步更新容器部署规范、部署说明和架构说明。
 - 验证结果：`sh -n docker/entrypoint.sh` 和 `git diff --check` 均通过；当前本机 Docker daemon 未运行，`docker run ... nginx -t` 与 `docker build -t bc-platform:latest .` 暂无法执行，报错为无法连接 Docker daemon。
+
+## 2026-06-10 21:53 HKT 下注页开奖中卡住修复
+
+- 完成任务：修复手机端下注页到达封盘/开奖时间后可能一直停在“开奖中”，不自动进入下一期的问题，并用 `魔力分分彩`、`腾讯分分彩` 在本地服务联调验证。
+- 解决问题：根因不是单点前端显示问题，而是多个链路叠加：下注页配置曾把已过封盘时间的 `open` 期继续当成 `selling`；首页当前期曾在历史 `closed` 期中取最早旧期；常驻调度快路径曾被 API 补期、合买流单退款、资金/期号全量持久化等慢操作拖慢。
+- 实施内容：下注页和首页当前期选择都按“未封盘可售期优先、最新待开奖期次之、最近已开奖兜底”处理；开奖期号创建、封盘、开奖、取消改为单条 `draw_issues` upsert；调度器拆成开盘快阶段和后台慢阶段，快阶段只处理封盘、补期和开盘推送，慢阶段再处理开奖结算、流单退款和机器人；慢阶段未结束时不阻塞下一轮快阶段。
+- 验证结果：本地后端连接 `postgres://root:***@192.168.2.3:15432/postgres` 后启动，`/api/lottery/home` 在 `21:46 -> 21:47` 跨期后返回 `ssc60=20260610214759/selling`、`txffc=202606101308/selling`；登录临时用户后，`/api/user/bet/page-config/ssc60` 返回 `20260610215259/selling`，`/api/user/bet/page-config/txffc` 返回 `202606101313/selling`。后端 `cargo check`、自动化流单退款单测和调度器测试已通过，后续继续跑完整测试与手机端构建。

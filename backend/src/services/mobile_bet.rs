@@ -1,6 +1,6 @@
 //! 手机端下注页聚合服务，负责把彩种、期号和玩法赔率转换为前端投注配置。
 
-use chrono::NaiveDateTime;
+use chrono::{Local, NaiveDateTime};
 
 use crate::domain::{
     draw::{DrawIssue, DrawIssueStatus},
@@ -19,13 +19,26 @@ const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const DEFAULT_UNIT_AMOUNT_MINOR: i64 = 200;
 const DEFAULT_MAX_MULTIPLE: u32 = 999;
 
+struct RoundCandidate<'a> {
+    issue: &'a DrawIssue,
+    status: &'static str,
+}
+
 /// 生成手机端下注页配置，只暴露当前彩种已启用的玩法和赔率。
 pub fn build_mobile_bet_page_config(
     lottery: &LotteryKind,
     issues: Vec<DrawIssue>,
 ) -> MobileBetPageConfig {
-    let current_open_issue = current_open_issue(&issues);
-    let waiting_issue = waiting_issue(&issues);
+    let now_timestamp = Local::now().naive_local().and_utc().timestamp();
+    build_mobile_bet_page_config_at(lottery, issues, now_timestamp)
+}
+
+fn build_mobile_bet_page_config_at(
+    lottery: &LotteryKind,
+    issues: Vec<DrawIssue>,
+    now_timestamp: i64,
+) -> MobileBetPageConfig {
+    let round_candidate = round_candidate(&issues, now_timestamp);
     let latest_drawn_issue = latest_drawn_issue(&issues);
     let summaries = play_rule_summaries();
     let plays = lottery
@@ -53,26 +66,50 @@ pub fn build_mobile_bet_page_config(
             initiator_min_buy_ratio: format!("{:.2}", lottery.group_buy.initiator_min_percent),
             share_amount: minor_to_decimal(lottery.group_buy.min_share_amount_minor),
         },
-        round: round_from_issue(current_open_issue.or(waiting_issue)),
+        round: round_from_candidate(round_candidate),
         latest_draw: latest_drawn_issue.map(latest_draw_from_issue),
         plays,
     }
 }
 
-/// 选择最早封盘的可售期号，作为下注页当前可投注期。
-fn current_open_issue(issues: &[DrawIssue]) -> Option<&DrawIssue> {
+/// 选择当前下注页期号；已过封盘时间的 open 期号应进入开奖中轮询，而不是继续视为可售。
+fn round_candidate(issues: &[DrawIssue], now_timestamp: i64) -> Option<RoundCandidate<'_>> {
+    if let Some(issue) = current_open_issue(issues, now_timestamp) {
+        return Some(RoundCandidate {
+            issue,
+            status: "selling",
+        });
+    }
+
+    waiting_issue(issues, now_timestamp).map(|issue| RoundCandidate {
+        issue,
+        status: "opening",
+    })
+}
+
+/// 选择最早封盘且封盘时间还未到的可售期号，作为下注页当前可投注期。
+fn current_open_issue(issues: &[DrawIssue], now_timestamp: i64) -> Option<&DrawIssue> {
     issues
         .iter()
-        .filter(|issue| issue.status == DrawIssueStatus::Open)
+        .filter(|issue| {
+            issue.status == DrawIssueStatus::Open
+                && timestamp_value(&issue.sale_closed_at)
+                    .is_some_and(|sale_closed_at| sale_closed_at > now_timestamp)
+        })
         .min_by_key(|issue| timestamp_value(&issue.sale_closed_at).unwrap_or(i64::MAX))
 }
 
 /// 没有可售期时展示最近待开奖期，让页面进入“开奖中/开盘轮询”状态。
-fn waiting_issue(issues: &[DrawIssue]) -> Option<&DrawIssue> {
+fn waiting_issue(issues: &[DrawIssue], now_timestamp: i64) -> Option<&DrawIssue> {
     issues
         .iter()
-        .filter(|issue| issue.status == DrawIssueStatus::Closed)
-        .min_by_key(|issue| timestamp_value(&issue.scheduled_at).unwrap_or(i64::MAX))
+        .filter(|issue| {
+            issue.status == DrawIssueStatus::Closed
+                || (issue.status == DrawIssueStatus::Open
+                    && timestamp_value(&issue.sale_closed_at)
+                        .is_some_and(|sale_closed_at| sale_closed_at <= now_timestamp))
+        })
+        .max_by_key(|issue| timestamp_value(&issue.scheduled_at).unwrap_or_default())
 }
 
 /// 选择最近一个带开奖结果的已开奖期号，作为下注页顶部最近开奖。
@@ -91,8 +128,8 @@ fn latest_drawn_issue(issues: &[DrawIssue]) -> Option<&DrawIssue> {
 }
 
 /// 根据当前期号生成前端状态；非可售期统一返回 opening，触发手机端轮询下一期。
-fn round_from_issue(issue: Option<&DrawIssue>) -> MobileBetRound {
-    let Some(issue) = issue else {
+fn round_from_candidate(candidate: Option<RoundCandidate<'_>>) -> MobileBetRound {
+    let Some(candidate) = candidate else {
         return MobileBetRound {
             issue: String::new(),
             status: "opening".to_string(),
@@ -100,14 +137,11 @@ fn round_from_issue(issue: Option<&DrawIssue>) -> MobileBetRound {
             sale_stop_at: None,
         };
     };
+    let issue = candidate.issue;
 
     MobileBetRound {
         issue: issue.issue.clone(),
-        status: if issue.status == DrawIssueStatus::Open {
-            "selling".to_string()
-        } else {
-            "opening".to_string()
-        },
+        status: candidate.status.to_string(),
         scheduled_draw_at: Some(issue.scheduled_at.clone()),
         sale_stop_at: Some(issue.sale_closed_at.clone()),
     }
@@ -404,7 +438,7 @@ mod tests {
         play::PlayRuleCode,
     };
 
-    use super::build_mobile_bet_page_config;
+    use super::{build_mobile_bet_page_config, build_mobile_bet_page_config_at, timestamp_value};
 
     #[test]
     /// 验证下注页配置只暴露可售期、最近开奖和已启用玩法。
@@ -415,7 +449,11 @@ mod tests {
             issue_fixture("I002", DrawIssueStatus::Open, None),
         ];
 
-        let config = build_mobile_bet_page_config(&lottery, issues);
+        let config = build_mobile_bet_page_config_at(
+            &lottery,
+            issues,
+            timestamp_value("2026-06-05 12:01:40").expect("测试时间应可解析"),
+        );
 
         assert_eq!(config.lottery.code, "txffc");
         assert_eq!(config.round.issue, "I002");
@@ -426,6 +464,64 @@ mod tests {
         );
         assert_eq!(config.plays.len(), 1);
         assert_eq!(config.plays[0].code, PlayRuleCode::FiveFrontDirect);
+    }
+
+    #[test]
+    /// 验证已过封盘时间但尚未被调度关闭的 open 期号不会继续返回可投注状态。
+    fn expired_open_round_enters_opening_refresh_state() {
+        let lottery = lottery_fixture();
+        let issues = vec![issue_fixture("I002", DrawIssueStatus::Open, None)];
+
+        let config = build_mobile_bet_page_config_at(
+            &lottery,
+            issues,
+            timestamp_value("2026-06-05 12:02:45").expect("测试时间应可解析"),
+        );
+
+        assert_eq!(config.round.issue, "I002");
+        assert_eq!(config.round.status, "opening");
+        assert_eq!(
+            config.round.sale_stop_at.as_deref(),
+            Some("2026-06-05 12:02:30")
+        );
+    }
+
+    #[test]
+    /// 验证存在下一期可售期时，过期 open 期号不会挡住新的销售期。
+    fn next_open_round_wins_over_expired_open_round() {
+        let lottery = lottery_fixture();
+        let issues = vec![
+            issue_fixture("I002", DrawIssueStatus::Open, None),
+            issue_fixture("I003", DrawIssueStatus::Open, None),
+        ];
+
+        let config = build_mobile_bet_page_config_at(
+            &lottery,
+            issues,
+            timestamp_value("2026-06-05 12:02:45").expect("测试时间应可解析"),
+        );
+
+        assert_eq!(config.round.issue, "I003");
+        assert_eq!(config.round.status, "selling");
+    }
+
+    #[test]
+    /// 验证没有可售期时，下注页展示最新待开奖期，不会被历史封盘旧期压住。
+    fn latest_waiting_round_wins_over_old_closed_round() {
+        let lottery = lottery_fixture();
+        let issues = vec![
+            issue_fixture("I001", DrawIssueStatus::Closed, None),
+            issue_fixture("I002", DrawIssueStatus::Closed, None),
+        ];
+
+        let config = build_mobile_bet_page_config_at(
+            &lottery,
+            issues,
+            timestamp_value("2026-06-05 12:02:45").expect("测试时间应可解析"),
+        );
+
+        assert_eq!(config.round.issue, "I002");
+        assert_eq!(config.round.status, "opening");
     }
 
     #[test]
