@@ -48,21 +48,24 @@ pub async fn run_draw_automation(
     group_buys: &GroupBuyRepository,
     payload: DrawAutomationRunRequest,
 ) -> ApiResult<DrawAutomationRun> {
-    let now = payload.now.trim().to_string();
-    if now.is_empty() {
-        return Err(ApiError::BadRequest(
-            "automation time is required".to_string(),
-        ));
-    }
+    let close_run =
+        close_due_draw_issues(draws, lotteries, finance, group_buys, payload.clone()).await?;
+    let draw_run = draw_due_issues(draws, lotteries, orders, finance, group_buys, payload).await?;
 
-    let mut run = DrawAutomationRun {
-        now: now.clone(),
-        closed_issues: Vec::new(),
-        drawn_issues: Vec::new(),
-        settlement_runs: Vec::new(),
-        ledger_entries: Vec::new(),
-        skipped_issues: Vec::new(),
-    };
+    Ok(merge_draw_automation_runs(close_run, draw_run))
+}
+
+/// 只处理到期封盘和未满员合买流单退款，供调度器优先释放下一期开盘。
+pub async fn close_due_draw_issues(
+    draws: &DrawRepository,
+    lotteries: &crate::services::lottery::LotteryRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    payload: DrawAutomationRunRequest,
+) -> ApiResult<DrawAutomationRun> {
+    let now = normalize_automation_now(&payload)?;
+
+    let mut run = empty_draw_automation_run(&now);
 
     let lottery_configs = lottery_automation_configs(lotteries).await?;
     for issue in draws.list().await? {
@@ -86,16 +89,25 @@ pub async fn run_draw_automation(
         }
     }
 
+    Ok(run)
+}
+
+/// 处理到期开奖、订单结算、派奖入账和合买结算，允许在开盘推送之后继续执行。
+pub async fn draw_due_issues(
+    draws: &DrawRepository,
+    lotteries: &crate::services::lottery::LotteryRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    payload: DrawAutomationRunRequest,
+) -> ApiResult<DrawAutomationRun> {
+    let now = normalize_automation_now(&payload)?;
+    let mut run = empty_draw_automation_run(&now);
+    let lottery_configs = lottery_automation_configs(lotteries).await?;
     let mut draw_candidates = Vec::new();
     for issue in draws.list().await? {
         if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_configs) {
-            if !run
-                .skipped_issues
-                .iter()
-                .any(|skipped| skipped.draw_issue_id == issue.id)
-            {
-                run.skipped_issues.push(skipped_issue(&issue, &reason));
-            }
+            push_skipped_issue_once(&mut run, &issue, &reason);
             continue;
         }
 
@@ -179,6 +191,49 @@ pub async fn run_draw_automation(
     }
 
     Ok(run)
+}
+
+fn normalize_automation_now(payload: &DrawAutomationRunRequest) -> ApiResult<String> {
+    let now = payload.now.trim().to_string();
+    if now.is_empty() {
+        return Err(ApiError::BadRequest(
+            "automation time is required".to_string(),
+        ));
+    }
+
+    Ok(now)
+}
+
+fn empty_draw_automation_run(now: &str) -> DrawAutomationRun {
+    DrawAutomationRun {
+        now: now.to_string(),
+        closed_issues: Vec::new(),
+        drawn_issues: Vec::new(),
+        settlement_runs: Vec::new(),
+        ledger_entries: Vec::new(),
+        skipped_issues: Vec::new(),
+    }
+}
+
+/// 合并两个自动化阶段的结果，跳过原因按期号去重，避免停售彩种重复告警。
+pub fn merge_draw_automation_runs(
+    mut first: DrawAutomationRun,
+    second: DrawAutomationRun,
+) -> DrawAutomationRun {
+    first.closed_issues.extend(second.closed_issues);
+    first.drawn_issues.extend(second.drawn_issues);
+    first.settlement_runs.extend(second.settlement_runs);
+    first.ledger_entries.extend(second.ledger_entries);
+    for skipped in second.skipped_issues {
+        if !first
+            .skipped_issues
+            .iter()
+            .any(|existing| existing.draw_issue_id == skipped.draw_issue_id)
+        {
+            first.skipped_issues.push(skipped);
+        }
+    }
+    first
 }
 
 /// 并发预取本轮涉及的 API 彩种最新期号，避免多个彩种串行等待第三方接口。
@@ -335,6 +390,16 @@ fn skipped_issue(issue: &DrawIssue, reason: &str) -> DrawAutomationSkippedIssue 
         lottery_id: issue.lottery_id.clone(),
         issue: issue.issue.clone(),
         reason: reason.to_string(),
+    }
+}
+
+fn push_skipped_issue_once(run: &mut DrawAutomationRun, issue: &DrawIssue, reason: &str) {
+    if !run
+        .skipped_issues
+        .iter()
+        .any(|skipped| skipped.draw_issue_id == issue.id)
+    {
+        run.skipped_issues.push(skipped_issue(issue, reason));
     }
 }
 

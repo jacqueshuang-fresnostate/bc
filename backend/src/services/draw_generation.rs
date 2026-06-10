@@ -377,6 +377,29 @@ fn generation_baseline(
             .ok_or_else(|| ApiError::BadRequest("scheduled time is out of range".to_string()));
     }
 
+    if let DrawSchedule::Periodic { interval_seconds } = &lottery.schedule {
+        if let Some(latest_scheduled_at) = latest_scheduled_at(existing_issues, &lottery.id)? {
+            if *interval_seconds == 0 {
+                return Err(ApiError::BadRequest(
+                    "periodic interval must be greater than zero".to_string(),
+                ));
+            }
+            if latest_scheduled_at > now {
+                return Ok(latest_scheduled_at);
+            }
+
+            let interval_seconds = i64::from(*interval_seconds);
+            let elapsed_seconds = now
+                .signed_duration_since(latest_scheduled_at)
+                .num_seconds()
+                .max(0);
+            let completed_intervals = elapsed_seconds / interval_seconds;
+            return latest_scheduled_at
+                .checked_add_signed(Duration::seconds(completed_intervals * interval_seconds))
+                .ok_or_else(|| ApiError::BadRequest("scheduled time is out of range".to_string()));
+        }
+    }
+
     let baseline = latest_scheduled_at(existing_issues, &lottery.id)?.unwrap_or(now);
     Ok(if baseline > now { baseline } else { now })
 }
@@ -916,6 +939,34 @@ mod tests {
             draws.list().await.expect("draw issues can be listed").len(),
             3
         );
+    }
+
+    #[tokio::test]
+    async fn periodic_generation_keeps_cadence_when_scheduler_runs_late() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "20260610201827".to_string(),
+                    scheduled_at: "2026-06-10 20:18:27".to_string(),
+                    sale_closed_at: "2026-06-10 20:18:17".to_string(),
+                },
+            )
+            .await
+            .expect("existing issue can be created");
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-10 20:18:52"))
+            .await
+            .expect("late scheduler can generate next cadence issue");
+
+        assert_eq!(issue.issue, "20260610201927");
+        assert_eq!(issue.scheduled_at, "2026-06-10 20:19:27");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:26");
     }
 
     #[tokio::test]
