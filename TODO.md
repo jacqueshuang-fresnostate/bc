@@ -2815,3 +2815,17 @@
 - 解决问题：停售彩种和历史期号被调度跳过时，页面会展开大量“彩种已停售，跳过自动任务”提示，影响运营查看真正的调度结果。
 - 实施内容：手动自动任务结果增加“跳过 X 项”汇总；调度历史保留跳过数量指标；移除 `skippedIssues` 和 `skippedLotteries` 的逐条黄色列表；错误信息红色提示继续保留。
 - 验证结果：管理后台 `npm run build` 和 `git diff --check` 均通过；构建仍有既有的大 chunk 提示。
+
+## 2026-06-10 19:15 HKT 合买模块命名调整
+
+- 完成任务：把后台运营入口中的“合买配置”改为“合买管理”。
+- 解决问题：当前模块已经负责合买计划、认购进度、参与记录和状态维护，不只是彩种参数配置，继续叫“合买配置”容易让运营误解入口职责。
+- 实施内容：后台合买页面标题改为“合买管理”；后台首页主要功能组描述改为“彩种、开奖、玩法与合买管理”；后台首页 `group-buy` 模块名称改为“合买管理”，说明文案改为“合买计划、认购进度和参与记录”。
+- 验证结果：管理后台 `npm run build`、后端 `cargo fmt --check && cargo check` 和 `git diff --check` 均通过；构建仍有既有的大 chunk 提示。
+
+## 2026-06-10 19:17 HKT Docker 单镜像日志输出收敛
+
+- 完成任务：打包成 Docker 镜像后，容器日志只保留后端服务输出为主，Nginx 日志不再进入 Docker 日志。
+- 解决问题：官方 Nginx 镜像默认把访问日志输出到 stdout、错误日志输出到 stderr，部署后 `docker logs` 容易被静态资源、健康检查和代理请求刷屏，不便观察后端业务日志。
+- 实施内容：`docker/nginx.conf` 增加 `access_log off;` 并把 `error_log` 指向 `/dev/null`；同步更新容器部署规范、部署说明和架构说明。
+- 验证结果：`sh -n docker/entrypoint.sh` 和 `git diff --check` 均通过；当前本机 Docker daemon 未运行，`docker run ... nginx -t` 与 `docker build -t bc-platform:latest .` 暂无法执行，报错为无法连接 Docker daemon。

@@ -345,7 +345,7 @@ fn module_groups() -> Vec<ModuleGroup> {
         ModuleGroup {
             key: "lottery".to_string(),
             title: "主要功能".to_string(),
-            description: "彩种、开奖、玩法与合买配置".to_string(),
+            description: "彩种、开奖、玩法与合买管理".to_string(),
             modules: vec![
                 module(
                     "lottery-console",
@@ -373,8 +373,8 @@ fn module_groups() -> Vec<ModuleGroup> {
                 ),
                 module(
                     "group-buy",
-                    "合买配置",
-                    "份额、起购、参与金额配置",
+                    "合买管理",
+                    "合买计划、认购进度和参与记录",
                     ModuleStatus::Scaffolded,
                 ),
                 module(

@@ -256,7 +256,7 @@ export function GroupBuyManagementPage({
     <div className="space-y-5">
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-ink">合买配置</h1>
+          <h1 className="text-xl font-semibold text-ink">合买管理</h1>
           <p className="mt-1 text-sm text-slate-500">
             维护合买计划、认购进度、参与记录和计划状态。
           </p>
