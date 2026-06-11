@@ -1,5 +1,34 @@
 # TODO
 
+## 2026-06-11 22:56 HKT 体彩排列3/排列5 API68 接入
+
+- 完成任务：新增体彩排列3独立开奖源，并接入体彩排列5彩种和开奖源。
+- 解决问题：
+  - `pl3` 过去复用 `api68-fc3d` 的 `lotCode=10041`，无法使用用户提供的体彩排列3独立接口。
+  - 系统此前没有 `pl5` 体彩排列5彩种和默认开奖源。
+- 实施内容：
+  - `api68-fc3d` 默认来源收窄为只绑定 `fc3d`。
+  - 新增 `api68-pl3`，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfo1.do`，`lotCode=10043`，绑定 `pl3`。
+  - 新增 `pl5` 体彩排列5默认彩种，号码类型为 `fiveDigit`，默认每日 `21:00:15` 开奖、停售、关闭合买。
+  - 新增 `api68-pl5`，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfo.do`，`lotCode=10044`，绑定 `pl5`。
+  - 新增迁移修正旧库中的 `pl3` 绑定，并补齐 `api68-pl3/api68-pl5` 开奖源。
+  - 同步更新架构说明和后端 API 契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_api -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml seeded_lotteries_include_requested_api68_lotteries -- --nocapture` 和 `git diff --check` 均通过；本机没有 `psql` 命令，未执行迁移 SQL 的事务回滚试跑。
+
+## 2026-06-11 22:41 HKT 手机端合买大厅发起人头像展示
+
+- 完成任务：合买大厅列表卡片左侧改为显示发起人头像。
+- 解决问题：
+  - 合买大厅此前使用本地生成的彩票图标，用户无法直观看到合买发起人。
+  - 直接展示机器人头像可能暴露机器人身份，需要继续保持前台匿名规则。
+- 实施内容：
+  - 后端用户端合买响应新增 `initiatorAvatarUrl`，普通用户计划按 `initiatorUserId` 读取用户头像。
+  - 机器人合买计划不返回真实头像，继续只返回脱敏发起人展示名。
+  - 手机端合买 API 类型和适配层接入 `initiatorAvatarUrl`。
+  - 手机端合买大厅卡片使用公共缓存头像组件展示圆形发起人头像，无头像时显示脱敏名首字。
+  - 同步更新架构说明和前后端规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_group_buy_plan -- --nocapture`、`cd mobile && npm run build` 和 `git diff --check` 均通过。
+
 ## 2026-06-11 22:00 HKT 手机端客服未读 Badge 提示
 
 - 完成任务：手机端客服回复未读提示从小红点升级为数字 Badge。

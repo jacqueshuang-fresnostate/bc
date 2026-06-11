@@ -65,6 +65,16 @@ export function initiatorDisplay(item: GroupBuyPlan) {
   return item.initiator_display || '平台发起'
 }
 
+/** 展示合买发起人头像地址。 */
+export function initiatorAvatarUrl(item: GroupBuyPlan) {
+  return String(item.initiator_avatar_url || '').trim()
+}
+
+/** 生成合买发起人头像缺省文字。 */
+export function initiatorAvatarText(item: GroupBuyPlan) {
+  return initiatorDisplay(item).trim().slice(0, 1).toUpperCase() || '会'
+}
+
 /** 展示合买计划标题。 */
 export function formatPlanTitle(item: GroupBuyPlan) {
   return item.title || `${item.lottery_name || item.lottery_code} 第${item.issue}期`

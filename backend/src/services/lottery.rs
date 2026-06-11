@@ -734,7 +734,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
         },
         LotteryKind {
             id: "pl3".to_string(),
-            name: "排列 3".to_string(),
+            name: "体彩排列3".to_string(),
             category: "regional".to_string(),
             logo_url: String::new(),
             number_type: LotteryNumberType::ThreeDigit,
@@ -765,6 +765,39 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
                     (PlayRuleCode::ThreeGroupSix, 48_000),
                     (PlayRuleCode::ThreeGroupSixBanker, 48_000),
                 ],
+            ),
+        },
+        LotteryKind {
+            id: "pl5".to_string(),
+            name: "体彩排列5".to_string(),
+            category: "regional".to_string(),
+            logo_url: String::new(),
+            number_type: LotteryNumberType::FiveDigit,
+            draw_mode: DrawMode::Api,
+            api_draw_delay_seconds: 0,
+            issue_format: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            schedule: DrawSchedule::Daily {
+                time: "21:00:15".to_string(),
+            },
+            sale_enabled: false,
+            group_buy: group_buy_config(),
+            play_categories: vec![
+                PlayCategory::Direct,
+                PlayCategory::DirectCombination,
+                PlayCategory::GroupThree,
+                PlayCategory::GroupSix,
+                PlayCategory::BigSmallOddEven,
+            ],
+            play_configs: play_configs_with_overrides(
+                LotteryNumberType::FiveDigit,
+                &[
+                    PlayCategory::Direct,
+                    PlayCategory::DirectCombination,
+                    PlayCategory::GroupThree,
+                    PlayCategory::GroupSix,
+                    PlayCategory::BigSmallOddEven,
+                ],
+                &[],
             ),
         },
         LotteryKind {
@@ -1529,6 +1562,7 @@ mod tests {
 
         for (id, number_type, has_play_rules) in [
             ("bjpk10", LotteryNumberType::Pk10, false),
+            ("pl5", LotteryNumberType::FiveDigit, true),
             ("tjssc", LotteryNumberType::FiveDigit, true),
             ("gd11x5", LotteryNumberType::ElevenFive, false),
             ("au10", LotteryNumberType::Pk10, false),
@@ -1544,6 +1578,24 @@ mod tests {
             assert_eq!(lottery.draw_mode, DrawMode::Api);
             assert_eq!(lottery.play_configs.is_empty(), !has_play_rules);
         }
+
+        let pl3 = lotteries
+            .iter()
+            .find(|item| item.id == "pl3")
+            .expect("pl3 seed lottery exists");
+        assert_eq!(pl3.name, "体彩排列3");
+
+        let pl5 = lotteries
+            .iter()
+            .find(|item| item.id == "pl5")
+            .expect("pl5 seed lottery exists");
+        assert_eq!(pl5.name, "体彩排列5");
+        assert_eq!(
+            pl5.schedule,
+            DrawSchedule::Daily {
+                time: "21:00:15".to_string()
+            }
+        );
 
         for removed_id in [
             "jsk3", "gxk3", "jlk3", "hebk3", "nmgk3", "ahk3", "fjk3", "hubk3", "bjk3", "bjkl8",

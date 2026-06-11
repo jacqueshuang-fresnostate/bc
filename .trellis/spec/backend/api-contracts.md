@@ -1231,9 +1231,11 @@ await createUserBetOrders([{
 
 当前已接入的外部开奖源：
 
-- `api68-fc3d`：`fc3d` 福彩 3D 和 `pl3` 排列 3 默认复用 API68 全国彩接口，`lotCode=10041`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为开奖号码。
+- `api68-fc3d`：`fc3d` 福彩 3D 默认使用 API68 全国彩接口，`lotCode=10041`，响应中按 `result.data[].preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为开奖号码。
+- `api68-pl3`：`pl3` 体彩排列3默认使用 API68 全国彩接口，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfo1.do`，`lotCode=10043`，不再复用福彩 3D 来源。
+- `api68-pl5`：`pl5` 体彩排列5默认使用 API68 全国彩接口，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfo.do`，`lotCode=10044`。
 - `api68-au5`：`au5` 澳洲幸运5默认使用 API68 CQShiCai 单彩种接口，`lotCode=10010`，响应中按 `result.data.preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为英文逗号分隔开奖号码。
-- API68 批量接入彩种：`bjpk10`、`tjssc`、`xjssc`、`gd11x5`、`jsk3`、`au10`、`au20`、`bjkl8`、`jx11x5`、`js11x5`、`ah11x5`、`sh11x5`、`ln11x5`、`hb11x5`、`gx11x5`、`jl11x5`、`nmg11x5`、`zj11x5`、`gxk3`、`jlk3`、`hebk3`、`nmgk3`、`ahk3`、`fjk3`、`hubk3`、`bjk3`。这些来源按彩种分别绑定 API68 的 PKS、CQShiCai、ElevenFive、FastThree 或 LuckTwenty endpoint。
+- API68 批量接入彩种：`bjpk10`、`tjssc`、`xjssc`、`gd11x5`、`au10`、`au20`、`jx11x5`、`js11x5`、`ah11x5`、`sh11x5`、`ln11x5`、`hb11x5`、`gx11x5`、`jl11x5`、`nmg11x5`、`zj11x5`。这些来源按彩种分别绑定 API68 的 PKS、CQShiCai、ElevenFive 或 LuckTwenty endpoint；已停用的快3和北京快乐8不应重新出现在默认来源中。
 - `kj-txffc`：`txffc` 腾讯分分彩默认使用 KJAPI 接口，`lotKey=txffc`，响应中按 `result.data.preDrawIssue` 匹配后台期号，使用 `preDrawCode` 作为英文逗号分隔开奖号码；生成下一期时优先读取 `result.data.drawIssue` 和 `result.data.drawTime`。
 - `preDrawCode` 必须继续经过后端开奖号码校验，保存和返回仍统一为英文逗号分隔格式。
 - API68 解析器必须兼容 `result.data` 为数组或单对象两种形态；单对象接口还应读取 `drawIssue` 和 `drawTime` 作为下一期锚点。
@@ -1244,13 +1246,13 @@ await createUserBetOrders([{
 ```json
 {
   "id": "api68-fc3d",
-  "name": "API68 福彩 3D/排列 3",
+  "name": "API68 福彩 3D",
   "mode": "api",
   "provider": "api68",
   "lotCode": "10041",
   "endpoint": "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do",
   "editable": true,
-  "reusableForLotteryIds": ["fc3d", "pl3"]
+  "reusableForLotteryIds": ["fc3d"]
 }
 ```
 
@@ -1259,15 +1261,15 @@ await createUserBetOrders([{
 ```json
 {
   "id": "api68-fc3d",
-  "name": "API68 福彩 3D/排列 3",
+  "name": "API68 福彩 3D",
   "provider": "api68",
   "lotCode": "10041",
   "endpoint": "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do",
-  "reusableForLotteryIds": ["fc3d", "pl3"]
+  "reusableForLotteryIds": ["fc3d"]
 }
 ```
 
-`endpoint` 可为空；为空时后端按供应商写入默认 endpoint。福彩 3D/排列 3 默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfoList.do`；澳洲幸运5默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/CQShiCai/getBaseCQShiCai.do`；腾讯分分彩默认来源写入 `draw_sources` 表，endpoint 为 `https://kjapi.net/hall/hallajax/getLotteryInfo`。后续修改 endpoint 必须通过后台“开奖源配置”或开奖源 API 写入数据库，不通过环境变量覆盖。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
+`endpoint` 可为空；为空时后端按供应商写入默认 endpoint。福彩 3D 默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/QuanGuoCai/getLotteryInfoList.do`；体彩排列3默认来源写入 `https://api.api68.com/QuanGuoCai/getLotteryInfo1.do`；体彩排列5默认来源写入 `https://api.api68.com/QuanGuoCai/getLotteryInfo.do`；澳洲幸运5默认来源写入 `draw_sources` 表，endpoint 为 `https://api.api68.com/CQShiCai/getBaseCQShiCai.do`；腾讯分分彩默认来源写入 `draw_sources` 表，endpoint 为 `https://kjapi.net/hall/hallajax/getLotteryInfo`。后续修改 endpoint 必须通过后台“开奖源配置”或开奖源 API 写入数据库，不通过环境变量覆盖。`platform` 来源也会出现在 `GET /draw-sources` 中，但 `editable=false`，不支持通过 API 源配置接口修改。
 
 KJAPI 来源的 `lotCode` 字段在当前跨层模型中复用为 `lotKey`，例如腾讯分分彩保存 `lotCode="txffc"`；后端请求时会按供应商自动拼接 `lotKey=txffc`，不是 `lotCode=txffc`。后台展示标签可写为 `lotCode / lotKey`。
 
@@ -1330,8 +1332,8 @@ KJAPI 来源的 `lotCode` 字段在当前跨层模型中复用为 `lotKey`，例
 ### 5. Good / Base / Bad Cases
 
 - Good：`fc3d` 创建期号 `2026143` 后调用 `PATCH /draw` 传 `{}`，后端从 API68 匹配 `preDrawIssue=2026143`，保存 `preDrawCode`，并返回 `status="drawn"`。
-- Good：`pl3` 创建同一期号 `2026143` 后调用 `PATCH /draw` 传 `{}`，后端复用同一个 `api68-fc3d` 来源并保存同一条 `preDrawCode`。
-- Good：管理员把 `api68-fc3d` 的 `reusableForLotteryIds` 保存为 `["fc3d"]` 后，`pl3` 不再命中该外部源。
+- Good：`pl3` 创建同一期号 `2026143` 后调用 `PATCH /draw` 传 `{}`，后端通过 `api68-pl3` 的 `lotCode=10043` 获取体彩排列3开奖结果。
+- Good：`pl5` 创建体彩排列5期号后调用 `PATCH /draw` 传 `{}`，后端通过 `api68-pl5` 的 `lotCode=10044` 获取五位开奖号码。
 - Good：`manual-test` 创建期号后传 `{"drawNumber":"7,8,9,4,2"}`，后端按 `fiveDigit` 校验并保存逗号分隔开奖结果。
 - Base：开奖期号仓储当前是内存模式，服务重启后期号清空；这适合当前后台流程验证。没有外部源配置的 API 彩种仍是占位生成，不代表生产能力。
 - Bad：前端为 `manual` 期号传空对象执行开奖；后端必须拒绝，不能静默生成号码。
@@ -1345,7 +1347,7 @@ KJAPI 来源的 `lotCode` 字段在当前跨层模型中复用为 `lotKey`，例
 - 后端需要覆盖已开奖期号不能重复开奖或取消。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`。
-- 跨层联调需要请求开奖源、保存复用彩种、创建 `fc3d/pl3` 期号、封盘、API 开奖、手动开奖，并在管理后台页面确认结果回显。
+- 跨层联调需要请求开奖源、保存复用彩种、创建 `fc3d/pl3/pl5` 期号、封盘、API 开奖、手动开奖，并在管理后台页面确认结果回显。
 
 ### 7. Wrong vs Correct
 
@@ -1870,7 +1872,7 @@ let entries = finance.credit_settlement(&settlement).await?;
 4. 每日固定开奖：选择严格晚于基线的当天或次日配置时间。
 5. 周开奖：选择严格晚于基线的下一个配置星期和时间。
 6. 默认期号编码使用开奖时间格式化为 `YYYYMMDDHHMMSS`。
-7. 如果彩种绑定了外部 API 开奖源，后端必须先读取外部源最新 `preDrawIssue`，并用该数字期号递增生成未来期号；例如 API68 最新 `2026143` 时，福彩 3D 和复用同源的排列 3 下一期为 `2026144`。
+7. 如果彩种绑定了外部 API 开奖源，后端必须先读取当前彩种独立绑定来源的最新 `preDrawIssue`，并用该数字期号递增生成未来期号；例如福彩 3D 使用 `api68-fc3d`，体彩排列3使用 `api68-pl3`，体彩排列5使用 `api68-pl5`，不能再让排列 3 复用福彩 3D 的期号锚点。
 8. 如果外部 API 周期彩种返回 `preDrawTime`，期号生成必须使用 `preDrawTime + 周期间隔 * 期号偏移` 对齐外部开奖节奏，不能用服务器当前秒数直接推导开奖时间。
 9. 如果外部 API 周期彩种返回下一期 `drawIssue` 和 `drawTime`，例如 KJAPI 的腾讯分分彩，后端应优先使用这两个字段作为下一期锚点；当 `drawIssue` 已过封盘时间时，应继续递增到后续可销售期号。
 10. 生成计划必须跳过 `saleClosedAt <= now` 的候选期号，避免创建已经封盘却显示为 `open` 的期号；期号递增也要同步跳过这些候选期。
@@ -1899,7 +1901,8 @@ let entries = finance.credit_settlement(&settlement).await?;
 
 - Good：`ssc60` 配置 `periodic.intervalSeconds=60`，`now=2026-06-02 20:00:00`，生成 `scheduledAt=2026-06-02 20:01:00`。
 - Good：`fc3d` 配置每日 `21:00:15`，API68 最新 `preDrawIssue=2026143`，`now=2026-06-02 22:00:00`，生成 `issue=2026144`、`scheduledAt=2026-06-03 21:00:15`。
-- Good：`pl3` 复用 `api68-fc3d` 来源时，生成下一期同样使用 `issue=2026144`。
+- Good：`pl3` 使用 `api68-pl3` 来源时，按体彩排列3接口返回的最新期号生成下一期。
+- Good：`pl5` 使用 `api68-pl5` 来源时，按体彩排列5接口返回的最新期号生成下一期，号码类型为 `fiveDigit`。
 - Good：`au5` 配置 `periodic.intervalSeconds=300`，API68 最新 `preDrawIssue=51320849`、`preDrawTime=2026-06-03 11:18:40`，`now=2026-06-03 11:20:00`，生成 `issue=51320850`、`scheduledAt=2026-06-03 11:23:40`。
 - Good：同样的 `au5` 在 `now=2026-06-03 11:23:30` 且 `51320850` 已过封盘时间时，生成应跳到 `issue=51320851`、`scheduledAt=2026-06-03 11:28:40`，不能生成已封盘的 open 期。
 - Good：`txffc` 配置 `periodic.intervalSeconds=60`，KJAPI 返回 `drawIssue=202606031179`、`drawTime=2026-06-03 19:39:00`，`now=2026-06-03 19:38:20`，生成 `issue=202606031179`、`scheduledAt=2026-06-03 19:39:00`。
@@ -1915,7 +1918,7 @@ let entries = finance.credit_settlement(&settlement).await?;
 
 - 后端需要覆盖周期、每日、周开奖三种计划。
 - 后端需要覆盖已有期号时从最新期号继续生成。
-- 后端需要覆盖 API68 最新 `preDrawIssue` 驱动福彩 3D/排列 3 真实期号生成。
+- 后端需要覆盖 API68 最新 `preDrawIssue` 驱动福彩 3D、体彩排列3和体彩排列5真实期号生成。
 - 后端需要覆盖 API68 周期彩种使用 `preDrawTime` 对齐开奖时间，并跳过已过封盘时间的候选期。
 - 后端需要覆盖 KJAPI 的 `preDrawIssue/preDrawCode/preDrawTime/drawIssue/drawTime` 解析、12 位期号生成和已封盘候选期跳过。
 - 后端需要覆盖计划预览不写入仓储。
@@ -3171,6 +3174,7 @@ await createInvitation({
 19. 后台 `GET /api/admin/group-buy/plans`、用户端 `/api/user/group-buy/plans` 和 `/api/user/group-buy/my` 都必须由后端仓储统一按 `issue` 倒序返回；同一期多条计划按 `createdAt`、计划 ID 倒序稳定排列，前端不得改成升序。
 20. 后台 `GET /api/admin/group-buy/plans` 不传 `includeRobotData` 时等同于 `false`，默认过滤 `initiatorUserId` 为系统合买机器人账户的计划；传 `includeRobotData=true` 时才展示机器人发起计划。机器人作为参与人补单的普通用户发起计划不能被过滤掉。
 21. 后台计划列表摘要必须返回 `createdAt`，后台合买计划列表需要直接显示该创建时间，方便运营核对计划生成顺序。
+22. 用户端 `/api/user/group-buy/plans`、`/api/user/group-buy/plans/{id}` 和 `/api/user/group-buy/my` 返回的 `initiatorAvatarUrl` 只面向普通用户发起计划，从当前用户资料按 `initiatorUserId` 动态读取；机器人计划必须返回空字符串，避免暴露机器人账号头像。
 
 ### 4. 校验与错误矩阵
 
@@ -3224,6 +3228,7 @@ await createInvitation({
 - Good：后台合买计划列表显示每条计划的创建时间，且详情加载、创建计划和新增参与人后本地摘要仍保留 `createdAt`。
 - Good：后台合买管理默认只展示非机器人发起计划，打开“显示机器人数据”后才纳入机器人发起计划；机器人补单参与的用户计划仍保持可见。
 - Good：普通用户 `regular_user` 发起的用户端合买响应中 `initiatorDisplay` 返回 `r**********r`，机器人计划也返回同样脱敏后的普通会员式展示名。
+- Good：普通用户发起的用户端合买响应返回该用户当前 `initiatorAvatarUrl`，机器人计划返回空头像并由手机端显示脱敏名首字。
 - Base：无数据库环境下使用内存合买仓储，服务重启后恢复种子合买计划；数据库模式下使用 `group_buy_plans`、`group_buy_participants` 和 `ledger_entries` 持久化。
 - Bad：前端自行计算 `shareCount` 并提交给后端，后续会与彩种合买配置漂移。
 - Bad：直接把 dashboard 的 `groupBuyPlans` 写成静态函数，页面创建计划后首页摘要不会同步。
@@ -3247,6 +3252,7 @@ await createInvitation({
 - 后端需要覆盖合买计划摘要列表和详情列表均按期号倒序返回。
 - 后端需要覆盖后台合买计划默认过滤机器人发起计划，打开 `includeRobotData` 后才返回。
 - 后端需要覆盖用户端普通用户和机器人合买计划的 `initiatorDisplay` 脱敏，断言不会返回完整昵称、机器人账号或包含“机器人”的展示名。
+- 后端需要覆盖普通用户合买返回发起人头像、机器人合买不返回真实头像。
 - 后端需要运行 `cargo fmt --check`、`cargo check`、`cargo test`。
 - 前端需要运行 `npm run build`，确认计划状态、请求字段和 API client 类型一致。
 - API 冒烟需要创建计划、更新状态、添加参与记录到满单、确认 `orderId` 已生成，并验证 dashboard `groupBuyPlans` 来自真实仓储。

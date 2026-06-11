@@ -23,10 +23,17 @@ use super::business_database::{
 };
 
 pub const API68_FC3D_SOURCE_ID: &str = "api68-fc3d";
-pub const API68_FC3D_SOURCE_NAME: &str = "API68 福彩 3D/排列 3";
+pub const API68_FC3D_SOURCE_NAME: &str = "API68 福彩 3D";
 pub const API68_FC3D_LOTTERY_ID: &str = "fc3d";
+pub const API68_PL3_SOURCE_ID: &str = "api68-pl3";
+pub const API68_PL3_SOURCE_NAME: &str = "API68 体彩排列3";
 pub const API68_PL3_LOTTERY_ID: &str = "pl3";
 pub const API68_FC3D_LOT_CODE: &str = "10041";
+pub const API68_PL3_LOT_CODE: &str = "10043";
+pub const API68_PL5_SOURCE_ID: &str = "api68-pl5";
+pub const API68_PL5_SOURCE_NAME: &str = "API68 体彩排列5";
+pub const API68_PL5_LOTTERY_ID: &str = "pl5";
+pub const API68_PL5_LOT_CODE: &str = "10044";
 pub const API68_AU5_SOURCE_ID: &str = "api68-au5";
 pub const API68_AU5_SOURCE_NAME: &str = "API68 澳洲幸运5";
 pub const API68_AU5_LOTTERY_ID: &str = "au5";
@@ -37,6 +44,8 @@ pub const KJ_TXFFC_LOTTERY_ID: &str = "txffc";
 pub const KJ_TXFFC_LOT_KEY: &str = "txffc";
 const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
     "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do";
+const DEFAULT_API68_PL3_ENDPOINT: &str = "https://api.api68.com/QuanGuoCai/getLotteryInfo1.do";
+const DEFAULT_API68_PL5_ENDPOINT: &str = "https://api.api68.com/QuanGuoCai/getLotteryInfo.do";
 const DEFAULT_API68_CQSHICAI_SINGLE_ENDPOINT: &str =
     "https://api.api68.com/CQShiCai/getBaseCQShiCai.do";
 const DEFAULT_API68_PKS_ENDPOINT: &str = "https://api.api68.com/pks/getLotteryPksInfo.do";
@@ -105,6 +114,8 @@ impl ApiDrawSourceRepository {
         let mut static_responses = BTreeMap::new();
         let response_body = response_body.into();
         static_responses.insert(API68_FC3D_SOURCE_ID.to_string(), response_body.clone());
+        static_responses.insert(API68_PL3_SOURCE_ID.to_string(), response_body.clone());
+        static_responses.insert(API68_PL5_SOURCE_ID.to_string(), response_body.clone());
         static_responses.insert(API68_AU5_SOURCE_ID.to_string(), response_body);
 
         Self {
@@ -694,10 +705,31 @@ impl ApiDrawSourceConfig {
             provider: DrawSourceProvider::Api68,
             lot_code: API68_FC3D_LOT_CODE.to_string(),
             endpoint: default_api68_quanguocai_endpoint(),
-            reusable_for_lottery_ids: vec![
-                API68_FC3D_LOTTERY_ID.to_string(),
-                API68_PL3_LOTTERY_ID.to_string(),
-            ],
+            reusable_for_lottery_ids: vec![API68_FC3D_LOTTERY_ID.to_string()],
+        }
+    }
+
+    /// 构造 API68 体彩排列 3 默认开奖源。
+    fn api68_pl3() -> Self {
+        Self {
+            id: API68_PL3_SOURCE_ID.to_string(),
+            name: API68_PL3_SOURCE_NAME.to_string(),
+            provider: DrawSourceProvider::Api68,
+            lot_code: API68_PL3_LOT_CODE.to_string(),
+            endpoint: DEFAULT_API68_PL3_ENDPOINT.to_string(),
+            reusable_for_lottery_ids: vec![API68_PL3_LOTTERY_ID.to_string()],
+        }
+    }
+
+    /// 构造 API68 体彩排列 5 默认开奖源。
+    fn api68_pl5() -> Self {
+        Self {
+            id: API68_PL5_SOURCE_ID.to_string(),
+            name: API68_PL5_SOURCE_NAME.to_string(),
+            provider: DrawSourceProvider::Api68,
+            lot_code: API68_PL5_LOT_CODE.to_string(),
+            endpoint: DEFAULT_API68_PL5_ENDPOINT.to_string(),
+            reusable_for_lottery_ids: vec![API68_PL5_LOTTERY_ID.to_string()],
         }
     }
 
@@ -805,6 +837,8 @@ fn normalized_endpoint(endpoint: Option<&str>, provider: &DrawSourceProvider) ->
 fn default_api_draw_sources() -> Vec<ApiDrawSourceConfig> {
     let mut sources = vec![
         ApiDrawSourceConfig::api68_fc3d(),
+        ApiDrawSourceConfig::api68_pl3(),
+        ApiDrawSourceConfig::api68_pl5(),
         ApiDrawSourceConfig::api68_au5(),
         ApiDrawSourceConfig::kj_txffc(),
     ];
@@ -1215,7 +1249,7 @@ mod tests {
     use super::{
         parse_api68_draw_number, parse_api68_latest_issue, parse_kj_draw_number,
         parse_kj_latest_issue, ApiDrawSourceRepository, API68_AU5_SOURCE_ID, API68_FC3D_SOURCE_ID,
-        KJ_TXFFC_SOURCE_ID,
+        API68_PL3_SOURCE_ID, API68_PL5_SOURCE_ID, KJ_TXFFC_SOURCE_ID,
     };
     use crate::{
         domain::lottery::{DrawSourceProvider, SaveDrawSourceRequest},
@@ -1357,7 +1391,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn seeded_static_source_returns_latest_issue_for_reused_lotteries() {
+    async fn seeded_static_source_returns_latest_issue_for_default_api68_lotteries() {
         let repository = ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE);
 
         let fc3d = repository
@@ -1370,25 +1404,58 @@ mod tests {
             .await
             .expect("latest issue can be fetched")
             .expect("pl3 has source");
+        let pl5 = repository
+            .latest_issue_for_lottery("pl5")
+            .await
+            .expect("latest issue can be fetched")
+            .expect("pl5 has source");
 
         assert_eq!(fc3d.issue, "2026143");
         assert_eq!(pl3.issue, "2026143");
+        assert_eq!(pl5.issue, "2026143");
     }
 
     #[tokio::test]
-    async fn seeded_api68_source_reuses_fc3d_and_pl3() {
+    async fn seeded_api68_source_splits_fc3d_and_pl3() {
+        let repository = ApiDrawSourceRepository::api68_seeded();
+        let sources = repository.list().await.expect("sources can be listed");
+        let fc3d_source = sources
+            .iter()
+            .find(|source| source.id == API68_FC3D_SOURCE_ID)
+            .expect("seeded source exists");
+        let pl3_source = sources
+            .iter()
+            .find(|source| source.id == API68_PL3_SOURCE_ID)
+            .expect("pl3 seeded source exists");
+
+        assert_eq!(fc3d_source.lot_code.as_deref(), Some("10041"));
+        assert_eq!(
+            fc3d_source.reusable_for_lottery_ids,
+            vec!["fc3d".to_string()]
+        );
+        assert_eq!(pl3_source.lot_code.as_deref(), Some("10043"));
+        assert_eq!(
+            pl3_source.endpoint.as_deref(),
+            Some("https://api.api68.com/QuanGuoCai/getLotteryInfo1.do")
+        );
+        assert_eq!(pl3_source.reusable_for_lottery_ids, vec!["pl3".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn seeded_api68_source_includes_pl5() {
         let repository = ApiDrawSourceRepository::api68_seeded();
         let sources = repository.list().await.expect("sources can be listed");
         let source = sources
             .iter()
-            .find(|source| source.id == API68_FC3D_SOURCE_ID)
-            .expect("seeded source exists");
+            .find(|source| source.id == API68_PL5_SOURCE_ID)
+            .expect("pl5 seeded source exists");
 
-        assert_eq!(source.lot_code.as_deref(), Some("10041"));
-        assert!(source
-            .reusable_for_lottery_ids
-            .contains(&"fc3d".to_string()));
-        assert!(source.reusable_for_lottery_ids.contains(&"pl3".to_string()));
+        assert_eq!(source.lot_code.as_deref(), Some("10044"));
+        assert_eq!(
+            source.endpoint.as_deref(),
+            Some("https://api.api68.com/QuanGuoCai/getLotteryInfo.do")
+        );
+        assert_eq!(source.reusable_for_lottery_ids, vec!["pl5".to_string()]);
     }
 
     #[tokio::test]
@@ -1512,7 +1579,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_update_can_split_reusable_lottery_binding() {
+    async fn source_update_keeps_default_pl3_binding_independent() {
         let repository = ApiDrawSourceRepository::api68_seeded();
         let lotteries = seed_lotteries();
 
@@ -1524,13 +1591,14 @@ mod tests {
             )
             .await
             .expect("source can be updated");
-        let created = repository
-            .create(draw_source_payload("api68-pl3", &["pl3"]), &lotteries)
-            .await
-            .expect("pl3 source can be created after split");
+        let sources = repository.list().await.expect("sources can be listed");
+        let pl3_source = sources
+            .iter()
+            .find(|source| source.id == API68_PL3_SOURCE_ID)
+            .expect("pl3 source remains configured");
 
         assert_eq!(updated.reusable_for_lottery_ids, vec!["fc3d".to_string()]);
-        assert_eq!(created.reusable_for_lottery_ids, vec!["pl3".to_string()]);
+        assert_eq!(pl3_source.reusable_for_lottery_ids, vec!["pl3".to_string()]);
     }
 
     #[tokio::test]

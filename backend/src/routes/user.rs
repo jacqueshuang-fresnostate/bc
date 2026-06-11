@@ -1060,8 +1060,9 @@ async fn get_user_group_buy_plan(
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlan>>> {
     let lotteries = state.lotteries.list().await?;
+    let access = state.access.snapshot().await?;
     let plan = state.group_buys.get(&id).await?;
-    let plan = user_group_buy_plan(&plan, &lotteries, Some(&session.user.id))?;
+    let plan = user_group_buy_plan(&plan, &lotteries, Some(&session.user.id), &access.users)?;
 
     Ok(Json(ApiEnvelope::success(plan)))
 }
@@ -1072,6 +1073,7 @@ async fn list_my_group_buy_plans(
     Extension(session): Extension<UserAuthSession>,
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlanPage>>> {
     let lotteries = state.lotteries.list().await?;
+    let access = state.access.snapshot().await?;
     let items = state
         .group_buys
         .list_details()
@@ -1082,7 +1084,7 @@ async fn list_my_group_buy_plans(
                 .iter()
                 .any(|participant| participant.user_id == session.user.id)
         })
-        .map(|plan| user_group_buy_plan(&plan, &lotteries, Some(&session.user.id)))
+        .map(|plan| user_group_buy_plan(&plan, &lotteries, Some(&session.user.id), &access.users))
         .collect::<ApiResult<Vec<_>>>()?;
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyPlanPage { items })))
@@ -1259,7 +1261,7 @@ async fn create_user_group_buy_plan(
     )
     .await;
     let account = state.finance.account_or_create(&session.user.id).await?;
-    let plan = user_group_buy_plan(&plan, &[lottery], Some(&session.user.id))?;
+    let plan = user_group_buy_plan(&plan, &[lottery], Some(&session.user.id), &access.users)?;
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyActionResponse {
         plan,
@@ -1378,7 +1380,7 @@ async fn join_user_group_buy_plan(
     .await;
     let account = state.finance.account_or_create(&session.user.id).await?;
     let lotteries = state.lotteries.list().await?;
-    let plan = user_group_buy_plan(&updated, &lotteries, Some(&session.user.id))?;
+    let plan = user_group_buy_plan(&updated, &lotteries, Some(&session.user.id), &access.users)?;
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyActionResponse {
         plan,
@@ -1393,6 +1395,7 @@ async fn user_group_buy_plans(
     lotteries: &[LotteryKind],
     query: UserGroupBuyListQuery,
 ) -> ApiResult<Vec<UserGroupBuyPlan>> {
+    let access = state.access.snapshot().await?;
     let lottery_id = query
         .lottery_id
         .as_deref()
@@ -1431,7 +1434,7 @@ async fn user_group_buy_plans(
                 GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open | GroupBuyPlanStatus::Filled
             )
         })
-        .map(|plan| user_group_buy_plan(&plan, lotteries, Some(user_id)))
+        .map(|plan| user_group_buy_plan(&plan, lotteries, Some(user_id), &access.users))
         .collect()
 }
 
@@ -1440,6 +1443,7 @@ fn user_group_buy_plan(
     plan: &GroupBuyPlan,
     lotteries: &[LotteryKind],
     user_id: Option<&str>,
+    users: &[UserSummary],
 ) -> ApiResult<UserGroupBuyPlan> {
     let lottery = lotteries
         .iter()
@@ -1481,6 +1485,7 @@ fn user_group_buy_plan(
         status: plan.status.clone(),
         participant_count: plan.participants.len(),
         initiator_display: user_group_buy_initiator_display(plan),
+        initiator_avatar_url: user_group_buy_initiator_avatar_url(plan, users),
         my_participation,
         created_at: plan.created_at.clone(),
         updated_at: plan.updated_at.clone(),
@@ -1505,6 +1510,20 @@ fn user_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
     };
 
     mask_group_buy_initiator_display(&display_name)
+}
+
+/// 查询普通合买发起人的头像地址，机器人计划不返回真实机器人头像。
+fn user_group_buy_initiator_avatar_url(plan: &GroupBuyPlan, users: &[UserSummary]) -> String {
+    if is_robot_group_buy_plan(plan) {
+        return String::new();
+    }
+
+    users
+        .iter()
+        .find(|user| user.id == plan.initiator_user_id)
+        .map(|user| user.avatar_url.trim().to_string())
+        .filter(|avatar_url| !avatar_url.is_empty())
+        .unwrap_or_default()
 }
 
 /// 对合买大厅发起人名称做隐私脱敏，保留首尾并用星号替代中间内容。
@@ -1917,7 +1936,9 @@ async fn share_chat_hall_group_buy_plan(
         return Err(ApiError::BadRequest("只能分享自己的合买计划".to_string()));
     }
     let lotteries = state.lotteries.list().await?;
-    let plan_summary = user_group_buy_plan(&plan, &lotteries, Some(&session.user.id))?;
+    let access = state.access.snapshot().await?;
+    let plan_summary =
+        user_group_buy_plan(&plan, &lotteries, Some(&session.user.id), &access.users)?;
     let message = state
         .chat_hall
         .share_group_buy_plan(
@@ -2332,11 +2353,12 @@ mod tests {
         );
 
         let first_view =
-            user_group_buy_plan(&first_plan, &lotteries, None).expect("robot plan can map");
+            user_group_buy_plan(&first_plan, &lotteries, None, &[]).expect("robot plan can map");
         let second_view =
-            user_group_buy_plan(&second_plan, &lotteries, None).expect("robot plan can map");
+            user_group_buy_plan(&second_plan, &lotteries, None, &[]).expect("robot plan can map");
 
         assert_ne!(first_view.initiator_display, "agent_alpha");
+        assert_eq!(first_view.initiator_avatar_url, "");
         assert!(first_view.initiator_display.contains('*'));
         assert!(!first_view.initiator_display.contains("机器人"));
         assert!(!first_view.initiator_display.contains("agent"));
@@ -2356,10 +2378,41 @@ mod tests {
             "用户发起合买",
         );
 
-        let view = user_group_buy_plan(&plan, &lotteries, None).expect("normal plan can map");
+        let view = user_group_buy_plan(&plan, &lotteries, None, &[]).expect("normal plan can map");
 
         assert_eq!(view.initiator_display, "r**********r");
         assert_eq!(view.title, "用户发起合买");
+    }
+
+    #[test]
+    /// 验证普通用户合买会透出发起人头像，机器人计划不会透出真实头像。
+    fn user_group_buy_plan_returns_normal_initiator_avatar_only() {
+        let lotteries = vec![test_group_buy_lottery()];
+        let mut user = test_invitation_user("U90001", "regular_user", UserKind::Regular, None);
+        user.avatar_url = " https://cdn.example.com/avatar.png ".to_string();
+        let plan = test_group_buy_plan(
+            "G-USER-AVATAR-001",
+            "20260605200000",
+            "regular_user",
+            "用户发起合买",
+        );
+        let robot_plan = test_group_buy_plan(
+            "G-ROBOT-R-BUY-001-SSC60-20260605200000",
+            "20260605200000",
+            "agent_alpha",
+            "合买机器人 20260605200000",
+        );
+
+        let view = user_group_buy_plan(&plan, &lotteries, None, &[user.clone()])
+            .expect("normal plan can map");
+        let robot_view = user_group_buy_plan(&robot_plan, &lotteries, None, &[user])
+            .expect("robot plan can map");
+
+        assert_eq!(
+            view.initiator_avatar_url,
+            "https://cdn.example.com/avatar.png"
+        );
+        assert_eq!(robot_view.initiator_avatar_url, "");
     }
 
     #[test]

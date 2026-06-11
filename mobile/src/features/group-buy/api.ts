@@ -116,6 +116,7 @@ function normalizeGroupBuyPlan(item: any): GroupBuyPlan {
     updated_at: item?.updatedAt ? String(item.updatedAt) : undefined,
     participant_count: Number(item?.participantCount || 0),
     initiator_display: String(item?.initiatorDisplay || ''),
+    initiator_avatar_url: String(item?.initiatorAvatarUrl || item?.initiator_avatar_url || ''),
     my_participation: myParticipation
       ? {
           shares: Number(myParticipation.shareCount || 0),

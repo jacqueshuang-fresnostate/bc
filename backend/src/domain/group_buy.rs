@@ -213,6 +213,7 @@ pub struct UserGroupBuyPlan {
     pub status: GroupBuyPlanStatus,
     pub participant_count: usize,
     pub initiator_display: String,
+    pub initiator_avatar_url: String,
     pub my_participation: Option<GroupBuyParticipationSummary>,
     pub created_at: String,
     pub updated_at: String,

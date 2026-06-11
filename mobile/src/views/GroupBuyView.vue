@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute } from 'vue-router'
 import { useBrandingStore } from '../stores/branding'
+import CachedAvatarImage from '../components/mobile/CachedAvatarImage.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import { fetchGroupBuyDetail } from '../features/group-buy/api'
 import { useGroupBuyHall } from '../features/group-buy/composables/useGroupBuyHall'
@@ -13,7 +14,8 @@ import {
   formatMoney,
   formatPlanTitle,
   formatPlayName,
-  hallLotteryIcon,
+  initiatorAvatarText,
+  initiatorAvatarUrl,
   initiatorDisplay,
   progressPercent,
   progressRemainingText,
@@ -184,7 +186,17 @@ onMounted(async () => {
             >
               <div class="flex min-w-0 items-start justify-between gap-2">
                 <div class="flex min-w-0 items-center gap-2">
-                  <div class="hallLotteryIcon flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-50 text-base font-black text-red-800">{{ hallLotteryIcon(item) }}</div>
+                  <div class="group-buy-initiator-avatar flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-red-50 font-headline text-sm font-black text-red-800 ring-1 ring-red-900/10">
+                    <CachedAvatarImage
+                      v-if="initiatorAvatarUrl(item)"
+                      :alt="`${initiatorDisplay(item)}头像`"
+                      class="h-full w-full object-cover"
+                      :src="initiatorAvatarUrl(item)"
+                    >
+                      <span>{{ initiatorAvatarText(item) }}</span>
+                    </CachedAvatarImage>
+                    <span v-else>{{ initiatorAvatarText(item) }}</span>
+                  </div>
                   <div class="min-w-0">
                     <h3 class="truncate font-headline text-sm font-black leading-tight text-stone-950">{{ item.lottery_name || item.title || formatPlanTitle(item) }}</h3>
                     <p class="mt-0.5 truncate text-[10px] font-medium text-stone-500">第{{ item.issue }}期 · {{ formatPlayName(item) }}</p>

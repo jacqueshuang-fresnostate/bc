@@ -29,6 +29,7 @@ export type GroupBuyPlan = {
   updated_at?: string
   participant_count: number
   initiator_display: string
+  initiator_avatar_url: string
   my_participation?: GroupBuyParticipation | null
 }
 
