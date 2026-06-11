@@ -1,5 +1,15 @@
 # TODO
 
+## 2026-06-11 23:22 HKT 修复体彩排列5新增后的种子彩种数量测试
+
+- 完成任务：修复 CI 中 `repository_uses_seeded_memory_lotteries` 失败。
+- 解决问题：
+  - 新增 `pl5` 体彩排列5后，内存种子彩种总数从 22 增加到 23，但旧测试仍断言 22，导致全量后端测试失败。
+- 实施内容：
+  - 将内存种子彩种数量断言更新为 23。
+  - 增加 `pl5` 存在性断言，避免测试只检查数量而没有覆盖新增彩种。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml repository_uses_seeded_memory_lotteries -- --nocapture` 和 `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 均通过，后端全量测试 292 个通过。
+
 ## 2026-06-11 22:56 HKT 体彩排列3/排列5 API68 接入
 
 - 完成任务：新增体彩排列3独立开奖源，并接入体彩排列5彩种和开奖源。

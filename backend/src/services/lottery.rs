@@ -1739,7 +1739,8 @@ mod tests {
 
         let lotteries = repository.list().await.expect("lotteries can be listed");
 
-        assert_eq!(lotteries.len(), 22);
+        assert_eq!(lotteries.len(), 23);
+        assert!(lotteries.iter().any(|lottery| lottery.id == "pl5"));
     }
 
     #[tokio::test]
