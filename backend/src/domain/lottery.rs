@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::play::PlayRuleCode;
 
+/// 平台开奖期号默认生成格式，等价于旧版按开奖时间生成 `yyyyMMddHHmmss`。
+pub const DEFAULT_ISSUE_FORMAT_PATTERN: &str = "{yyyy}{MM}{dd}{HH}{mm}{ss}";
+
 /// 彩种分类配置，允许按代码和展示名进行自定义。
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -135,12 +138,20 @@ pub struct LotteryKind {
     /// API 开奖源延迟秒数；只影响 API 模式到点后多久请求第三方开奖号码。
     #[serde(default)]
     pub api_draw_delay_seconds: u32,
+    /// 平台开奖期号生成格式；仅平台开奖模式按该模板生成期号。
+    #[serde(default = "default_issue_format_pattern")]
+    pub issue_format: String,
     pub schedule: DrawSchedule,
     pub sale_enabled: bool,
     pub group_buy: GroupBuyConfig,
     pub play_categories: Vec<PlayCategory>,
     #[serde(default)]
     pub play_configs: Vec<LotteryPlayConfig>,
+}
+
+/// 反序列化旧数据时补齐默认期号格式。
+fn default_issue_format_pattern() -> String {
+    DEFAULT_ISSUE_FORMAT_PATTERN.to_string()
 }
 
 #[cfg(test)]

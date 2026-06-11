@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AppShell, type NavigationItem } from './components/AppShell';
 import { useAuth } from './hooks/useAuth';
 import { useDashboard } from './hooks/useDashboard';
+import { useResizableAdminTables } from './hooks/useResizableAdminTables';
 import { AccessManagementPage } from './pages/AccessManagementPage';
 import { AdvertisementManagementPage } from './pages/AdvertisementManagementPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -22,6 +23,7 @@ import { SupportManagementPage } from './pages/SupportManagementPage';
 import type { DashboardSummary, PermissionScope } from './types/dashboard';
 
 export function App() {
+  useResizableAdminTables();
   const {
     error: authError,
     loading: authLoading,

@@ -33,7 +33,7 @@ import type {
   PlayRuleCode,
   PlaySelection,
 } from '../types/playRules';
-import { formatMoney } from '../utils/format';
+import { formatDateTime, formatMoney } from '../utils/format';
 import { yuanInputToMinor } from '../utils/moneyInput';
 import {
   formatOdds,
@@ -325,6 +325,9 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                     <tr key={order.id} className="border-b border-slate-100">
                       <td className="py-3 pr-4">
                         <div className="font-semibold text-ink">{order.id}</div>
+                        <div className="mt-1 text-xs text-slate-400">
+                          {formatDateTime(order.createdAt, order.createdAt || '-')}
+                        </div>
                       </td>
                       <td className="py-3 pr-4">
                         <div className="font-mono text-xs font-semibold text-slate-700">
@@ -362,7 +365,9 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
                               {order.drawNumber}
                             </div>
                             <div className="mt-1 text-xs text-slate-400">
-                              {order.settledAt ?? '已结算'}
+                              {order.settledAt
+                                ? formatDateTime(order.settledAt, order.settledAt)
+                                : '已结算'}
                             </div>
                           </>
                         ) : (

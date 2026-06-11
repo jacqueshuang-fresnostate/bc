@@ -1,5 +1,45 @@
 # TODO
 
+## 2026-06-11 20:59 HKT 后台表格列宽拖拽
+
+- 完成任务：后台所有原生表格支持通过拖动表头右侧边缘调整列宽。
+- 解决问题：
+  - 订单、财务、用户、合买、计奖派奖等运营表格字段较多时，列宽固定，运营无法临时放大用户名、期号、下注信息、说明等关键列。
+  - 每个页面单独写拖拽逻辑会造成维护成本高且行为不一致。
+- 实施内容：
+  - 新增 `useResizableAdminTables` 全局 hook，自动扫描后台页面和 SideSheet 中的 `<table>`。
+  - 表头右侧增加列宽拖拽热区，拖动后按列同步设置表头和表体单元格宽度。
+  - hook 使用 `MutationObserver` 处理页面切换、抽屉打开和动态列表更新，不需要各页面逐个接入。
+  - 全局 CSS 增加列宽拖拽手柄、拖拽中光标和禁止选中文本样式。
+  - 前端组件规范和架构说明同步记录后台表格列宽拖拽约定。
+- 验证结果：`cd admin && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-11 20:52 HKT 平台开奖期号格式可配置
+
+- 完成任务：新增平台开奖彩种的期号生成格式配置能力。
+- 解决问题：
+  - 平台开奖此前统一按开奖时间生成 `yyyyMMddHHmmss` 期号，运营无法按彩种配置不同的期号格式。
+  - 后台彩种新增/编辑没有期号格式入口，无法满足平台开奖彩种差异化规则。
+- 实施内容：
+  - `lotteries` 表新增 `issue_format` 字段，默认 `{yyyy}{MM}{dd}{HH}{mm}{ss}`，并补充中文字段注释。
+  - 后端彩种模型、仓储 SQL、种子彩种、测试夹具和期号生成器接入 `issueFormat`。
+  - 平台开奖模式使用配置模板生成期号；API 开奖仍按开奖源最新期号顺延，不受平台模板影响。
+  - 期号模板支持 `{yyyy}`、`{yy}`、`{MM}`、`{dd}`、`{HH}`、`{mm}`、`{ss}`、`{date}`、`{time}`、`{timestamp}`，并校验非法变量、空结果和过长结果。
+  - 后台彩种新增/编辑 SideSheet 在“平台开奖”时显示“平台期号格式”输入框。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture`、`cd admin && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
+## 2026-06-11 20:40 HKT 订单列表 unix 时间展示转换
+
+- 完成任务：把后台订单列表中可能出现的 `unix:秒` 原始时间标签转换为可读时间。
+- 解决问题：
+  - 订单列表“开奖”列直接渲染 `settledAt`，当后端返回 `unix:1781102946` 时会原样展示内部时间编码。
+  - 订单列表此前没有展示创建时间，运营核对订单顺序时缺少直接时间信息。
+- 实施内容：
+  - 订单列表订单列新增创建时间，使用公共 `formatDateTime` 处理 `createdAt`。
+  - “开奖”列的结算时间改为使用公共 `formatDateTime` 处理 `settledAt`。
+  - 前端组件规范和架构说明同步补充订单创建/结算时间的展示规则。
+- 验证结果：`cd admin && npm run build` 和 `git diff --check` 均通过；后台构建仅保留既有 Vite chunk 体积提示。
+
 ## 2026-06-11 04:24 HKT 侧边栏注册配置入口更名
 
 - 完成任务：把后台侧边栏里的“用户注册”入口更名为“系统配置”。

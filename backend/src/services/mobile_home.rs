@@ -668,6 +668,7 @@ mod tests {
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode: DrawMode::Platform,
             api_draw_delay_seconds: 0,
+            issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 60,
             },

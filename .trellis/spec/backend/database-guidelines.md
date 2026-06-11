@@ -40,6 +40,12 @@ YYYYMMDDHHMMSS_describe_change.sql
 
 如果使用 SQLx 标准模式，每个迁移只需要前向 SQL。若后续选择其他迁移工具，需要先更新本规范。
 
+## 彩种表约定
+
+- `lotteries.issue_format` 保存平台开奖期号生成格式，默认 `{yyyy}{MM}{dd}{HH}{mm}{ss}`。
+- `issue_format` 只控制 `draw_mode=platform` 的本地期号渲染；API 彩种期号仍来自开奖源锚点顺延。
+- 新增或修改彩种字段时必须同步更新迁移字段注释，避免数据库结构说明落后于后台能力。
+
 ## 场景：跨仓储事务协调
 
 ### 1. 范围 / 触发条件

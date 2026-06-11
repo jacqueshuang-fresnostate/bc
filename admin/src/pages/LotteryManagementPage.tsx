@@ -51,6 +51,7 @@ interface LotteryManagementPageProps {
 
 type ScheduleKind = 'periodic' | 'daily' | 'weekly';
 type LotterySaleFilter = 'all' | 'selling' | 'stopped';
+const DEFAULT_ISSUE_FORMAT = '{yyyy}{MM}{dd}{HH}{mm}{ss}';
 
 interface LotteryFormState {
   apiDrawDelaySeconds: string;
@@ -58,6 +59,7 @@ interface LotteryFormState {
   drawMode: DrawMode;
   groupBuyEnabled: boolean;
   id: string;
+  issueFormat: string;
   logoUrl: string;
   initiatorMinPercent: string;
   intervalSeconds: string;
@@ -616,6 +618,21 @@ export function LotteryManagementPage({
                   />
                 </Field>
               ) : null}
+              {form.drawMode === 'platform' ? (
+                <Field label="平台期号格式">
+                  <Input
+                    className="form-input"
+                    placeholder={DEFAULT_ISSUE_FORMAT}
+                    value={form.issueFormat}
+                    onChange={(value) =>
+                      setFormValue(setForm, 'issueFormat', value)
+                    }
+                  />
+                  <p className="text-xs text-slate-400">
+                    支持 {'{yyyy}'}、{'{yy}'}、{'{MM}'}、{'{dd}'}、{'{HH}'}、{'{mm}'}、{'{ss}'}、{'{date}'}、{'{time}'}、{'{timestamp}'}；留空使用默认格式。
+                  </p>
+                </Field>
+              ) : null}
               <Field label="彩种分类">
                 <Select
                   className="form-input"
@@ -959,6 +976,7 @@ function emptyForm(): LotteryFormState {
     id: '',
     initiatorMinPercent: '10',
     intervalSeconds: '60',
+    issueFormat: DEFAULT_ISSUE_FORMAT,
     minShareAmountYuan: '1.00',
     name: '',
     logoUrl: '',
@@ -985,6 +1003,7 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
     id: lottery.id,
     initiatorMinPercent: String(lottery.groupBuy.initiatorMinPercent),
     intervalSeconds: schedule.intervalSeconds,
+    issueFormat: lottery.issueFormat || DEFAULT_ISSUE_FORMAT,
     minShareAmountYuan: minorToYuanInput(lottery.groupBuy.minShareAmountMinor),
     name: lottery.name,
     numberType: lottery.numberType,
@@ -1019,6 +1038,10 @@ function lotteryFromForm(
       participantMinAmountMinor,
     },
     id: form.id.trim(),
+    issueFormat:
+      form.drawMode === 'platform'
+        ? form.issueFormat.trim() || DEFAULT_ISSUE_FORMAT
+        : DEFAULT_ISSUE_FORMAT,
     name: form.name.trim(),
     logoUrl: form.logoUrl.trim(),
     numberType: form.numberType,

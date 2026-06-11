@@ -73,3 +73,30 @@ select {
   background: var(--semi-color-disabled-fill);
   color: var(--semi-color-disabled-text);
 }
+
+.admin-resizable-table th[data-admin-resizable-column] {
+  position: relative;
+}
+
+.admin-resizable-table th[data-admin-resizable-column]::after {
+  position: absolute;
+  top: 7px;
+  right: 0;
+  bottom: 7px;
+  width: 10px;
+  border-right: 1px solid transparent;
+  cursor: col-resize;
+  content: "";
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.admin-resizable-table th[data-admin-resizable-column]:hover::after {
+  border-color: rgba(15, 118, 110, 0.42);
+  background-color: rgba(15, 118, 110, 0.08);
+}
+
+body.admin-table-column-resizing,
+body.admin-table-column-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}

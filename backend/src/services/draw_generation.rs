@@ -1,6 +1,6 @@
 //! 开奖期号生成与平台号码生成服务，实现规则化期号流转
 
-use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 use std::collections::HashSet;
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
             CreateDrawIssueRequest, DrawIssue, DrawIssueGenerationPreview,
             GenerateDrawIssueRequest, GenerateDrawIssuesRequest,
         },
-        lottery::{DrawMode, DrawSchedule, LotteryKind},
+        lottery::{DrawMode, DrawSchedule, LotteryKind, DEFAULT_ISSUE_FORMAT_PATTERN},
     },
     error::{ApiError, ApiResult},
     services::{draw::DrawRepository, draw_api::ApiDrawSourceLatestIssue},
@@ -19,7 +19,9 @@ pub const DEFAULT_SALE_CLOSE_LEAD_SECONDS: u32 = 1;
 const MAX_GENERATION_COUNT: u32 = 50;
 const MAX_UNIQUE_ATTEMPTS_PER_ISSUE: u32 = 100;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-const ISSUE_FORMAT: &str = "%Y%m%d%H%M%S";
+const MAX_ISSUE_FORMAT_PATTERN_LENGTH: usize = 96;
+const MAX_RENDERED_ISSUE_LENGTH: usize = 64;
+const ISSUE_FORMAT_SAMPLE: (i32, u32, u32, u32, u32, u32) = (2026, 6, 2, 20, 1, 0);
 
 /// 生成当前开奖流程下一期的开奖期号。
 pub async fn generate_next_draw_issue(
@@ -160,7 +162,7 @@ async fn plan_draw_issue_generation(
         .filter(|existing| existing.lottery_id == lottery.id)
         .map(|existing| existing.issue.clone())
         .collect();
-    let mut issue_labeler = IssueLabeler::for_api_anchor(api_anchor.as_ref())?;
+    let mut issue_labeler = IssueLabeler::for_lottery(lottery, api_anchor.as_ref())?;
     let mut plans = Vec::with_capacity(payload.count as usize);
     let mut scheduled_at = next_scheduled_at(&lottery.schedule, baseline)?;
     let attempt_limit = payload.count.saturating_mul(MAX_UNIQUE_ATTEMPTS_PER_ISSUE);
@@ -512,23 +514,176 @@ fn format_timestamp(value: NaiveDateTime) -> String {
     value.format(TIMESTAMP_FORMAT).to_string()
 }
 
-/// 按固定格式转换输出。
-fn format_issue(value: NaiveDateTime) -> String {
-    value.format(ISSUE_FORMAT).to_string()
+/// 标准化平台期开奖期号格式，空值回退到默认时间戳格式。
+pub(crate) fn normalize_issue_format_pattern(value: &str) -> ApiResult<String> {
+    let pattern = value.trim();
+    let pattern = if pattern.is_empty() {
+        DEFAULT_ISSUE_FORMAT_PATTERN
+    } else {
+        pattern
+    };
+    validate_issue_format_pattern(pattern)?;
+    Ok(pattern.to_string())
+}
+
+/// 校验期号格式模板，提前发现不支持的变量或会生成非法期号的配置。
+fn validate_issue_format_pattern(pattern: &str) -> ApiResult<()> {
+    if pattern.len() > MAX_ISSUE_FORMAT_PATTERN_LENGTH {
+        return Err(ApiError::BadRequest(
+            "期号生成格式不能超过 96 个字符".to_string(),
+        ));
+    }
+    if !contains_supported_issue_token(pattern) {
+        return Err(ApiError::BadRequest(
+            "期号生成格式至少需要包含一个时间变量".to_string(),
+        ));
+    }
+
+    let sample = NaiveDate::from_ymd_opt(
+        ISSUE_FORMAT_SAMPLE.0,
+        ISSUE_FORMAT_SAMPLE.1,
+        ISSUE_FORMAT_SAMPLE.2,
+    )
+    .and_then(|date| {
+        date.and_hms_opt(
+            ISSUE_FORMAT_SAMPLE.3,
+            ISSUE_FORMAT_SAMPLE.4,
+            ISSUE_FORMAT_SAMPLE.5,
+        )
+    })
+    .ok_or_else(|| ApiError::Internal("期号格式示例时间无效".to_string()))?;
+    let rendered = render_issue_format(sample, pattern)?;
+    if rendered.is_empty() {
+        return Err(ApiError::BadRequest(
+            "期号生成格式不能生成空期号".to_string(),
+        ));
+    }
+    if rendered.len() > MAX_RENDERED_ISSUE_LENGTH {
+        return Err(ApiError::BadRequest(
+            "期号生成结果不能超过 64 个字符".to_string(),
+        ));
+    }
+    if !rendered
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(ApiError::BadRequest(
+            "期号生成结果只能包含字母、数字、短横线或下划线".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// 判断模板是否包含至少一个受支持的时间变量，避免常量期号造成重复冲突。
+fn contains_supported_issue_token(pattern: &str) -> bool {
+    [
+        "{yyyy}",
+        "{yy}",
+        "{MM}",
+        "{dd}",
+        "{HH}",
+        "{mm}",
+        "{ss}",
+        "{date}",
+        "{time}",
+        "{timestamp}",
+    ]
+    .iter()
+    .any(|token| pattern.contains(token))
+}
+
+/// 按平台配置模板生成期号。
+fn format_issue(value: NaiveDateTime, pattern: &str) -> ApiResult<String> {
+    render_issue_format(value, pattern)
+}
+
+/// 渲染期号模板变量，模板外的普通字母数字会原样保留。
+fn render_issue_format(value: NaiveDateTime, pattern: &str) -> ApiResult<String> {
+    let mut output = String::new();
+    let mut cursor = 0;
+
+    while cursor < pattern.len() {
+        let remaining = &pattern[cursor..];
+        if remaining.starts_with('{') {
+            let Some(close_offset) = remaining.find('}') else {
+                return Err(ApiError::BadRequest(
+                    "期号生成格式存在未闭合变量".to_string(),
+                ));
+            };
+            let token = &remaining[..=close_offset];
+            output.push_str(&issue_token_value(value, token)?);
+            cursor += close_offset + 1;
+            continue;
+        }
+        if remaining.starts_with('}') {
+            return Err(ApiError::BadRequest(
+                "期号生成格式存在多余右括号".to_string(),
+            ));
+        }
+
+        let Some(ch) = remaining.chars().next() else {
+            break;
+        };
+        output.push(ch);
+        cursor += ch.len_utf8();
+    }
+
+    Ok(output)
+}
+
+/// 返回单个期号模板变量的实际值。
+fn issue_token_value(value: NaiveDateTime, token: &str) -> ApiResult<String> {
+    let formatted = match token {
+        "{yyyy}" => format!("{:04}", value.year()),
+        "{yy}" => format!("{:02}", value.year().rem_euclid(100)),
+        "{MM}" => format!("{:02}", value.month()),
+        "{dd}" => format!("{:02}", value.day()),
+        "{HH}" => format!("{:02}", value.hour()),
+        "{mm}" => format!("{:02}", value.minute()),
+        "{ss}" => format!("{:02}", value.second()),
+        "{date}" => value.format("%Y%m%d").to_string(),
+        "{time}" => value.format("%H%M%S").to_string(),
+        "{timestamp}" => value.format("%Y%m%d%H%M%S").to_string(),
+        _ => {
+            return Err(ApiError::BadRequest(format!(
+                "期号生成格式包含不支持的变量 {token}"
+            )))
+        }
+    };
+
+    Ok(formatted)
 }
 
 /// 期号标签生成器，负责按不同排期推进下一期号。
 enum IssueLabeler {
-    Timestamp,
+    Pattern { pattern: String },
     Sequential { next_issue: u64 },
 }
 
 /// 期号标签生成器，负责按不同排期推进下一期号。
 impl IssueLabeler {
+    /// 根据彩种模式和 API 锚点选择期号生成方式。
+    fn for_lottery(lottery: &LotteryKind, api_anchor: Option<&ApiIssueAnchor>) -> ApiResult<Self> {
+        if let Some(api_anchor) = api_anchor {
+            return Self::for_api_anchor(Some(api_anchor));
+        }
+
+        let pattern = if lottery.draw_mode == DrawMode::Platform {
+            normalize_issue_format_pattern(&lottery.issue_format)?
+        } else {
+            DEFAULT_ISSUE_FORMAT_PATTERN.to_string()
+        };
+
+        Ok(Self::Pattern { pattern })
+    }
+
     /// 处理 for_api_anchor 的具体内部流程。
     fn for_api_anchor(api_anchor: Option<&ApiIssueAnchor>) -> ApiResult<Self> {
         let Some(api_anchor) = api_anchor else {
-            return Ok(Self::Timestamp);
+            return Ok(Self::Pattern {
+                pattern: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            });
         };
         let next_issue = api_anchor
             .latest_issue
@@ -541,7 +696,7 @@ impl IssueLabeler {
     /// 处理 next_issue 的具体内部流程。
     fn next_issue(&mut self, scheduled_at: NaiveDateTime) -> ApiResult<String> {
         match self {
-            Self::Timestamp => Ok(format_issue(scheduled_at)),
+            Self::Pattern { pattern } => format_issue(scheduled_at, pattern),
             Self::Sequential { next_issue } => {
                 let issue = *next_issue;
                 *next_issue = (*next_issue)
@@ -637,6 +792,23 @@ mod tests {
         assert_eq!(issue.issue, "20260602200100");
         assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
         assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:59");
+    }
+
+    #[tokio::test]
+    async fn platform_schedule_uses_custom_issue_format() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+        lottery.draw_mode = DrawMode::Platform;
+        lottery.issue_format = "{yy}{MM}{dd}{HH}{mm}".to_string();
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-02 20:00:00"))
+            .await
+            .expect("issue can be generated with custom format");
+
+        assert_eq!(issue.issue, "2606022001");
+        assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
     }
 
     #[tokio::test]
@@ -1096,6 +1268,7 @@ mod tests {
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode: DrawMode::Api,
             api_draw_delay_seconds: 0,
+            issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
             schedule,
             sale_enabled: true,
             group_buy: GroupBuyConfig {
