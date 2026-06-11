@@ -4,7 +4,7 @@ import 'vant/lib/index.css'
 import './index.css'
 import './styles/vant-cinnabar.css'
 import {
-  Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem,
+  Badge, Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem,
   Tab, Tabs, Tag, Grid, GridItem, Loading, Empty, NoticeBar,
   SwipeCell, Dialog, Popup, Form, DropdownMenu, DropdownItem, Switch, Slider,
 } from 'vant'
@@ -26,7 +26,7 @@ async function bootstrap() {
   app.use(router)
 
   const components = [
-    Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem,
+    Badge, Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem,
     Tab, Tabs, Tag, Grid, GridItem, Loading, Empty, NoticeBar,
     SwipeCell, Dialog, Popup, Form, DropdownMenu, DropdownItem, Switch, Slider,
   ]

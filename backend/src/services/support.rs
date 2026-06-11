@@ -178,6 +178,20 @@ impl SupportRepository {
         Ok(result)
     }
 
+    /// 删除已解决的客服会话，处理中和等待处理的会话不能被直接移除。
+    pub async fn delete_resolved(&self, id: &str) -> ApiResult<SupportConversation> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("support store lock poisoned".to_string()))?;
+            let result = store.delete_resolved(id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     async fn persist(&self, store: &SupportStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_support_store(persistence, store).await?;
@@ -405,16 +419,18 @@ impl SupportStore {
 
     /// 返回完整数据列表。
     fn list(&self) -> Vec<SupportConversation> {
-        self.conversations.values().cloned().collect()
+        sort_support_conversations(self.conversations.values().cloned().collect())
     }
 
     /// 返回指定用户自己的会话，避免用户端读取他人客服记录。
     fn list_for_user(&self, user_id: &str) -> Vec<SupportConversation> {
-        self.conversations
-            .values()
-            .filter(|conversation| conversation.user_id == user_id)
-            .cloned()
-            .collect()
+        sort_support_conversations(
+            self.conversations
+                .values()
+                .filter(|conversation| conversation.user_id == user_id)
+                .cloned()
+                .collect(),
+        )
     }
 
     /// 按标识查询并返回单条记录。
@@ -618,6 +634,22 @@ impl SupportStore {
 
         Ok(conversation.clone())
     }
+
+    /// 删除已解决会话并返回被删除的快照，便于路由层发布删除实时事件。
+    fn delete_resolved(&mut self, id: &str) -> ApiResult<SupportConversation> {
+        let conversation =
+            self.conversations.get(id).cloned().ok_or_else(|| {
+                ApiError::NotFound(format!("support conversation `{id}` not found"))
+            })?;
+        if conversation.status != SupportConversationStatus::Resolved {
+            return Err(ApiError::BadRequest(
+                "只有已解决的客服会话可以删除".to_string(),
+            ));
+        }
+
+        self.conversations.remove(id);
+        Ok(conversation)
+    }
 }
 
 /// 标准化输入并返回规范值。
@@ -765,6 +797,37 @@ fn seed_conversations() -> Vec<SupportConversation> {
     ]
 }
 
+/// 按客服处理优先级排序会话：后台未读优先，其次最近消息或更新时间最新优先。
+fn sort_support_conversations(
+    mut conversations: Vec<SupportConversation>,
+) -> Vec<SupportConversation> {
+    conversations.sort_by(|left, right| {
+        let left_unread = left.unread_count > 0;
+        let right_unread = right.unread_count > 0;
+
+        right_unread
+            .cmp(&left_unread)
+            .then_with(|| support_activity_time(right).cmp(&support_activity_time(left)))
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    conversations
+}
+
+/// 取会话最后活跃时间，优先使用最后一条消息时间，没有消息时退回更新时间和创建时间。
+fn support_activity_time(conversation: &SupportConversation) -> &str {
+    conversation
+        .messages
+        .last()
+        .map(|message| message.created_at.as_str())
+        .unwrap_or_else(|| {
+            if conversation.updated_at.trim().is_empty() {
+                conversation.created_at.as_str()
+            } else {
+                conversation.updated_at.as_str()
+            }
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -829,6 +892,23 @@ mod tests {
         assert_eq!(replied.messages.len(), 2);
         assert_eq!(replied.unread_count, 0);
         assert_eq!(replied.user_unread_count, 1);
+    }
+
+    #[tokio::test]
+    async fn support_repository_lists_unread_recent_conversations_first() {
+        let support = SupportRepository::memory_seeded();
+        let conversations = support
+            .list()
+            .await
+            .expect("support conversations can be listed");
+
+        assert_eq!(
+            conversations
+                .iter()
+                .map(|conversation| conversation.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["CS-10002", "CS-10001"]
+        );
     }
 
     #[tokio::test]
@@ -1049,6 +1129,44 @@ mod tests {
 
         assert_eq!(updated.status, SupportConversationStatus::Open);
         assert_eq!(updated.unread_count, unread_before + 1);
+    }
+
+    #[tokio::test]
+    async fn support_repository_deletes_only_resolved_conversations() {
+        let support = SupportRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+
+        let open_error = support
+            .delete_resolved("CS-10001")
+            .await
+            .expect_err("open conversation cannot be deleted");
+        assert!(matches!(open_error, ApiError::BadRequest(_)));
+
+        support
+            .update(
+                "CS-10001",
+                UpdateSupportConversationRequest {
+                    status: SupportConversationStatus::Resolved,
+                    priority: SupportPriority::Normal,
+                    assigned_admin_id: Some("A10001".to_string()),
+                },
+                &access.admins,
+            )
+            .await
+            .expect("conversation can be resolved");
+
+        let deleted = support
+            .delete_resolved("CS-10001")
+            .await
+            .expect("resolved conversation can be deleted");
+        assert_eq!(deleted.id, "CS-10001");
+        assert!(matches!(
+            support.get("CS-10001").await,
+            Err(ApiError::NotFound(_))
+        ));
     }
 
     #[tokio::test]

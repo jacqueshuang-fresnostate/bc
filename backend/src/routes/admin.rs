@@ -82,8 +82,8 @@ use crate::{
         realtime::{
             admin_audience_matches, balance_changed_event, draw_result_event, heartbeat_event,
             issue_closed_event, issue_opened_event, order_changed_event, recharge_changed_event,
-            support_conversation_updated_event, support_message_created_event,
-            withdrawal_changed_event,
+            support_conversation_deleted_event, support_conversation_updated_event,
+            support_message_created_event, withdrawal_changed_event,
         },
         rebate::credit_recharge_rebate_for_order,
         scheduler::DrawSchedulerConfig,
@@ -145,7 +145,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route(
             "/support/conversations/{id}",
-            get(get_support_conversation).put(update_support_conversation),
+            get(get_support_conversation)
+                .put(update_support_conversation)
+                .delete(delete_support_conversation),
         )
         .route(
             "/support/conversations/{id}/messages",
@@ -1255,6 +1257,15 @@ fn publish_support_conversation_updated(state: &AppState, conversation: &Support
     state.realtime.publish_admin(event);
 }
 
+/// 推送客服会话删除事件，让后台和用户端移除已删除的已解决会话。
+fn publish_support_conversation_deleted(state: &AppState, conversation: &SupportConversation) {
+    let event = support_conversation_deleted_event(conversation);
+    state
+        .realtime
+        .publish_user(&conversation.user_id, event.clone());
+    state.realtime.publish_admin(event);
+}
+
 /// 推送用户提现订单变化事件，供手机端提现记录按需刷新。
 fn publish_user_withdrawal_changed(state: &AppState, order: &WithdrawalOrderSummary) {
     state
@@ -1654,6 +1665,17 @@ async fn update_support_conversation(
     let access = state.access.snapshot().await?;
     let conversation = state.support.update(&id, payload, &access.admins).await?;
     publish_support_conversation_updated(&state, &conversation);
+
+    Ok(Json(ApiEnvelope::success(conversation)))
+}
+
+/// 后台删除已解决的客服会话，处理中和等待用户的会话不能直接删除。
+async fn delete_support_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+    let conversation = state.support.delete_resolved(&id).await?;
+    publish_support_conversation_deleted(&state, &conversation);
 
     Ok(Json(ApiEnvelope::success(conversation)))
 }

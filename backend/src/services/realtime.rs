@@ -234,6 +234,18 @@ pub fn support_conversation_updated_event(conversation: &SupportConversation) ->
     )
 }
 
+/// 封装客服会话删除事件，用于后台和用户端移除已删除的已解决会话。
+pub fn support_conversation_deleted_event(conversation: &SupportConversation) -> Value {
+    realtime_envelope(
+        "support.conversation_deleted",
+        "support",
+        json!({
+            "conversationId": conversation.id,
+            "userId": conversation.user_id,
+        }),
+    )
+}
+
 /// 封装公共聊天大厅消息事件，所有在线手机端连接都可以收到。
 pub fn chat_hall_message_created_event(message: &ChatHallMessage) -> Value {
     realtime_envelope(
@@ -424,6 +436,33 @@ mod tests {
         assert_eq!(event["scope"], "support");
         assert_eq!(event["data"]["conversationId"], "CS-R000000000001");
         assert_eq!(event["data"]["conversation"]["assignedAdminName"], "admin");
+    }
+
+    #[test]
+    /// 验证客服会话删除事件只携带会话编号和用户编号，供客户端移除本地列表项。
+    fn support_conversation_deleted_event_contains_identity() {
+        let conversation = SupportConversation {
+            id: "CS-R000000000001".to_string(),
+            user_id: "U10001".to_string(),
+            username: "demo_user".to_string(),
+            subject: "客服直充 R000000000001".to_string(),
+            status: crate::domain::support::SupportConversationStatus::Resolved,
+            priority: crate::domain::support::SupportPriority::Normal,
+            assigned_admin_id: Some("A10001".to_string()),
+            assigned_admin_name: Some("admin".to_string()),
+            unread_count: 0,
+            user_unread_count: 0,
+            created_at: "2026-06-05 18:20:00".to_string(),
+            updated_at: "2026-06-05 18:25:00".to_string(),
+            messages: Vec::new(),
+        };
+
+        let event = support_conversation_deleted_event(&conversation);
+
+        assert_eq!(event["event"], "support.conversation_deleted");
+        assert_eq!(event["scope"], "support");
+        assert_eq!(event["data"]["conversationId"], "CS-R000000000001");
+        assert_eq!(event["data"]["userId"], "U10001");
     }
 
     #[test]

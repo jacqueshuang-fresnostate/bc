@@ -1,5 +1,48 @@
 # TODO
 
+## 2026-06-11 22:00 HKT 手机端客服未读 Badge 提示
+
+- 完成任务：手机端客服回复未读提示从小红点升级为数字 Badge。
+- 解决问题：
+  - 客服有新回复时，手机端底部“我的”和个人中心“在线客服”此前只显示小红点，用户无法直观看到未读数量。
+  - 在线客服多会话标签也只显示红点，多个未读会话不够醒目。
+- 实施内容：
+  - 手机端注册 Vant `Badge` 组件，用于未读数量展示。
+  - 底部导航“我的”图标右上角改为显示客服未读数量 Badge，超过 99 显示 `99+`。
+  - 个人中心“在线客服”设置项右侧显示客服未读数量 Badge，并继续保留“有新消息”文案。
+  - 在线客服多会话标签使用数字 Badge 标记每个会话的 `userUnreadCount`。
+  - 同步更新架构说明和前端规范，要求客服未读提示使用后端 `userUnreadCount` 和 Vant Badge。
+- 验证结果：`cd mobile && npm run build` 和 `git diff --check` 均通过。
+
+## 2026-06-11 21:53 HKT 后台在线客服已解决会话删除
+
+- 完成任务：后台在线客服支持删除已解决的用户会话。
+- 解决问题：
+  - 客服会话处理到“已解决”后，后台只能继续保留在列表中，无法直接清理已完成会话。
+  - 多个后台窗口同时查看在线客服时，某个窗口删除会话后其它窗口可能继续看到旧会话。
+- 实施内容：
+  - 后端新增 `DELETE /api/admin/support/conversations/{id}`，只允许删除 `resolved` 状态会话。
+  - 客服仓储新增已解决会话删除逻辑，删除后同步持久化，并保留处理中、等待用户和已关闭状态的删除保护。
+  - 新增 `support.conversation_deleted` 实时事件，后台和用户连接收到后可移除本地会话。
+  - 管理后台在线客服详情中，只有当前会话状态为“已解决”时显示“删除会话”按钮，点击后直接删除并刷新工作台。
+  - 同步更新 OpenAPI、架构说明、前端组件规范和后端 API 契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml support -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cd admin && npm run build`、`cd mobile && npm run build` 和 `git diff --check` 均通过。
+
+## 2026-06-11 21:44 HKT 后台在线客服未读优先排序
+
+- 完成任务：优化后台在线客服会话列表排序和未读标记。
+- 解决问题：
+  - 后台客服会话此前按会话 ID 排序，最新用户消息不会自动排到前面。
+  - WebSocket 实时更新时会话被追加到列表末尾，导致客服需要手动查找最新未读。
+  - 未读数只显示普通数字，不够醒目。
+- 实施内容：
+  - 后端客服仓储 `list()` 和 `list_for_user()` 改为按“未读优先、最近消息/更新时间倒序、会话 ID 倒序”排序。
+  - 后台 `useSupportConversations` 在初始加载和实时 upsert 后复用相同排序，保证新消息推送后列表立即重排。
+  - 在线客服表格未读行增加浅红底，主题旁显示红点，未读列使用 Semi UI `Badge` 展示未读数量；已读显示“已读”标签。
+  - 新增客服仓储排序测试，覆盖未读且最近的会话排在最前。
+  - 同步更新架构说明、前端组件规范和后端 API 契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml support_repository -- --nocapture`、`cd admin && npm run build` 和 `git diff --check` 均通过。
+
 ## 2026-06-11 20:59 HKT 后台表格列宽拖拽
 
 - 完成任务：后台所有原生表格支持通过拖动表头右侧边缘调整列宽。

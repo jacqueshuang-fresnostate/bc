@@ -281,6 +281,7 @@ WebSocket 消息统一使用当前系统事件信封：
 
 - `support.message_created`：客服会话新增消息，`data` 包含 `conversationId`、`userId`、`conversation` 和 `message`；`message` 需要携带 `messageType`、`content` 和可选 `imageUrl`，方便后台与手机端按文本或图片渲染。该事件必须同时发布给会话所属用户和后台客服连接，不允许发给匿名用户或其他普通用户。
 - `support.conversation_updated`：客服会话状态、优先级、分配客服或用户侧已读状态变化，`data` 包含 `conversationId`、`userId` 和 `conversation`。后台修改状态、优先级或分配客服时必须同时发布给会话所属用户和后台客服连接，手机端客服页需要据此刷新“客服已接入”和会话状态；用户调用已读接口只发布给会话所属用户，避免后台客服列表出现无意义刷新。
+- `support.conversation_deleted`：后台删除已解决客服会话，`data` 只包含 `conversationId` 和 `userId`。该事件必须同时发布给会话所属用户和后台客服连接，客户端收到后移除本地会话并刷新未读状态。
 - 后台连接使用 `/api/admin/realtime?token=...`，因为浏览器 WebSocket 不能设置 `Authorization` 头；后端必须用查询参数 token 校验管理员会话，并要求具备 `customerService` 权限。
 
 聊天大厅接口：
@@ -300,6 +301,7 @@ WebSocket 消息统一使用当前系统事件信封：
 | 事件受众为其他用户 | 当前连接不得收到该事件 |
 | 客服消息新增 | 当前用户和后台客服连接收到 `support.message_created`，其他用户或匿名连接收不到 |
 | 客服状态或分配变更 | 当前用户和后台客服连接收到 `support.conversation_updated`，其他用户或匿名连接收不到 |
+| 客服已解决会话被删除 | 当前用户和后台客服连接收到 `support.conversation_deleted`，其他用户或匿名连接收不到 |
 | 用户标记客服会话已读 | 当前用户收到 `support.conversation_updated`，后台客服连接和其他用户收不到 |
 | 聊天大厅消息新增 | 所有在线手机端连接收到 `chat_hall.message_created` |
 | 聊天大厅发送空内容 | 返回业务错误，不保存、不广播 |
@@ -314,6 +316,7 @@ WebSocket 消息统一使用当前系统事件信封：
 - Good：用户下注扣款后只给该用户推送 `user.balance_changed` 和 `user.order_changed`。
 - Good：客服直充创建会话、用户继续发消息或后台回复后，用户客服页和后台客服页都能通过 `support.message_created` 实时刷新。
 - Good：后台分配客服或保存会话状态后，用户客服页通过 `support.conversation_updated` 实时刷新接入客服和状态。
+- Good：后台删除已解决会话后，后台会话列表和用户端客服未读缓存通过 `support.conversation_deleted` 刷新。
 - Good：客服确认充值后，充值页通过 `user.recharge_changed` 刷新充值记录，通过 `user.balance_changed` 刷新余额。
 - Good：用户在聊天大厅发送“大家好”，后端保存到 `chat_hall_messages` 并发布 `chat_hall.message_created`，其他在线用户无需刷新即可看到。
 - Base：匿名用户仍可通过实时连接获取开奖和开盘状态。
@@ -2722,6 +2725,12 @@ await updateInvitePolicy({
 }
 ```
 
+删除已解决会话：
+
+- `DELETE /api/admin/support/conversations/{id}`
+- 成功时返回被删除的客服会话快照。
+- 仅允许 `status=resolved` 的会话被删除。
+
 字段契约：
 
 1. `status` 只允许 `open`、`pending`、`resolved`、`closed`。
@@ -2736,6 +2745,8 @@ await updateInvitePolicy({
 10. `unreadCount` 只代表后台客服侧未读消息数，用户发消息时递增，后台客服回复或关闭/解决会话时清零。
 11. `userUnreadCount` 只代表用户侧未读消息数，后台客服回复时递增，用户回复或调用 `POST /api/user/support/conversations/{id}/read` 后清零。
 12. 用户侧已读接口必须校验会话归属，归属不匹配时返回 404；该接口只清理用户侧未读，不影响后台客服侧 `unreadCount`。
+13. 后台客服会话列表必须按处理优先级返回：`unreadCount > 0` 的会话排在最前，其次按最后一条消息时间、更新时间、创建时间倒序，最后按会话 ID 倒序兜底。
+14. 后台删除客服会话只允许 `resolved` 状态；删除成功后必须发布 `support.conversation_deleted`，事件只携带 `conversationId` 和 `userId`，用于客户端移除本地会话。
 
 ### 4. 校验与错误矩阵
 
@@ -2754,6 +2765,8 @@ await updateInvitePolicy({
 | 图片回复缺少图片链接 | HTTP 400，返回客服图片链接不能为空 |
 | 图片回复链接不是 `http/https` | HTTP 400，返回客服图片链接必须是 `http` 或 `https` 地址 |
 | 查询、更新、回复不存在会话 | HTTP 404，返回会话不存在 |
+| 删除未解决会话 | HTTP 400，返回只有已解决的客服会话可以删除 |
+| 删除已解决会话 | HTTP 200，删除会话并返回被删除快照 |
 | 用户标记他人客服会话已读 | HTTP 404，返回会话不存在 |
 
 ### 5. Good / Base / Bad Cases
@@ -2763,9 +2776,12 @@ await updateInvitePolicy({
 - Good：客服回复后消息列表新增 `admin` 消息，`unreadCount` 清零。
 - Good：客服回复后 `userUnreadCount` 递增，手机端在线客服入口显示未读红点；用户打开该会话并调用已读接口后 `userUnreadCount` 清零。
 - Good：后台上传图床图片后用 `messageType=image` 和 `imageUrl` 发送，后台和手机端历史消息都展示图片缩略图。
+- Good：用户发送新客服消息后，该会话的 `unreadCount` 递增，并在后台会话列表移动到未读队列前列。
+- Good：客服把会话保存为已解决后，后台点击“删除会话”，接口删除该会话并广播 `support.conversation_deleted`。
 - Base：无数据库环境下使用内存客服仓储，服务重启后恢复种子会话。
 - Bad：前端直接提交 `username` 或 `assignedAdminName` 并让后端信任，会导致用户/管理员改名后数据漂移。
 - Bad：只把图片 URL 拼进文本内容，导致手机端无法按图片消息渲染，也无法区分图片说明文字。
+- Bad：允许删除处理中会话，会导致客服工单和用户沟通记录在未完成时丢失。
 
 ### 6. 必要测试
 

@@ -72,6 +72,12 @@ function conversationStatusText(conversation: SupportConversation) {
   return labels[conversation.status] || conversation.status
 }
 
+function badgeContent(count: unknown) {
+  const value = Math.max(0, Number(count || 0))
+  if (!value) return ''
+  return value > 99 ? '99+' : String(value)
+}
+
 function sortedConversations(items: SupportConversation[]) {
   return [...items]
     .filter(isVisibleSupportConversation)
@@ -293,7 +299,8 @@ watch(routeConversationId, (conversationId) => {
 watch(() => props.wsMessage, (message) => {
   if (
     (message?.event !== 'support_message_created'
-      && message?.event !== 'support_conversation_updated')
+      && message?.event !== 'support_conversation_updated'
+      && message?.event !== 'support_conversation_deleted')
     || !message.conversationId
   ) return
   const preferredConversationId = (
@@ -336,9 +343,15 @@ onBeforeUnmount(() => {
           :class="{ 'is-active': activeConversationId === conversation.id }"
           @click="selectConversation(conversation.id)"
         >
-          <span>
-            {{ conversation.subject }}
-            <i v-if="conversation.userUnreadCount" class="support-chat__conversation-dot" aria-hidden="true"></i>
+          <span class="support-chat__conversation-title">
+            <span class="support-chat__conversation-title-text">{{ conversation.subject }}</span>
+            <van-badge
+              v-if="badgeContent(conversation.userUnreadCount)"
+              class="support-chat__conversation-badge"
+              :content="badgeContent(conversation.userUnreadCount)"
+            >
+              <i class="support-chat__conversation-badge-anchor" aria-hidden="true"></i>
+            </van-badge>
           </span>
           <small>{{ conversationStatusText(conversation) }}</small>
         </button>
@@ -618,15 +631,45 @@ onBeforeUnmount(() => {
   font-weight: 900;
 }
 
-.support-chat__conversation-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-left: 5px;
-  border-radius: 999px;
+.support-chat__conversation-title {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.support-chat__conversation-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.support-chat__conversation-badge {
+  flex: 0 0 auto;
+}
+
+.support-chat__conversation-badge-anchor {
+  display: block;
+  width: 1px;
+  height: 1px;
+}
+
+:deep(.support-chat__conversation-badge .van-badge) {
+  min-width: 18px;
+  height: 18px;
+  border: 2px solid #fff;
   background: #dc2626;
-  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.14);
-  vertical-align: 1px;
+  box-shadow: 0 4px 10px rgba(220, 38, 38, 0.22);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 14px;
+}
+
+.support-chat__conversation-tabs button.is-active :deep(.support-chat__conversation-badge .van-badge) {
+  border-color: #af2829;
+  background: #fff;
+  color: #af2829;
 }
 
 .support-chat__conversation-tabs small {

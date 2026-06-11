@@ -429,6 +429,15 @@ export function updateSupportConversation(
   );
 }
 
+export function deleteSupportConversation(id: string) {
+  return requestJson<SupportConversation>(
+    `/api/admin/support/conversations/${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+    },
+  );
+}
+
 export function replySupportConversation(id: string, payload: SupportReplyRequest) {
   return requestJson<SupportConversation>(
     `/api/admin/support/conversations/${encodeURIComponent(id)}/messages`,

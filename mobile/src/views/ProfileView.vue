@@ -20,7 +20,7 @@ const userDataStore = useMobileUserDataStore()
 const supportUnreadStore = useSupportUnreadStore()
 const { branding } = storeToRefs(brandingStore)
 const { profile } = storeToRefs(userDataStore)
-const { hasUnread: hasSupportUnread } = storeToRefs(supportUnreadStore)
+const { hasUnread: hasSupportUnread, unreadTotal: supportUnreadTotal } = storeToRefs(supportUnreadStore)
 const uploadingAvatar = ref(false)
 const avatarInput = ref<HTMLInputElement | null>(null)
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
@@ -50,6 +50,7 @@ const supportItems = computed(() => [
     icon: 'support_agent',
     value: hasSupportUnread.value ? '有新消息' : '24h 在线',
     unread: hasSupportUnread.value,
+    badgeCount: supportUnreadTotal.value,
   },
   { key: 'help', label: '帮助中心', icon: 'help', hint: '查看常见问题' },
 ])

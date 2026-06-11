@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   adminRealtimeUrl,
+  deleteSupportConversation,
   fetchAdmins,
   fetchSupportConversations,
   replySupportConversation,
@@ -96,6 +97,12 @@ export function useSupportConversations() {
             setConversations((current) =>
               upsertVisibleConversation(current, message.conversation),
             );
+          } else if (message?.event === 'support.conversation_deleted') {
+            setConversations((current) =>
+              current.filter(
+                (conversation) => conversation.id !== message.conversationId,
+              ),
+            );
           }
         } catch {
           setError('后台实时客服消息解析失败');
@@ -142,6 +149,23 @@ export function useSupportConversations() {
     [],
   );
 
+  const remove = useCallback(async (id: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const deleted = await deleteSupportConversation(id);
+      setConversations((current) =>
+        current.filter((conversation) => conversation.id !== deleted.id),
+      );
+      return deleted;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
   const reply = useCallback(async (id: string, payload: SupportReplyRequest) => {
     setSaving(true);
     setError(null);
@@ -164,13 +188,14 @@ export function useSupportConversations() {
     loading,
     refresh,
     reply,
+    remove,
     saving,
     update,
   };
 }
 
 function visibleSupportConversations(items: SupportConversation[]) {
-  return items.filter(isVisibleSupportConversation);
+  return sortSupportConversations(items.filter(isVisibleSupportConversation));
 }
 
 function isVisibleSupportConversation(conversation: SupportConversation) {
@@ -183,10 +208,37 @@ function upsertVisibleConversation(
 ) {
   const nextItems = items.filter((current) => current.id !== conversation.id);
   return isVisibleSupportConversation(conversation)
-    ? [...nextItems, conversation]
-    : nextItems;
+    ? sortSupportConversations([...nextItems, conversation])
+    : sortSupportConversations(nextItems);
 }
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : '接口请求失败';
+}
+
+function sortSupportConversations(items: SupportConversation[]) {
+  return [...items].sort((left, right) => {
+    const leftUnread = left.unreadCount > 0;
+    const rightUnread = right.unreadCount > 0;
+
+    if (leftUnread !== rightUnread) {
+      return leftUnread ? -1 : 1;
+    }
+
+    return (
+      supportActivityTime(right).localeCompare(supportActivityTime(left)) ||
+      right.id.localeCompare(left.id)
+    );
+  });
+}
+
+function supportActivityTime(conversation: SupportConversation) {
+  const lastMessage = conversation.messages[conversation.messages.length - 1];
+
+  return (
+    lastMessage?.createdAt ||
+    conversation.updatedAt ||
+    conversation.createdAt ||
+    ''
+  );
 }

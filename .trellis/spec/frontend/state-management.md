@@ -48,7 +48,7 @@
 - 资金写入或资料修改成功后必须使用 `force` 刷新或直接写回 store，例如下注、发起/认购合买、充值、提现、绑定邮箱、修改密码和上传头像。
 - 列表缓存不能用数组长度判断是否有效；空列表也是有效响应，应以 `fetchedAt` 和 TTL 判断是否需要重新请求。
 - 有缓存时不要显示整页 loading；过期刷新应静默进行，避免用户返回页面时看到重复加载闪烁。
-- 在线客服未读状态由手机端 `supportUnread` Pinia store 维护，来源为当前用户客服会话列表里的 `userUnreadCount`；收到 `support_message_created` 或 `support_conversation_updated` 实时事件时需要 `force + silent` 刷新，进入具体会话后调用已读接口并写回 store，避免个人中心和底部导航红点状态不一致。
+- 在线客服未读状态由手机端 `supportUnread` Pinia store 维护，来源为当前用户客服会话列表里的 `userUnreadCount`；收到 `support_message_created`、`support_conversation_updated` 或 `support_conversation_deleted` 实时事件时需要 `force + silent` 刷新，进入具体会话后调用已读接口并写回 store，避免个人中心、底部导航和客服多会话 Badge 数量不一致。
 
 ## 实时看板状态
 

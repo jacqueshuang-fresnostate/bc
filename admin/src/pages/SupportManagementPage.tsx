@@ -1,5 +1,6 @@
 import {
   Avatar,
+  Badge,
   Banner,
   Button,
   Card,
@@ -18,6 +19,7 @@ import {
   Save,
   Send,
   Smile,
+  Trash2,
   X,
 } from 'lucide-react';
 import {
@@ -108,6 +110,7 @@ export function SupportManagementPage({
     loading,
     refresh,
     reply,
+    remove,
     saving,
     update,
   } = useSupportConversations();
@@ -217,6 +220,21 @@ export function SupportManagementPage({
     }
     const updated = await update(selectedConversation.id, updatePayload(updateForm));
     setSelectedId(updated.id);
+    onDashboardRefresh();
+  };
+
+  const submitDelete = async () => {
+    if (!selectedConversation) {
+      return;
+    }
+    if (selectedConversation.status !== 'resolved') {
+      Toast.warning('只有已解决的客服会话可以删除');
+      return;
+    }
+
+    await remove(selectedConversation.id);
+    setSelectedId(null);
+    Toast.success('客服会话已删除');
     onDashboardRefresh();
   };
 
@@ -390,20 +408,24 @@ export function SupportManagementPage({
                   {visibleConversations.map((conversation) => (
                     <tr
                       key={conversation.id}
-                      className={
-                        selectedConversation?.id === conversation.id
-                          ? 'bg-teal-50/60'
-                          : ''
-                      }
+                      className={supportConversationRowClass(
+                        conversation,
+                        selectedConversation?.id === conversation.id,
+                      )}
                     >
                       <td className="py-3 pr-4">
-                        <button
-                          className="text-left font-medium text-ink hover:text-teal-700"
-                          type="button"
-                          onClick={() => setSelectedId(conversation.id)}
-                        >
-                          {conversation.subject}
-                        </button>
+                        <div className="inline-flex max-w-full items-center gap-2">
+                          <button
+                            className="truncate text-left font-medium text-ink hover:text-teal-700"
+                            type="button"
+                            onClick={() => setSelectedId(conversation.id)}
+                          >
+                            {conversation.subject}
+                          </button>
+                          {conversation.unreadCount > 0 ? (
+                            <Badge dot type="danger" />
+                          ) : null}
+                        </div>
                         <div className="mt-1 text-xs text-slate-400">
                           {conversation.id}
                         </div>
@@ -427,7 +449,16 @@ export function SupportManagementPage({
                         </Tag>
                       </td>
                       <td className="py-3 pr-4 text-slate-600">
-                        {conversation.unreadCount}
+                        {conversation.unreadCount > 0 ? (
+                          <Badge
+                            count={conversation.unreadCount}
+                            overflowCount={99}
+                            theme="solid"
+                            type="danger"
+                          />
+                        ) : (
+                          <Tag color="grey">已读</Tag>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -516,15 +547,28 @@ export function SupportManagementPage({
                       </Select>
                     </Field>
                   </div>
-                  <Button
-                    disabled={saving}
-                    icon={<Save size={16} />}
-                    loading={saving}
-                    onClick={() => void submitUpdate()}
-                    theme="solid"
-                  >
-                    保存状态
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      disabled={saving}
+                      icon={<Save size={16} />}
+                      loading={saving}
+                      onClick={() => void submitUpdate()}
+                      theme="solid"
+                    >
+                      保存状态
+                    </Button>
+                    {selectedConversation.status === 'resolved' ? (
+                      <Button
+                        disabled={saving}
+                        icon={<Trash2 size={16} />}
+                        loading={saving}
+                        onClick={() => void submitDelete()}
+                        type="danger"
+                      >
+                        删除会话
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div>
@@ -805,6 +849,19 @@ function statusFilterCount(
     return conversations.length;
   }
   return conversations.filter((conversation) => conversation.status === filter).length;
+}
+
+function supportConversationRowClass(
+  conversation: SupportConversation,
+  selected: boolean,
+) {
+  if (selected) {
+    return 'bg-teal-50/70';
+  }
+  if (conversation.unreadCount > 0) {
+    return 'bg-rose-50/50';
+  }
+  return '';
 }
 
 function statusText(status: SupportConversationStatus) {

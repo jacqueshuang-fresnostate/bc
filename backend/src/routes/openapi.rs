@@ -586,6 +586,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Json,
     ),
     doc(
+        "delete",
+        "/admin/support/conversations/{id}",
+        "在线客服",
+        "删除已解决客服会话",
+        "删除状态为已解决的客服会话，处理中或等待用户的会话不能直接删除。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
         "post",
         "/admin/support/conversations/{id}/messages",
         "在线客服",

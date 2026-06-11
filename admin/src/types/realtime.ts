@@ -3,7 +3,8 @@ import type { SupportConversation, SupportMessage } from './support';
 export type AdminRealtimeEvent =
   | AdminHeartbeatEvent
   | AdminSupportMessageCreatedEvent
-  | AdminSupportConversationUpdatedEvent;
+  | AdminSupportConversationUpdatedEvent
+  | AdminSupportConversationDeletedEvent;
 
 export interface AdminHeartbeatEvent {
   event: 'system.heartbeat';
@@ -23,6 +24,13 @@ export interface AdminSupportConversationUpdatedEvent {
   occurredAt: string;
   conversation: SupportConversation;
   conversationId: string;
+}
+
+export interface AdminSupportConversationDeletedEvent {
+  event: 'support.conversation_deleted';
+  occurredAt: string;
+  conversationId: string;
+  userId: string;
 }
 
 interface AdminRealtimeEnvelope {
@@ -68,6 +76,19 @@ export function normalizeAdminRealtimeEvent(raw: unknown): AdminRealtimeEvent | 
       conversationId,
       event,
       occurredAt,
+    };
+  }
+  if (event === 'support.conversation_deleted' && isPlainObject(envelope.data)) {
+    const conversationId = String(envelope.data.conversationId || '').trim();
+    const userId = String(envelope.data.userId || '').trim();
+    if (!conversationId || !userId) {
+      return null;
+    }
+    return {
+      conversationId,
+      event,
+      occurredAt,
+      userId,
     };
   }
 

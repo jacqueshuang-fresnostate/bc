@@ -9,10 +9,17 @@ type SettingsListItem = {
   hint?: string
   danger?: boolean
   unread?: boolean
+  badgeCount?: number
 }
 
 defineProps<{ items: SettingsListItem[] }>()
 const emit = defineEmits<{ select: [item: SettingsListItem] }>()
+
+function badgeContent(item: SettingsListItem) {
+  const count = Math.max(0, Number(item.badgeCount || 0))
+  if (!count) return ''
+  return count > 99 ? '99+' : String(count)
+}
 </script>
 
 <template>
@@ -38,7 +45,14 @@ const emit = defineEmits<{ select: [item: SettingsListItem] }>()
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-2 pl-3 text-on-surface-variant">
-          <span v-if="item.unread" class="h-2 w-2 rounded-full bg-red-600 shadow-[0_0_0_3px_rgba(220,38,38,0.12)]"></span>
+          <van-badge
+            v-if="badgeContent(item)"
+            class="settings-list-group__badge"
+            :content="badgeContent(item)"
+          >
+            <span class="settings-list-group__badge-anchor"></span>
+          </van-badge>
+          <span v-else-if="item.unread" class="h-2 w-2 rounded-full bg-red-600 shadow-[0_0_0_3px_rgba(220,38,38,0.12)]"></span>
           <span v-if="item.value" class="text-[9px]">{{ item.value }}</span>
           <span class="text-base leading-none">›</span>
         </div>
@@ -46,3 +60,22 @@ const emit = defineEmits<{ select: [item: SettingsListItem] }>()
     </div>
   </section>
 </template>
+
+<style scoped>
+.settings-list-group__badge-anchor {
+  display: block;
+  width: 1px;
+  height: 1px;
+}
+
+:deep(.settings-list-group__badge .van-badge) {
+  min-width: 18px;
+  height: 18px;
+  border: 2px solid #fff;
+  background: #dc2626;
+  box-shadow: 0 4px 10px rgba(220, 38, 38, 0.22);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 14px;
+}
+</style>
