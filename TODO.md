@@ -3175,3 +3175,10 @@
 - 解决问题：原默认 `{yyyy}{MM}{dd}{HH}{mm}{ss}` 会直接使用开奖时间作为期号，不符合现在要求的 `202606130001` 这类默认期号规则。
 - 实施内容：后端默认 `issueFormat` 改为 `{date}{seq4}`；期号生成器新增 `{seq4}` 变量并按开奖日期每日递增；数据库迁移更新 `lotteries.issue_format` 默认值并把老默认配置迁移为新默认；后台彩种表单提示、架构说明和 Trellis 规范同步更新。
 - 验证结果：后端 `cargo fmt --check`、`cargo check`、`cargo test draw_generation -- --nocapture`、后台 `npm run build`、手机端 `pnpm build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
+
+## 2026-06-13 05:03 HKT 修复调度器测试期号断言
+
+- 完成任务：修复 CI 中调度器相关测试仍断言旧平台期号格式的问题。
+- 解决问题：平台开奖默认期号已改成 `{date}{seq4}` 后，`scheduler_opens_next_issue_after_current_issue_closes` 和 `scheduler_runs_due_automation_before_generating_future_issues` 仍期待旧的 `yyyyMMddHHmmss` 期号，导致后端全量测试失败。
+- 实施内容：将调度器测试里的平台开奖默认期号样例和断言更新为 `202606020001`、`202606020002`，继续覆盖调度器先执行到期开奖/封盘，再补齐未来开盘期号的行为。
+- 验证结果：两个失败的 scheduler 定向测试、后端 `cargo fmt --check`、`cargo check`、全量 `cargo test -- --nocapture` 和 `git diff --check` 均通过；后端全量 296 个测试成功。

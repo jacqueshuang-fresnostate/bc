@@ -1562,7 +1562,7 @@ mod tests {
             .generated_issues
             .iter()
             .any(|issue| issue.lottery_id == "ssc60"
-                && issue.issue == "20260602200100"
+                && issue.issue == "202606020001"
                 && issue.draw_mode == DrawMode::Platform));
     }
 
@@ -1736,7 +1736,7 @@ mod tests {
                 &lottery,
                 CreateDrawIssueRequest {
                     lottery_id: lottery.id.clone(),
-                    issue: "20260602200100".to_string(),
+                    issue: "202606020001".to_string(),
                     scheduled_at: "2026-06-02 20:01:00".to_string(),
                     sale_closed_at: "2026-06-02 20:00:30".to_string(),
                 },
@@ -1764,7 +1764,7 @@ mod tests {
             .generated_issues
             .iter()
             .any(|issue| issue.lottery_id == "ssc60"
-                && issue.issue == "20260602200200"
+                && issue.issue == "202606020002"
                 && issue.status == DrawIssueStatus::Open));
     }
 
