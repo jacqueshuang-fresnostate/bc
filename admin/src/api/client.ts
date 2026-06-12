@@ -89,6 +89,11 @@ import type {
   RobotStatusUpdateRequest,
 } from '../types/robots';
 import type {
+  AgentRebatePage,
+  AgentRebateQuery,
+  AgentRebateRecordPage,
+  AgentRebateWithdrawalRequest,
+  AgentRebateWithdrawalResult,
   InvitePolicySummary,
   InvitePolicyUpdateRequest,
 } from '../types/rebates';
@@ -316,6 +321,9 @@ function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery)
   }
   if (query?.includeRobotData) {
     params.set('includeRobotData', 'true');
+  }
+  if (pageQuery?.userId?.trim()) {
+    params.set('userId', pageQuery.userId.trim());
   }
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
@@ -656,6 +664,43 @@ export function updateInvitePolicy(payload: InvitePolicyUpdateRequest) {
     body: payload,
     method: 'PUT',
   });
+}
+
+export function fetchAgentRebateStatistics(
+  signal?: AbortSignal,
+  query?: AgentRebateQuery,
+) {
+  return requestJson<AgentRebatePage>(
+    adminQueryPath('/api/admin/rebate-statistics', query),
+    { signal },
+  );
+}
+
+export function fetchAgentRebateRecords(
+  agentUserId: string,
+  signal?: AbortSignal,
+  query?: AgentRebateQuery,
+) {
+  return requestJson<AgentRebateRecordPage>(
+    adminQueryPath(
+      `/api/admin/rebate-statistics/${encodeURIComponent(agentUserId)}/records`,
+      query,
+    ),
+    { signal },
+  );
+}
+
+export function processAgentRebateWithdrawal(
+  agentUserId: string,
+  payload: AgentRebateWithdrawalRequest,
+) {
+  return requestJson<AgentRebateWithdrawalResult>(
+    `/api/admin/rebate-statistics/${encodeURIComponent(agentUserId)}/withdrawals`,
+    {
+      body: payload,
+      method: 'POST',
+    },
+  );
 }
 
 export function fetchRobots(signal?: AbortSignal) {

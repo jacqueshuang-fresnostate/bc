@@ -171,6 +171,25 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 后台处理代理返利提现，从代理可用余额扣减并记录独立返利提现流水。
+    pub async fn withdraw_agent_rebate(
+        &self,
+        agent_user_id: &str,
+        amount_minor: i64,
+        description: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let result = store.withdraw_agent_rebate(agent_user_id, amount_minor, description)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     /// 合买认购时扣减用户可用余额，并按参与记录 ID 保持幂等。
     pub async fn debit_group_buy(
         &self,
@@ -905,6 +924,37 @@ impl FinanceStore {
         )
     }
 
+    /// 处理代理返利提现，直接扣减可用余额并保留独立流水便于统计已提现返利。
+    pub(crate) fn withdraw_agent_rebate(
+        &mut self,
+        agent_user_id: &str,
+        amount_minor: i64,
+        description: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let agent_user_id = agent_user_id.trim();
+        let description = description.trim();
+        if agent_user_id.is_empty() {
+            return Err(ApiError::BadRequest("代理用户 ID 不能为空".to_string()));
+        }
+        if amount_minor <= 0 {
+            return Err(ApiError::BadRequest("返利提现金额必须大于 0".to_string()));
+        }
+        if description.is_empty() {
+            return Err(ApiError::BadRequest("返利提现说明不能为空".to_string()));
+        }
+        self.ensure_available(agent_user_id, amount_minor)?;
+
+        self.apply_available_delta(
+            agent_user_id,
+            LedgerEntryKind::AgentRebateWithdrawal,
+            amount_minor
+                .checked_neg()
+                .ok_or_else(|| ApiError::BadRequest("返利提现金额过大".to_string()))?,
+            None,
+            description.to_string(),
+        )
+    }
+
     /// 提交提现申请时把可用余额转入冻结余额，并生成提现冻结流水。
     pub(crate) fn freeze_withdrawal(
         &mut self,
@@ -1576,6 +1626,24 @@ mod tests {
             Some("recharge-rebate:R000000000001")
         );
         assert_eq!(account.available_balance_minor, 520_350);
+    }
+
+    #[test]
+    /// 代理返利提现会扣减可用余额，并生成独立流水供后台统计已处理金额。
+    fn store_withdraws_agent_rebate() {
+        let mut store = FinanceStore::seeded();
+        store
+            .credit_recharge_rebate("U90001", "U10001", 350, "R000000000001")
+            .expect("recharge rebate can be credited");
+
+        let entry = store
+            .withdraw_agent_rebate("U90001", 200, "代理返利提现处理")
+            .expect("agent rebate can be withdrawn");
+        let account = store.account("U90001").expect("agent account exists");
+
+        assert_eq!(entry.kind, LedgerEntryKind::AgentRebateWithdrawal);
+        assert_eq!(entry.amount_minor, -200);
+        assert_eq!(account.available_balance_minor, 520_150);
     }
 
     #[test]

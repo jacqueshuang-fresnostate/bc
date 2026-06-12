@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Select,
+  SideSheet,
   Spin,
   Switch,
   Tabs,
@@ -20,6 +21,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  useEffect,
   useState,
   type Dispatch,
   type ReactNode,
@@ -29,6 +31,7 @@ import { MetricCard } from '../components/MetricCard';
 import { PageControls } from '../components/PageControls';
 import { useFinance } from '../hooks/useFinance';
 import type {
+  AdminFinancialAccountSummary,
   FinancePage,
   LedgerEntry,
   LedgerEntryKind,
@@ -43,6 +46,13 @@ import { yuanInputToMinor } from '../utils/moneyInput';
 
 interface FinanceManagementPageProps {
   onDashboardRefresh: () => void;
+  ledgerUserFilter?: UserRecordFilter | null;
+  onClearLedgerUserFilter?: () => void;
+}
+
+interface UserRecordFilter {
+  userId: string;
+  username?: string | null;
 }
 
 interface AdjustmentFormState {
@@ -51,7 +61,11 @@ interface AdjustmentFormState {
   userId: string;
 }
 
-export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementPageProps) {
+export function FinanceManagementPage({
+  ledgerUserFilter,
+  onClearLedgerUserFilter,
+  onDashboardRefresh,
+}: FinanceManagementPageProps) {
   const [activeFinanceTab, setActiveFinanceTab] = useState('accounts');
   const [accountPage, setAccountPage] = useState(1);
   const [accountPageSize, setAccountPageSize] = useState(10);
@@ -82,7 +96,12 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
   } = useFinance({
     accountQuery: { includeRobotData, page: accountPage, pageSize: accountPageSize },
     includeRobotData,
-    ledgerQuery: { includeRobotData, page: ledgerPage, pageSize: ledgerPageSize },
+    ledgerQuery: {
+      includeRobotData,
+      page: ledgerPage,
+      pageSize: ledgerPageSize,
+      userId: ledgerUserFilter?.userId,
+    },
     rechargeQuery: { page: rechargePage, pageSize: rechargePageSize },
     withdrawalQuery: { page: withdrawalPage, pageSize: withdrawalPageSize },
   });
@@ -91,14 +110,40 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
     description: '后台手动补款',
     userId: 'U10001',
   });
+  const [adjustmentSheetVisible, setAdjustmentSheetVisible] = useState(false);
+  const [adjustmentAccount, setAdjustmentAccount] =
+    useState<AdminFinancialAccountSummary | null>(null);
 
   const availableBalanceMinor = overview
     ? overview.totalBalanceMinor - overview.pendingWithdrawMinor
     : 0;
 
+  useEffect(() => {
+    if (!ledgerUserFilter?.userId) {
+      return;
+    }
+    setActiveFinanceTab('ledger');
+    setLedgerPage(1);
+  }, [ledgerUserFilter?.userId]);
+
   const refreshAll = () => {
     refresh();
     onDashboardRefresh();
+  };
+
+  const openAdjustmentSheet = (account: AdminFinancialAccountSummary) => {
+    setAdjustmentAccount(account);
+    setForm({
+      amountYuan: '10.00',
+      description: `后台手动调账：${account.username ?? account.userId}`,
+      userId: account.userId,
+    });
+    setAdjustmentSheetVisible(true);
+  };
+
+  const closeAdjustmentSheet = () => {
+    setAdjustmentSheetVisible(false);
+    setAdjustmentAccount(null);
   };
 
   const submit = async () => {
@@ -111,13 +156,20 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
       Toast.warning('调账金额不能为 0 元');
       return;
     }
+    const userId = form.userId.trim();
+    if (!userId) {
+      Toast.warning('请选择需要调账的资金账户');
+      return;
+    }
     const payload: ManualBalanceAdjustmentRequest = {
       amountMinor,
-      description: form.description.trim(),
-      userId: form.userId.trim(),
+      description: form.description.trim() || '后台手动调账',
+      userId,
     };
     await adjustBalance(payload);
+    closeAdjustmentSheet();
     onDashboardRefresh();
+    Toast.success('调账已提交');
   };
 
   const confirmCustomerServiceRecharge = async (id: string) => {
@@ -197,6 +249,11 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
           <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
             刷新
           </Button>
+          {ledgerUserFilter ? (
+            <Tag color="purple" closable onClose={onClearLedgerUserFilter}>
+              流水用户：{ledgerUserFilter.username || '未知用户'}（{ledgerUserFilter.userId}）
+            </Tag>
+          ) : null}
         </div>
       </section>
 
@@ -244,7 +301,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
             </span>
           }
         >
-          <section className="grid gap-4 pt-3 xl:grid-cols-[1fr_420px]">
+          <section className="pt-3">
             <Card className="rounded-md border border-line">
           <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-2">
@@ -271,7 +328,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
             </div>
           ) : accounts.items.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-left text-sm">
+              <table className="w-full min-w-[860px] text-left text-sm">
                 <thead className="border-b border-line text-xs text-slate-500">
                   <tr>
                     <th className="py-2 pr-4 font-medium">用户</th>
@@ -279,6 +336,7 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                     <th className="py-2 pr-4 font-medium">冻结余额</th>
                     <th className="py-2 pr-4 font-medium">账户总额</th>
                     <th className="py-2 pr-4 font-medium">状态</th>
+                    <th className="py-2 pr-4 font-medium">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -306,6 +364,16 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
                           {account.availableBalanceMinor > 0 ? '可投注' : '无可用余额'}
                         </Tag>
                       </td>
+                      <td className="py-3 pr-4">
+                        <Button
+                          icon={<WalletCards size={14} />}
+                          size="small"
+                          theme="solid"
+                          onClick={() => openAdjustmentSheet(account)}
+                        >
+                          调账
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -316,62 +384,6 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
               暂无资金账户。
             </div>
           )}
-            </Card>
-
-            <Card className="rounded-md border border-line">
-          <div className="mb-4 flex items-start gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-md bg-teal-50 text-teal-700">
-              <WalletCards size={18} />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-ink">手动调账</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                金额使用元，负数表示扣减可用余额，最多保留两位小数。
-              </p>
-            </div>
-          </div>
-
-          <form
-            className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-            }}
-          >
-            <Field label="用户 ID">
-              <Input
-                className="form-input"
-                value={form.userId}
-                onChange={(value) => setFormValue(setForm, 'userId', value)}
-              />
-            </Field>
-
-            <Field label="调账金额（元）">
-              <Input
-                className="form-input"
-                inputMode="decimal"
-                placeholder="例如 10 或 -5.50"
-                value={form.amountYuan}
-                onChange={(value) => setFormValue(setForm, 'amountYuan', value)}
-              />
-            </Field>
-
-            <Field label="说明">
-              <Input
-                className="form-input"
-                value={form.description}
-                onChange={(value) => setFormValue(setForm, 'description', value)}
-              />
-            </Field>
-
-            <Button
-              disabled={saving}
-              icon={<Plus size={16} />}
-              theme="solid"
-              onClick={() => void submit()}
-            >
-              {saving ? '提交中' : '提交调账'}
-            </Button>
-          </form>
             </Card>
           </section>
         </Tabs.TabPane>
@@ -657,6 +669,11 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
           <div className="flex items-center gap-2">
             <h2 className="text-base font-semibold text-ink">资金流水</h2>
             <Tag color="blue">{ledgerEntries.totalCount} 笔</Tag>
+            {ledgerUserFilter ? (
+              <Tag color="purple" closable onClose={onClearLedgerUserFilter}>
+                {ledgerUserFilter.username || '未知用户'}（{ledgerUserFilter.userId}）
+              </Tag>
+            ) : null}
           </div>
           <PageControls
             loading={loading}
@@ -737,6 +754,82 @@ export function FinanceManagementPage({ onDashboardRefresh }: FinanceManagementP
           </Card>
         </Tabs.TabPane>
       </Tabs>
+
+      <SideSheet
+        aria-label="手动调账"
+        title="手动调账"
+        visible={adjustmentSheetVisible}
+        width={460}
+        onCancel={closeAdjustmentSheet}
+      >
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-ink">资金账户调账</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            当前调账对象来自资金账户列表，金额使用元，负数表示扣减可用余额。
+          </p>
+        </div>
+
+        {adjustmentAccount ? (
+          <div className="mb-4 rounded-md bg-slate-50 p-3 text-sm text-slate-600">
+            <div className="font-semibold text-ink">
+              {adjustmentAccount.username ?? '未知用户'}
+            </div>
+            <div className="mt-1 text-xs text-slate-400">{adjustmentAccount.userId}</div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-xs text-slate-400">可用余额</div>
+                <div className="mt-1 font-semibold text-emerald-700">
+                  {formatMoney(adjustmentAccount.availableBalanceMinor)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-400">冻结余额</div>
+                <div className="mt-1 font-semibold text-slate-700">
+                  {formatMoney(adjustmentAccount.frozenBalanceMinor)}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+          }}
+        >
+          <Field label="用户 ID">
+            <Input className="form-input" disabled value={form.userId} />
+          </Field>
+
+          <Field label="调账金额（元）">
+            <Input
+              className="form-input"
+              inputMode="decimal"
+              placeholder="例如 10 或 -5.50"
+              value={form.amountYuan}
+              onChange={(value) => setFormValue(setForm, 'amountYuan', value)}
+            />
+          </Field>
+
+          <Field label="说明">
+            <Input
+              className="form-input"
+              value={form.description}
+              onChange={(value) => setFormValue(setForm, 'description', value)}
+            />
+          </Field>
+
+          <Button
+            disabled={saving || !adjustmentAccount}
+            icon={<Plus size={16} />}
+            theme="solid"
+            onClick={() => void submit()}
+          >
+            {saving ? '提交中' : '提交调账'}
+          </Button>
+        </form>
+      </SideSheet>
     </div>
   );
 }
@@ -778,6 +871,7 @@ function dateFileLabel() {
 
 function ledgerKindText(kind: LedgerEntryKind) {
   const labels: Record<LedgerEntryKind, string> = {
+    agentRebateWithdrawal: '代理返利提现',
     groupBuyDebit: '合买认购',
     groupBuyRefund: '合买退款',
     manualAdjustment: '手动调账',
@@ -797,6 +891,7 @@ function ledgerKindText(kind: LedgerEntryKind) {
 
 function ledgerKindColor(kind: LedgerEntryKind) {
   const colors: Record<LedgerEntryKind, 'blue' | 'green' | 'orange' | 'red'> = {
+    agentRebateWithdrawal: 'red',
     groupBuyDebit: 'red',
     groupBuyRefund: 'blue',
     manualAdjustment: 'orange',

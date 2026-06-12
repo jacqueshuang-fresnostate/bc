@@ -41,14 +41,19 @@ use crate::{
             AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyPlan,
             GroupBuyPlanSummary, UpdateGroupBuyPlanRequest,
         },
-        invite::{CreateInviteRecordRequest, InviteRecord, UpdateInviteRecordRequest},
+        invite::{
+            CreateInviteRecordRequest, InviteRecord, InviteStatus, UpdateInviteRecordRequest,
+        },
         lottery::{
             DrawMode, DrawSource, LotteryCategoryConfig, LotteryKind, SaveDrawSourceRequest,
         },
         order::{CreateOrderRequest, OrderDetail, OrderSource, OrderStatus, OrderSummary},
         permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
         play::{PlayRuleEvaluateRequest, PlayRuleEvaluation, PlayRuleSummary},
-        rebate::{InvitePolicySummary, InvitePolicyUpdateRequest},
+        rebate::{
+            AgentRebateRecord, AgentRebateSummary, AgentRebateWithdrawalRequest,
+            InvitePolicySummary, InvitePolicyUpdateRequest,
+        },
         recharge::{
             ConfirmRechargeOrderRequest, RechargeChannel, RechargeOrderStatus, RechargeOrderSummary,
         },
@@ -60,7 +65,7 @@ use crate::{
         },
         user::{
             AdminPasswordResetRequest, AdminSaveRequest, AdminStatusRequest, AdminSummary,
-            RegistrationConfig, UserStatusRequest, UserSummary,
+            RegistrationConfig, UserKind, UserStatusRequest, UserSummary,
         },
         withdrawal::WithdrawalOrderSummary,
     },
@@ -186,6 +191,15 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/invite-policy",
             get(get_invite_policy).put(update_invite_policy),
+        )
+        .route("/rebate-statistics", get(list_agent_rebate_statistics))
+        .route(
+            "/rebate-statistics/{agent_user_id}/records",
+            get(list_agent_rebate_records),
+        )
+        .route(
+            "/rebate-statistics/{agent_user_id}/withdrawals",
+            post(process_agent_rebate_withdrawal),
         )
         .route("/robots", get(list_robots).post(create_robot))
         .route("/robots/run", post(run_group_buy_robots_request))
@@ -723,6 +737,7 @@ struct FinancePageQuery {
     page: Option<usize>,
     page_size: Option<usize>,
     include_robot_data: Option<bool>,
+    user_id: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -822,6 +837,14 @@ impl FinancePageQuery {
     fn include_robot_data(&self) -> bool {
         self.include_robot_data.unwrap_or(false)
     }
+
+    /// 读取可选用户 ID 过滤条件，空字符串按未设置处理。
+    fn user_id_filter(&self) -> Option<&str> {
+        self.user_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|user_id| !user_id.is_empty())
+    }
 }
 
 /// 后台用户列表查询参数。
@@ -832,6 +855,7 @@ impl UserListQuery {
             include_robot_data: None,
             page: self.page,
             page_size: self.page_size,
+            user_id: None,
         }
     }
 }
@@ -2073,6 +2097,65 @@ async fn update_invite_policy(
     Ok(Json(ApiEnvelope::success(policy)))
 }
 
+/// 返回代理邀请返利统计分页列表。
+async fn list_agent_rebate_statistics(
+    State(state): State<AppState>,
+    Query(query): Query<FinancePageQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<AgentRebateSummary>>>> {
+    let summaries = agent_rebate_summaries(&state).await?;
+
+    Ok(Json(ApiEnvelope::success(page_items(summaries, query))))
+}
+
+/// 返回指定代理的每一笔下级充值返利记录。
+async fn list_agent_rebate_records(
+    State(state): State<AppState>,
+    Path(agent_user_id): Path<String>,
+    Query(query): Query<FinancePageQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<AgentRebateRecord>>>> {
+    ensure_agent_user(&state, &agent_user_id).await?;
+    let mut records = agent_rebate_records(&state, Some(&agent_user_id)).await?;
+    sort_agent_rebate_records_by_time_desc(&mut records);
+
+    Ok(Json(ApiEnvelope::success(page_items(records, query))))
+}
+
+/// 后台处理代理返利提现，扣减代理可用余额并生成返利提现流水。
+async fn process_agent_rebate_withdrawal(
+    State(state): State<AppState>,
+    Path(agent_user_id): Path<String>,
+    Json(payload): Json<AgentRebateWithdrawalRequest>,
+) -> ApiResult<Json<ApiEnvelope<LedgerEntry>>> {
+    let agent = ensure_agent_user(&state, &agent_user_id).await?;
+    let amount_minor = payload.amount_minor;
+    if amount_minor <= 0 {
+        return Err(ApiError::BadRequest("返利提现金额必须大于 0".to_string()));
+    }
+    let summary = agent_rebate_summary_for_agent(&state, &agent_user_id).await?;
+    if amount_minor > summary.withdrawable_rebate_minor {
+        return Err(ApiError::BadRequest("返利可提现金额不足".to_string()));
+    }
+    let description = payload.description.trim();
+    let description = if description.is_empty() {
+        format!("代理返利提现处理：{}", agent.username)
+    } else {
+        description.to_string()
+    };
+    let entry = state
+        .finance
+        .withdraw_agent_rebate(&agent_user_id, amount_minor, &description)
+        .await?;
+    publish_user_balance_changed(
+        &state,
+        &entry.user_id,
+        "agent_rebate_withdrawal",
+        entry.reference_id.as_deref(),
+    )
+    .await;
+
+    Ok(Json(ApiEnvelope::success(entry)))
+}
+
 /// 返回后台机器人配置列表。
 async fn list_robots(
     State(state): State<AppState>,
@@ -2247,6 +2330,13 @@ fn should_include_user_scoped_record(include_robot_data: bool, user_id: &str) ->
     include_robot_data || !is_group_buy_robot_user_id(user_id)
 }
 
+/// 判断列表行是否命中指定用户筛选；未传用户 ID 时不过滤。
+fn should_match_user_filter(query: &FinancePageQuery, user_id: &str) -> bool {
+    query
+        .user_id_filter()
+        .map_or(true, |target_user_id| target_user_id == user_id)
+}
+
 /// 判断后台合买计划列表是否展示机器人发起的计划；机器人只作为参与人补单时不影响展示。
 fn should_include_robot_initiated_group_buy_plan(
     include_robot_data: bool,
@@ -2348,6 +2438,7 @@ async fn list_financial_accounts(
         .into_iter()
         .filter(|account| {
             should_include_user_scoped_record(query.include_robot_data(), &account.user_id)
+                && should_match_user_filter(&query, &account.user_id)
         })
         .collect::<Vec<_>>();
     let users = state.access.users().await?;
@@ -2382,6 +2473,7 @@ async fn list_ledger_entries(
         .into_iter()
         .filter(|entry| {
             should_include_user_scoped_record(query.include_robot_data(), &entry.user_id)
+                && should_match_user_filter(&query, &entry.user_id)
         })
         .collect::<Vec<_>>();
     sort_ledger_entries_by_time_desc(&mut entries);
@@ -2545,6 +2637,7 @@ async fn list_orders(
         .into_iter()
         .filter(|order| {
             should_include_user_scoped_record(query.include_robot_data(), &order.user_id)
+                && should_match_user_filter(&query, &order.user_id)
         })
         .map(|order| admin_order_detail_with_usernames(order, &usernames))
         .collect::<Vec<_>>();
@@ -2659,6 +2752,276 @@ fn admin_ledger_entry_with_usernames(
 ) -> AdminLedgerEntry {
     let username = usernames.get(&entry.user_id).cloned();
     AdminLedgerEntry { entry, username }
+}
+
+/// 校验并返回代理用户，后台返利提现只允许处理代理账户。
+async fn ensure_agent_user(state: &AppState, agent_user_id: &str) -> ApiResult<UserSummary> {
+    let agent = state.access.get_user(agent_user_id).await?;
+    if !matches!(agent.kind, UserKind::Agent) {
+        return Err(ApiError::BadRequest("只能处理代理用户的返利".to_string()));
+    }
+
+    Ok(agent)
+}
+
+/// 读取并构造全部代理返利统计列表。
+async fn agent_rebate_summaries(state: &AppState) -> ApiResult<Vec<AgentRebateSummary>> {
+    let users = state.access.users().await?;
+    let accounts = state.finance.accounts().await?;
+    let entries = state.finance.ledger_entries().await?;
+    let invite_records = state.invites.list().await?;
+    let account_by_user_id = accounts
+        .into_iter()
+        .map(|account| (account.user_id.clone(), account))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut summaries = users
+        .iter()
+        .filter(|user| matches!(user.kind, UserKind::Agent))
+        .map(|agent| {
+            agent_rebate_summary_from_data(
+                agent,
+                &users,
+                &invite_records,
+                &entries,
+                &account_by_user_id,
+            )
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
+    sort_agent_rebate_summaries(&mut summaries);
+    Ok(summaries)
+}
+
+/// 返回单个代理的返利统计，没有返利记录也会返回零值统计。
+async fn agent_rebate_summary_for_agent(
+    state: &AppState,
+    agent_user_id: &str,
+) -> ApiResult<AgentRebateSummary> {
+    let agent = ensure_agent_user(state, agent_user_id).await?;
+    let users = state.access.users().await?;
+    let accounts = state.finance.accounts().await?;
+    let entries = state.finance.ledger_entries().await?;
+    let invite_records = state.invites.list().await?;
+    let account_by_user_id = accounts
+        .into_iter()
+        .map(|account| (account.user_id.clone(), account))
+        .collect::<BTreeMap<_, _>>();
+
+    agent_rebate_summary_from_data(
+        &agent,
+        &users,
+        &invite_records,
+        &entries,
+        &account_by_user_id,
+    )
+}
+
+/// 基于已加载数据构造单个代理返利统计，避免列表页重复读仓储。
+fn agent_rebate_summary_from_data(
+    agent: &UserSummary,
+    users: &[UserSummary],
+    invite_records: &[InviteRecord],
+    entries: &[LedgerEntry],
+    account_by_user_id: &BTreeMap<String, FinancialAccountSummary>,
+) -> ApiResult<AgentRebateSummary> {
+    let mut total_rebate_minor = 0_i64;
+    let mut withdrawn_rebate_minor = 0_i64;
+    let mut rebate_record_count = 0_usize;
+    let mut last_rebate_at: Option<String> = None;
+
+    for entry in entries.iter().filter(|entry| entry.user_id == agent.id) {
+        match entry.kind {
+            LedgerEntryKind::RechargeRebateCredit => {
+                if entry.amount_minor > 0 {
+                    total_rebate_minor = total_rebate_minor
+                        .checked_add(entry.amount_minor)
+                        .ok_or_else(|| ApiError::Internal("代理返利金额汇总溢出".to_string()))?;
+                }
+                rebate_record_count += 1;
+                if admin_time_is_newer(&entry.created_at, last_rebate_at.as_deref()) {
+                    last_rebate_at = Some(entry.created_at.clone());
+                }
+            }
+            LedgerEntryKind::AgentRebateWithdrawal => {
+                let amount = entry
+                    .amount_minor
+                    .checked_neg()
+                    .ok_or_else(|| ApiError::Internal("代理返利提现金额汇总溢出".to_string()))?;
+                if amount > 0 {
+                    withdrawn_rebate_minor = withdrawn_rebate_minor
+                        .checked_add(amount)
+                        .ok_or_else(|| ApiError::Internal("代理返利提现汇总溢出".to_string()))?;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let pending_rebate_minor = total_rebate_minor
+        .checked_sub(withdrawn_rebate_minor)
+        .unwrap_or_default()
+        .max(0);
+    let account_available_balance_minor = account_by_user_id
+        .get(&agent.id)
+        .map(|account| account.available_balance_minor)
+        .unwrap_or_default();
+    let withdrawable_rebate_minor = pending_rebate_minor.min(account_available_balance_minor);
+
+    Ok(AgentRebateSummary {
+        account_available_balance_minor,
+        agent_user_id: agent.id.clone(),
+        agent_username: agent.username.clone(),
+        direct_invitee_count: direct_invitee_ids(&agent.id, users, invite_records).len(),
+        invite_code: agent.invite_code.clone(),
+        last_rebate_at,
+        pending_rebate_minor,
+        rebate_record_count,
+        total_rebate_minor,
+        withdrawable_rebate_minor,
+        withdrawn_rebate_minor,
+    })
+}
+
+/// 返回指定代理或全部代理的返利记录，记录来源以充值返利流水为准。
+async fn agent_rebate_records(
+    state: &AppState,
+    agent_user_id: Option<&str>,
+) -> ApiResult<Vec<AgentRebateRecord>> {
+    let users = state.access.users().await?;
+    let entries = state.finance.ledger_entries().await?;
+    let recharges = state.recharges.list().await?;
+    Ok(agent_rebate_records_from_data(
+        agent_user_id,
+        &users,
+        &entries,
+        &recharges,
+    ))
+}
+
+/// 基于资金流水和充值订单构造返利明细，充值订单被清理时仍保留流水本身。
+fn agent_rebate_records_from_data(
+    agent_user_id: Option<&str>,
+    users: &[UserSummary],
+    entries: &[LedgerEntry],
+    recharges: &[RechargeOrderSummary],
+) -> Vec<AgentRebateRecord> {
+    let users_by_id = users
+        .iter()
+        .map(|user| (user.id.as_str(), user))
+        .collect::<BTreeMap<_, _>>();
+    let recharges_by_id = recharges
+        .iter()
+        .map(|order| (order.id.as_str(), order))
+        .collect::<BTreeMap<_, _>>();
+
+    entries
+        .iter()
+        .filter(|entry| entry.kind == LedgerEntryKind::RechargeRebateCredit)
+        .filter(|entry| agent_user_id.map_or(true, |agent_id| entry.user_id == agent_id))
+        .map(|entry| {
+            let recharge_order_id = rebate_recharge_order_id(entry);
+            let recharge = recharge_order_id
+                .as_deref()
+                .and_then(|order_id| recharges_by_id.get(order_id).copied());
+            let invitee_user_id = recharge
+                .map(|order| order.user_id.clone())
+                .or_else(|| invitee_user_id_from_rebate_description(&entry.description));
+            let invitee_username = recharge.map(|order| order.username.clone()).or_else(|| {
+                invitee_user_id
+                    .as_deref()
+                    .and_then(|user_id| users_by_id.get(user_id).map(|user| user.username.clone()))
+            });
+            let agent_username = users_by_id
+                .get(entry.user_id.as_str())
+                .map(|user| user.username.clone())
+                .unwrap_or_else(|| "未知代理".to_string());
+
+            AgentRebateRecord {
+                agent_user_id: entry.user_id.clone(),
+                agent_username,
+                created_at: entry.created_at.clone(),
+                invitee_user_id,
+                invitee_username,
+                ledger_entry_id: entry.id.clone(),
+                rebate_amount_minor: entry.amount_minor,
+                recharge_amount_minor: recharge.map(|order| order.amount_minor),
+                recharge_order_id,
+            }
+        })
+        .collect()
+}
+
+/// 收集代理的直属下级 ID，合并后台邀请关系和注册时绑定的上级代理。
+fn direct_invitee_ids(
+    agent_user_id: &str,
+    users: &[UserSummary],
+    invite_records: &[InviteRecord],
+) -> BTreeSet<String> {
+    let mut invitee_ids = BTreeSet::new();
+    for record in invite_records.iter().filter(|record| {
+        record.inviter_user_id == agent_user_id && matches!(record.status, InviteStatus::Active)
+    }) {
+        invitee_ids.insert(record.invitee_user_id.clone());
+    }
+    for user in users
+        .iter()
+        .filter(|user| user.agent_id.as_deref() == Some(agent_user_id))
+    {
+        invitee_ids.insert(user.id.clone());
+    }
+    invitee_ids
+}
+
+/// 从充值返利流水引用 ID 中恢复充值订单号。
+fn rebate_recharge_order_id(entry: &LedgerEntry) -> Option<String> {
+    entry
+        .reference_id
+        .as_deref()
+        .and_then(|reference_id| reference_id.strip_prefix("recharge-rebate:"))
+        .map(ToString::to_string)
+}
+
+/// 兼容充值订单历史被清理后的旧流水说明，尽量恢复下级用户 ID。
+fn invitee_user_id_from_rebate_description(description: &str) -> Option<String> {
+    description
+        .rsplit_once("下级 ")
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// 判断候选时间是否比当前时间更新，兼容 `unix:` 历史标签。
+fn admin_time_is_newer(candidate: &str, current: Option<&str>) -> bool {
+    let Some(current) = current else {
+        return true;
+    };
+    parse_admin_list_timestamp_seconds(candidate)
+        .cmp(&parse_admin_list_timestamp_seconds(current))
+        .then_with(|| candidate.cmp(current))
+        .is_gt()
+}
+
+/// 代理返利统计按最近返利、待处理金额和代理 ID 倒序展示。
+fn sort_agent_rebate_summaries(summaries: &mut [AgentRebateSummary]) {
+    summaries.sort_by(|left, right| {
+        parse_admin_list_timestamp_seconds(right.last_rebate_at.as_deref().unwrap_or(""))
+            .cmp(&parse_admin_list_timestamp_seconds(
+                left.last_rebate_at.as_deref().unwrap_or(""),
+            ))
+            .then_with(|| right.pending_rebate_minor.cmp(&left.pending_rebate_minor))
+            .then_with(|| right.agent_user_id.cmp(&left.agent_user_id))
+    });
+}
+
+/// 代理返利明细按返利流水创建时间倒序展示。
+fn sort_agent_rebate_records_by_time_desc(records: &mut [AgentRebateRecord]) {
+    records.sort_by(|left, right| {
+        compare_admin_time_desc(
+            &left.created_at,
+            &left.ledger_entry_id,
+            &right.created_at,
+            &right.ledger_entry_id,
+        )
+    });
 }
 
 /// 为后台结算批次中的每条订单明细补充用户名。
@@ -2917,10 +3280,12 @@ struct SaleStatusRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        admin_user_summary_with_usernames, align_draw_issue_plan_after_sale_on,
+        admin_user_summary_with_usernames, agent_rebate_records_from_data,
+        agent_rebate_summary_from_data, align_draw_issue_plan_after_sale_on,
         finance_overview_for_query, normalize_admin_draw_control_target, page_items,
         required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
         should_include_robot_initiated_group_buy_plan, should_include_user_scoped_record,
+        should_match_user_filter, sort_agent_rebate_records_by_time_desc,
         sort_financial_accounts_by_latest_user_desc, sort_ledger_entries_by_time_desc,
         sort_recharge_orders_by_time_desc, sort_users, sort_withdrawal_orders_by_time_desc,
         username_map_from_users, FinancePageQuery, UserListQuery,
@@ -2930,7 +3295,10 @@ mod tests {
         app::AppState,
         domain::{
             draw::{DrawControlTargetScope, DrawIssueStatus, SaveLotteryDrawControlRequest},
-            finance::{AdminFinancialAccountSummary, LedgerEntry, LedgerEntryKind},
+            finance::{
+                AdminFinancialAccountSummary, FinancialAccountSummary, LedgerEntry, LedgerEntryKind,
+            },
+            invite::{InviteRecord, InviteStatus},
             lottery::DrawMode,
             order::CreateOrderRequest,
             permission::PermissionScope,
@@ -2958,6 +3326,7 @@ mod tests {
             withdrawal::WithdrawalRepository,
         },
     };
+    use std::collections::BTreeMap;
 
     #[test]
     /// 处理 required_scope_maps_admin_paths 的具体内部流程。
@@ -3007,6 +3376,10 @@ mod tests {
             required_scope_for_path("/invite-policy"),
             Some(PermissionScope::Rebates)
         );
+        assert_eq!(
+            required_scope_for_path("/rebate-statistics/U90001/records"),
+            Some(PermissionScope::Rebates)
+        );
     }
 
     #[test]
@@ -3052,6 +3425,7 @@ mod tests {
                 include_robot_data: None,
                 page: Some(2),
                 page_size: Some(2),
+                user_id: None,
             },
         );
 
@@ -3144,6 +3518,7 @@ mod tests {
                 include_robot_data: None,
                 page: Some(1),
                 page_size: Some(2),
+                user_id: None,
             },
         );
 
@@ -3171,6 +3546,7 @@ mod tests {
                 include_robot_data: None,
                 page: Some(1),
                 page_size: Some(2),
+                user_id: None,
             },
         );
         assert_eq!(
@@ -3181,6 +3557,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["L000000000003", "L000000000002"]
         );
+
+        let user_filter = FinancePageQuery {
+            include_robot_data: None,
+            page: Some(1),
+            page_size: Some(20),
+            user_id: Some("U10001".to_string()),
+        };
+        assert!(should_match_user_filter(&user_filter, "U10001"));
+        assert!(!should_match_user_filter(&user_filter, "U10002"));
 
         let mut recharge_orders = vec![
             test_recharge_order("R000000000001", "2026-06-10 09:00:00"),
@@ -3195,6 +3580,112 @@ mod tests {
         ];
         sort_withdrawal_orders_by_time_desc(&mut withdrawal_orders);
         assert_eq!(withdrawal_orders[0].id, "W000000000002");
+    }
+
+    #[test]
+    /// 代理返利统计按返利入账和返利提现流水计算总额、待处理和可提现金额。
+    fn agent_rebate_summary_counts_pending_and_withdrawable_amounts() {
+        let mut agent = test_user("U90001", "agent_alpha", 0);
+        agent.kind = UserKind::Agent;
+        agent.invite_code = "ABCDEFGH".to_string();
+        let mut invitee = test_user("U10001", "demo_user", 0);
+        invitee.agent_id = Some(agent.id.clone());
+        let users = vec![agent.clone(), invitee.clone()];
+        let invite_records = vec![InviteRecord {
+            created_at: "2026-06-12 10:00:00".to_string(),
+            id: "INV-1".to_string(),
+            invite_code: agent.invite_code.clone(),
+            invitee_user_id: invitee.id.clone(),
+            invitee_username: invitee.username.clone(),
+            inviter_user_id: agent.id.clone(),
+            inviter_username: agent.username.clone(),
+            note: String::new(),
+            rebate_enabled: true,
+            status: InviteStatus::Active,
+            updated_at: "2026-06-12 10:00:00".to_string(),
+        }];
+        let entries = vec![
+            test_agent_rebate_entry(
+                "L000000000010",
+                LedgerEntryKind::RechargeRebateCredit,
+                350,
+                Some("recharge-rebate:R000000000001"),
+                "2026-06-12 11:00:00",
+            ),
+            test_agent_rebate_entry(
+                "L000000000011",
+                LedgerEntryKind::AgentRebateWithdrawal,
+                -120,
+                None,
+                "2026-06-12 12:00:00",
+            ),
+        ];
+        let mut accounts = BTreeMap::new();
+        accounts.insert(
+            agent.id.clone(),
+            FinancialAccountSummary {
+                available_balance_minor: 200,
+                frozen_balance_minor: 0,
+                user_id: agent.id.clone(),
+            },
+        );
+
+        let summary =
+            agent_rebate_summary_from_data(&agent, &users, &invite_records, &entries, &accounts)
+                .expect("agent rebate summary can be calculated");
+
+        assert_eq!(summary.direct_invitee_count, 1);
+        assert_eq!(summary.total_rebate_minor, 350);
+        assert_eq!(summary.withdrawn_rebate_minor, 120);
+        assert_eq!(summary.pending_rebate_minor, 230);
+        assert_eq!(summary.withdrawable_rebate_minor, 200);
+        assert_eq!(
+            summary.last_rebate_at.as_deref(),
+            Some("2026-06-12 11:00:00")
+        );
+    }
+
+    #[test]
+    /// 代理返利明细可以从返利流水和充值订单中还原下级用户、充值单和充值金额。
+    fn agent_rebate_records_include_invitee_and_recharge_order() {
+        let mut agent = test_user("U90001", "agent_alpha", 0);
+        agent.kind = UserKind::Agent;
+        let invitee = test_user("U10001", "demo_user", 0);
+        let users = vec![agent.clone(), invitee.clone()];
+        let entries = vec![test_agent_rebate_entry(
+            "L000000000010",
+            LedgerEntryKind::RechargeRebateCredit,
+            350,
+            Some("recharge-rebate:R000000000001"),
+            "2026-06-12 11:00:00",
+        )];
+        let recharges = vec![RechargeOrderSummary {
+            amount_minor: 10_000,
+            channel: RechargeChannel::CustomerService,
+            created_at: "2026-06-12 10:59:00".to_string(),
+            id: "R000000000001".to_string(),
+            paid_at: Some("2026-06-12 11:00:00".to_string()),
+            pay_type: None,
+            payment_url: None,
+            provider_trade_no: None,
+            status: RechargeOrderStatus::Paid,
+            support_conversation_id: None,
+            user_id: invitee.id.clone(),
+            username: invitee.username.clone(),
+        }];
+        let mut records =
+            agent_rebate_records_from_data(Some(&agent.id), &users, &entries, &recharges);
+        sort_agent_rebate_records_by_time_desc(&mut records);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].agent_username, "agent_alpha");
+        assert_eq!(records[0].invitee_user_id.as_deref(), Some("U10001"));
+        assert_eq!(
+            records[0].recharge_order_id.as_deref(),
+            Some("R000000000001")
+        );
+        assert_eq!(records[0].recharge_amount_minor, Some(10_000));
+        assert_eq!(records[0].rebate_amount_minor, 350);
     }
 
     #[tokio::test]
@@ -3334,6 +3825,25 @@ mod tests {
             kind: LedgerEntryKind::ManualAdjustment,
             reference_id: None,
             user_id: "U10001".to_string(),
+        }
+    }
+
+    fn test_agent_rebate_entry(
+        id: &str,
+        kind: LedgerEntryKind,
+        amount_minor: i64,
+        reference_id: Option<&str>,
+        created_at: &str,
+    ) -> LedgerEntry {
+        LedgerEntry {
+            amount_minor,
+            balance_after_minor: 1000,
+            created_at: created_at.to_string(),
+            description: "下级用户充值返利：订单 R000000000001，下级 U10001".to_string(),
+            id: id.to_string(),
+            kind,
+            reference_id: reference_id.map(ToString::to_string),
+            user_id: "U90001".to_string(),
         }
     }
 

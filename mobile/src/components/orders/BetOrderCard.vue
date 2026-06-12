@@ -5,6 +5,7 @@ import { formatDateTime, moneyText, orderAmountLabel, orderBetContentText, order
 const props = defineProps<{ order: any }>()
 const emit = defineEmits<{ open: [any] }>()
 const orderNumbersText = computed(() => orderBetContentText(props.order))
+const orderCreatedAtText = computed(() => formatDateTime(props.order?.created_at || props.order?.createdAt))
 </script>
 
 <template>
@@ -24,7 +25,10 @@ const orderNumbersText = computed(() => orderBetContentText(props.order))
           <span class="bet-record-card__tag">{{ orderTagText(order) }}</span>
           <span class="bet-record-card__source">{{ orderSourceText(order) }}</span>
         </h2>
-        <p>第 {{ order.issue }} 期</p>
+        <div class="bet-record-card__meta">
+          <p>第 {{ order.issue }} 期</p>
+          <p>下注时间 {{ orderCreatedAtText }}</p>
+        </div>
       </div>
       <span class="status-pill" :class="`status-pill--${orderTone(order.status)}`">
         <span class="status-pill__icon">{{ orderStatusIcon(order.status) }}</span>
@@ -38,10 +42,6 @@ const orderNumbersText = computed(() => orderBetContentText(props.order))
     </div>
 
     <div class="bet-record-card__grid">
-      <div>
-        <p>下注时间</p>
-        <strong>{{ formatDateTime(order.created_at) }}</strong>
-      </div>
       <div>
         <p>单注金额</p>
         <strong>{{ moneyText(orderUnitAmount(order)) }}</strong>
@@ -139,6 +139,12 @@ const orderNumbersText = computed(() => orderBetContentText(props.order))
 
 .bet-record-card__title-block {
   min-width: 0;
+}
+
+.bet-record-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
 }
 
 .bet-record-card h2 {

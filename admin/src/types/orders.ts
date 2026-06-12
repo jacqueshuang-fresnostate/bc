@@ -18,6 +18,7 @@ export interface OrderListQuery {
   includeRobotData?: boolean;
   page?: number;
   pageSize?: number;
+  userId?: string;
 }
 
 export type OrderPage = FinancePage<OrderDetail>;

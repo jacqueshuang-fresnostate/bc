@@ -159,6 +159,7 @@ function positionGridKind(ruleCode: string) {
 }
 
 export function normalizeUserBetOrder(order: UserBetOrderDetail) {
+  const rawOrder = order as UserBetOrderDetail & { created_at?: string; settled_at?: string | null }
   const numbers = selectionNumbers(order)
   const isGroupBuy = order.orderSource === 'groupBuy'
   const participationAmountMinor = normalizeOptionalMinor(order.participationAmountMinor)
@@ -200,8 +201,8 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     display_amount: participationAmount || formatMinorAmount(order.amountMinor),
     odds: formatMinorAmount(order.oddsBasisPoints / 100),
     payout: formatMinorAmount(displayPayoutMinor),
-    created_at: order.createdAt,
-    settled_at: order.settledAt,
+    created_at: order.createdAt || rawOrder.created_at || '',
+    settled_at: order.settledAt || rawOrder.settled_at,
     position_grid_kind: positionGridKind(order.ruleCode),
   }
 }

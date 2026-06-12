@@ -46,6 +46,7 @@ pub struct FinancePage<T> {
 #[serde(rename_all = "camelCase")]
 /// 资金流水类型，标识每一笔余额变动对应的业务来源。
 pub enum LedgerEntryKind {
+    AgentRebateWithdrawal,
     ManualAdjustment,
     OrderDebit,
     OrderRefund,

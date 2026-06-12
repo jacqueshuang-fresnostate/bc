@@ -22,6 +22,11 @@ import { SettlementManagementPage } from './pages/SettlementManagementPage';
 import { SupportManagementPage } from './pages/SupportManagementPage';
 import type { DashboardSummary, PermissionScope } from './types/dashboard';
 
+interface UserRecordFilter {
+  userId: string;
+  username: string;
+}
+
 export function App() {
   useResizableAdminTables();
   const {
@@ -34,6 +39,8 @@ export function App() {
   } = useAuth();
   const { data, loading, error, refresh } = useDashboard(Boolean(session));
   const [activeKey, setActiveKey] = useState('dashboard');
+  const [orderUserFilter, setOrderUserFilter] = useState<UserRecordFilter | null>(null);
+  const [ledgerUserFilter, setLedgerUserFilter] = useState<UserRecordFilter | null>(null);
   const filteredData = useMemo(
     () => (data && session ? filterDashboardByScopes(data, session.scopes) : data),
     [data, session],
@@ -110,9 +117,17 @@ export function App() {
       ) : activeKey === 'draw-modes' || activeKey === 'schedules' ? (
         <DrawManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'orders' ? (
-        <OrderManagementPage onDashboardRefresh={refresh} />
+        <OrderManagementPage
+          userFilter={orderUserFilter}
+          onClearUserFilter={() => setOrderUserFilter(null)}
+          onDashboardRefresh={refresh}
+        />
       ) : activeKey === 'finance' ? (
-        <FinanceManagementPage onDashboardRefresh={refresh} />
+        <FinanceManagementPage
+          ledgerUserFilter={ledgerUserFilter}
+          onClearLedgerUserFilter={() => setLedgerUserFilter(null)}
+          onDashboardRefresh={refresh}
+        />
       ) : activeKey === 'support' ? (
         <SupportManagementPage onDashboardRefresh={refresh} />
       ) : activeKey === 'group-buy' ? (
@@ -126,6 +141,14 @@ export function App() {
       ) : isAccessModule(activeKey) ? (
         <AccessManagementPage
           activeModuleKey={activeKey}
+          onOpenUserLedger={(user) => {
+            setLedgerUserFilter({ userId: user.id, username: user.username });
+            setActiveKey('finance');
+          }}
+          onOpenUserOrders={(user) => {
+            setOrderUserFilter({ userId: user.id, username: user.username });
+            setActiveKey('orders');
+          }}
           onDashboardRefresh={refresh}
         />
       ) : isRobotModule(activeKey) ? (

@@ -46,6 +46,13 @@ import {
 
 interface OrderManagementPageProps {
   onDashboardRefresh: () => void;
+  onClearUserFilter?: () => void;
+  userFilter?: UserRecordFilter | null;
+}
+
+interface UserRecordFilter {
+  userId: string;
+  username?: string | null;
 }
 
 interface OrderFormState {
@@ -71,7 +78,11 @@ const digitAttributeOptions: Array<{ label: string; value: DigitAttribute }> = [
   { label: '双', value: 'even' },
 ];
 
-export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageProps) {
+export function OrderManagementPage({
+  onClearUserFilter,
+  onDashboardRefresh,
+  userFilter,
+}: OrderManagementPageProps) {
   const [includeRobotData, setIncludeRobotData] = useState(false);
   const [orderPageNumber, setOrderPageNumber] = useState(1);
   const [orderPageSize, setOrderPageSize] = useState(20);
@@ -89,6 +100,7 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
     includeRobotData,
     page: orderPageNumber,
     pageSize: orderPageSize,
+    userId: userFilter?.userId,
   });
   const {
     error: lotteryError,
@@ -106,6 +118,10 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
   const [createdOrder, setCreatedOrder] = useState<OrderDetail | null>(null);
   const [createSheetVisible, setCreateSheetVisible] = useState(false);
   const [form, setForm] = useState<OrderFormState>(() => emptyForm());
+
+  useEffect(() => {
+    setOrderPageNumber(1);
+  }, [userFilter?.userId]);
 
   const selectedLottery = useMemo(
     () => lotteries.find((lottery) => lottery.id === form.lotteryId) ?? lotteries[0] ?? null,
@@ -246,6 +262,11 @@ export function OrderManagementPage({ onDashboardRefresh }: OrderManagementPageP
           <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
             刷新
           </Button>
+          {userFilter ? (
+            <Tag color="purple" closable onClose={onClearUserFilter}>
+              当前用户：{userFilter.username || '未知用户'}（{userFilter.userId}）
+            </Tag>
+          ) : null}
           <Button
             icon={<Plus size={16} />}
             theme="solid"

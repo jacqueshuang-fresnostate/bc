@@ -187,7 +187,7 @@ watch(() => props.selectedOrder?.id, () => {
           </div>
           <div>
             <span>投注时间</span>
-            <strong>{{ formatDateTime(selectedOrder.created_at) }}</strong>
+            <strong>{{ formatDateTime(selectedOrder.created_at || selectedOrder.createdAt) }}</strong>
           </div>
         </section>
       </div>

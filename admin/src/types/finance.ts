@@ -1,6 +1,7 @@
 export type { FinanceOverview } from './dashboard';
 
 export type LedgerEntryKind =
+  | 'agentRebateWithdrawal'
   | 'manualAdjustment'
   | 'groupBuyDebit'
   | 'groupBuyRefund'
@@ -43,6 +44,7 @@ export interface FinancePageQuery {
   page?: number;
   pageSize?: number;
   includeRobotData?: boolean;
+  userId?: string;
 }
 
 export interface ClearRecordsResult {

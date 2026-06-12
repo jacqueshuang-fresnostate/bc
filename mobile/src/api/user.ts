@@ -177,6 +177,7 @@ export type CreateRechargeOrderResponse = {
 }
 
 export type LedgerEntryKind =
+  | 'agentRebateWithdrawal'
   | 'manualAdjustment'
   | 'orderDebit'
   | 'orderRefund'

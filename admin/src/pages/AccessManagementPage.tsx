@@ -60,6 +60,8 @@ type AccessSection = 'admins' | 'roles' | 'settings' | 'users';
 interface AccessManagementPageProps {
   activeModuleKey: string;
   onDashboardRefresh: () => void;
+  onOpenUserLedger: (user: AdminUserSummary) => void;
+  onOpenUserOrders: (user: AdminUserSummary) => void;
 }
 
 interface UserFormState {
@@ -176,6 +178,8 @@ const USER_SORT_DIRECTION_OPTIONS: Array<{
 export function AccessManagementPage({
   activeModuleKey,
   onDashboardRefresh,
+  onOpenUserLedger,
+  onOpenUserOrders,
 }: AccessManagementPageProps) {
   const [userPageNumber, setUserPageNumber] = useState(1);
   const [userPageSize, setUserPageSize] = useState(20);
@@ -402,6 +406,8 @@ export function AccessManagementPage({
             setUserForm(emptyUserForm());
             setUserSheetVisible(true);
           }}
+          onOpenLedger={onOpenUserLedger}
+          onOpenOrders={onOpenUserOrders}
           onSetForm={setUserForm}
           onPageChange={setUserPageNumber}
           onPageSizeChange={(pageSize) => {
@@ -505,6 +511,8 @@ function UserSection({
   onClose,
   onEdit,
   onNew,
+  onOpenLedger,
+  onOpenOrders,
   onPageChange,
   onPageSizeChange,
   onSetForm,
@@ -528,6 +536,8 @@ function UserSection({
   onClose: () => void;
   onEdit: (user: AdminUserSummary) => void;
   onNew: () => void;
+  onOpenLedger: (user: AdminUserSummary) => void;
+  onOpenOrders: (user: AdminUserSummary) => void;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
   onSetForm: Dispatch<SetStateAction<UserFormState>>;
@@ -686,6 +696,12 @@ function UserSection({
                     <div className="flex flex-wrap gap-2">
                       <Button size="small" onClick={() => onEdit(user)}>
                         编辑
+                      </Button>
+                      <Button size="small" onClick={() => onOpenOrders(user)}>
+                        注单
+                      </Button>
+                      <Button size="small" onClick={() => onOpenLedger(user)}>
+                        流水
                       </Button>
                       <Button
                         disabled={user.status === 'active'}

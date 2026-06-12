@@ -429,8 +429,8 @@ fn module_groups() -> Vec<ModuleGroup> {
                 ),
                 module(
                     "rebate",
-                    "返利配置",
-                    "立即返利与阶梯返利",
+                    "返利管理",
+                    "返利统计、明细与策略",
                     ModuleStatus::Scaffolded,
                 ),
             ],

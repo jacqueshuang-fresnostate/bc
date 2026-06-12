@@ -40,7 +40,7 @@ export function useOrders(query: OrderListQuery = {}) {
     return () => {
       controller.abort();
     };
-  }, [query.includeRobotData, query.page, query.pageSize, refreshToken]);
+  }, [query.includeRobotData, query.page, query.pageSize, query.userId, refreshToken]);
 
   const create = useCallback(
     async (payload: CreateOrderRequest) => {

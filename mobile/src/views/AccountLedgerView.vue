@@ -31,6 +31,7 @@ const loading = computed(() => Boolean(
 ))
 
 const kindTextMap: Record<LedgerEntryKind, string> = {
+  agentRebateWithdrawal: '返利提现',
   manualAdjustment: '财务调整',
   orderDebit: '投注扣款',
   orderRefund: '投注退款',
@@ -51,7 +52,7 @@ function kindText(kind: LedgerEntryKind) {
 function kindIcon(kind: LedgerEntryKind) {
   if (kind === 'rechargeCredit' || kind === 'rechargeRebateCredit') return 'output_circle'
   if (kind === 'payoutCredit' || kind === 'orderRefund' || kind === 'withdrawalReject' || kind === 'groupBuyRefund') return 'add_circle'
-  if (kind === 'orderDebit' || kind === 'withdrawalFreeze' || kind === 'withdrawalPayout' || kind === 'groupBuyDebit') return 'payments'
+  if (kind === 'agentRebateWithdrawal' || kind === 'orderDebit' || kind === 'withdrawalFreeze' || kind === 'withdrawalPayout' || kind === 'groupBuyDebit') return 'payments'
   return 'account_balance_wallet'
 }
 
