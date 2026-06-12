@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::play::PlayRuleCode;
 
-/// 平台开奖期号默认生成格式，等价于旧版按开奖时间生成 `yyyyMMddHHmmss`。
-pub const DEFAULT_ISSUE_FORMAT_PATTERN: &str = "{yyyy}{MM}{dd}{HH}{mm}{ss}";
+/// 平台开奖期号默认生成格式，按 `yyyyMMdd` 加 4 位每日递增序号生成。
+pub const DEFAULT_ISSUE_FORMAT_PATTERN: &str = "{date}{seq4}";
 
 /// 彩种分类配置，允许按代码和展示名进行自定义。
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

@@ -51,7 +51,7 @@ interface LotteryManagementPageProps {
 
 type ScheduleKind = 'periodic' | 'daily' | 'weekly';
 type LotterySaleFilter = 'all' | 'selling' | 'stopped';
-const DEFAULT_ISSUE_FORMAT = '{yyyy}{MM}{dd}{HH}{mm}{ss}';
+const DEFAULT_ISSUE_FORMAT = '{date}{seq4}';
 
 interface LotteryFormState {
   apiDrawDelaySeconds: string;
@@ -629,7 +629,7 @@ export function LotteryManagementPage({
                     }
                   />
                   <p className="text-xs text-slate-400">
-                    支持 {'{yyyy}'}、{'{yy}'}、{'{MM}'}、{'{dd}'}、{'{HH}'}、{'{mm}'}、{'{ss}'}、{'{date}'}、{'{time}'}、{'{timestamp}'}；留空使用默认格式。
+                    支持 {'{yyyy}'}、{'{yy}'}、{'{MM}'}、{'{dd}'}、{'{HH}'}、{'{mm}'}、{'{ss}'}、{'{date}'}、{'{time}'}、{'{timestamp}'}、{'{seq4}'}；留空默认生成如 202606130001 的日期加 4 位序号。
                   </p>
                 </Field>
               ) : null}

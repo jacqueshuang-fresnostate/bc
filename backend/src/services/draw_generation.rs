@@ -1,7 +1,7 @@
 //! 开奖期号生成与平台号码生成服务，实现规则化期号流转
 
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::{
     domain::{
@@ -162,7 +162,8 @@ async fn plan_draw_issue_generation(
         .filter(|existing| existing.lottery_id == lottery.id)
         .map(|existing| existing.issue.clone())
         .collect();
-    let mut issue_labeler = IssueLabeler::for_lottery(lottery, api_anchor.as_ref())?;
+    let mut issue_labeler =
+        IssueLabeler::for_lottery(lottery, &existing_issues, api_anchor.as_ref())?;
     let mut plans = Vec::with_capacity(payload.count as usize);
     let mut scheduled_at = next_scheduled_at(&lottery.schedule, baseline)?;
     let attempt_limit = payload.count.saturating_mul(MAX_UNIQUE_ATTEMPTS_PER_ISSUE);
@@ -514,7 +515,7 @@ fn format_timestamp(value: NaiveDateTime) -> String {
     value.format(TIMESTAMP_FORMAT).to_string()
 }
 
-/// 标准化平台期开奖期号格式，空值回退到默认时间戳格式。
+/// 标准化平台期开奖期号格式，空值回退到默认日期序号格式。
 pub(crate) fn normalize_issue_format_pattern(value: &str) -> ApiResult<String> {
     let pattern = value.trim();
     let pattern = if pattern.is_empty() {
@@ -535,7 +536,7 @@ fn validate_issue_format_pattern(pattern: &str) -> ApiResult<()> {
     }
     if !contains_supported_issue_token(pattern) {
         return Err(ApiError::BadRequest(
-            "期号生成格式至少需要包含一个时间变量".to_string(),
+            "期号生成格式至少需要包含一个日期或时间变量".to_string(),
         ));
     }
 
@@ -552,7 +553,7 @@ fn validate_issue_format_pattern(pattern: &str) -> ApiResult<()> {
         )
     })
     .ok_or_else(|| ApiError::Internal("期号格式示例时间无效".to_string()))?;
-    let rendered = render_issue_format(sample, pattern)?;
+    let rendered = render_issue_format(sample, pattern, Some(1))?;
     if rendered.is_empty() {
         return Err(ApiError::BadRequest(
             "期号生成格式不能生成空期号".to_string(),
@@ -575,7 +576,7 @@ fn validate_issue_format_pattern(pattern: &str) -> ApiResult<()> {
     Ok(())
 }
 
-/// 判断模板是否包含至少一个受支持的时间变量，避免常量期号造成重复冲突。
+/// 判断模板是否包含至少一个受支持的日期或时间变量，避免常量期号造成重复冲突。
 fn contains_supported_issue_token(pattern: &str) -> bool {
     [
         "{yyyy}",
@@ -594,12 +595,26 @@ fn contains_supported_issue_token(pattern: &str) -> bool {
 }
 
 /// 按平台配置模板生成期号。
-fn format_issue(value: NaiveDateTime, pattern: &str) -> ApiResult<String> {
-    render_issue_format(value, pattern)
+fn format_issue(
+    value: NaiveDateTime,
+    pattern: &str,
+    sequence_state: &mut IssueSequenceState,
+) -> ApiResult<String> {
+    let seq4 = if pattern.contains("{seq4}") {
+        Some(sequence_state.next_seq4(value.date())?)
+    } else {
+        None
+    };
+
+    render_issue_format(value, pattern, seq4)
 }
 
 /// 渲染期号模板变量，模板外的普通字母数字会原样保留。
-fn render_issue_format(value: NaiveDateTime, pattern: &str) -> ApiResult<String> {
+fn render_issue_format(
+    value: NaiveDateTime,
+    pattern: &str,
+    seq4: Option<u32>,
+) -> ApiResult<String> {
     let mut output = String::new();
     let mut cursor = 0;
 
@@ -612,7 +627,7 @@ fn render_issue_format(value: NaiveDateTime, pattern: &str) -> ApiResult<String>
                 ));
             };
             let token = &remaining[..=close_offset];
-            output.push_str(&issue_token_value(value, token)?);
+            output.push_str(&issue_token_value(value, token, seq4)?);
             cursor += close_offset + 1;
             continue;
         }
@@ -633,7 +648,7 @@ fn render_issue_format(value: NaiveDateTime, pattern: &str) -> ApiResult<String>
 }
 
 /// 返回单个期号模板变量的实际值。
-fn issue_token_value(value: NaiveDateTime, token: &str) -> ApiResult<String> {
+fn issue_token_value(value: NaiveDateTime, token: &str, seq4: Option<u32>) -> ApiResult<String> {
     let formatted = match token {
         "{yyyy}" => format!("{:04}", value.year()),
         "{yy}" => format!("{:02}", value.year().rem_euclid(100)),
@@ -645,6 +660,12 @@ fn issue_token_value(value: NaiveDateTime, token: &str) -> ApiResult<String> {
         "{date}" => value.format("%Y%m%d").to_string(),
         "{time}" => value.format("%H%M%S").to_string(),
         "{timestamp}" => value.format("%Y%m%d%H%M%S").to_string(),
+        "{seq4}" => format!(
+            "{:04}",
+            seq4.ok_or_else(|| {
+                ApiError::Internal("期号序号变量缺少递增状态".to_string())
+            })?
+        ),
         _ => {
             return Err(ApiError::BadRequest(format!(
                 "期号生成格式包含不支持的变量 {token}"
@@ -655,16 +676,84 @@ fn issue_token_value(value: NaiveDateTime, token: &str) -> ApiResult<String> {
     Ok(formatted)
 }
 
+/// 平台开奖每日序号状态，用于把 `{seq4}` 渲染成当天递增的 4 位数字。
+#[derive(Debug, Clone, Default)]
+struct IssueSequenceState {
+    next_by_date: BTreeMap<NaiveDate, u32>,
+}
+
+impl IssueSequenceState {
+    /// 根据已存在期号恢复当天下一个序号，避免调度重启后重复生成。
+    fn from_existing_issues(pattern: &str, issues: &[DrawIssue], lottery_id: &str) -> Self {
+        let mut state = Self::default();
+        if !pattern.contains("{seq4}") {
+            return state;
+        }
+
+        for issue in issues.iter().filter(|issue| issue.lottery_id == lottery_id) {
+            let Some((date, seq)) = parse_date_sequence_issue(&issue.issue) else {
+                continue;
+            };
+            let next_seq = seq.saturating_add(1);
+            let entry = state.next_by_date.entry(date).or_insert(1);
+            *entry = (*entry).max(next_seq);
+        }
+
+        state
+    }
+
+    /// 获取指定日期的下一个 4 位序号并推进状态。
+    fn next_seq4(&mut self, date: NaiveDate) -> ApiResult<u32> {
+        let next_seq = self.next_by_date.entry(date).or_insert(1);
+        if *next_seq > 9_999 {
+            return Err(ApiError::Conflict(
+                "当天平台期号序号已超过 9999".to_string(),
+            ));
+        }
+
+        let current = *next_seq;
+        *next_seq = current
+            .checked_add(1)
+            .ok_or_else(|| ApiError::Internal("平台期号序号超出范围".to_string()))?;
+        Ok(current)
+    }
+}
+
+/// 解析默认 `yyyyMMddNNNN` 期号，用于恢复 `{seq4}` 的每日递增位置。
+fn parse_date_sequence_issue(value: &str) -> Option<(NaiveDate, u32)> {
+    let value = value.trim();
+    if value.len() != 12 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    let date = NaiveDate::parse_from_str(&value[..8], "%Y%m%d").ok()?;
+    let seq = value[8..].parse::<u32>().ok()?;
+    if seq == 0 || seq > 9_999 {
+        return None;
+    }
+
+    Some((date, seq))
+}
+
 /// 期号标签生成器，负责按不同排期推进下一期号。
 enum IssueLabeler {
-    Pattern { pattern: String },
-    Sequential { next_issue: u64 },
+    Pattern {
+        pattern: String,
+        sequence_state: IssueSequenceState,
+    },
+    Sequential {
+        next_issue: u64,
+    },
 }
 
 /// 期号标签生成器，负责按不同排期推进下一期号。
 impl IssueLabeler {
     /// 根据彩种模式和 API 锚点选择期号生成方式。
-    fn for_lottery(lottery: &LotteryKind, api_anchor: Option<&ApiIssueAnchor>) -> ApiResult<Self> {
+    fn for_lottery(
+        lottery: &LotteryKind,
+        existing_issues: &[DrawIssue],
+        api_anchor: Option<&ApiIssueAnchor>,
+    ) -> ApiResult<Self> {
         if let Some(api_anchor) = api_anchor {
             return Self::for_api_anchor(Some(api_anchor));
         }
@@ -675,7 +764,13 @@ impl IssueLabeler {
             DEFAULT_ISSUE_FORMAT_PATTERN.to_string()
         };
 
-        Ok(Self::Pattern { pattern })
+        let sequence_state =
+            IssueSequenceState::from_existing_issues(&pattern, existing_issues, &lottery.id);
+
+        Ok(Self::Pattern {
+            pattern,
+            sequence_state,
+        })
     }
 
     /// 处理 for_api_anchor 的具体内部流程。
@@ -683,6 +778,7 @@ impl IssueLabeler {
         let Some(api_anchor) = api_anchor else {
             return Ok(Self::Pattern {
                 pattern: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+                sequence_state: IssueSequenceState::default(),
             });
         };
         let next_issue = api_anchor
@@ -696,7 +792,10 @@ impl IssueLabeler {
     /// 处理 next_issue 的具体内部流程。
     fn next_issue(&mut self, scheduled_at: NaiveDateTime) -> ApiResult<String> {
         match self {
-            Self::Pattern { pattern } => format_issue(scheduled_at, pattern),
+            Self::Pattern {
+                pattern,
+                sequence_state,
+            } => format_issue(scheduled_at, pattern, sequence_state),
             Self::Sequential { next_issue } => {
                 let issue = *next_issue;
                 *next_issue = (*next_issue)
@@ -789,7 +888,7 @@ mod tests {
             .await
             .expect("issue can be generated");
 
-        assert_eq!(issue.issue, "20260602200100");
+        assert_eq!(issue.issue, "202606020001");
         assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
         assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:59");
     }
@@ -825,8 +924,8 @@ mod tests {
             .await
             .expect("second issue can be generated");
 
-        assert_eq!(first.issue, "20260602200100");
-        assert_eq!(second.issue, "20260602200200");
+        assert_eq!(first.issue, "202606020001");
+        assert_eq!(second.issue, "202606020002");
     }
 
     #[tokio::test]
@@ -840,7 +939,7 @@ mod tests {
             .await
             .expect("issue can be generated");
 
-        assert_eq!(issue.issue, "20260603210015");
+        assert_eq!(issue.issue, "202606030001");
         assert_eq!(issue.sale_closed_at, "2026-06-03 21:00:14");
     }
 
@@ -1055,7 +1154,7 @@ mod tests {
             .await
             .expect("issue can be generated");
 
-        assert_eq!(issue.issue, "20260604210000");
+        assert_eq!(issue.issue, "202606040001");
         assert_eq!(issue.scheduled_at, "2026-06-04 21:00:00");
     }
 
@@ -1079,7 +1178,7 @@ mod tests {
                 .iter()
                 .map(|plan| plan.issue.as_str())
                 .collect::<Vec<_>>(),
-            vec!["20260602200100", "20260602200200", "20260602200300"]
+            vec!["202606020001", "202606020002", "202606020003"]
         );
         assert!(draws
             .list()
@@ -1105,7 +1204,7 @@ mod tests {
                 .iter()
                 .map(|issue| issue.issue.as_str())
                 .collect::<Vec<_>>(),
-            vec!["20260602200100", "20260602200200", "20260602200300"]
+            vec!["202606020001", "202606020002", "202606020003"]
         );
         assert_eq!(
             draws.list().await.expect("draw issues can be listed").len(),
@@ -1136,7 +1235,7 @@ mod tests {
             .await
             .expect("late scheduler can generate next cadence issue");
 
-        assert_eq!(issue.issue, "20260610201927");
+        assert_eq!(issue.issue, "202606100001");
         assert_eq!(issue.scheduled_at, "2026-06-10 20:19:27");
         assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:26");
     }
@@ -1161,7 +1260,7 @@ mod tests {
                 .iter()
                 .map(|issue| issue.issue.as_str())
                 .collect::<Vec<_>>(),
-            vec!["20260602200300", "20260602200400"]
+            vec!["202606020003", "202606020004"]
         );
     }
 
@@ -1185,7 +1284,7 @@ mod tests {
                 .iter()
                 .map(|plan| plan.issue.as_str())
                 .collect::<Vec<_>>(),
-            vec!["20260603210015", "20260604210015"]
+            vec!["202606030001", "202606040001"]
         );
     }
 
@@ -1210,7 +1309,7 @@ mod tests {
                 .iter()
                 .map(|plan| plan.issue.as_str())
                 .collect::<Vec<_>>(),
-            vec!["20260604210000", "20260609210000", "20260611210000"]
+            vec!["202606040001", "202606090001", "202606110001"]
         );
     }
 

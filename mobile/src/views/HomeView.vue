@@ -218,7 +218,7 @@ watch(heroBanners, (banners) => {
       </div>
     </header>
 
-    <main class="mobile-safe-main-top mx-auto max-w-2xl space-y-6 px-4 pb-28">
+    <main class="mobile-safe-main-top mx-auto max-w-2xl space-y-4 px-4 pb-28">
       <!-- 首页容器只负责品牌、数据加载与区块编排。 -->
       <section
         v-if="showBanner"
@@ -283,16 +283,16 @@ watch(heroBanners, (banners) => {
 
       <template v-else>
         <!-- 推荐区受后端 settings.featuredEnabled 控制，关闭时不展示高频卡片组。 -->
-        <section class="space-y-4" v-if="showFeatured">
-          <div class="featured-section-heading flex items-end justify-between rounded-xl bg-surface-container-lowest px-4 py-3 shadow-sm shadow-red-900/5">
+        <section class="space-y-3" v-if="showFeatured">
+          <div class="featured-section-heading flex items-end justify-between rounded-xl bg-surface-container-lowest px-3 py-2.5 shadow-sm shadow-red-900/5">
             <div class="min-w-0">
-              <p class="text-[10px] font-bold uppercase tracking-[0.18em] text-primary/70">HOT DRAW</p>
-              <h3 class="mt-0.5 truncate font-headline text-lg font-extrabold tracking-tight">{{ featuredTitle }}</h3>
-              <p class="mt-1 text-[11px] font-medium text-on-surface-variant">开奖后自动刷新下一期倒计时</p>
+              <p class="text-[9px] font-bold uppercase tracking-[0.16em] text-primary/70">HOT DRAW</p>
+              <h3 class="mt-0.5 truncate font-headline text-base font-extrabold tracking-tight">{{ featuredTitle }}</h3>
+              <p class="mt-0.5 text-[10px] font-medium text-on-surface-variant">开奖后自动刷新下一期倒计时</p>
             </div>
             <span class="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold text-primary">精选</span>
           </div>
-          <div class="grid grid-cols-2 gap-2.5">
+          <div class="grid grid-cols-2 gap-2">
             <HomeDrawCard
               v-if="featuredLottery"
               :lottery="featuredLottery"
@@ -316,10 +316,10 @@ watch(heroBanners, (banners) => {
         </section>
 
         <!-- 分组区受 settings.groupsEnabled 控制，后端会返回全部销售中彩种的分类分组。 -->
-        <section v-for="(group, groupIndex) in visibleGroups" :key="group.code || group.name || groupIndex" class="space-y-4">
+        <section v-for="(group, groupIndex) in visibleGroups" :key="group.code || group.name || groupIndex" class="space-y-2.5">
           <div class="flex items-end justify-between px-1">
             <h3
-              class="border-l-4 pl-3 font-headline text-lg font-extrabold tracking-tight"
+              class="border-l-4 pl-2.5 font-headline text-base font-extrabold tracking-tight"
               :class="groupIndex % 2 === 0 ? 'border-secondary' : 'border-tertiary'"
             >
               {{ group.name || '彩种分组' }}

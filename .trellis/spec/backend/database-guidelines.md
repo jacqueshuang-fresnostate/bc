@@ -42,7 +42,7 @@ YYYYMMDDHHMMSS_describe_change.sql
 
 ## 彩种表约定
 
-- `lotteries.issue_format` 保存平台开奖期号生成格式，默认 `{yyyy}{MM}{dd}{HH}{mm}{ss}`。
+- `lotteries.issue_format` 保存平台开奖期号生成格式，默认 `{date}{seq4}`，即 `yyyyMMdd` 加 4 位每日递增序号。
 - `issue_format` 只控制 `draw_mode=platform` 的本地期号渲染；API 彩种期号仍来自开奖源锚点顺延。
 - 新增或修改彩种字段时必须同步更新迁移字段注释，避免数据库结构说明落后于后台能力。
 
