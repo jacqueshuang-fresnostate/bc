@@ -49,6 +49,12 @@ const ROBOT_FILL_STAGE_THREE_TARGET_PERCENT: i64 = 80;
 const ROBOT_FILL_FINAL_TARGET_PERCENT: i64 = 100;
 const ROBOT_FILL_STAGE_COUNT: i64 = 5;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RobotFillPolicy {
+    Rhythm,
+    GuaranteedUserPlan,
+}
+
 /// 判断用户 ID 是否为系统合买机器人账户。
 pub fn is_group_buy_robot_user_id(user_id: &str) -> bool {
     user_id.trim() == ROBOT_GROUP_BUY_USER_ID
@@ -168,6 +174,17 @@ async fn execute_lottery_robot(
     robot_user: &UserSummary,
     now_at: NaiveDateTime,
 ) -> ApiResult<()> {
+    if is_issue_sale_closed(issue, now_at)? {
+        push_skipped(
+            run,
+            robot,
+            &lottery.id,
+            Some(issue.issue.clone()),
+            "已到封盘时间，机器人不再发起自己的合买计划",
+        );
+        return Ok(());
+    }
+
     let plan_id = robot_plan_id(robot, lottery, issue);
     let mut plan = match group_buys.get(&plan_id).await {
         Ok(existing) => existing,
@@ -218,8 +235,18 @@ async fn execute_lottery_robot(
     match plan.status {
         GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open => {
             fill_robot_plan(
-                run, robot, lottery, issue, &mut plan, draws, orders, finance, group_buys, users,
+                run,
+                robot,
+                lottery,
+                issue,
+                &mut plan,
+                draws,
+                orders,
+                finance,
+                group_buys,
+                users,
                 now_at,
+                RobotFillPolicy::Rhythm,
             )
             .await?;
         }
@@ -265,6 +292,7 @@ async fn fill_existing_group_buy_plans(
                 && plan.issue == issue.issue
                 && plan.id != robot_plan_id
                 && !plan.id.starts_with("G-ROBOT-")
+                && !is_group_buy_robot_user_id(&plan.initiator_user_id)
                 && matches!(
                     plan.status,
                     GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open
@@ -276,8 +304,18 @@ async fn fill_existing_group_buy_plans(
     for mut plan in candidate_plans {
         let plan_id = plan.id.clone();
         if let Err(error) = fill_robot_plan(
-            run, robot, lottery, issue, &mut plan, draws, orders, finance, group_buys, users,
+            run,
+            robot,
+            lottery,
+            issue,
+            &mut plan,
+            draws,
+            orders,
+            finance,
+            group_buys,
+            users,
             now_at,
+            RobotFillPolicy::GuaranteedUserPlan,
         )
         .await
         {
@@ -307,8 +345,9 @@ async fn fill_robot_plan(
     group_buys: &GroupBuyRepository,
     users: &[UserSummary],
     now_at: NaiveDateTime,
+    policy: RobotFillPolicy,
 ) -> ApiResult<()> {
-    let decision = match robot_fill_decision(plan, issue, now_at)? {
+    let decision = match robot_fill_decision(plan, issue, now_at, policy)? {
         RobotFillDecision::Skip(reason) => {
             push_skipped(run, robot, &lottery.id, Some(issue.issue.clone()), reason);
             return Ok(());
@@ -569,7 +608,7 @@ fn robot_group_buy_amounts(lottery: &LotteryKind, stake_count: i64) -> ApiResult
     ))
 }
 
-/// 选择当前仍可销售的最近一期。
+/// 选择当前仍可由机器人处理的最近一期。
 async fn current_open_issue(
     draws: &DrawRepository,
     lottery: &LotteryKind,
@@ -579,9 +618,7 @@ async fn current_open_issue(
         .list_by_lottery_id(&lottery.id)
         .await?
         .into_iter()
-        .filter(|issue| {
-            issue.status == DrawIssueStatus::Open && issue.sale_closed_at.as_str() > now
-        })
+        .filter(|issue| issue.status == DrawIssueStatus::Open && issue.scheduled_at.as_str() >= now)
         .min_by(|left, right| {
             left.sale_closed_at
                 .cmp(&right.sale_closed_at)
@@ -848,6 +885,7 @@ fn robot_fill_decision(
     plan: &GroupBuyPlan,
     issue: &DrawIssue,
     now_at: NaiveDateTime,
+    policy: RobotFillPolicy,
 ) -> ApiResult<RobotFillDecision> {
     let remaining_amount_minor = plan
         .total_amount_minor
@@ -858,8 +896,15 @@ fn robot_fill_decision(
     }
 
     let sale_closed_at = parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?;
+    let scheduled_at = parse_robot_timestamp(&issue.scheduled_at, "开奖时间")?;
     let seconds_until_sale_close = (sale_closed_at - now_at).num_seconds();
     if seconds_until_sale_close <= 0 {
+        if policy == RobotFillPolicy::GuaranteedUserPlan && now_at <= scheduled_at {
+            return Ok(RobotFillDecision::Add(RobotFillAmount {
+                amount_minor: remaining_amount_minor,
+                note: "合买机器人封盘兜底补满用户合买".to_string(),
+            }));
+        }
         return Ok(RobotFillDecision::Skip(
             "已到封盘时间，机器人不再补单".to_string(),
         ));
@@ -881,8 +926,14 @@ fn robot_fill_decision(
     let mut amount_minor = target_amount
         .checked_sub(plan.filled_amount_minor)
         .ok_or_else(|| ApiError::BadRequest("机器人补单金额无效".to_string()))?;
-    amount_minor = amount_minor.min(remaining_amount_minor);
-    amount_minor = round_down_to_multiple(amount_minor, plan.min_share_amount_minor.max(1));
+    amount_minor = if target_percent == ROBOT_FILL_FINAL_TARGET_PERCENT {
+        remaining_amount_minor
+    } else {
+        round_down_to_multiple(
+            amount_minor.min(remaining_amount_minor),
+            plan.min_share_amount_minor.max(1),
+        )
+    };
     if amount_minor <= 0 {
         return Ok(RobotFillDecision::Skip(
             "本轮机器人补单金额小于最小份额，等待下一阶段".to_string(),
@@ -893,7 +944,7 @@ fn robot_fill_decision(
         .participant_min_amount_minor
         .max(plan.min_share_amount_minor)
         .max(1);
-    if amount_minor < participant_min {
+    if amount_minor < participant_min && amount_minor != remaining_amount_minor {
         return Ok(RobotFillDecision::Skip(format!(
             "本轮机器人补单金额低于参与最低金额 {participant_min}，等待下一阶段"
         )));
@@ -915,6 +966,11 @@ fn robot_fill_decision(
         amount_minor,
         note: format!("合买机器人{stage_label}节奏补单"),
     }))
+}
+
+/// 判断当前执行时间是否已经到达期号封盘点。
+fn is_issue_sale_closed(issue: &DrawIssue, now_at: NaiveDateTime) -> ApiResult<bool> {
+    Ok(now_at >= parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?)
 }
 
 /// 根据距离封盘秒数返回机器人当前阶段目标。

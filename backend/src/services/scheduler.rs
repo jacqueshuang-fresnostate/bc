@@ -694,6 +694,29 @@ pub fn spawn_draw_scheduler(
             next_run_at += interval;
             let run_started = Instant::now();
 
+            let pre_close_robot_run = match run_group_buy_robots(
+                &robots,
+                &draws,
+                &lotteries,
+                &orders,
+                &finance,
+                &group_buys,
+                &access,
+                now.clone(),
+            )
+            .await
+            {
+                Ok(run) => run,
+                Err(error) => {
+                    tracing::error!(
+                        now = %now,
+                        error = %error.log_message(),
+                        "开奖调度器封盘前合买机器人兜底失败"
+                    );
+                    empty_group_buy_robot_run(now.clone())
+                }
+            };
+
             match run_draw_scheduler_opening_once_with_realtime(
                 &draws,
                 &lotteries,
@@ -703,7 +726,9 @@ pub fn spawn_draw_scheduler(
             )
             .await
             {
-                Ok(run) => {
+                Ok(mut run) => {
+                    run.robot_run = pre_close_robot_run;
+                    publish_scheduler_completion_events(&realtime, &finance, &run).await;
                     let run_elapsed_ms = run_started.elapsed().as_millis();
                     let finished_at = current_scheduler_timestamp();
                     if let Err(error) = scheduler
@@ -722,6 +747,7 @@ pub fn spawn_draw_scheduler(
                         "本轮耗时毫秒" = run_elapsed_ms,
                         "封盘期数" = run.automation_run.closed_issues.len(),
                         "新增期号" = run.generated_issues.len(),
+                        "封盘前机器人满单" = run.robot_run.filled_plans.len(),
                         "开奖调度器开盘阶段执行完成"
                     );
 
@@ -903,7 +929,18 @@ async fn run_draw_scheduler_once_with_realtime(
     now: String,
     realtime: Option<&RealtimeHub>,
 ) -> ApiResult<DrawSchedulerRun> {
-    let opening_run = run_draw_scheduler_opening_once_with_realtime(
+    let pre_close_robot_run = run_group_buy_robots(
+        robots,
+        draws,
+        lotteries,
+        orders,
+        finance,
+        group_buys,
+        access,
+        now.clone(),
+    )
+    .await?;
+    let mut opening_run = run_draw_scheduler_opening_once_with_realtime(
         draws,
         lotteries,
         config,
@@ -911,6 +948,10 @@ async fn run_draw_scheduler_once_with_realtime(
         realtime,
     )
     .await?;
+    opening_run.robot_run = pre_close_robot_run;
+    if let Some(realtime) = realtime {
+        publish_scheduler_completion_events(realtime, finance, &opening_run).await;
+    }
     let slow_run = run_draw_scheduler_slow_once_with_realtime(
         draws, lotteries, orders, finance, group_buys, robots, access, config, now, realtime,
     )
@@ -923,7 +964,7 @@ async fn run_draw_scheduler_once_with_realtime(
             slow_run.automation_run,
         ),
         generated_issues: opening_run.generated_issues,
-        robot_run: slow_run.robot_run,
+        robot_run: merge_group_buy_robot_runs(opening_run.robot_run, slow_run.robot_run),
         skipped_lotteries: opening_run.skipped_lotteries,
     })
 }
@@ -1016,6 +1057,20 @@ async fn run_draw_scheduler_slow_once_with_realtime(
         ));
     }
 
+    let robot_phase_started = Instant::now();
+    let robot_run = run_group_buy_robots(
+        robots,
+        draws,
+        lotteries,
+        orders,
+        finance,
+        group_buys,
+        access,
+        now.clone(),
+    )
+    .await?;
+    let robot_phase_ms = robot_phase_started.elapsed().as_millis();
+
     let refund_phase_started = Instant::now();
     let refund_run = refund_closed_unfilled_group_buys(
         draws,
@@ -1038,20 +1093,6 @@ async fn run_draw_scheduler_slow_once_with_realtime(
     )
     .await?;
     let draw_phase_ms = draw_phase_started.elapsed().as_millis();
-
-    let robot_phase_started = Instant::now();
-    let robot_run = run_group_buy_robots(
-        robots,
-        draws,
-        lotteries,
-        orders,
-        finance,
-        group_buys,
-        access,
-        now.clone(),
-    )
-    .await?;
-    let robot_phase_ms = robot_phase_started.elapsed().as_millis();
 
     let automation_run = merge_draw_automation_runs(refund_run, draw_run);
     let run = DrawSchedulerRun {
@@ -1091,6 +1132,19 @@ fn empty_group_buy_robot_run(now: String) -> GroupBuyRobotRun {
         ledger_entries: Vec::new(),
         skipped_items: Vec::new(),
     }
+}
+
+/// 合并封盘前兜底和慢阶段机器人结果，方便后台看到完整机器人执行明细。
+fn merge_group_buy_robot_runs(
+    mut first: GroupBuyRobotRun,
+    second: GroupBuyRobotRun,
+) -> GroupBuyRobotRun {
+    first.created_plans.extend(second.created_plans);
+    first.filled_plans.extend(second.filled_plans);
+    first.created_orders.extend(second.created_orders);
+    first.ledger_entries.extend(second.ledger_entries);
+    first.skipped_items.extend(second.skipped_items);
+    first
 }
 
 async fn ensure_non_api_future_draw_issues(
@@ -1285,6 +1339,7 @@ mod tests {
     use crate::{
         domain::{
             draw::{CreateDrawIssueRequest, DrawIssueStatus},
+            group_buy::{CreateGroupBuyPlanRequest, GroupBuyPlanStatus},
             lottery::DrawMode,
         },
         services::{
@@ -1509,6 +1564,92 @@ mod tests {
             .any(|issue| issue.lottery_id == "ssc60"
                 && issue.issue == "20260602200100"
                 && issue.draw_mode == DrawMode::Platform));
+    }
+
+    #[tokio::test]
+    async fn scheduler_fills_user_group_buy_before_closing_issue() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "ssc60").await;
+        let mut lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.group_buy.enabled = true;
+        lotteries
+            .update("ssc60", lottery.clone())
+            .await
+            .expect("lottery group buy can be enabled");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
+        let users = access.snapshot().await.expect("access can load").users;
+        let config = enabled_config(1);
+        let issue = draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "GROUPBUY20260602200000".to_string(),
+                    scheduled_at: "2026-06-02 20:00:00".to_string(),
+                    sale_closed_at: "2026-06-02 19:59:30".to_string(),
+                },
+            )
+            .await
+            .expect("draw issue can be created");
+        let plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-USER-SCHEDULER-FILL".to_string(),
+                    lottery_id: lottery.id.clone(),
+                    issue: issue.issue.clone(),
+                    rule_code: "fiveFrontDirect".to_string(),
+                    title: "用户发起封盘兜底合买".to_string(),
+                    numbers: "1|2|3".to_string(),
+                    initiator_user_id: "U10001".to_string(),
+                    total_amount_minor: 5_000,
+                    initiator_amount_minor: 1_000,
+                    note: "调度器封盘前兜底测试".to_string(),
+                },
+                std::slice::from_ref(&lottery),
+                &users,
+            )
+            .await
+            .expect("user group buy plan can be created");
+        finance
+            .debit_group_buy(
+                &plan.initiator_user_id,
+                plan.filled_amount_minor,
+                "G-USER-SCHEDULER-FILL-P001",
+                &plan.id,
+            )
+            .await
+            .expect("initiator group buy debit can be written");
+
+        let run = run_draw_scheduler_once(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &robots,
+            &access,
+            &config,
+            "2026-06-02 19:59:30".to_string(),
+        )
+        .await
+        .expect("scheduler can fill user group buy before close");
+        let stored_issue = draws.get(&issue.id).await.expect("issue exists");
+        let stored_plan = group_buys.get(&plan.id).await.expect("plan exists");
+
+        assert_eq!(stored_issue.status, DrawIssueStatus::Closed);
+        assert_eq!(stored_plan.status, GroupBuyPlanStatus::Filled);
+        assert!(stored_plan.order_id.is_some());
+        assert!(run
+            .robot_run
+            .filled_plans
+            .iter()
+            .any(|filled| filled.id == plan.id && filled.order_id.is_some()));
+        assert!(run.automation_run.ledger_entries.is_empty());
     }
 
     #[tokio::test]

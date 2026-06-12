@@ -78,8 +78,8 @@ function statusClass() {
   <div v-if="variant === 'featured'" class="featured-lottery-card col-span-2 flex flex-col gap-3 overflow-hidden rounded-xl border border-primary/10 bg-surface-container-lowest p-4 shadow-sm shadow-red-900/5">
     <div class="flex items-start justify-between gap-3">
       <div class="flex min-w-0 items-center gap-3">
-        <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-12 w-12 flex-shrink-0 rounded-xl object-cover shadow-sm" @error="logoLoadFailed = true" />
-        <div v-else class="lottery-card-icon-fallback flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">★</div>
+        <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-9 w-9 flex-shrink-0 rounded-lg object-cover shadow-sm" @error="logoLoadFailed = true" />
+        <div v-else class="lottery-card-icon-fallback flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">★</div>
         <div class="min-w-0">
           <h4 class="truncate font-headline text-lg font-extrabold leading-tight">{{ lottery.name }}</h4>
           <div class="mt-1 flex flex-wrap items-center gap-1.5">
@@ -111,8 +111,8 @@ function statusClass() {
   <button v-else-if="variant === 'secondary'" class="secondary-lottery-card flex min-h-[7.75rem] w-full flex-col justify-between rounded-xl border border-primary/5 bg-surface-container-lowest p-3 text-left shadow-sm shadow-red-900/5 active:scale-[0.99]" @click="emit('open', lottery)">
     <div class="flex items-start justify-between gap-2">
       <div class="flex min-w-0 items-start gap-2">
-        <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-8 w-8 flex-shrink-0 rounded-xl object-cover" @error="logoLoadFailed = true" />
-        <div v-else class="lottery-card-icon-fallback flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-primary/10 text-xs text-primary">★</div>
+        <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-6 w-6 flex-shrink-0 rounded-md object-cover" @error="logoLoadFailed = true" />
+        <div v-else class="lottery-card-icon-fallback flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-primary/10 text-xs text-primary">★</div>
         <div class="min-w-0">
           <span class="block truncate text-sm font-extrabold leading-tight">{{ lottery.name }}</span>
           <span :class="['lottery-state-pill mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
@@ -287,11 +287,15 @@ function statusClass() {
 }
 
 .group-lottery-card__issue {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
   color: rgba(73, 61, 68, 0.68);
-  font-size: 0.62rem;
+  font-size: 0.56rem;
   font-weight: 800;
   line-height: 1.25;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .group-lottery-card__digits {
@@ -327,9 +331,9 @@ function statusClass() {
 
 .group-lottery-card__logo-shell {
   display: flex;
-  width: 3.1rem;
-  height: 3.1rem;
-  flex: 0 0 3.1rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 2.25rem;
   align-items: center;
   justify-content: center;
   overflow: hidden;
@@ -373,10 +377,10 @@ function statusClass() {
   }
 
   .group-lottery-card__logo-shell {
-    width: 2.75rem;
-    height: 2.75rem;
-    flex-basis: 2.75rem;
-    border-radius: 0.85rem;
+    width: 2rem;
+    height: 2rem;
+    flex-basis: 2rem;
+    border-radius: 0.7rem;
   }
 
   .group-lottery-card__copy h5 {

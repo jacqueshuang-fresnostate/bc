@@ -1526,7 +1526,7 @@ fn user_group_buy_initiator_avatar_url(plan: &GroupBuyPlan, users: &[UserSummary
         .unwrap_or_default()
 }
 
-/// 对合买大厅发起人名称做隐私脱敏，保留首尾并用星号替代中间内容。
+/// 对合买大厅发起人名称做隐私脱敏，保留前四个字符并用星号替代剩余内容。
 fn mask_group_buy_initiator_display(value: &str) -> String {
     let value = value.trim();
     if value.is_empty() {
@@ -1534,17 +1534,12 @@ fn mask_group_buy_initiator_display(value: &str) -> String {
     }
 
     let chars: Vec<char> = value.chars().collect();
-    match chars.len() {
-        0 => "会员".to_string(),
-        1 => chars[0].to_string(),
-        2 => format!("{}*{}", chars[0], chars[1]),
-        len => format!(
-            "{}{}{}",
-            chars[0],
-            "*".repeat(len.saturating_sub(2)),
-            chars[len - 1]
-        ),
+    if chars.len() <= 4 {
+        return chars.into_iter().collect();
     }
+
+    let visible_prefix = chars.iter().take(4).collect::<String>();
+    format!("{}{}", visible_prefix, "*".repeat(chars.len() - 4))
 }
 
 /// 判断合买计划是否由机器人账户发起。
@@ -2380,7 +2375,7 @@ mod tests {
 
         let view = user_group_buy_plan(&plan, &lotteries, None, &[]).expect("normal plan can map");
 
-        assert_eq!(view.initiator_display, "r**********r");
+        assert_eq!(view.initiator_display, "regu********");
         assert_eq!(view.title, "用户发起合买");
     }
 
@@ -2418,8 +2413,14 @@ mod tests {
     #[test]
     /// 验证合买发起人脱敏支持中文、短昵称和空昵称。
     fn mask_group_buy_initiator_display_handles_edge_cases() {
-        assert_eq!(mask_group_buy_initiator_display(" 张三 "), "张*三");
-        assert_eq!(mask_group_buy_initiator_display("A9"), "A*9");
+        assert_eq!(
+            mask_group_buy_initiator_display(" 爱情819281 "),
+            "爱情81****"
+        );
+        assert_eq!(mask_group_buy_initiator_display("张三"), "张三");
+        assert_eq!(mask_group_buy_initiator_display("A9"), "A9");
+        assert_eq!(mask_group_buy_initiator_display("测试用户"), "测试用户");
+        assert_eq!(mask_group_buy_initiator_display("测试用户1"), "测试用户*");
         assert_eq!(mask_group_buy_initiator_display("单"), "单");
         assert_eq!(mask_group_buy_initiator_display(""), "会员");
     }
