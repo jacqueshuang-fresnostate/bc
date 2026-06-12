@@ -47,19 +47,14 @@ export function useHomepageDrawUpdates(homepage: Ref<HomepageResponse | null>, n
   }
 
   function countdownText(lottery?: LotteryCard) {
-    // 倒计时先算封盘，再算开奖；开奖时间已过时由首页触发静默刷新，避免长期停在“开奖中”。
+    // 首页卡片展示距官方开奖时间的倒计时；封盘禁投仍由下注页和后端期号状态判断。
     if (!lottery) return '--:--'
     if (lottery.status === 'drawn') return '已开奖'
     if (lottery.status === 'closed') return '已关闭'
 
-    const saleStopTime = parseChinaDateTime(lottery.saleStopTime)
-    if (Number.isFinite(saleStopTime) && saleStopTime > nowMs.value) {
-      return formatCountdown(Math.floor((saleStopTime - nowMs.value) / 1000))
-    }
-
     const drawTime = parseChinaDateTime(lottery.nextDrawTime)
     if (Number.isFinite(drawTime) && drawTime > nowMs.value) {
-      return `封盘 ${formatCountdown(Math.floor((drawTime - nowMs.value) / 1000))}`
+      return `开奖 ${formatCountdown(Math.floor((drawTime - nowMs.value) / 1000))}`
     }
 
     if (Number.isFinite(drawTime)) {
@@ -85,18 +80,24 @@ export function useHomepageDrawUpdates(homepage: Ref<HomepageResponse | null>, n
 
   function nextDrawTime(lottery: LotteryCard) {
     if (!lottery.drawInterval || lottery.drawInterval <= 0) return null
-    return Date.now() + lottery.drawInterval * 1000
+    return nowMs.value + lottery.drawInterval * 1000
+  }
+
+  function currentFutureDrawTime(lottery: LotteryCard) {
+    const drawTime = parseChinaDateTime(lottery.nextDrawTime)
+    return Number.isFinite(drawTime) && drawTime > nowMs.value ? lottery.nextDrawTime : null
   }
 
   function updateLotteryFromDrawResult(lottery: LotteryCard, msg: LotteryDrawMessage) {
-    // 只更新推送命中的彩种：写入最新开奖号、推进下一期号，并用 draw_interval 估算下一次倒计时。
+    // 只更新推送命中的彩种：写入最新开奖号、推进下一期号；已有开盘事件给出的官方开奖时间优先保留。
     const lotteryCode = msg?.lotteryCode || msg?.lottery_code
     if (lottery.code !== lotteryCode) return lottery
+    const fallbackNextDrawTime = nextDrawTime(lottery)
     return {
       ...lottery,
       issue: nextIssue(msg?.issue || lottery.issue),
       status: 'selling',
-      nextDrawTime: nextDrawTime(lottery),
+      nextDrawTime: currentFutureDrawTime(lottery) || fallbackNextDrawTime,
       drawTimeText: lottery.drawTimeText,
       latestResult: parseDrawResult(msg.result),
     }

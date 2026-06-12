@@ -3154,3 +3154,10 @@
 - 解决问题：原规则保留首尾字符，中间打星；现在需要类似“爱情819281”展示为“爱情81****”，即保留前 4 个字符、后续全部替换为星号。
 - 实施内容：后端 `mask_group_buy_initiator_display` 改为前 4 字符保留规则；长度不超过 4 的昵称保持原样，空昵称仍显示“会员”；同步更新普通用户合买和边界测试。
 - 验证结果：后端 `cargo fmt --check`、`cargo check`、`cargo test group_buy_initiator -- --nocapture`、`cargo test user_group_buy_plan_masks_normal_initiator_display -- --nocapture`，手机端 `pnpm build`，以及 `git diff --check` 均通过。
+
+## 2026-06-13 01:45 HKT 手机端首页倒计时改为距开奖
+
+- 完成任务：把手机端首页彩种卡片主倒计时从“距封盘”调整为“距开奖”。
+- 解决问题：澳洲幸运5等 5 分钟 API 彩种在开奖结果延迟返回后，首页按封盘时间显示会看起来只剩 4:30-4:40，容易误解为周期被缩短。
+- 实施内容：首页倒计时优先使用 `nextDrawTime`，展示标签为“开奖”；`draw_result` 推送不再覆盖已有 `issue_opened` 写入的下一期官方开奖时间；同步更新前端规范和架构说明。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。

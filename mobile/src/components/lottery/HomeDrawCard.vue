@@ -41,9 +41,11 @@ const digitSum = computed(() => {
 const countdownDisplay = computed(() => {
   // 倒计时文案由首页组合函数统一计算，这里只负责拆成适合卡片展示的短标签和值。
   const rawText = String(props.countdownText(props.lottery) || '--:--').trim()
+  const drawMatch = rawText.match(/^开奖\s+(.+)$/)
+  if (drawMatch) return { label: '开奖', value: drawMatch[1] }
   const sealedMatch = rawText.match(/^封盘\s+(.+)$/)
   if (sealedMatch) return { label: '封盘', value: sealedMatch[1] }
-  if (/^\d{2}:\d{2}(:\d{2})?$/.test(rawText)) return { label: '计时', value: rawText }
+  if (/^\d{2}:\d{2}(:\d{2})?$/.test(rawText)) return { label: '开奖', value: rawText }
   return { label: '状态', value: rawText || '--:--' }
 })
 
