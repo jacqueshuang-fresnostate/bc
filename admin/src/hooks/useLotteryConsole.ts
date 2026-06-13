@@ -43,7 +43,7 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
       fetchDrawIssues(controller.signal),
       fetchLotteryDrawControls(controller.signal),
       fetchDrawSchedulerStatus(controller.signal),
-      fetchOrders(controller.signal),
+      fetchOrders(controller.signal, { includeRobotData: true }),
     ])
       .then(([lotteryList, drawIssuePage, controls, scheduler, orderPage]) => {
         setLotteries(lotteryList);

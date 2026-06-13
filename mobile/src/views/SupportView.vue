@@ -202,7 +202,7 @@ async function sendImageMessage(file: File) {
   try {
     const { imageUrl } = await uploadSupportImage(file)
     const updatedConversation = await replySupportConversation(currentConversation.value.id, {
-      content: file.name || '图片',
+      content: '',
       imageUrl,
       messageType: 'image',
     })
@@ -449,7 +449,7 @@ onBeforeUnmount(() => {
             <a :href="item.imageUrl" target="_blank" rel="noreferrer">
               <img class="support-chat__image" :src="item.imageUrl" alt="客服图片消息">
             </a>
-            <p v-if="item.content" class="support-chat__file-name">{{ item.content }}</p>
+            <p v-if="item.author !== 'user' && item.content" class="support-chat__image-caption">{{ item.content }}</p>
           </div>
           <div v-else class="support-chat__content">{{ item.content }}</div>
         </div>
@@ -873,7 +873,7 @@ onBeforeUnmount(() => {
   outline-offset: 2px;
 }
 
-.support-chat__file-name {
+.support-chat__image-caption {
   margin-top: 6px;
   font-size: 12px;
   opacity: 0.78;

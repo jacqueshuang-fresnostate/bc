@@ -33,7 +33,7 @@ import type {
 } from '../types/draws';
 import type { OrderDetail, OrderStatus } from '../types/orders';
 import type { DrawSchedulerStatus } from '../types/scheduler';
-import { formatMoney } from '../utils/format';
+import { formatDateTime, formatMoney } from '../utils/format';
 import {
   drawNumberInputMeta,
   lotteryNumberTypeText as numberTypeText,
@@ -97,7 +97,8 @@ export function LotteryConsolePage({
   } = useLotteryConsole();
   const [now, setNow] = useState(() => new Date());
   const [statusFilter, setStatusFilter] =
-    useState<LotteryConsoleStatusFilter>('all');
+    useState<LotteryConsoleStatusFilter>('saleEnabled');
+  const [nameSearch, setNameSearch] = useState('');
   const [selectedControlItem, setSelectedControlItem] =
     useState<LotteryConsoleItem | null>(null);
   const [controlForm, setControlForm] = useState<LotteryDrawControlFormState>(
@@ -134,16 +135,20 @@ export function LotteryConsolePage({
       ),
     [drawControlByLotteryId, issues, lotteries, orders],
   );
+  const searchMatchedItems = useMemo(
+    () => items.filter((item) => lotteryConsoleItemMatchesName(item, nameSearch)),
+    [items, nameSearch],
+  );
   const statusFilterOptions = useMemo(
-    () => lotteryConsoleStatusFilterOptions(items, now),
-    [items, now],
+    () => lotteryConsoleStatusFilterOptions(searchMatchedItems, now),
+    [searchMatchedItems, now],
   );
   const filteredItems = useMemo(
     () =>
-      items.filter((item) =>
+      searchMatchedItems.filter((item) =>
         lotteryConsoleItemMatchesFilter(item, statusFilter, now),
       ),
-    [items, statusFilter, now],
+    [searchMatchedItems, statusFilter, now],
   );
 
   const metrics = useMemo(() => {
@@ -303,9 +308,11 @@ export function LotteryConsolePage({
       <LotteryConsoleStatusFilterBar
         active={statusFilter}
         filteredCount={filteredItems.length}
+        nameSearch={nameSearch}
         options={statusFilterOptions}
         totalCount={items.length}
         onChange={setStatusFilter}
+        onNameSearchChange={setNameSearch}
       />
 
       {filteredItems.length > 0 ? (
@@ -347,13 +354,17 @@ export function LotteryConsolePage({
 function LotteryConsoleStatusFilterBar({
   active,
   filteredCount,
+  nameSearch,
   onChange,
+  onNameSearchChange,
   options,
   totalCount,
 }: {
   active: LotteryConsoleStatusFilter;
   filteredCount: number;
+  nameSearch: string;
   onChange: (filter: LotteryConsoleStatusFilter) => void;
+  onNameSearchChange: (keyword: string) => void;
   options: LotteryConsoleStatusFilterOption[];
   totalCount: number;
 }) {
@@ -366,18 +377,26 @@ function LotteryConsoleStatusFilterBar({
             当前显示 {filteredCount} / {totalCount} 个彩种
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {options.map((option) => (
-            <Button
-              key={option.key}
-              size="small"
-              theme={active === option.key ? 'solid' : 'light'}
-              onClick={() => onChange(option.key)}
-            >
-              {option.label}
-              <span className="ml-1 font-mono text-xs opacity-75">{option.count}</span>
-            </Button>
-          ))}
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+          <Input
+            className="form-input min-w-[220px]"
+            placeholder="搜索彩种名称"
+            value={nameSearch}
+            onChange={onNameSearchChange}
+          />
+          <div className="flex flex-wrap gap-2">
+            {options.map((option) => (
+              <Button
+                key={option.key}
+                size="small"
+                theme={active === option.key ? 'solid' : 'light'}
+                onClick={() => onChange(option.key)}
+              >
+                {option.label}
+                <span className="ml-1 font-mono text-xs opacity-75">{option.count}</span>
+              </Button>
+            ))}
+          </div>
         </div>
       </div>
     </Card>
@@ -756,11 +775,13 @@ function DrawControlSideSheet({
             </div>
             {visibleOrders.length > 0 ? (
               <div className="mt-3 max-h-[320px] overflow-auto">
-                <table className="w-full min-w-[1040px] text-left text-xs">
+                <table className="w-full min-w-[1240px] text-left text-xs">
                   <thead className="border-b border-line text-slate-500">
                     <tr>
                       <th className="py-2 pr-3 font-medium">订单</th>
                       <th className="py-2 pr-3 font-medium">用户</th>
+                      <th className="py-2 pr-3 font-medium">来源</th>
+                      <th className="py-2 pr-3 font-medium">下单时间</th>
                       <th className="py-2 pr-3 font-medium">期号</th>
                       <th className="py-2 pr-3 font-medium">玩法</th>
                       <th className="py-2 pr-3 font-medium">下注信息</th>
@@ -782,6 +803,14 @@ function DrawControlSideSheet({
                           <div className="mt-1 text-[11px] text-slate-400">
                             {order.userId}
                           </div>
+                        </td>
+                        <td className="py-2 pr-3">
+                          <Tag color={orderSourceColor(order.orderSource)}>
+                            {orderSourceText(order.orderSource)}
+                          </Tag>
+                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap text-slate-600">
+                          {formatDateTime(order.createdAt, order.createdAt || '-')}
                         </td>
                         <td className="py-2 pr-3 text-slate-600">{order.issue}</td>
                         <td className="py-2 pr-3 text-slate-600">{order.ruleCode}</td>
@@ -941,6 +970,14 @@ function lotteryConsoleItemMatchesFilter(
     case 'saleEnabled':
       return item.lottery.saleEnabled;
   }
+}
+
+function lotteryConsoleItemMatchesName(item: LotteryConsoleItem, keyword: string) {
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  if (!normalizedKeyword) {
+    return true;
+  }
+  return item.lottery.name.toLowerCase().includes(normalizedKeyword);
 }
 
 function lotteryConsoleItemIsWaitingDraw(item: LotteryConsoleItem, now: Date) {
@@ -1260,6 +1297,14 @@ function orderStatusColor(status: OrderStatus) {
     won: 'green',
   };
   return colors[status];
+}
+
+function orderSourceText(source: OrderDetail['orderSource']) {
+  return source === 'groupBuy' ? '合买下单' : '独立下单';
+}
+
+function orderSourceColor(source: OrderDetail['orderSource']) {
+  return source === 'groupBuy' ? 'orange' : 'blue';
 }
 
 function formatOrderUser(order: OrderDetail) {
