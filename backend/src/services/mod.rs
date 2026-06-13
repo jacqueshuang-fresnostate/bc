@@ -2,6 +2,7 @@
 
 pub mod access;
 pub mod advertisement;
+pub mod agent_application;
 pub mod automation;
 pub mod business_database;
 pub mod chat_hall;

@@ -45,3 +45,30 @@ export type AgentRebatePage = FinancePage<AgentRebateSummary>;
 export type AgentRebateRecordPage = FinancePage<AgentRebateRecord>;
 export type AgentRebateQuery = Pick<FinancePageQuery, 'page' | 'pageSize'>;
 export type AgentRebateWithdrawalResult = LedgerEntry;
+
+export type AgentApplicationStatus = 'pending' | 'approved' | 'rejected';
+
+export interface AgentApplication {
+  id: string;
+  userId: string;
+  username: string;
+  inviteCode: string;
+  status: AgentApplicationStatus;
+  reason: string;
+  reviewNote: string | null;
+  reviewedByAdminId: string | null;
+  reviewedByAdminUsername: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewAgentApplicationRequest {
+  approved: boolean;
+  note?: string | null;
+}
+
+export type AgentApplicationPage = FinancePage<AgentApplication>;
+export type AgentApplicationQuery = Pick<FinancePageQuery, 'page' | 'pageSize'> & {
+  status?: AgentApplicationStatus;
+};

@@ -3182,3 +3182,31 @@
 - 解决问题：平台开奖默认期号已改成 `{date}{seq4}` 后，`scheduler_opens_next_issue_after_current_issue_closes` 和 `scheduler_runs_due_automation_before_generating_future_issues` 仍期待旧的 `yyyyMMddHHmmss` 期号，导致后端全量测试失败。
 - 实施内容：将调度器测试里的平台开奖默认期号样例和断言更新为 `202606020001`、`202606020002`，继续覆盖调度器先执行到期开奖/封盘，再补齐未来开盘期号的行为。
 - 验证结果：两个失败的 scheduler 定向测试、后端 `cargo fmt --check`、`cargo check`、全量 `cargo test -- --nocapture` 和 `git diff --check` 均通过；后端全量 296 个测试成功。
+
+## 2026-06-13 07:18 HKT 手机端 Notify 磨砂玻璃样式优化
+
+- 完成任务：优化手机端 Vant `Notify` 全局提示样式。
+- 解决问题：原来的 `van-notify` 是贴顶的实心红色横条，视觉偏重，也容易和顶部安全区、Header 贴得太近。
+- 实施内容：将通知改为安全区下方的浮层圆角卡片；增加半透明渐变、磨砂模糊、细边框、高光层和柔和阴影；成功、警告、错误通知保留轻微色彩差异。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过；本地静态视觉预览因内置浏览器安全策略拦截 `data:` 页面，未绕过该限制。
+
+## 2026-06-13 07:22 HKT 手机端首页普通彩种卡片 padding 调整
+
+- 完成任务：把 `.group-lottery-card` 的 padding 调整为 `0.28rem 0.58rem`。
+- 解决问题：普通分类彩种卡片仍需要进一步收紧内边距，让首页同屏展示更多彩种。
+- 实施内容：基础样式和小屏媒体查询中的 `.group-lottery-card` padding 统一为上下 `0.28rem`、左右 `0.58rem`。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。
+
+## 2026-06-13 22:24 HKT 手机端代理中心与后台代理审核
+
+- 完成任务：新增手机端代理中心申请能力，并在后台返利管理中提供代理申请审核。
+- 解决问题：此前只有代理能使用邀请中心，普通玩家没有正式申请成为代理的入口，后台也没有审核普通玩家升级为代理的闭环。
+- 实施内容：后端新增代理申请领域模型、仓储、数据库表和用户端/后台接口；后台“返利管理”新增“代理申请”Tab 和审核 `SideSheet`；手机端 `/agent-center` 支持普通玩家提交申请、查看待审核/驳回状态，代理继续查看邀请码和直属下级返利数据；OpenAPI 和架构说明同步更新。
+- 验证结果：后端 `cargo fmt`、`cargo fmt --check`、`cargo check`、`cargo test agent_application -- --nocapture`、`cargo test openapi_document_contains_core_paths -- --nocapture` 和全量 `cargo test -- --nocapture` 均通过（299 个测试成功）；后台 `npm run build`、手机端 `pnpm build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
+
+## 2026-06-13 22:33 HKT 手机端首页普通彩种卡片参考草图改版
+
+- 完成任务：按用户提供的手绘结构调整手机端首页普通分类彩种卡片。
+- 解决问题：普通分类彩种卡片需要更接近“左侧彩种信息、右侧 Logo、底部开奖号码”的扫描结构，减少信息堆叠带来的拥挤感。
+- 实施内容：`HomeDrawCard.vue` 普通卡片改为 CSS Grid 两列布局；彩种名和状态同行、期号单独一行、Logo 右侧靠下、开奖号码左下单行滚动展示；主推卡和高频极速二级卡不变。
+- 验证结果：手机端 `pnpm build` 通过，`git diff --check` 通过；尝试用内置浏览器打开本地 Vite 预览时浏览器插件返回不可用，未完成可视截图验证。

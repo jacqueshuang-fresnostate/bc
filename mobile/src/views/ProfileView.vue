@@ -56,7 +56,13 @@ const supportItems = computed(() => [
 ])
 
 const inviteItems = computed(() => [
-  ...(canInvite.value ? [{ key: 'invite', label: '邀请中心', icon: 'star', value: inviteText.value, hint: '查看直属下级充值与返利' }] : []),
+  {
+    key: 'agentCenter',
+    label: '代理中心',
+    icon: 'star',
+    value: canInvite.value ? inviteText.value : '申请代理',
+    hint: canInvite.value ? '查看直属下级充值与返利' : '申请成为代理后可邀请下级',
+  },
   { key: 'inviter', label: '邀请人', icon: 'group', value: inviterText.value },
 ])
 
@@ -81,10 +87,7 @@ function statusText(status: string) {
 
 function onAccountItem(item: { key: string }) {
   if (item.key === 'security') router.push('/security-center')
-  if (item.key === 'invite') {
-    if (canInvite.value) router.push('/invitation-center')
-    else showToast('普通用户暂无邀请权限')
-  }
+  if (item.key === 'agentCenter') router.push('/agent-center')
   if (item.key === 'ledger') router.push('/ledger')
   if (item.key === 'withdrawal') router.push('/withdrawal-methods')
 }

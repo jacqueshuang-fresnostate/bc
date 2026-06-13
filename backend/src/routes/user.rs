@@ -17,6 +17,9 @@ use std::time::Duration;
 use crate::{
     app::AppState,
     domain::advertisement::MobileAdvertisement,
+    domain::agent_application::{
+        AgentApplication, SubmitAgentApplicationRequest, UserAgentApplicationResponse,
+    },
     domain::chat_hall::{
         ChatHallGroupBuyPlanPayload, ChatHallMessage, ClaimChatHallRedPacketResponse,
         CreateChatHallMessageRequest, CreateChatHallRedPacketRequest,
@@ -114,6 +117,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/balance", get(get_balance))
         .route("/ledger-entries", get(list_ledger_entries))
         .route("/invitations/summary", get(get_user_invitation_summary))
+        .route(
+            "/agent/application",
+            get(get_user_agent_application).post(submit_user_agent_application),
+        )
         .route(
             "/bet/page-config/{lottery_id}",
             get(get_user_bet_page_config),
@@ -611,6 +618,33 @@ async fn get_user_invitation_summary(
         default_recharge_rebate_basis_points: policy.default_recharge_rebate_basis_points,
         direct_users,
     })))
+}
+
+/// 返回当前用户最近一次代理申请状态，供手机端代理中心展示审核进度。
+async fn get_user_agent_application(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<UserAgentApplicationResponse>>> {
+    let application = state
+        .agent_applications
+        .latest_for_user(&session.user.id)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(UserAgentApplicationResponse {
+        application,
+    })))
+}
+
+/// 当前用户提交代理申请，审核通过后后台会把账号升级为代理。
+async fn submit_user_agent_application(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+    Json(payload): Json<SubmitAgentApplicationRequest>,
+) -> ApiResult<Json<ApiEnvelope<AgentApplication>>> {
+    let user = state.access.get_user(&session.user.id).await?;
+    let application = state.agent_applications.submit(&user, payload).await?;
+
+    Ok(Json(ApiEnvelope::success(application)))
 }
 
 /// 邀请中心内部直属用户候选项，统一承载来源用户、关系状态和创建时间。

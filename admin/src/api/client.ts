@@ -94,8 +94,12 @@ import type {
   AgentRebateRecordPage,
   AgentRebateWithdrawalRequest,
   AgentRebateWithdrawalResult,
+  AgentApplication,
+  AgentApplicationPage,
+  AgentApplicationQuery,
   InvitePolicySummary,
   InvitePolicyUpdateRequest,
+  ReviewAgentApplicationRequest,
 } from '../types/rebates';
 import type { SettlementPage, SettlementRun } from '../types/settlements';
 import type {
@@ -696,6 +700,29 @@ export function processAgentRebateWithdrawal(
 ) {
   return requestJson<AgentRebateWithdrawalResult>(
     `/api/admin/rebate-statistics/${encodeURIComponent(agentUserId)}/withdrawals`,
+    {
+      body: payload,
+      method: 'POST',
+    },
+  );
+}
+
+export function fetchAgentApplications(
+  signal?: AbortSignal,
+  query?: AgentApplicationQuery,
+) {
+  return requestJson<AgentApplicationPage>(
+    adminQueryPath('/api/admin/agent-applications', query),
+    { signal },
+  );
+}
+
+export function reviewAgentApplication(
+  id: string,
+  payload: ReviewAgentApplicationRequest,
+) {
+  return requestJson<AgentApplication>(
+    `/api/admin/agent-applications/${encodeURIComponent(id)}/review`,
     {
       body: payload,
       method: 'POST',

@@ -8,6 +8,7 @@ import {
   Spin,
   Tabs,
   Tag,
+  TextArea,
   Toast,
 } from '@douyinfe/semi-ui';
 import {
@@ -24,6 +25,8 @@ import { MetricCard } from '../components/MetricCard';
 import { PageControls } from '../components/PageControls';
 import { useRebatePolicy } from '../hooks/useRebatePolicy';
 import type {
+  AgentApplication,
+  AgentApplicationStatus,
   AgentRebateSummary,
   InvitePolicySummary,
   InvitePolicyUpdateRequest,
@@ -49,12 +52,22 @@ export function RebateManagementPage({
   const [activeTab, setActiveTab] = useState('statistics');
   const [statisticsPage, setStatisticsPage] = useState(1);
   const [statisticsPageSize, setStatisticsPageSize] = useState(10);
+  const [applicationPage, setApplicationPage] = useState(1);
+  const [applicationPageSize, setApplicationPageSize] = useState(10);
+  const [applicationStatusFilter, setApplicationStatusFilter] = useState<
+    AgentApplicationStatus | 'all'
+  >('pending');
   const [recordsPage, setRecordsPage] = useState(1);
   const [recordsPageSize, setRecordsPageSize] = useState(10);
   const [selectedAgent, setSelectedAgent] = useState<AgentRebateSummary | null>(null);
+  const [selectedApplication, setSelectedApplication] = useState<AgentApplication | null>(
+    null,
+  );
+  const [reviewNote, setReviewNote] = useState('');
   const [withdrawAmountYuan, setWithdrawAmountYuan] = useState('');
   const [withdrawDescription, setWithdrawDescription] = useState('代理返利提现处理');
   const {
+    applications,
     error,
     loadRecords,
     loading,
@@ -63,11 +76,19 @@ export function RebateManagementPage({
     recordsLoading,
     refresh,
     registration,
+    reviewApplication,
     save,
     saving,
     statistics,
     withdraw,
-  } = useRebatePolicy({ page: statisticsPage, pageSize: statisticsPageSize });
+  } = useRebatePolicy(
+    { page: statisticsPage, pageSize: statisticsPageSize },
+    {
+      page: applicationPage,
+      pageSize: applicationPageSize,
+      status: applicationStatusFilter === 'all' ? undefined : applicationStatusFilter,
+    },
+  );
   const [form, setForm] = useState<RebateFormState>(() => emptyForm());
   const currentMode = policy?.rebateMode ?? form.rebateMode;
   const totals = useMemo(() => policyTotals(policy), [policy]);
@@ -78,6 +99,9 @@ export function RebateManagementPage({
   const currentSelectedAgent =
     statistics.items.find((item) => item.agentUserId === selectedAgent?.agentUserId) ??
     selectedAgent;
+  const currentSelectedApplication =
+    applications.items.find((item) => item.id === selectedApplication?.id) ??
+    selectedApplication;
 
   useEffect(() => {
     if (policy) {
@@ -124,6 +148,16 @@ export function RebateManagementPage({
     setSelectedAgent(null);
   };
 
+  const openApplicationReview = (application: AgentApplication) => {
+    setSelectedApplication(application);
+    setReviewNote(application.reviewNote ?? '');
+  };
+
+  const closeApplicationReview = () => {
+    setSelectedApplication(null);
+    setReviewNote('');
+  };
+
   const submitWithdrawal = async () => {
     if (!currentSelectedAgent) {
       return;
@@ -148,6 +182,19 @@ export function RebateManagementPage({
       page: recordsPage,
       pageSize: recordsPageSize,
     });
+  };
+
+  const submitApplicationReview = async (approved: boolean) => {
+    if (!currentSelectedApplication) {
+      return;
+    }
+    await reviewApplication(currentSelectedApplication.id, {
+      approved,
+      note: reviewNote.trim() || null,
+    });
+    Toast.success(approved ? '代理申请已通过' : '代理申请已驳回');
+    closeApplicationReview();
+    onDashboardRefresh();
   };
 
   return (
@@ -288,6 +335,125 @@ export function RebateManagementPage({
             ) : (
               <div className="rounded-md border border-line p-4 text-sm text-slate-500">
                 暂无代理返利统计。代理下级充值并产生返利后会显示在这里。
+              </div>
+            )}
+          </Card>
+        </Tabs.TabPane>
+
+        <Tabs.TabPane itemKey="applications" tab="代理申请">
+          <Card className="mt-3 rounded-md border border-line">
+            <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-semibold text-ink">代理申请审核</h2>
+                <Tag color="purple">{applications.totalCount} 条</Tag>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Select
+                  className="form-input w-full sm:w-36"
+                  value={applicationStatusFilter}
+                  onChange={(value) => {
+                    setApplicationPage(1);
+                    setApplicationStatusFilter(value as AgentApplicationStatus | 'all');
+                  }}
+                >
+                  <Select.Option value="pending">待审核</Select.Option>
+                  <Select.Option value="approved">已通过</Select.Option>
+                  <Select.Option value="rejected">已驳回</Select.Option>
+                  <Select.Option value="all">全部</Select.Option>
+                </Select>
+                <PageControls
+                  loading={loading}
+                  page={applications.page}
+                  pageSize={applicationPageSize}
+                  totalCount={applications.totalCount}
+                  totalPages={applications.totalPages}
+                  onPageChange={setApplicationPage}
+                  onPageSizeChange={(nextPageSize) => {
+                    setApplicationPage(1);
+                    setApplicationPageSize(nextPageSize);
+                  }}
+                />
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="grid min-h-[320px] place-items-center">
+                <Spin tip="正在加载代理申请" />
+              </div>
+            ) : applications.items.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1080px] text-left text-sm">
+                  <thead className="border-b border-line text-xs text-slate-500">
+                    <tr>
+                      <th className="py-2 pr-4 font-medium">申请用户</th>
+                      <th className="py-2 pr-4 font-medium">邀请码</th>
+                      <th className="py-2 pr-4 font-medium">状态</th>
+                      <th className="py-2 pr-4 font-medium">申请说明</th>
+                      <th className="py-2 pr-4 font-medium">申请时间</th>
+                      <th className="py-2 pr-4 font-medium">审核信息</th>
+                      <th className="py-2 pr-4 font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {applications.items.map((application) => (
+                      <tr key={application.id} className="border-b border-slate-100">
+                        <td className="py-3 pr-4">
+                          <div className="font-semibold text-ink">{application.username}</div>
+                          <div className="mt-1 text-xs text-slate-400">
+                            {application.userId}
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Tag color="teal">{application.inviteCode}</Tag>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Tag color={agentApplicationStatusColor(application.status)}>
+                            {agentApplicationStatusText(application.status)}
+                          </Tag>
+                        </td>
+                        <td className="py-3 pr-4 text-slate-600">
+                          <div className="max-w-[260px] whitespace-pre-wrap break-words">
+                            {application.reason}
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4 text-slate-600">
+                          {formatDateTime(application.createdAt, application.createdAt)}
+                        </td>
+                        <td className="py-3 pr-4 text-slate-600">
+                          {application.reviewedAt ? (
+                            <div>
+                              <div>
+                                {application.reviewedByAdminUsername ?? '未知管理员'}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-400">
+                                {formatDateTime(
+                                  application.reviewedAt,
+                                  application.reviewedAt,
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Button
+                            icon={<Eye size={14} />}
+                            size="small"
+                            theme={application.status === 'pending' ? 'solid' : 'light'}
+                            onClick={() => openApplicationReview(application)}
+                          >
+                            {application.status === 'pending' ? '审核' : '查看'}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+                暂无符合条件的代理申请。
               </div>
             )}
           </Card>
@@ -481,6 +647,104 @@ export function RebateManagementPage({
           )}
         </Tabs.TabPane>
       </Tabs>
+
+      <SideSheet
+        aria-label="代理申请审核"
+        title="代理申请审核"
+        visible={Boolean(selectedApplication)}
+        width={680}
+        onCancel={closeApplicationReview}
+      >
+        {currentSelectedApplication ? (
+          <div className="space-y-4">
+            <section className="rounded-md bg-slate-50 p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-ink">
+                    {currentSelectedApplication.username}
+                  </h2>
+                  <div className="mt-1 text-xs text-slate-400">
+                    {currentSelectedApplication.userId} · 邀请码{' '}
+                    {currentSelectedApplication.inviteCode}
+                  </div>
+                </div>
+                <Tag color={agentApplicationStatusColor(currentSelectedApplication.status)}>
+                  {agentApplicationStatusText(currentSelectedApplication.status)}
+                </Tag>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <InfoBlock
+                  label="申请时间"
+                  value={formatDateTime(
+                    currentSelectedApplication.createdAt,
+                    currentSelectedApplication.createdAt,
+                  )}
+                />
+                <InfoBlock
+                  label="更新时间"
+                  value={formatDateTime(
+                    currentSelectedApplication.updatedAt,
+                    currentSelectedApplication.updatedAt,
+                  )}
+                />
+              </div>
+            </section>
+
+            <Card className="rounded-md border border-line">
+              <h3 className="mb-2 text-sm font-semibold text-ink">申请说明</h3>
+              <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                {currentSelectedApplication.reason}
+              </p>
+            </Card>
+
+            <Card className="rounded-md border border-line">
+              <Field label="审核备注">
+                <TextArea
+                  autosize
+                  className="form-input"
+                  disabled={currentSelectedApplication.status !== 'pending'}
+                  placeholder="填写通过或驳回原因，便于用户查看"
+                  rows={4}
+                  value={reviewNote}
+                  onChange={setReviewNote}
+                />
+              </Field>
+              {currentSelectedApplication.status === 'pending' ? (
+                <div className="mt-4 flex justify-end gap-2">
+                  <Button
+                    disabled={saving}
+                    loading={saving}
+                    type="danger"
+                    onClick={() => void submitApplicationReview(false)}
+                  >
+                    驳回
+                  </Button>
+                  <Button
+                    disabled={saving}
+                    loading={saving}
+                    theme="solid"
+                    onClick={() => void submitApplicationReview(true)}
+                  >
+                    通过并升级为代理
+                  </Button>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-slate-500">
+                  审核人：
+                  {currentSelectedApplication.reviewedByAdminUsername ?? '未知管理员'}，
+                  审核时间：
+                  {currentSelectedApplication.reviewedAt
+                    ? formatDateTime(
+                        currentSelectedApplication.reviewedAt,
+                        currentSelectedApplication.reviewedAt,
+                      )
+                    : '-'}
+                </div>
+              )}
+            </Card>
+          </div>
+        ) : null}
+      </SideSheet>
 
       <SideSheet
         aria-label="代理返利详情"
@@ -687,6 +951,20 @@ function SummaryAmount({ label, value }: SummaryAmountProps) {
   );
 }
 
+interface InfoBlockProps {
+  label: string;
+  value: ReactNode;
+}
+
+function InfoBlock({ label, value }: InfoBlockProps) {
+  return (
+    <div>
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className="mt-1 text-sm font-medium text-ink">{value}</div>
+    </div>
+  );
+}
+
 function emptyForm(): RebateFormState {
   return {
     agentsCanInvite: true,
@@ -748,4 +1026,16 @@ function rebateModeText(mode: RebateMode) {
 
 function percentText(basisPoints: number) {
   return `${(basisPoints / 100).toFixed(2)}%`;
+}
+
+function agentApplicationStatusText(status: AgentApplicationStatus) {
+  if (status === 'approved') return '已通过';
+  if (status === 'rejected') return '已驳回';
+  return '待审核';
+}
+
+function agentApplicationStatusColor(status: AgentApplicationStatus) {
+  if (status === 'approved') return 'green';
+  if (status === 'rejected') return 'red';
+  return 'orange';
 }

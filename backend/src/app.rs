@@ -13,6 +13,7 @@ use crate::{
     services::{
         access::AccessRepository,
         advertisement::AdvertisementRepository,
+        agent_application::AgentApplicationRepository,
         business_database::BusinessDatabase,
         chat_hall::ChatHallRepository,
         draw::DrawRepository,
@@ -37,6 +38,7 @@ use crate::{
 pub struct AppState {
     pub access: AccessRepository,
     pub advertisements: AdvertisementRepository,
+    pub agent_applications: AgentApplicationRepository,
     pub chat_hall: ChatHallRepository,
     pub draws: DrawRepository,
     pub finance: FinanceRepository,
@@ -103,6 +105,7 @@ impl AppState {
         Self {
             access: AccessRepository::memory_seeded(),
             advertisements: AdvertisementRepository::memory(),
+            agent_applications: AgentApplicationRepository::memory(),
             chat_hall: ChatHallRepository::memory(),
             draws: default_draw_repository(),
             finance: FinanceRepository::memory_seeded(),
@@ -141,6 +144,8 @@ impl AppState {
         Ok(Self {
             access: AccessRepository::persistent(business_database.clone()).await?,
             advertisements: AdvertisementRepository::persistent(business_database.clone()).await?,
+            agent_applications: AgentApplicationRepository::persistent(business_database.clone())
+                .await?,
             chat_hall: ChatHallRepository::persistent(business_database.clone()).await?,
             draws: DrawRepository::persistent_with_api_sources(
                 api_sources,
@@ -175,6 +180,10 @@ impl AppState {
         result.record_reload(
             "广告管理",
             self.advertisements.reload_from_database().await?,
+        );
+        result.record_reload(
+            "代理申请",
+            self.agent_applications.reload_from_database().await?,
         );
         result.record_reload("聊天大厅", self.chat_hall.reload_from_database().await?);
         result.record_reload("开奖期号与控制", self.draws.reload_from_database().await?);

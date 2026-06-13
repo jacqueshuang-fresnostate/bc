@@ -25,6 +25,7 @@ export type UserSummary = {
 
 export type InviteStatus = 'pending' | 'active' | 'disabled'
 export type RebateMode = 'immediate' | 'rechargeTiered'
+export type AgentApplicationStatus = 'pending' | 'approved' | 'rejected'
 
 export type UserInvitationDirectUser = {
   id: string
@@ -46,6 +47,29 @@ export type UserInvitationSummary = {
   rebateMode: RebateMode
   defaultRechargeRebateBasisPoints: number
   directUsers: UserInvitationDirectUser[]
+}
+
+export type AgentApplication = {
+  id: string
+  userId: string
+  username: string
+  inviteCode: string
+  status: AgentApplicationStatus
+  reason: string
+  reviewNote?: string | null
+  reviewedByAdminId?: string | null
+  reviewedByAdminUsername?: string | null
+  reviewedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type UserAgentApplicationResponse = {
+  application?: AgentApplication | null
+}
+
+export type SubmitAgentApplicationPayload = {
+  reason: string
 }
 
 export type UserAuthSession = {
@@ -544,6 +568,14 @@ export async function fetchUserLedgerEntries() {
 
 export async function fetchInvitationSummary() {
   return unwrapApiData<UserInvitationSummary>(await http.get('/user/invitations/summary'))
+}
+
+export async function fetchAgentApplication() {
+  return unwrapApiData<UserAgentApplicationResponse>(await http.get('/user/agent/application'))
+}
+
+export async function submitAgentApplication(payload: SubmitAgentApplicationPayload) {
+  return unwrapApiData<AgentApplication>(await http.post('/user/agent/application', payload))
 }
 
 export async function createRechargeOrder(payload: CreateRechargeOrderPayload) {

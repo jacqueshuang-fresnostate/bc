@@ -542,6 +542,24 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/admin/agent-applications",
+        "邀请返利",
+        "代理申请列表",
+        "分页返回普通用户提交的代理申请，可按审核状态筛选。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/admin/agent-applications/{id}/review",
+        "邀请返利",
+        "审核代理申请",
+        "通过或驳回代理申请；通过时会把申请用户升级为代理。",
+        AuthMode::Admin,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "get",
         "/admin/rebate-statistics",
         "邀请返利",
         "代理返利统计",
@@ -1226,6 +1244,24 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/user/agent/application",
+        "用户端账户",
+        "读取代理申请",
+        "返回当前用户最近一次代理申请状态，用于手机端代理中心展示审核进度。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "post",
+        "/user/agent/application",
+        "用户端账户",
+        "提交代理申请",
+        "普通用户提交成为代理的申请说明，后台审核通过后该用户可使用邀请码拉人。",
+        AuthMode::User,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "get",
         "/user/bet/page-config/{lottery_id}",
         "用户端投注",
         "下注页配置",
@@ -1854,6 +1890,8 @@ mod tests {
         assert!(document["paths"]["/admin/recharge-orders"]["get"].is_object());
         assert!(document["paths"]["/admin/recharge-orders/{id}/confirm"]["post"].is_object());
         assert!(document["paths"]["/admin/realtime"]["get"].is_object());
+        assert!(document["paths"]["/admin/agent-applications"]["get"].is_object());
+        assert!(document["paths"]["/admin/agent-applications/{id}/review"]["post"].is_object());
         assert!(document["paths"]["/admin/withdrawal-orders"]["get"].is_object());
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/approve"]["post"].is_object());
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/reject"]["post"].is_object());
@@ -1869,6 +1907,8 @@ mod tests {
         assert!(document["paths"]["/user/mobile/site-config"]["get"].is_object());
         assert!(document["paths"]["/user/register-options"]["get"].is_object());
         assert!(document["paths"]["/user/invitations/summary"]["get"].is_object());
+        assert!(document["paths"]["/user/agent/application"]["get"].is_object());
+        assert!(document["paths"]["/user/agent/application"]["post"].is_object());
         assert!(document["paths"]["/user/bet/page-config/{lottery_id}"]["get"].is_object());
         assert!(document["paths"]["/user/bet/orders"]["get"].is_object());
         assert!(document["paths"]["/user/bet/orders"]["post"].is_object());

@@ -25,6 +25,9 @@ use crate::{
     app::{AppState, MemoryCacheReloadResult},
     domain::{
         advertisement::{AdvertisementSummary, SaveAdvertisementRequest},
+        agent_application::{
+            AgentApplication, AgentApplicationStatus, ReviewAgentApplicationRequest,
+        },
         auth::{AdminAuthSession, AdminLoginRequest, AdminLogoutResponse, CurrentAdminProfile},
         draw::{
             CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest,
@@ -65,7 +68,7 @@ use crate::{
         },
         user::{
             AdminPasswordResetRequest, AdminSaveRequest, AdminStatusRequest, AdminSummary,
-            RegistrationConfig, UserKind, UserStatusRequest, UserSummary,
+            RegistrationConfig, UserKind, UserStatus, UserStatusRequest, UserSummary,
         },
         withdrawal::WithdrawalOrderSummary,
     },
@@ -200,6 +203,11 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/rebate-statistics/{agent_user_id}/withdrawals",
             post(process_agent_rebate_withdrawal),
+        )
+        .route("/agent-applications", get(list_agent_applications))
+        .route(
+            "/agent-applications/{id}/review",
+            post(review_agent_application),
         )
         .route("/robots", get(list_robots).post(create_robot))
         .route("/robots/run", post(run_group_buy_robots_request))
@@ -443,6 +451,7 @@ fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
     }
     if path.starts_with("invitations")
         || path.starts_with("invite-policy")
+        || path.starts_with("agent-applications")
         || path.starts_with("rebate")
     {
         return Some(PermissionScope::Rebates);
@@ -742,6 +751,15 @@ struct FinancePageQuery {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台代理申请列表筛选和分页查询参数。
+struct AgentApplicationListQuery {
+    status: Option<AgentApplicationStatus>,
+    page: Option<usize>,
+    page_size: Option<usize>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 /// 后台用户列表分页和排序查询参数。
 struct UserListQuery {
     page: Option<usize>,
@@ -850,6 +868,19 @@ impl FinancePageQuery {
 /// 后台用户列表查询参数。
 impl UserListQuery {
     /// 复用后台通用分页结构，用户列表不涉及机器人数据开关。
+    fn page_query(&self) -> FinancePageQuery {
+        FinancePageQuery {
+            include_robot_data: None,
+            page: self.page,
+            page_size: self.page_size,
+            user_id: None,
+        }
+    }
+}
+
+/// 后台代理申请列表查询参数。
+impl AgentApplicationListQuery {
+    /// 复用后台通用分页结构，代理申请列表只需要分页能力。
     fn page_query(&self) -> FinancePageQuery {
         FinancePageQuery {
             include_robot_data: None,
@@ -2154,6 +2185,55 @@ async fn process_agent_rebate_withdrawal(
     .await;
 
     Ok(Json(ApiEnvelope::success(entry)))
+}
+
+/// 返回后台代理申请分页列表，可按待审核、已通过或已驳回筛选。
+async fn list_agent_applications(
+    State(state): State<AppState>,
+    Query(query): Query<AgentApplicationListQuery>,
+) -> ApiResult<Json<ApiEnvelope<FinancePage<AgentApplication>>>> {
+    let applications = state.agent_applications.list(query.status.clone()).await?;
+
+    Ok(Json(ApiEnvelope::success(page_items(
+        applications,
+        query.page_query(),
+    ))))
+}
+
+/// 后台审核代理申请；通过时会把用户类型升级为代理，之后邀请码才具备邀请功能。
+async fn review_agent_application(
+    State(state): State<AppState>,
+    Extension(session): Extension<AdminAuthSession>,
+    Path(id): Path<String>,
+    Json(payload): Json<ReviewAgentApplicationRequest>,
+) -> ApiResult<Json<ApiEnvelope<AgentApplication>>> {
+    let current = state.agent_applications.get(&id).await?;
+    if !matches!(&current.status, AgentApplicationStatus::Pending) {
+        return Err(ApiError::BadRequest(
+            "代理申请已经审核，不能重复处理".to_string(),
+        ));
+    }
+
+    if payload.approved {
+        let mut user = state.access.get_user(&current.user_id).await?;
+        if !matches!(&user.status, UserStatus::Active) {
+            return Err(ApiError::BadRequest(
+                "申请用户状态异常，不能升级为代理".to_string(),
+            ));
+        }
+        if !matches!(&user.kind, UserKind::Agent) {
+            user.kind = UserKind::Agent;
+            let user_id = user.id.clone();
+            state.access.update_user(&user_id, user).await?;
+        }
+    }
+
+    let application = state
+        .agent_applications
+        .review(&id, payload, &session.admin)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(application)))
 }
 
 /// 返回后台机器人配置列表。
@@ -3779,6 +3859,8 @@ mod tests {
         AppState {
             access: AccessRepository::memory_seeded(),
             advertisements: AdvertisementRepository::memory(),
+            agent_applications:
+                crate::services::agent_application::AgentApplicationRepository::memory(),
             chat_hall: ChatHallRepository::memory(),
             draws: DrawRepository::memory(),
             finance: FinanceRepository::memory_seeded(),

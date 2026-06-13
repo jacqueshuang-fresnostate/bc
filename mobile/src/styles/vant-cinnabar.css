@@ -171,10 +171,54 @@ textarea:not(.van-field__control) {
 }
 
 .van-notify {
-  background: linear-gradient(135deg, #8c0a15 0%, #af2829 100%);
+  top: calc(var(--mobile-status-safe-top, env(safe-area-inset-top, 0px)) + 8px) !important;
+  left: 14px;
+  right: 14px;
+  width: auto;
+  min-height: 46px;
+  padding: 10px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.34), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.04)),
+    linear-gradient(135deg, rgba(140, 10, 21, 0.86), rgba(175, 40, 41, 0.74));
   color: #ffffff;
-  font-weight: 700;
-  box-shadow: 0 10px 40px rgba(140, 10, 21, 0.15);
+  font-family: var(--font-body, Inter, ui-sans-serif, system-ui, sans-serif);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-align: center;
+  text-shadow: 0 1px 10px rgba(65, 0, 4, 0.28);
+  box-shadow: 0 18px 42px rgba(140, 10, 21, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.van-notify--success {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.34), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.04)),
+    linear-gradient(135deg, rgba(140, 10, 21, 0.84), rgba(192, 55, 56, 0.72));
+}
+
+.van-notify--warning {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.32), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.04)),
+    linear-gradient(135deg, rgba(115, 92, 0, 0.86), rgba(175, 96, 28, 0.74));
+  box-shadow: 0 18px 42px rgba(115, 92, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.38);
+}
+
+.van-notify--danger {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.32), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.04)),
+    linear-gradient(135deg, rgba(147, 0, 10, 0.88), rgba(186, 26, 26, 0.76));
+  box-shadow: 0 18px 42px rgba(147, 0, 10, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.38);
 }
 
 .van-tabs {

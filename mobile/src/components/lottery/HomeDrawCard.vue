@@ -142,24 +142,22 @@ function statusClass() {
     @click="emit('open', lottery)"
   >
     <div class="group-lottery-card__content">
-      <div class="group-lottery-card__top">
-        <div class="group-lottery-card__copy">
+      <div class="group-lottery-card__copy">
+        <div class="group-lottery-card__title-row">
           <h5>{{ lottery.name }}</h5>
-          <div class="group-lottery-card__meta">
-            <span :class="['lottery-state-pill rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
-          </div>
-          <span class="group-lottery-card__issue">{{ issueText }}</span>
+          <span :class="['lottery-state-pill group-lottery-card__state rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
         </div>
-        <div class="group-lottery-card__logo-shell">
-          <img
-            v-if="showImage"
-            :src="logoUrl"
-            :alt="`${lottery.name} 标志`"
-            class="group-lottery-card__logo"
-            @error="logoLoadFailed = true"
-          />
-          <div v-else class="group-lottery-card__fallback">{{ variant === 'regional' ? '◇' : '★' }}</div>
-        </div>
+        <span class="group-lottery-card__issue">{{ issueText }}</span>
+      </div>
+      <div class="group-lottery-card__logo-shell">
+        <img
+          v-if="showImage"
+          :src="logoUrl"
+          :alt="`${lottery.name} 标志`"
+          class="group-lottery-card__logo"
+          @error="logoLoadFailed = true"
+        />
+        <div v-else class="group-lottery-card__fallback">{{ variant === 'regional' ? '◇' : '★' }}</div>
       </div>
       <div class="group-lottery-card__digits" aria-label="最近开奖号码">
         <span
@@ -210,7 +208,7 @@ function statusClass() {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.74);
   border-radius: 0.85rem;
-  padding: 0.58rem;
+  padding: 0.28rem 0.58rem;
   text-align: left;
   box-shadow: 0 6px 16px rgba(77, 41, 68, 0.07);
   transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
@@ -248,49 +246,54 @@ function statusClass() {
 .group-lottery-card__content {
   position: relative;
   z-index: 1;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'copy logo'
+    'digits logo';
   min-height: 3.35rem;
-  gap: 0.35rem;
-}
-
-.group-lottery-card__top {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.42rem;
+  column-gap: 0.48rem;
+  row-gap: 0.32rem;
 }
 
 .group-lottery-card__copy {
+  grid-area: copy;
   display: flex;
   min-width: 0;
-  flex: 1;
   flex-direction: column;
-  gap: 0.24rem;
+  gap: 0.18rem;
 }
 
-.group-lottery-card__copy h5 {
-  margin: 0;
-  overflow: hidden;
-  color: #2d2630;
-  font-size: 0.84rem;
-  font-weight: 900;
-  line-height: 1.05;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.group-lottery-card__meta {
+.group-lottery-card__title-row {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 0.28rem;
 }
 
+.group-lottery-card__copy h5 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  flex: 1;
+  color: #2d2630;
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-lottery-card__state {
+  flex: 0 0 auto;
+  max-width: 3.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .group-lottery-card__issue {
   display: block;
-  max-width: 100%;
+  max-width: 92%;
   overflow: hidden;
   color: rgba(73, 61, 68, 0.68);
   font-size: 0.52rem;
@@ -301,6 +304,7 @@ function statusClass() {
 }
 
 .group-lottery-card__digits {
+  grid-area: digits;
   display: flex;
   max-width: 100%;
   flex-wrap: nowrap;
@@ -332,10 +336,11 @@ function statusClass() {
 }
 
 .group-lottery-card__logo-shell {
+  grid-area: logo;
   display: flex;
-  width: 1.9rem;
-  height: 1.9rem;
-  flex: 0 0 1.9rem;
+  width: 2.05rem;
+  height: 2.05rem;
+  align-self: end;
   align-items: center;
   justify-content: center;
   overflow: hidden;
@@ -375,7 +380,7 @@ function statusClass() {
 
   .group-lottery-card {
     min-height: 4.3rem;
-    padding: 0.52rem;
+    padding: 0.28rem 0.58rem;
   }
 
   .group-lottery-card__logo-shell {

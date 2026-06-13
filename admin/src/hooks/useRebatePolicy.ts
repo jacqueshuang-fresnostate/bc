@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  fetchAgentApplications,
   fetchAgentRebateRecords,
   fetchAgentRebateStatistics,
   fetchInvitePolicy,
   fetchRegistrationConfig,
   processAgentRebateWithdrawal,
+  reviewAgentApplication,
   updateInvitePolicy,
 } from '../api/client';
 import type { RegistrationConfig } from '../types/dashboard';
@@ -13,17 +15,27 @@ import type {
   AgentRebateQuery,
   AgentRebateRecordPage,
   AgentRebateWithdrawalRequest,
+  AgentApplicationPage,
+  AgentApplicationQuery,
   InvitePolicySummary,
   InvitePolicyUpdateRequest,
+  ReviewAgentApplicationRequest,
 } from '../types/rebates';
 
-export function useRebatePolicy(statisticsQuery: AgentRebateQuery = {}) {
+export function useRebatePolicy(
+  statisticsQuery: AgentRebateQuery = {},
+  applicationQuery: AgentApplicationQuery = {},
+) {
   const statisticsPage = statisticsQuery.page;
   const statisticsPageSize = statisticsQuery.pageSize;
+  const applicationPage = applicationQuery.page;
+  const applicationPageSize = applicationQuery.pageSize;
+  const applicationStatus = applicationQuery.status;
   const [policy, setPolicy] = useState<InvitePolicySummary | null>(null);
   const [registration, setRegistration] = useState<RegistrationConfig | null>(null);
   const [statistics, setStatistics] = useState<AgentRebatePage>(() => emptyPage());
   const [records, setRecords] = useState<AgentRebateRecordPage>(() => emptyPage());
+  const [applications, setApplications] = useState<AgentApplicationPage>(() => emptyPage());
   const [loading, setLoading] = useState(true);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -47,11 +59,17 @@ export function useRebatePolicy(statisticsQuery: AgentRebateQuery = {}) {
         page: statisticsPage,
         pageSize: statisticsPageSize,
       }),
+      fetchAgentApplications(controller.signal, {
+        page: applicationPage,
+        pageSize: applicationPageSize,
+        status: applicationStatus,
+      }),
     ])
-      .then(([nextPolicy, nextRegistration, nextStatistics]) => {
+      .then(([nextPolicy, nextRegistration, nextStatistics, nextApplications]) => {
         setPolicy(nextPolicy);
         setRegistration(nextRegistration);
         setStatistics(nextStatistics);
+        setApplications(nextApplications);
       })
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) {
@@ -67,7 +85,14 @@ export function useRebatePolicy(statisticsQuery: AgentRebateQuery = {}) {
     return () => {
       controller.abort();
     };
-  }, [refreshToken, statisticsPage, statisticsPageSize]);
+  }, [
+    applicationPage,
+    applicationPageSize,
+    applicationStatus,
+    refreshToken,
+    statisticsPage,
+    statisticsPageSize,
+  ]);
 
   const save = useCallback(async (payload: InvitePolicyUpdateRequest) => {
     setSaving(true);
@@ -117,7 +142,26 @@ export function useRebatePolicy(statisticsQuery: AgentRebateQuery = {}) {
     [refresh],
   );
 
+  const reviewApplication = useCallback(
+    async (id: string, payload: ReviewAgentApplicationRequest) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const application = await reviewAgentApplication(id, payload);
+        refresh();
+        return application;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refresh],
+  );
+
   return {
+    applications,
     error,
     loadRecords,
     loading,
@@ -126,6 +170,7 @@ export function useRebatePolicy(statisticsQuery: AgentRebateQuery = {}) {
     recordsLoading,
     refresh,
     registration,
+    reviewApplication,
     save,
     saving,
     statistics,
@@ -137,12 +182,12 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : '接口请求失败';
 }
 
-function emptyPage<T>(): AgentRebatePage & AgentRebateRecordPage {
+function emptyPage(): AgentRebatePage & AgentRebateRecordPage & AgentApplicationPage {
   return {
     items: [],
     page: 1,
     pageSize: 20,
     totalCount: 0,
     totalPages: 0,
-  } as AgentRebatePage & AgentRebateRecordPage;
+  } as AgentRebatePage & AgentRebateRecordPage & AgentApplicationPage;
 }
