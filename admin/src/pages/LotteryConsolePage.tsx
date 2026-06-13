@@ -155,7 +155,7 @@ export function LotteryConsolePage({
       lotteryConsoleItemIsWaitingDraw(item, now),
     ).length;
     const controlEnabledCount = items.filter(
-      (item) => item.drawControl?.enabled,
+      (item) => item.lottery.drawControlEnabled && item.drawControl?.enabled,
     ).length;
 
     return [
@@ -187,6 +187,10 @@ export function LotteryConsolePage({
   }, [items, lotteries, now]);
 
   const openControlSheet = (item: LotteryConsoleItem) => {
+    if (!item.lottery.drawControlEnabled) {
+      Toast.warning('该彩种未开启开奖号码控制');
+      return;
+    }
     setSelectedControlItem(item);
     setControlForm(drawControlFormFromControl(item.drawControl));
     setControlError(null);
@@ -402,7 +406,8 @@ function LotteryConsoleCard({
       : null;
   const drawNumber = currentIssueDrawNumber ?? recentDrawnIssue?.drawNumber ?? null;
   const drawNumberLabel = currentIssueDrawNumber ? '本期开奖' : '最近开奖';
-  const controlEnabled = Boolean(drawControl?.enabled);
+  const controlAllowed = lottery.drawControlEnabled;
+  const controlEnabled = controlAllowed && Boolean(drawControl?.enabled);
   const currentOrderAmountMinor = item.currentIssueOrders.reduce(
     (total, order) => total + order.amountMinor,
     0,
@@ -434,8 +439,8 @@ function LotteryConsoleCard({
       <div className="mt-2 flex flex-wrap gap-1.5">
         <Tag color="cyan">{numberTypeText(lottery.numberType)}</Tag>
         <Tag color={drawModeColor(lottery.drawMode)}>{drawModeText(lottery.drawMode)}</Tag>
-        <Tag color={controlEnabled ? 'red' : 'grey'}>
-          {controlEnabled ? '控制开奖' : '未控制'}
+        <Tag color={controlEnabled ? 'red' : controlAllowed ? 'grey' : 'blue'}>
+          {controlEnabled ? '控制开奖' : controlAllowed ? '未控制' : '不控制'}
         </Tag>
         {item.waitingIssueCount > 0 && item.waitingIssue?.id !== currentIssue?.id ? (
           <Tag color="orange">待补开奖 {item.waitingIssueCount}</Tag>
@@ -496,24 +501,32 @@ function LotteryConsoleCard({
             className={`mt-1 truncate text-sm font-semibold ${
               controlEnabled ? 'font-mono text-rose-700' : 'text-slate-400'
             }`}
-            title={controlEnabled ? drawControl?.drawNumber ?? '-' : '未启用'}
+            title={
+              controlEnabled
+                ? drawControl?.drawNumber ?? '-'
+                : controlAllowed
+                  ? '未启用'
+                  : '未开启控制'
+            }
           >
-            {controlEnabled ? drawControl?.drawNumber ?? '-' : '未启用'}
+            {controlEnabled ? drawControl?.drawNumber ?? '-' : controlAllowed ? '未启用' : '未开启控制'}
           </div>
-          {drawControl?.updatedAt ? (
+          {controlAllowed && drawControl?.updatedAt ? (
             <div className="mt-0.5 truncate text-[11px] text-slate-500">
               {controlTargetText(drawControl)} · 更新 {formatTimePoint(drawControl.updatedAt)}
             </div>
           ) : null}
         </div>
         <div className="flex shrink-0 flex-col gap-1.5">
-          <Button
-            icon={<Settings2 size={14} />}
-            size="small"
-            onClick={() => onOpenControl(item)}
-          >
-            控制
-          </Button>
+          {controlAllowed ? (
+            <Button
+              icon={<Settings2 size={14} />}
+              size="small"
+              onClick={() => onOpenControl(item)}
+            >
+              控制
+            </Button>
+          ) : null}
           {lottery.drawMode === 'api' ? (
             <Button
               icon={<RefreshCcw size={14} />}
@@ -610,7 +623,7 @@ function DrawControlSideSheet({
       aria-label="控制开奖号码"
       title="控制开奖号码"
       visible={visible}
-      width={760}
+      width="80%"
       onCancel={onClose}
     >
       {lottery ? (

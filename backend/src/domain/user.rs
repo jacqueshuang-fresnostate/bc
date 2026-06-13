@@ -30,6 +30,8 @@ pub struct UserSummary {
     pub email: Option<String>,
     #[serde(default)]
     pub avatar_url: String,
+    #[serde(default)]
+    pub contact_qq: String,
     pub kind: UserKind,
     pub status: UserStatus,
     pub balance_minor: i64,
@@ -46,6 +48,8 @@ pub struct UserRegisterRequest {
     pub username: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact_qq: Option<String>,
     pub password: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invite_code: Option<String>,
@@ -271,5 +275,12 @@ pub struct AdminStatusRequest {
 #[serde(rename_all = "camelCase")]
 /// 后台重置管理员密码时提交的新密码。
 pub struct AdminPasswordResetRequest {
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 后台重置普通用户登录密码时提交的新密码。
+pub struct UserPasswordResetRequest {
     pub password: String,
 }

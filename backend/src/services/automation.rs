@@ -37,6 +37,7 @@ enum ApiDrawNumberLookup {
 struct LotteryAutomationConfig {
     sale_enabled: bool,
     api_draw_delay_seconds: u32,
+    draw_control_enabled: bool,
 }
 
 /// 触发自动化开奖一轮任务并返回执行结果。
@@ -141,6 +142,13 @@ pub async fn draw_due_issues(
         if !should_draw(&issue, &now, &lottery_configs) {
             continue;
         }
+        if issue.draw_mode == DrawMode::Manual
+            && !lottery_draw_control_enabled(&issue, &lottery_configs)
+        {
+            run.skipped_issues
+                .push(skipped_issue(&issue, "彩种未开启开奖号码控制"));
+            continue;
+        }
         if issue.draw_mode == DrawMode::Manual && !draws.has_active_draw_control(&issue).await? {
             run.skipped_issues
                 .push(skipped_issue(&issue, "手动开奖需要管理员录入开奖号码"));
@@ -158,8 +166,11 @@ pub async fn draw_due_issues(
             run.skipped_issues.push(skipped_issue(&issue, &reason));
             continue;
         }
-        if issue.draw_mode == DrawMode::Api && !draws.has_active_draw_control(&issue).await? {
-            api_draw_prefetch_issues.push(issue.clone());
+        if issue.draw_mode == DrawMode::Api {
+            let allow_control = lottery_draw_control_enabled(&issue, &lottery_configs);
+            if !allow_control || !draws.has_active_draw_control(&issue).await? {
+                api_draw_prefetch_issues.push(issue.clone());
+            }
         }
 
         executable_issues.push(issue);
@@ -178,7 +189,11 @@ pub async fn draw_due_issues(
 
         let draw_result = if issue.draw_mode == DrawMode::Api {
             draws
-                .draw_with_prefetched_api_number(&issue.id, api_draw_number)
+                .draw_with_prefetched_api_number_with_control_policy(
+                    &issue.id,
+                    api_draw_number,
+                    lottery_draw_control_enabled(&issue, &lottery_configs),
+                )
                 .await
         } else {
             draws
@@ -488,11 +503,23 @@ async fn lottery_automation_configs(
             LotteryAutomationConfig {
                 sale_enabled: lottery.sale_enabled,
                 api_draw_delay_seconds: lottery.api_draw_delay_seconds,
+                draw_control_enabled: lottery.draw_control_enabled,
             },
         );
     }
 
     Ok(configs)
+}
+
+/// 判断当前彩种是否允许调度阶段使用开奖号码控制配置。
+fn lottery_draw_control_enabled(
+    issue: &DrawIssue,
+    lottery_configs: &HashMap<String, LotteryAutomationConfig>,
+) -> bool {
+    lottery_configs
+        .get(&issue.lottery_id)
+        .map(|config| config.draw_control_enabled)
+        .unwrap_or_default()
 }
 
 /// 判断彩种停售或配置缺失时是否需要跳过自动封盘开奖。
@@ -1004,6 +1031,7 @@ mod tests {
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode,
             api_draw_delay_seconds: 0,
+            draw_control_enabled: true,
             issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
             schedule: DrawSchedule::Daily {
                 time: "21:00:15".to_string(),

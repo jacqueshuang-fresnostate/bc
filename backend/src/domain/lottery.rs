@@ -138,6 +138,9 @@ pub struct LotteryKind {
     /// API 开奖源延迟秒数；只影响 API 模式到点后多久请求第三方开奖号码。
     #[serde(default)]
     pub api_draw_delay_seconds: u32,
+    /// 是否允许后台控制开奖号码；关闭后管理端不展示控制入口，接口也不允许启用控制。
+    #[serde(default = "default_draw_control_enabled")]
+    pub draw_control_enabled: bool,
     /// 平台开奖期号生成格式；仅平台开奖模式按该模板生成期号。
     #[serde(default = "default_issue_format_pattern")]
     pub issue_format: String,
@@ -152,6 +155,11 @@ pub struct LotteryKind {
 /// 反序列化旧数据时补齐默认期号格式。
 fn default_issue_format_pattern() -> String {
     DEFAULT_ISSUE_FORMAT_PATTERN.to_string()
+}
+
+/// 兼容旧数据：历史彩种未保存该字段时默认仍允许控制开奖。
+fn default_draw_control_enabled() -> bool {
+    true
 }
 
 #[cfg(test)]

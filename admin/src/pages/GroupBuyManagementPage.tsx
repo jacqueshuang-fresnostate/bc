@@ -573,7 +573,7 @@ export function GroupBuyManagementPage({
               aria-label="合买计划详情"
               title="合买计划详情"
               visible={detailSheetVisible}
-              width={920}
+              width="80%"
               onCancel={() => setDetailSheetVisible(false)}
           >
               {detailPlan ? (

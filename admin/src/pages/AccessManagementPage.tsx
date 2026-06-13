@@ -67,10 +67,12 @@ interface AccessManagementPageProps {
 interface UserFormState {
   agentId: string;
   balanceMinor: string;
+  contactQq: string;
   email: string;
   id: string;
   inviteCode: string;
   kind: UserKind;
+  password: string;
   status: UserStatus;
   username: string;
 }
@@ -174,6 +176,14 @@ const USER_SORT_DIRECTION_OPTIONS: Array<{
   { label: '降序', value: 'desc' },
   { label: '升序', value: 'asc' },
 ];
+type UserStatusFilter = 'all' | UserStatus;
+
+const USER_STATUS_FILTER_OPTIONS: Array<{ label: string; value: UserStatusFilter }> = [
+  { label: '全部状态', value: 'all' },
+  { label: '启用', value: 'active' },
+  { label: '停用', value: 'suspended' },
+  { label: '锁定', value: 'locked' },
+];
 
 export function AccessManagementPage({
   activeModuleKey,
@@ -186,14 +196,23 @@ export function AccessManagementPage({
   const [userSortBy, setUserSortBy] = useState<UserListSortBy>('id');
   const [userSortDirection, setUserSortDirection] =
     useState<UserListSortDirection>('desc');
+  const [userStatusFilter, setUserStatusFilter] =
+    useState<UserStatusFilter>('all');
   const userQuery = useMemo(
     () => ({
       page: userPageNumber,
       pageSize: userPageSize,
       sortBy: userSortBy,
       sortDirection: userSortDirection,
+      status: userStatusFilter === 'all' ? undefined : userStatusFilter,
     }),
-    [userPageNumber, userPageSize, userSortBy, userSortDirection],
+    [
+      userPageNumber,
+      userPageSize,
+      userSortBy,
+      userSortDirection,
+      userStatusFilter,
+    ],
   );
   const {
     admins,
@@ -206,6 +225,7 @@ export function AccessManagementPage({
     removeRole,
     reloadMemoryCache,
     resetPassword,
+    resetUserLoginPassword,
     roles,
     saveAdmin,
     saveRegistration,
@@ -288,8 +308,13 @@ export function AccessManagementPage({
   const isSettingsPage = section === 'settings';
 
   const submitUser = async () => {
-    const saved = await saveUser(userPayload(userForm), editingUserId ?? undefined);
-    setUserForm(userFormFromSummary(saved));
+    let saved = await saveUser(userPayload(userForm), editingUserId ?? undefined);
+    const password = userForm.password.trim();
+    if (password) {
+      saved = await resetUserLoginPassword(saved.id, { password });
+      Toast.success('用户密码已重置');
+    }
+    setUserForm({ ...userFormFromSummary(saved), password: '' });
     setEditingUserId(saved.id);
     setUserSheetVisible(false);
     onDashboardRefresh();
@@ -392,6 +417,7 @@ export function AccessManagementPage({
           sheetVisible={userSheetVisible}
           sortBy={userSortBy}
           sortDirection={userSortDirection}
+          statusFilter={userStatusFilter}
           totalCount={userPage.totalCount}
           totalPages={userPage.totalPages}
           users={users}
@@ -420,6 +446,10 @@ export function AccessManagementPage({
           }}
           onSortDirectionChange={(sortDirection) => {
             setUserSortDirection(sortDirection);
+            setUserPageNumber(1);
+          }}
+          onStatusFilterChange={(status) => {
+            setUserStatusFilter(status);
             setUserPageNumber(1);
           }}
           onStatus={(id, status) => {
@@ -519,6 +549,7 @@ function UserSection({
   onSortByChange,
   onSortDirectionChange,
   onStatus,
+  onStatusFilterChange,
   onSubmit,
   page,
   pageSize,
@@ -526,6 +557,7 @@ function UserSection({
   sheetVisible,
   sortBy,
   sortDirection,
+  statusFilter,
   totalCount,
   totalPages,
   users,
@@ -544,6 +576,7 @@ function UserSection({
   onSortByChange: (sortBy: UserListSortBy) => void;
   onSortDirectionChange: (sortDirection: UserListSortDirection) => void;
   onStatus: (id: string, status: UserStatus) => void;
+  onStatusFilterChange: (status: UserStatusFilter) => void;
   onSubmit: () => void;
   page: number;
   pageSize: number;
@@ -551,6 +584,7 @@ function UserSection({
   sheetVisible: boolean;
   sortBy: UserListSortBy;
   sortDirection: UserListSortDirection;
+  statusFilter: UserStatusFilter;
   totalCount: number;
   totalPages: number;
   users: AdminUserSummary[];
@@ -605,6 +639,20 @@ function UserSection({
                   </Select.Option>
                 ))}
               </Select>
+              <span className="text-xs font-medium text-slate-500">状态</span>
+              <Select
+                className="form-input min-w-[112px]"
+                value={statusFilter}
+                onChange={(value) =>
+                  onStatusFilterChange((value as UserStatusFilter) || 'all')
+                }
+              >
+                {USER_STATUS_FILTER_OPTIONS.map((option) => (
+                  <Select.Option key={option.value} value={option.value}>
+                    {option.label}
+                  </Select.Option>
+                ))}
+              </Select>
             </div>
             <PageControls
               loading={loading}
@@ -618,7 +666,7 @@ function UserSection({
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[960px] text-left text-sm">
+          <table className="w-full min-w-[1040px] text-left text-sm">
             <thead className="border-b border-line text-xs text-slate-500">
               <tr>
                 <th className="py-2 pr-4 font-medium">用户</th>
@@ -649,6 +697,7 @@ function UserSection({
                     <div className="mt-1 text-xs text-slate-400">
                       {user.id}
                       {user.email ? ` · ${user.email}` : ''}
+                      {user.contactQq ? ` · QQ ${user.contactQq}` : ''}
                     </div>
                   </td>
                   <td className="py-3 pr-4">
@@ -717,6 +766,13 @@ function UserSection({
                       >
                         停用
                       </Button>
+                      <Button
+                        disabled={user.status === 'locked'}
+                        size="small"
+                        onClick={() => onStatus(user.id, 'locked')}
+                      >
+                        锁定
+                      </Button>
                     </div>
                   </td>
                 </tr>
@@ -759,6 +815,31 @@ function UserSection({
                 setFormValue(onSetForm, 'email', value)
               }
             />
+          </Field>
+          <Field label="联系方式 QQ">
+            <Input
+              className="form-input"
+              placeholder="选填 QQ 号码"
+              value={form.contactQq}
+              onChange={(value) =>
+                setFormValue(onSetForm, 'contactQq', value)
+              }
+            />
+          </Field>
+          <Field label={editingId ? '重置密码' : '初始密码'}>
+            <Input
+              autoComplete="new-password"
+              className="form-input"
+              placeholder={editingId ? '留空则不修改密码' : '可选，至少 8 位'}
+              type="password"
+              value={form.password}
+              onChange={(value) =>
+                setFormValue(onSetForm, 'password', value)
+              }
+            />
+            <p className="text-xs text-slate-400">
+              填写后保存会立即重置该用户的登录密码。
+            </p>
           </Field>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <Field label="用户类型">
@@ -815,7 +896,7 @@ function UserSection({
           </Field>
           <div className="flex flex-wrap gap-2">
             <Button
-              disabled={saving}
+              disabled={saving || passwordNeedsMoreChars(form.password)}
               icon={<Save size={16} />}
               theme="solid"
               onClick={onSubmit}
@@ -2221,10 +2302,12 @@ function emptyUserForm(): UserFormState {
   return {
     agentId: '',
     balanceMinor: '0',
+    contactQq: '',
     email: '',
     id: 'U20001',
     inviteCode: '',
     kind: 'regular',
+    password: '',
     status: 'active',
     username: 'new_user',
   };
@@ -2234,10 +2317,12 @@ function userFormFromSummary(user: UserSummary): UserFormState {
   return {
     agentId: user.agentId ?? '',
     balanceMinor: `${user.balanceMinor}`,
+    contactQq: user.contactQq ?? '',
     email: user.email ?? '',
     id: user.id,
     inviteCode: user.inviteCode,
     kind: user.kind,
+    password: '',
     status: user.status,
     username: user.username,
   };
@@ -2247,6 +2332,7 @@ function userPayload(form: UserFormState): UserSummary {
   return {
     agentId: optionalText(form.agentId),
     balanceMinor: numberField(form.balanceMinor),
+    contactQq: form.contactQq.trim(),
     email: optionalText(form.email),
     id: form.id.trim(),
     inviteCode: form.inviteCode.trim(),
@@ -2349,6 +2435,11 @@ function optionalText(value: string) {
 function numberField(value: string) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function passwordNeedsMoreChars(password: string) {
+  const trimmed = password.trim();
+  return trimmed.length > 0 && trimmed.length < 8;
 }
 
 function userKindText(kind: UserKind) {

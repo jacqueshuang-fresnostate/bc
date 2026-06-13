@@ -159,9 +159,16 @@ function positionGridKind(ruleCode: string) {
 }
 
 export function normalizeUserBetOrder(order: UserBetOrderDetail) {
-  const rawOrder = order as UserBetOrderDetail & { created_at?: string; settled_at?: string | null }
+  const rawOrder = order as UserBetOrderDetail & {
+    created_at?: string
+    draw_number?: string | null
+    draw_result?: string | null
+    result?: string | null
+    settled_at?: string | null
+  }
   const numbers = selectionNumbers(order)
   const isGroupBuy = order.orderSource === 'groupBuy'
+  const drawNumber = order.drawNumber || rawOrder.draw_number || rawOrder.draw_result || rawOrder.result || ''
   const participationAmountMinor = normalizeOptionalMinor(order.participationAmountMinor)
   const participationPayoutMinor = normalizeOptionalMinor(order.participationPayoutMinor)
   const participationAmount = participationAmountMinor !== null
@@ -185,8 +192,10 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     rule_code: order.ruleCode,
     numbers,
     canonical_numbers: numbers,
-    result_numbers: splitDrawNumber(order.drawNumber),
-    draw_numbers: splitDrawNumber(order.drawNumber),
+    result: drawNumber,
+    draw_result: drawNumber,
+    result_numbers: splitDrawNumber(drawNumber),
+    draw_numbers: splitDrawNumber(drawNumber),
     matched_bets: order.matchedBets || [],
     expanded_bets: order.expandedBets || [],
     status: statusMap[order.status] || order.status,

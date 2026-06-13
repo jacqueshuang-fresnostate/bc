@@ -11,6 +11,7 @@ import {
   fetchUserPage,
   reloadBackendMemoryCache,
   resetAdminPassword,
+  resetUserPassword,
   setAdminStatus,
   setUserStatus,
   updateAdmin,
@@ -30,6 +31,7 @@ import type {
   SystemSetting,
   UserListQuery,
   UserPage,
+  UserPasswordResetRequest,
   UserStatus,
   UserSummary,
 } from '../types/access';
@@ -101,6 +103,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     userQuery.pageSize,
     userQuery.sortBy,
     userQuery.sortDirection,
+    userQuery.status,
   ]);
 
   const saveUser = useCallback(async (payload: UserSummary, existingId?: string) => {
@@ -136,6 +139,25 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
       setSaving(false);
     }
   }, [refresh]);
+
+  const resetUserLoginPassword = useCallback(
+    async (id: string, payload: UserPasswordResetRequest) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const saved = await resetUserPassword(id, payload);
+        setUserPage((current) => replacePageUser(current, saved));
+        refresh();
+        return saved;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refresh],
+  );
 
   const saveAdmin = useCallback(
     async (payload: AdminSaveRequest, existingId?: string) => {
@@ -280,6 +302,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     removeRole,
     reloadMemoryCache,
     resetPassword,
+    resetUserLoginPassword,
     roles,
     saveAdmin,
     saveRegistration,

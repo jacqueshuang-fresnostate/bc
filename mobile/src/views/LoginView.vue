@@ -44,6 +44,7 @@ const account = ref('')
 const password = ref('')
 const email = ref('')
 const invitationCode = ref('')
+const contactQq = ref('')
 const loading = ref(false)
 
 async function doLogin() {
@@ -63,8 +64,13 @@ async function doLogin() {
 
 async function doRegister() {
   const invite = invitationCode.value.trim()
+  const qq = contactQq.value.trim()
   if (inviteRequired.value && !invite) {
     showToast('邀请码必填')
+    return
+  }
+  if (qq && (!/^\d+$/.test(qq) || qq.length < 5 || qq.length > 12)) {
+    showToast('QQ 号码需要是 5-12 位数字')
     return
   }
   if (regType.value === 'email') {
@@ -73,14 +79,24 @@ async function doRegister() {
     showToast('请输入用户名')
     return
   }
-  if (!password.value || password.value.length < 6) { showToast('请输入至少6位密码'); return }
+  if (!password.value || password.value.length < 8) { showToast('请输入至少8位密码'); return }
   loading.value = true
   try {
     if (regType.value === 'email') {
-      await registerUser({ email: email.value.trim(), password: password.value, inviteCode: invite || undefined })
+      await registerUser({
+        contactQq: qq || undefined,
+        email: email.value.trim(),
+        password: password.value,
+        inviteCode: invite || undefined,
+      })
       account.value = email.value
     } else {
-      await registerUser({ username: account.value.trim(), password: password.value, inviteCode: invite || undefined })
+      await registerUser({
+        contactQq: qq || undefined,
+        username: account.value.trim(),
+        password: password.value,
+        inviteCode: invite || undefined,
+      })
     }
     await doLogin()
   } catch (e: unknown) {
@@ -232,7 +248,7 @@ async function doRegister() {
                   v-model="password"
                   :type="showPassword ? 'text' : 'password'"
                   class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
-                  placeholder="请输入密码（至少6位）"
+                  placeholder="请输入密码（至少8位）"
                 />
                 <button
                   type="button"
@@ -245,15 +261,29 @@ async function doRegister() {
               </div>
             </div>
 
-            <div class="auth-field">
-              <label class="auth-label block font-label font-bold text-on-surface-variant">邀请码</label>
-              <input
-                v-model="invitationCode"
-                class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
-                :placeholder="inviteRequired ? '请输入上级邀请码' : '选填上级邀请码'"
-                maxlength="16"
-                type="text"
-              />
+            <div class="grid grid-cols-2 gap-2">
+              <div class="auth-field">
+                <label class="auth-label block font-label font-bold text-on-surface-variant">邀请码</label>
+                <input
+                  v-model="invitationCode"
+                  class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
+                  :placeholder="inviteRequired ? '必填' : '选填'"
+                  maxlength="16"
+                  type="text"
+                />
+              </div>
+
+              <div class="auth-field">
+                <label class="auth-label block font-label font-bold text-on-surface-variant">QQ</label>
+                <input
+                  v-model="contactQq"
+                  class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
+                  inputmode="numeric"
+                  maxlength="12"
+                  placeholder="选填"
+                  type="text"
+                />
+              </div>
             </div>
 
             <button

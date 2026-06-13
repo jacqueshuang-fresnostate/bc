@@ -277,7 +277,7 @@ function statusClass() {
   overflow: hidden;
   flex: 1;
   color: #2d2630;
-  font-size: 0.86rem;
+  font-size: 0.66rem;
   font-weight: 900;
   line-height: 1.05;
   text-overflow: ellipsis;
@@ -391,7 +391,7 @@ function statusClass() {
   }
 
   .group-lottery-card__copy h5 {
-    font-size: 0.78rem;
+    font-size: 0.66rem;
   }
 
   .group-lottery-card__digit {

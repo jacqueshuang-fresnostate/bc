@@ -31,6 +31,10 @@ export interface AdminPasswordResetRequest {
   password: string;
 }
 
+export interface UserPasswordResetRequest {
+  password: string;
+}
+
 export interface UpdateSystemSettingRequest {
   value: string;
 }
@@ -63,6 +67,7 @@ export interface UserListQuery {
   pageSize?: number;
   sortBy?: UserListSortBy;
   sortDirection?: UserListSortDirection;
+  status?: UserStatus;
 }
 
 export type UserPage = FinancePage<AdminUserSummary>;

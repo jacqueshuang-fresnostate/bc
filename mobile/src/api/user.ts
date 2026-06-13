@@ -16,6 +16,7 @@ export type UserSummary = {
   username: string
   email?: string | null
   avatarUrl: string
+  contactQq?: string
   kind: UserKind
   status: UserStatus
   balanceMinor: number
@@ -339,6 +340,7 @@ type LoginPayload = {
 type RegisterPayload = {
   username?: string
   email?: string
+  contactQq?: string
   password: string
   inviteCode?: string
 }

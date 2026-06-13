@@ -2642,6 +2642,7 @@ mod tests {
             number_type: LotteryNumberType::FiveDigit,
             draw_mode: DrawMode::Platform,
             api_draw_delay_seconds: 0,
+            draw_control_enabled: true,
             issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 60,
@@ -2781,6 +2782,7 @@ mod tests {
             username: username.to_string(),
             email: None,
             avatar_url: String::new(),
+            contact_qq: String::new(),
             kind,
             status: UserStatus::Active,
             balance_minor: 0,

@@ -21,6 +21,7 @@ import type {
   StatusUpdateRequest,
   SystemSetting,
   UpdateSystemSettingRequest,
+  UserPasswordResetRequest,
   UserListQuery,
   UserPage,
   UserSummary,
@@ -347,6 +348,9 @@ function userQueryPath(path: string, query?: UserListQuery) {
   if (query?.sortDirection) {
     params.set('sortDirection', query.sortDirection);
   }
+  if (query?.status) {
+    params.set('status', query.status);
+  }
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
 }
@@ -491,6 +495,16 @@ export function updateUser(id: string, payload: UserSummary) {
 export function setUserStatus(id: string, payload: StatusUpdateRequest) {
   return requestJson<AdminUserSummary>(
     `/api/admin/users/${encodeURIComponent(id)}/status`,
+    {
+      body: payload,
+      method: 'PATCH',
+    },
+  );
+}
+
+export function resetUserPassword(id: string, payload: UserPasswordResetRequest) {
+  return requestJson<AdminUserSummary>(
+    `/api/admin/users/${encodeURIComponent(id)}/password`,
     {
       body: payload,
       method: 'PATCH',
@@ -1007,6 +1021,13 @@ export function evaluatePlayRule(payload: PlayRuleEvaluateRequest) {
 
 export function fetchOrders(signal?: AbortSignal, query?: OrderListQuery) {
   return requestJson<OrderPage>(adminQueryPath('/api/admin/orders', query), { signal });
+}
+
+export function fetchOrderGroupBuyPlan(id: string, signal?: AbortSignal) {
+  return requestJson<GroupBuyPlan>(
+    `/api/admin/orders/${encodeURIComponent(id)}/group-buy-plan`,
+    { signal },
+  );
 }
 
 export function createOrder(payload: CreateOrderRequest) {

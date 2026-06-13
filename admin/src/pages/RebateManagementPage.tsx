@@ -750,7 +750,7 @@ export function RebateManagementPage({
         aria-label="代理返利详情"
         title="代理返利详情"
         visible={Boolean(selectedAgent)}
-        width={820}
+        width="80%"
         onCancel={closeAgentDetail}
       >
         {currentSelectedAgent ? (
@@ -769,10 +769,14 @@ export function RebateManagementPage({
                   可处理 {formatMoney(currentSelectedAgent.withdrawableRebateMinor)}
                 </Tag>
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <SummaryAmount label="返利总额" value={currentSelectedAgent.totalRebateMinor} />
                 <SummaryAmount label="已提现" value={currentSelectedAgent.withdrawnRebateMinor} />
                 <SummaryAmount label="待处理" value={currentSelectedAgent.pendingRebateMinor} />
+                <SummaryAmount
+                  label="下级提现"
+                  value={currentSelectedAgent.directInviteeWithdrawalMinor}
+                />
                 <SummaryAmount
                   label="账户可用"
                   value={currentSelectedAgent.accountAvailableBalanceMinor}
@@ -848,12 +852,13 @@ export function RebateManagementPage({
                 </div>
               ) : records.items.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px] text-left text-sm">
+                  <table className="w-full min-w-[900px] text-left text-sm">
                     <thead className="border-b border-line text-xs text-slate-500">
                       <tr>
                         <th className="py-2 pr-4 font-medium">下级用户</th>
                         <th className="py-2 pr-4 font-medium">充值订单</th>
                         <th className="py-2 pr-4 font-medium">充值金额</th>
+                        <th className="py-2 pr-4 font-medium">下级总提现</th>
                         <th className="py-2 pr-4 font-medium">返利金额</th>
                         <th className="py-2 pr-4 font-medium">返利时间</th>
                       </tr>
@@ -876,6 +881,9 @@ export function RebateManagementPage({
                             {record.rechargeAmountMinor === null
                               ? '-'
                               : formatMoney(record.rechargeAmountMinor)}
+                          </td>
+                          <td className="py-3 pr-4 text-slate-600">
+                            {formatMoney(record.inviteeTotalWithdrawalMinor)}
                           </td>
                           <td className="py-3 pr-4 font-semibold text-emerald-700">
                             {formatMoney(record.rebateAmountMinor)}

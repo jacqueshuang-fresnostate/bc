@@ -25,9 +25,9 @@ use crate::{
             AdminPasswordResetRequest, AdminSaveRequest, AdminSummary, RegistrationConfig,
             UserAuthSession, UserAvatarRequest, UserBindEmailRequest, UserChangePasswordRequest,
             UserForgotPasswordRequest, UserForgotPasswordResponse, UserKind, UserLoginRequest,
-            UserLogoutResponse, UserRegisterRequest, UserResetPasswordRequest,
-            UserResetPasswordResponse, UserStatus, UserSummary, WithdrawalMethod,
-            WithdrawalMethodRequest, WithdrawalMethodType,
+            UserLogoutResponse, UserPasswordResetRequest, UserRegisterRequest,
+            UserResetPasswordRequest, UserResetPasswordResponse, UserStatus, UserSummary,
+            WithdrawalMethod, WithdrawalMethodRequest, WithdrawalMethodType,
         },
     },
     error::{ApiError, ApiResult},
@@ -51,6 +51,8 @@ const SESSION_TOKEN_RANDOM_BYTES: usize = 32;
 const SESSION_TOKEN_PREFIX: &str = "bcst_";
 const SESSION_TOKEN_HASH_PREFIX: &str = "sha256:";
 const MAX_AVATAR_URL_LEN: usize = 500;
+const MIN_CONTACT_QQ_LEN: usize = 5;
+const MAX_CONTACT_QQ_LEN: usize = 12;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct PasswordResetTokenRecord {
@@ -295,6 +297,24 @@ impl AccessRepository {
             let result = store.reset_password(payload)?;
             let snapshot = store.clone();
             (result, snapshot)
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
+    /// 后台重置普通用户登录密码，适用于用户忘记密码或账号异常后的人工维护。
+    pub async fn reset_user_password(
+        &self,
+        id: &str,
+        payload: UserPasswordResetRequest,
+    ) -> ApiResult<UserSummary> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.reset_user_password(id, payload)?;
+            (result, store.clone())
         };
         self.persist(&snapshot).await?;
         Ok(result)
@@ -647,7 +667,7 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
     let pool = database.pool();
     let mut users = BTreeMap::new();
     for row in sqlx::query(
-        "SELECT id, username, email, avatar_url, kind, status, balance_minor, agent_id, invite_code
+        "SELECT id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code
          FROM users
          ORDER BY id ASC",
     )
@@ -670,6 +690,9 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
                     .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
                 avatar_url: row
                     .try_get("avatar_url")
+                    .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                contact_qq: row
+                    .try_get("contact_qq")
                     .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
                 kind: enum_from_string(
                     row.try_get("kind")
@@ -1032,13 +1055,14 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
 
     for user in store.users.values() {
         sqlx::query(
-            "INSERT INTO users (id, username, email, avatar_url, kind, status, balance_minor, agent_id, invite_code)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            "INSERT INTO users (id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
         .bind(&user.id)
         .bind(&user.username)
         .bind(&user.email)
         .bind(&user.avatar_url)
+        .bind(&user.contact_qq)
         .bind(enum_to_string(&user.kind)?)
         .bind(enum_to_string(&user.status)?)
         .bind(user.balance_minor)
@@ -1334,6 +1358,11 @@ impl AccessStore {
             .map(|value| required_trimmed(value, "email"))
             .transpose()?
             .filter(|value| !value.is_empty() && value.contains('@'));
+        let contact_qq = payload
+            .contact_qq
+            .map(normalize_contact_qq)
+            .transpose()?
+            .unwrap_or_default();
 
         if email_provided && email.is_none() {
             return Err(ApiError::BadRequest("邮箱格式不正确".to_string()));
@@ -1391,6 +1420,7 @@ impl AccessStore {
             username,
             email,
             avatar_url: String::new(),
+            contact_qq,
             kind: UserKind::Regular,
             status: UserStatus::Active,
             balance_minor: 0,
@@ -1603,6 +1633,20 @@ impl AccessStore {
             .insert(user.id.clone(), hash_user_password(&new_password)?);
 
         Ok(UserResetPasswordResponse { reset: true })
+    }
+
+    /// 后台人工重置指定用户密码，写入新的用户密码哈希但不修改用户基础资料。
+    fn reset_user_password(
+        &mut self,
+        id: &str,
+        payload: UserPasswordResetRequest,
+    ) -> ApiResult<UserSummary> {
+        let password = validate_user_password(&payload.password)?;
+        let user = self.get_user(id)?;
+        self.user_password_hashes
+            .insert(user.id.clone(), hash_user_password(&password)?);
+
+        Ok(user)
     }
 
     /// 列出指定用户的提现方式。
@@ -2057,6 +2101,7 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
         .map(|email| email.trim().to_string())
         .filter(|email| !email.is_empty());
     user.avatar_url = normalize_avatar_url(user.avatar_url)?;
+    user.contact_qq = normalize_contact_qq(user.contact_qq)?;
     user.agent_id = user
         .agent_id
         .map(|agent_id| agent_id.trim().to_string())
@@ -2070,6 +2115,25 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
     }
 
     Ok(user)
+}
+
+/// 标准化用户 QQ 联系方式：允许为空，填写时必须是 5-12 位数字。
+fn normalize_contact_qq(value: String) -> ApiResult<String> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Ok(value);
+    }
+    let len = value.chars().count();
+    if len < MIN_CONTACT_QQ_LEN || len > MAX_CONTACT_QQ_LEN {
+        return Err(ApiError::BadRequest(format!(
+            "QQ 号码需要是 {MIN_CONTACT_QQ_LEN}-{MAX_CONTACT_QQ_LEN} 位数字"
+        )));
+    }
+    if !value.chars().all(|ch| ch.is_ascii_digit()) {
+        return Err(ApiError::BadRequest("QQ 号码只能填写数字".to_string()));
+    }
+
+    Ok(value)
 }
 
 /// 标准化头像链接：空值表示未设置，非空值只接受 http/https 链接。
@@ -2370,6 +2434,7 @@ fn seed_users() -> Vec<UserSummary> {
             username: "demo_user".to_string(),
             email: Some("demo@example.com".to_string()),
             avatar_url: String::new(),
+            contact_qq: String::new(),
             kind: crate::domain::user::UserKind::Regular,
             status: UserStatus::Active,
             balance_minor: 12_000,
@@ -2381,6 +2446,7 @@ fn seed_users() -> Vec<UserSummary> {
             username: "agent_alpha".to_string(),
             email: None,
             avatar_url: String::new(),
+            contact_qq: String::new(),
             kind: crate::domain::user::UserKind::Agent,
             status: UserStatus::Active,
             balance_minor: 520_000,
@@ -2392,6 +2458,7 @@ fn seed_users() -> Vec<UserSummary> {
             username: "risk_watch".to_string(),
             email: None,
             avatar_url: String::new(),
+            contact_qq: String::new(),
             kind: crate::domain::user::UserKind::Regular,
             status: UserStatus::Suspended,
             balance_minor: 0,
@@ -2621,7 +2688,8 @@ mod tests {
     use crate::domain::user::WithdrawalMethodType;
     use crate::domain::user::{
         UserChangePasswordRequest, UserForgotPasswordRequest, UserLoginRequest,
-        UserRegisterRequest, UserResetPasswordRequest, WithdrawalMethodRequest,
+        UserPasswordResetRequest, UserRegisterRequest, UserResetPasswordRequest,
+        WithdrawalMethodRequest,
     };
 
     fn assert_invite_code_format(code: &str) {
@@ -2660,6 +2728,7 @@ mod tests {
                 username: "new_user".to_string(),
                 email: Some("new@example.com".to_string()),
                 avatar_url: String::new(),
+                contact_qq: "123456".to_string(),
                 kind: UserKind::Regular,
                 status: UserStatus::Active,
                 balance_minor: 1000,
@@ -2688,6 +2757,7 @@ mod tests {
                 username: "random_invite_a".to_string(),
                 email: None,
                 avatar_url: String::new(),
+                contact_qq: String::new(),
                 kind: UserKind::Regular,
                 status: UserStatus::Active,
                 balance_minor: 0,
@@ -2702,6 +2772,7 @@ mod tests {
                 username: "random_invite_b".to_string(),
                 email: None,
                 avatar_url: String::new(),
+                contact_qq: String::new(),
                 kind: UserKind::Regular,
                 status: UserStatus::Active,
                 balance_minor: 0,
@@ -2729,6 +2800,7 @@ mod tests {
                     username: "renamed_demo".to_string(),
                     email: original.email.clone(),
                     avatar_url: "https://example.com/should-not-override.png".to_string(),
+                    contact_qq: "234567".to_string(),
                     kind: original.kind.clone(),
                     status: original.status.clone(),
                     balance_minor: 999_999,
@@ -2743,6 +2815,7 @@ mod tests {
         assert_eq!(updated.balance_minor, original.balance_minor);
         assert_eq!(updated.invite_code, original.invite_code);
         assert_eq!(updated.avatar_url, original.avatar_url);
+        assert_eq!(updated.contact_qq, "234567");
     }
 
     #[tokio::test]
@@ -2794,6 +2867,7 @@ mod tests {
                 username: "duplicate_invite_code".to_string(),
                 email: None,
                 avatar_url: String::new(),
+                contact_qq: String::new(),
                 kind: UserKind::Regular,
                 status: UserStatus::Active,
                 balance_minor: 0,
@@ -2979,6 +3053,7 @@ mod tests {
             .register_user(UserRegisterRequest {
                 username: Some("new_member".to_string()),
                 email: None,
+                contact_qq: Some("1234567".to_string()),
                 password: "newPassword123".to_string(),
                 invite_code: None,
             })
@@ -2986,6 +3061,7 @@ mod tests {
             .expect("username register should succeed");
 
         assert_eq!(username_user.username, "new_member");
+        assert_eq!(username_user.contact_qq, "1234567");
         assert_invite_code_format(&username_user.invite_code);
 
         let _ = access
@@ -3001,6 +3077,7 @@ mod tests {
             .register_user(UserRegisterRequest {
                 username: None,
                 email: Some("mail_reg@example.com".to_string()),
+                contact_qq: None,
                 password: "emailPassword123".to_string(),
                 invite_code: None,
             })
@@ -3078,6 +3155,7 @@ mod tests {
             .register_user(UserRegisterRequest {
                 username: Some("still_forbidden".to_string()),
                 email: None,
+                contact_qq: None,
                 password: "forbidPassword123".to_string(),
                 invite_code: None,
             })
@@ -3109,6 +3187,36 @@ mod tests {
             })
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn access_repository_supports_admin_reset_user_password() {
+        let access = AccessRepository::memory_seeded();
+
+        access
+            .reset_user_password(
+                "U10001",
+                UserPasswordResetRequest {
+                    password: "manualPass123".to_string(),
+                },
+            )
+            .await
+            .expect("admin can reset user password");
+
+        assert!(access
+            .login_user(UserLoginRequest {
+                login_key: "demo_user".to_string(),
+                password: "manualPass123".to_string(),
+            })
+            .await
+            .is_ok());
+        assert!(access
+            .login_user(UserLoginRequest {
+                login_key: "demo_user".to_string(),
+                password: "12345678".to_string(),
+            })
+            .await
+            .is_err());
     }
 
     #[tokio::test]

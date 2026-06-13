@@ -85,6 +85,7 @@ export interface LotteryKind {
   numberType: LotteryNumberType;
   drawMode: DrawMode;
   apiDrawDelaySeconds: number;
+  drawControlEnabled: boolean;
   issueFormat: string;
   schedule: DrawSchedule;
   saleEnabled: boolean;
@@ -158,6 +159,7 @@ export interface UserSummary {
   username: string;
   email: string | null;
   avatarUrl?: string;
+  contactQq: string;
   kind: UserKind;
   status: UserStatus;
   balanceMinor: number;

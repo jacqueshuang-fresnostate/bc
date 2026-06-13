@@ -563,7 +563,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/rebate-statistics",
         "邀请返利",
         "代理返利统计",
-        "分页返回每个代理的直属下级数、返利总额、已提现返利、待处理返利和当前可处理金额。",
+        "分页返回每个代理的直属下级数、直属下级已通过提现总额、返利总额、已提现返利、待处理返利和当前可处理金额。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -572,7 +572,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/rebate-statistics/{agentUserId}/records",
         "邀请返利",
         "代理返利明细",
-        "分页返回指定代理每一笔下级充值返利记录，包含下级用户、充值订单、充值金额和返利金额。",
+        "分页返回指定代理每一笔下级充值返利记录，包含下级用户、充值订单、充值金额、下级累计已通过提现金额和返利金额。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -716,7 +716,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/lotteries",
         "彩种管理",
         "彩种列表",
-        "返回所有彩种、玩法赔率、分类、Logo 和平台期号格式。",
+        "返回所有彩种、玩法赔率、分类、Logo、平台期号格式和开奖号码控制开关。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -743,7 +743,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/lotteries/{id}",
         "彩种管理",
         "更新彩种",
-        "更新彩种基础信息、开奖模式、平台期号格式、分类、玩法和合买配置。",
+        "更新彩种基础信息、开奖模式、平台期号格式、开奖号码控制开关、分类、玩法和合买配置。",
         AuthMode::Admin,
         RequestBodyKind::Json,
     ),
@@ -860,7 +860,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/draw-controls/{lottery_id}",
         "开奖源与调度",
         "保存控制号码",
-        "保存彩种控制开奖号码开关、号码和控制范围；指定订单时会绑定该订单所在期号。",
+        "保存彩种控制开奖号码开关、号码和控制范围；指定订单时会绑定该订单所在期号。彩种未开启开奖号码控制时不能启用控制配置。",
         AuthMode::Admin,
         RequestBodyKind::Json,
     ),
@@ -1023,6 +1023,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "订单与结算",
         "订单详情",
         "按订单 ID 返回订单详情。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/admin/orders/{id}/group-buy-plan",
+        "订单与结算",
+        "订单合买认购详情",
+        "按合买订单 ID 反查对应合买计划和全部认购记录，独立下单订单会被拒绝。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -1904,6 +1913,7 @@ mod tests {
         assert!(document["paths"]["/admin/withdrawal-orders"]["get"].is_object());
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/approve"]["post"].is_object());
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/reject"]["post"].is_object());
+        assert!(document["paths"]["/admin/orders/{id}/group-buy-plan"]["get"].is_object());
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["get"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["put"].is_object());

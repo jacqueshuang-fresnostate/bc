@@ -1,5 +1,47 @@
 # TODO
 
+## 2026-06-14 04:53 HKT 订单列表查看合买认购详情
+
+- 完成任务：订单管理列表中，合买下单的订单支持直接查看对应合买计划的认购详情。
+- 解决问题：
+  - 运营在订单列表看到合买总单后，无法直接确认这个合买订单由哪些用户认购、各自认购金额和占比，需要跳转到合买管理再人工按订单号查找。
+- 实施内容：
+  - 后端新增 `GET /api/admin/orders/{id}/group-buy-plan`，通过投注订单号反查合买计划，并返回计划详情和参与记录。
+  - 该接口会拒绝独立下单订单，并在合买订单缺少认购记录时返回明确错误。
+  - OpenAPI 文档同步登记订单合买认购详情接口。
+  - 后台订单列表仅对“合买下单”显示“认购详情”按钮。
+  - 点击后打开 `SideSheet`，上方展示订单、计划、彩种、期号、玩法、进度和投注内容，下方展示全部认购用户、用户 ID、金额、份数、占比、认购时间和备注。
+  - 同步更新架构说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、后台 `npm run build`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture` 和 `git diff --check` 均通过；后台构建仍保留既有的大 chunk 提示。
+
+## 2026-06-14 04:44 HKT 注册可选 QQ 联系方式
+
+- 完成任务：用户注册支持选填 QQ 联系方式，并在后台用户维护中展示和编辑。
+- 解决问题：
+  - 手机端注册此前没有联系方式字段，客服或财务后续核对用户时只能依赖用户名、邮箱或聊天记录。
+- 实施内容：
+  - 后端用户资料新增 `contactQq/contact_qq` 字段，新增迁移 `20260614043000_add_user_contact_qq.sql`。
+  - 用户注册接口支持可选 `contactQq`，后端校验填写时必须为 5-12 位数字。
+  - 手机端注册表单新增 QQ 输入框，并和邀请码放在同一行，避免撑高登录注册页。
+  - 手机端注册密码提示和前端校验同步为至少 8 位，与后端规则一致。
+  - 后台用户列表展示用户 QQ，用户维护 `SideSheet` 增加“联系方式 QQ”输入框。
+  - 同步更新架构说明。
+- 验证结果：`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml access_repository_registers_user_by_username_or_email -- --nocapture`、手机端 `npm run build`、后台 `npm run build`、`cargo fmt --manifest-path backend/Cargo.toml --check` 和 `git diff --check` 均通过；后台构建仍保留既有的大 chunk 提示。
+
+## 2026-06-14 04:32 HKT 后台用户锁定筛选与密码重置
+
+- 完成任务：用户管理支持按账号状态筛选锁定用户，并在用户维护抽屉中重置普通用户登录密码。
+- 解决问题：
+  - 运营此前无法直接筛选出锁定状态用户，只能通过排序或人工扫描列表定位异常账号。
+  - 用户维护抽屉没有普通用户密码重置入口，后台只能依赖用户端忘记密码流程处理登录密码问题。
+- 实施内容：
+  - 后端 `GET /api/admin/users` 增加 `status` 查询参数，支持 `active/suspended/locked` 过滤。
+  - 后端新增 `PATCH /api/admin/users/{id}/password`，复用用户密码规则和 Argon2 哈希写入 `user_password_hashes`。
+  - 后台用户列表增加状态筛选下拉框和“锁定”快捷按钮。
+  - 后台用户维护 `SideSheet` 增加“重置密码/初始密码”输入框，留空不修改，填写后保存会重置会员登录密码。
+  - 同步更新架构说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml access_repository_supports_admin_reset_user_password -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml user_list_status_filter_keeps_only_locked_users -- --nocapture`、后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍保留既有的大 chunk 提示。
+
 ## 2026-06-11 23:22 HKT 修复体彩排列5新增后的种子彩种数量测试
 
 - 完成任务：修复 CI 中 `repository_uses_seeded_memory_lotteries` 失败。
@@ -3238,3 +3280,31 @@
 - 解决问题：后台客服可以发送图片，手机端此前只能查看图片和发送文字，用户无法在客服会话中上传充值凭证或问题截图。
 - 实施内容：后端用户客服回复支持 `messageType=image`、`imageUrl` 和可选说明；新增 `/api/user/support/images/upload` 图床代理上传接口；手机端 `/support` 输入栏新增图片按钮，选择图片后上传并自动发送图片消息，发送过程中禁用输入和按钮；同步把客服回复空内容校验文案改为中文提示。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml support_repository_allows_user_image_reply -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml support_repository_allows_user_to_continue_owned_conversation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、手机端 `pnpm build`、手机端 `pnpm test` 和 `git diff --check` 均通过；当前手机端测试脚本显示 0 个测试用例。
+
+## 2026-06-14 01:10 HKT 后台详情抽屉与彩种控制开关优化
+
+- 完成任务：优化合买计划详情、控制开奖号码和代理返利详情抽屉，并增加彩种开奖号码控制开关。
+- 解决问题：原三个 `SideSheet` 宽度偏窄，表格和明细内容横向拥挤；所有彩种默认都展示控制按钮，无法区分不需要控开的彩种；代理返利详情缺少下级提现汇总。
+- 实施内容：三个详情 `SideSheet` 宽度改为 `80%`；彩种配置新增 `drawControlEnabled`/`draw_control_enabled` 并持久化到数据库，后台彩种表单可配置，控制台按该开关隐藏“控制”按钮；后端拒绝未开启控制的彩种启用控制号码，自动开奖也不会用历史控制号覆盖；代理返利统计和明细增加下级已通过提现金额展示；同步更新 OpenAPI 路径描述。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml agent_rebate -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml repository_draws_api_issue_with_prefetched_number_without_refetching_source -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml repository_save_draw_control -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
+
+## 2026-06-14 04:01 HKT 手机端注单记录独立页面壳
+
+- 完成任务：调整手机端 `/orders` 注单记录页的页面外壳。
+- 解决问题：注单记录从“我的”进入后仍显示底部导航，页面层级和代理中心等子页不一致，列表可用高度也被底部导航占用。
+- 实施内容：`LayoutView.vue` 对 `/orders` 隐藏底部导航；`HistoryView.vue` 在订单模式下使用代理中心同款紧凑安全区 Header，提供返回、标题“我的注单”和刷新按钮；开奖模式继续保留原品牌 Header。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过；尝试用内置浏览器打开 `/orders` 做可视验证时，因本地页面需要登录态且浏览器安全策略禁止通过 `javascript:` 注入 localStorage，未完成可视截图验证。
+
+## 2026-06-14 04:06 HKT 手机端首页彩种卡片标题字号调优
+
+- 完成任务：调整手机端首页普通彩种卡片标题字号。
+- 解决问题：`group-lottery-card__copy h5` 标题字号仍偏大，在紧凑卡片中容易挤占状态和期号空间。
+- 实施内容：将 `mobile/src/components/lottery/HomeDrawCard.vue` 中 `.group-lottery-card__copy h5` 的默认字号和小屏覆盖字号统一调整为 `0.66rem`。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。
+
+## 2026-06-14 04:11 HKT 手机端注单卡片展示开奖号码
+
+- 完成任务：在手机端 `/orders` 注单记录卡片中展示开奖号码。
+- 解决问题：用户此前只能进入注单详情查看开奖号码，列表页无法直接核对每张注单的开奖结果。
+- 实施内容：`BetOrderCard.vue` 复用 `orderDrawNumbers`，在投注号码下方新增“开奖号码”区域；有开奖号码时显示紧凑圆形号码球，待开奖显示“待开奖”，缺失数据显示“暂无开奖数据”；`api/bet.ts` 兼容 `drawNumber`、`draw_number`、`draw_result` 和 `result` 字段并统一归一化。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。

@@ -955,6 +955,7 @@ mod tests {
                     username: "user".to_string(),
                     email: None,
                     avatar_url: String::new(),
+                    contact_qq: String::new(),
                     kind: UserKind::Regular,
                     status: UserStatus::Active,
                     balance_minor: 0,

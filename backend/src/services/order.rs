@@ -1896,6 +1896,7 @@ mod tests {
             number_type: LotteryNumberType::ThreeDigit,
             draw_mode: DrawMode::Api,
             api_draw_delay_seconds: 0,
+            draw_control_enabled: true,
             issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
             schedule: DrawSchedule::Daily {
                 time: "21:00:15".to_string(),

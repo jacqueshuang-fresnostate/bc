@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import DrawResultCard from '../components/lottery/DrawResultCard.vue'
 import LotteryGroupFilter from '../components/lottery/LotteryGroupFilter.vue'
 import SelectedLotteryHistorySheet from '../components/lottery/SelectedLotteryHistorySheet.vue'
+import LucideIcon from '../components/mobile/LucideIcon.vue'
 import BetOrderCard from '../components/orders/BetOrderCard.vue'
 import OrderDetailSheet from '../components/orders/OrderDetailSheet.vue'
 import { useBetOrders } from '../composables/useBetOrders'
@@ -97,7 +98,10 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
 
 <template>
   <section class="history-center">
-    <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
+    <header
+      v-if="pageMode === 'draws'"
+      class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md"
+    >
       <div class="flex items-center gap-3">
         <img
           :alt="`${branding.site_name} 标志`"
@@ -113,7 +117,23 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
       </div>
     </header>
 
-    <main class="history-content">
+    <header
+      v-else
+      class="mobile-safe-compact-header sticky top-0 z-30 flex h-14 items-center justify-between bg-white/85 px-4 shadow-sm shadow-red-900/5 backdrop-blur-md"
+    >
+      <button class="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-50 text-red-900" type="button" @click="router.back()">
+        <LucideIcon name="arrow_back" class="h-5 w-5" />
+      </button>
+      <strong class="font-headline text-base text-red-900">我的注单</strong>
+      <button class="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-50 text-red-900 disabled:opacity-60" type="button" :disabled="loadingOrders" @click="loadCurrentPage">
+        <LucideIcon name="refresh" class="h-4.5 w-4.5" />
+      </button>
+    </header>
+
+    <main
+      class="history-content"
+      :class="pageMode === 'orders' ? 'history-content--orders' : 'history-content--draws'"
+    >
       <!-- 开奖页只展示最新开奖；注单记录从“我的”进入。 -->
       <section v-if="pageMode === 'draws'" class="draw-panel">
         <div class="draw-panel__header">
@@ -141,9 +161,6 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
       </section>
 
       <section v-else class="orders-panel">
-        <div class="orders-panel__header">
-          <h2>我的注单</h2>
-        </div>
         <div v-if="loadingOrders" class="state-block">
           <van-loading>加载中...</van-loading>
         </div>
@@ -205,7 +222,14 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
 .history-content {
   width: min(100%, 672px);
   margin: 0 auto;
+}
+
+.history-content--draws {
   padding: var(--mobile-brand-page-top) 16px 112px;
+}
+
+.history-content--orders {
+  padding: 16px 16px 28px;
 }
 
 .draw-panel__header {
@@ -228,18 +252,6 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
 .orders-list {
   display: grid;
   gap: 16px;
-}
-
-.orders-panel__header {
-  margin-bottom: 16px;
-}
-
-.orders-panel__header h2 {
-  margin: 0;
-  color: #7a0711;
-  font-size: 18px;
-  font-weight: 900;
-  letter-spacing: -0.04em;
 }
 
 .orders-list--records {

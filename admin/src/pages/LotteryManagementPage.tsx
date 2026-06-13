@@ -57,6 +57,7 @@ interface LotteryFormState {
   apiDrawDelaySeconds: string;
   category: LotteryCategory;
   drawMode: DrawMode;
+  drawControlEnabled: boolean;
   groupBuyEnabled: boolean;
   id: string;
   issueFormat: string;
@@ -391,7 +392,7 @@ export function LotteryManagementPage({
             </div>
           ) : paginatedLotteries.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-left text-sm">
+              <table className="w-full min-w-[860px] text-left text-sm">
                 <thead className="border-b border-line text-xs text-slate-500">
                   <tr>
                     <th className="py-2 pr-4 font-medium">彩种</th>
@@ -402,6 +403,7 @@ export function LotteryManagementPage({
                     <th className="py-2 pr-4 font-medium">开奖</th>
                     <th className="py-2 pr-4 font-medium">时间</th>
                     <th className="py-2 pr-4 font-medium">销售</th>
+                    <th className="py-2 pr-4 font-medium">控制</th>
                     <th className="py-2 pr-4 font-medium">操作</th>
                   </tr>
                 </thead>
@@ -489,6 +491,11 @@ export function LotteryManagementPage({
                             {lottery.saleEnabled ? '销售中' : '已停售'}
                           </Tag>
                         </div>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <Tag color={lottery.drawControlEnabled ? 'red' : 'grey'}>
+                          {lottery.drawControlEnabled ? '允许控制' : '不控制'}
+                        </Tag>
                       </td>
                       <td className="py-3 pr-4">
                         <Button size="small" onClick={() => selectLottery(lottery)}>
@@ -740,6 +747,17 @@ export function LotteryManagementPage({
                   <span>{form.saleEnabled ? '销售中' : '停售'}</span>
                 </div>
               </Field>
+              <Field label="开奖号码控制">
+                <div className="flex h-10 items-center gap-2 text-sm text-slate-700">
+                  <Switch
+                    checked={form.drawControlEnabled}
+                    onChange={(checked) =>
+                      setFormValue(setForm, 'drawControlEnabled', checked)
+                    }
+                  />
+                  <span>{form.drawControlEnabled ? '允许控制' : '不需要控制'}</span>
+                </div>
+              </Field>
               <Field label="合买状态">
                 <label className="flex h-10 items-center gap-2 text-sm">
                   <input
@@ -972,6 +990,7 @@ function emptyForm(): LotteryFormState {
     apiDrawDelaySeconds: '0',
     category: 'regional',
     drawMode: 'platform',
+    drawControlEnabled: true,
     groupBuyEnabled: true,
     id: '',
     initiatorMinPercent: '10',
@@ -999,6 +1018,7 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
     category: lottery.category,
     logoUrl: lottery.logoUrl,
     drawMode: lottery.drawMode,
+    drawControlEnabled: lottery.drawControlEnabled,
     groupBuyEnabled: lottery.groupBuy.enabled,
     id: lottery.id,
     initiatorMinPercent: String(lottery.groupBuy.initiatorMinPercent),
@@ -1031,6 +1051,7 @@ function lotteryFromForm(
         : 0,
     category: form.category,
     drawMode: form.drawMode,
+    drawControlEnabled: form.drawControlEnabled,
     groupBuy: {
       enabled: form.groupBuyEnabled,
       initiatorMinPercent: numberField(form.initiatorMinPercent),

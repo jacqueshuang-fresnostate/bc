@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatDateTime, moneyText, orderAmountLabel, orderBetContentText, orderBetCount, orderDisplayAmount, orderMultiple, orderResultLabel, orderResultText, orderSourceText, orderStatusIcon, orderTagText, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
+import { formatDateTime, moneyText, orderAmountLabel, orderBetContentText, orderBetCount, orderDisplayAmount, orderDrawNumbers, orderMultiple, orderResultLabel, orderResultText, orderSourceText, orderStatusIcon, orderTagText, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
 
 const props = defineProps<{ order: any }>()
 const emit = defineEmits<{ open: [any] }>()
 const orderNumbersText = computed(() => orderBetContentText(props.order))
 const orderCreatedAtText = computed(() => formatDateTime(props.order?.created_at || props.order?.createdAt))
+const drawNumbers = computed(() => orderDrawNumbers(props.order))
+const drawEmptyText = computed(() => props.order?.status === 'pending' ? '待开奖' : '暂无开奖数据')
 </script>
 
 <template>
@@ -39,6 +41,20 @@ const orderCreatedAtText = computed(() => formatDateTime(props.order?.created_at
     <div class="bet-record-card__details">
       <p>投注号码</p>
       <strong>{{ orderNumbersText }}</strong>
+    </div>
+
+    <div class="bet-record-card__draw">
+      <p>开奖号码</p>
+      <div v-if="drawNumbers.length" class="bet-record-card__draw-balls">
+        <span
+          v-for="(number, index) in drawNumbers"
+          :key="`${order.id}-draw-${index}-${number}`"
+          class="bet-record-card__draw-ball"
+        >
+          {{ number }}
+        </span>
+      </div>
+      <strong v-else>{{ drawEmptyText }}</strong>
     </div>
 
     <div class="bet-record-card__grid">
@@ -237,6 +253,13 @@ const orderCreatedAtText = computed(() => formatDateTime(props.order?.created_at
   background: #fff8f0;
 }
 
+.bet-record-card__draw {
+  margin-bottom: 14px;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f8f1f1;
+}
+
 .bet-record-card__details strong {
   display: block;
   margin-top: 5px;
@@ -248,6 +271,37 @@ const orderCreatedAtText = computed(() => formatDateTime(props.order?.created_at
   letter-spacing: 0.04em;
 }
 
+.bet-record-card__draw strong {
+  display: block;
+  margin-top: 6px;
+  color: #5a403e;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.bet-record-card__draw-balls {
+  display: flex;
+  margin-top: 7px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bet-record-card__draw-ball {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #8c0a15;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 8px 16px rgba(140, 10, 21, 0.12);
+}
+
 .bet-record-card__grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -256,6 +310,7 @@ const orderCreatedAtText = computed(() => formatDateTime(props.order?.created_at
 }
 
 .bet-record-card__details p,
+.bet-record-card__draw p,
 .bet-record-card__grid p,
 .bet-record-card__result span {
   margin: 0 0 5px;

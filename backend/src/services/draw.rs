@@ -150,14 +150,15 @@ impl DrawRepository {
         Ok(result)
     }
 
-    /// 使用已经并发预取的 API 开奖号码完成开奖，避免自动调度阶段重复等待外部接口。
-    pub async fn draw_with_prefetched_api_number(
+    /// 使用预取 API 开奖号完成开奖，并允许调用方决定是否可用后台控制号覆盖。
+    pub async fn draw_with_prefetched_api_number_with_control_policy(
         &self,
         id: &str,
         api_draw_number: Option<String>,
+        allow_control_number: bool,
     ) -> ApiResult<DrawIssue> {
         let (payload, uses_control_number) = self
-            .resolve_prefetched_api_draw_payload(id, api_draw_number)
+            .resolve_prefetched_api_draw_payload(id, api_draw_number, allow_control_number)
             .await?;
 
         let result = {
@@ -221,6 +222,10 @@ impl DrawRepository {
         lottery: &LotteryKind,
         payload: SaveLotteryDrawControlRequest,
     ) -> ApiResult<LotteryDrawControl> {
+        if payload.enabled && !lottery.draw_control_enabled {
+            return Err(ApiError::BadRequest("该彩种未开启开奖号码控制".to_string()));
+        }
+
         let draw_number = normalize_control_draw_number(lottery, &payload)?;
         let (target_scope, target_issue, target_order_id) = normalize_control_target(&payload)?;
         let (result, snapshot) = {
@@ -375,16 +380,19 @@ impl DrawRepository {
         &self,
         id: &str,
         api_draw_number: Option<String>,
+        allow_control_number: bool,
     ) -> ApiResult<(DrawIssueResultRequest, bool)> {
         let issue = self.get(id).await?;
 
-        if let Some(draw_number) = self.active_draw_control_number(&issue).await? {
-            return Ok((
-                DrawIssueResultRequest {
-                    draw_number: Some(draw_number),
-                },
-                true,
-            ));
+        if allow_control_number {
+            if let Some(draw_number) = self.active_draw_control_number(&issue).await? {
+                return Ok((
+                    DrawIssueResultRequest {
+                        draw_number: Some(draw_number),
+                    },
+                    true,
+                ));
+            }
         }
 
         if issue.draw_mode == DrawMode::Api {
@@ -1681,6 +1689,29 @@ mod tests {
         assert!(error.to_string().contains("控制期号不能为空"));
     }
 
+    #[tokio::test]
+    async fn repository_save_draw_control_rejects_disabled_lottery_control() {
+        let mut lottery = lottery(DrawMode::Platform, LotteryNumberType::ThreeDigit);
+        lottery.draw_control_enabled = false;
+        let repository = DrawRepository::memory();
+
+        let error = repository
+            .save_draw_control(
+                &lottery,
+                SaveLotteryDrawControlRequest {
+                    enabled: true,
+                    draw_number: Some("2,4,7".to_string()),
+                    target_scope: DrawControlTargetScope::Lottery,
+                    target_issue: None,
+                    target_order_id: None,
+                },
+            )
+            .await
+            .expect_err("disabled lottery control cannot be enabled");
+
+        assert!(error.to_string().contains("未开启开奖号码控制"));
+    }
+
     #[test]
     /// 新增号码类型按各自长度、范围和去重规则校验开奖号码。
     fn normalize_draw_number_supports_new_lottery_number_types() {
@@ -1766,7 +1797,11 @@ mod tests {
             .expect("issue can be created");
 
         let drawn = repository
-            .draw_with_prefetched_api_number(&issue.id, Some("1,2,3".to_string()))
+            .draw_with_prefetched_api_number_with_control_policy(
+                &issue.id,
+                Some("1,2,3".to_string()),
+                true,
+            )
             .await
             .expect("prefetched draw number can be used");
 
@@ -1854,6 +1889,7 @@ mod tests {
             number_type,
             draw_mode,
             api_draw_delay_seconds: 0,
+            draw_control_enabled: true,
             issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
             schedule: DrawSchedule::Daily {
                 time: "21:00:15".to_string(),

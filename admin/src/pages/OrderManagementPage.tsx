@@ -10,7 +10,7 @@ import {
   Tag,
   Toast,
 } from '@douyinfe/semi-ui';
-import { Ban, Plus, RefreshCcw, Trash2 } from 'lucide-react';
+import { Ban, Eye, Plus, RefreshCcw, Trash2, Users } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -19,13 +19,14 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import { fetchOrderGroupBuyPlan } from '../api/client';
 import { OrderBetInfo } from '../components/OrderBetInfo';
 import { PageControls } from '../components/PageControls';
 import { useDraws } from '../hooks/useDraws';
 import { useLotteries } from '../hooks/useLotteries';
 import { useOrders } from '../hooks/useOrders';
 import { usePlayRules } from '../hooks/usePlayRules';
-import type { LotteryKind } from '../types/dashboard';
+import type { GroupBuyPlan, GroupBuyPlanStatus } from '../types/groupBuy';
 import type { CreateOrderRequest, OrderDetail, OrderStatus } from '../types/orders';
 import type {
   BigSmallOddEvenPick,
@@ -118,6 +119,11 @@ export function OrderManagementPage({
   const [createdOrder, setCreatedOrder] = useState<OrderDetail | null>(null);
   const [createSheetVisible, setCreateSheetVisible] = useState(false);
   const [form, setForm] = useState<OrderFormState>(() => emptyForm());
+  const [participationSheetVisible, setParticipationSheetVisible] = useState(false);
+  const [participationOrder, setParticipationOrder] = useState<OrderDetail | null>(null);
+  const [participationPlan, setParticipationPlan] = useState<GroupBuyPlan | null>(null);
+  const [participationLoading, setParticipationLoading] = useState(false);
+  const [participationError, setParticipationError] = useState<string | null>(null);
 
   useEffect(() => {
     setOrderPageNumber(1);
@@ -219,6 +225,22 @@ export function OrderManagementPage({
   const cancelPendingOrder = async (id: string) => {
     await cancel(id);
     onDashboardRefresh();
+  };
+
+  const openParticipationSheet = async (order: OrderDetail) => {
+    setParticipationOrder(order);
+    setParticipationPlan(null);
+    setParticipationError(null);
+    setParticipationSheetVisible(true);
+    setParticipationLoading(true);
+    try {
+      const plan = await fetchOrderGroupBuyPlan(order.id);
+      setParticipationPlan(plan);
+    } catch (requestError) {
+      setParticipationError(errorMessage(requestError));
+    } finally {
+      setParticipationLoading(false);
+    }
   };
 
   const clearBetOrderRecords = async () => {
@@ -419,14 +441,28 @@ export function OrderManagementPage({
                         <Tag color={statusColor(order.status)}>{statusText(order.status)}</Tag>
                       </td>
                       <td className="py-3 pr-4">
-                        <Button
-                          disabled={saving || order.status !== 'pendingDraw'}
-                          icon={<Ban size={14} />}
-                          size="small"
-                          onClick={() => void cancelPendingOrder(order.id)}
-                        >
-                          取消
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            disabled={saving || order.status !== 'pendingDraw'}
+                            icon={<Ban size={14} />}
+                            size="small"
+                            onClick={() => void cancelPendingOrder(order.id)}
+                          >
+                            取消
+                          </Button>
+                          {order.orderSource === 'groupBuy' ? (
+                            <Button
+                              icon={<Eye size={14} />}
+                              loading={
+                                participationLoading && participationOrder?.id === order.id
+                              }
+                              size="small"
+                              onClick={() => void openParticipationSheet(order)}
+                            >
+                              认购详情
+                            </Button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -570,6 +606,150 @@ export function OrderManagementPage({
             </div>
           ) : null}
         </SideSheet>
+
+        <SideSheet
+          aria-label="合买认购详情"
+          title="合买认购详情"
+          visible={participationSheetVisible}
+          width={720}
+          onCancel={() => setParticipationSheetVisible(false)}
+        >
+          {participationLoading ? (
+            <div className="grid min-h-[320px] place-items-center">
+              <Spin tip="正在加载合买认购详情" />
+            </div>
+          ) : participationError ? (
+            <Banner
+              type="danger"
+              title="合买认购详情加载失败"
+              description={participationError}
+            />
+          ) : participationPlan && participationOrder ? (
+            <div className="space-y-4">
+              <section className="rounded-md border border-line bg-slate-50 p-4">
+                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h2 className="text-base font-semibold text-ink">计划详情</h2>
+                    <p className="mt-1 break-all text-sm text-slate-500">
+                      订单号：{participationOrder.id}
+                    </p>
+                  </div>
+                  <Tag color={groupBuyStatusColor(participationPlan.status)}>
+                    {groupBuyStatusText(participationPlan.status)}
+                  </Tag>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <InfoLine label="合买计划" value={participationPlan.id} />
+                  <InfoLine label="彩种" value={participationPlan.lotteryName} />
+                  <InfoLine label="期号" value={participationPlan.issue || '-'} />
+                  <InfoLine
+                    label="玩法"
+                    value={ruleLabel(participationOrder.ruleCode, rules)}
+                  />
+                  <InfoLine
+                    label="发起人"
+                    value={`${participationPlan.initiatorUsername}（${participationPlan.initiatorUserId}）`}
+                  />
+                  <InfoLine
+                    label="计划总额"
+                    value={formatMoney(participationPlan.totalAmountMinor)}
+                  />
+                  <InfoLine
+                    label="已认购"
+                    value={formatMoney(participationPlan.filledAmountMinor)}
+                  />
+                  <InfoLine label="总份数" value={`${participationPlan.shareCount} 份`} />
+                  <InfoLine
+                    label="订单状态"
+                    value={statusText(participationOrder.status)}
+                  />
+                </div>
+                <div className="mt-4">
+                  <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+                    <span>合买进度</span>
+                    <span>{groupBuyProgressPercent(participationPlan)}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-white ring-1 ring-line">
+                    <div
+                      className="h-full rounded-full bg-orange-500"
+                      style={{ width: `${groupBuyProgressPercent(participationPlan)}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="mt-4 rounded-md border border-line bg-white px-3 py-2">
+                  <div className="text-xs text-slate-500">投注内容</div>
+                  <div className="mt-1 whitespace-pre-wrap break-all text-sm font-medium text-ink">
+                    {participationPlan.numbers || '-'}
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-md border border-line p-4">
+                <div className="mb-4 flex items-center gap-2">
+                  <Users size={17} />
+                  <h2 className="text-base font-semibold text-ink">认购记录</h2>
+                  <Tag color="orange">{participationPlan.participants.length} 条</Tag>
+                </div>
+                {participationPlan.participants.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[720px] text-left text-sm">
+                      <thead className="border-b border-line text-xs text-slate-500">
+                        <tr>
+                          <th className="py-2 pr-4 font-medium">用户</th>
+                          <th className="py-2 pr-4 font-medium">认购金额</th>
+                          <th className="py-2 pr-4 font-medium">份数</th>
+                          <th className="py-2 pr-4 font-medium">占比</th>
+                          <th className="py-2 pr-4 font-medium">认购时间</th>
+                          <th className="py-2 pr-4 font-medium">备注</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-line">
+                        {participationPlan.participants.map((participant) => (
+                          <tr key={participant.id}>
+                            <td className="py-3 pr-4">
+                              <div className="font-medium text-ink">
+                                {participant.username}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-400">
+                                {participant.userId}
+                              </div>
+                            </td>
+                            <td className="py-3 pr-4 font-semibold text-ink">
+                              {formatMoney(participant.amountMinor)}
+                            </td>
+                            <td className="py-3 pr-4 text-slate-600">
+                              {participant.shareCount} 份
+                            </td>
+                            <td className="py-3 pr-4 text-slate-600">
+                              {participantPercent(participant.amountMinor, participationPlan)}%
+                            </td>
+                            <td className="py-3 pr-4 text-slate-500">
+                              {formatDateTime(
+                                participant.createdAt,
+                                participant.createdAt || '-',
+                              )}
+                            </td>
+                            <td className="py-3 pr-4 text-slate-500">
+                              {participant.note || '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+                    暂无认购记录。
+                  </div>
+                )}
+              </section>
+            </div>
+          ) : (
+            <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+              请选择一笔合买订单查看认购详情。
+            </div>
+          )}
+        </SideSheet>
       </section>
     </div>
   );
@@ -586,6 +766,20 @@ function Field({ children, label }: FieldProps) {
       <span className="text-xs font-medium text-slate-500">{label}</span>
       {children}
     </label>
+  );
+}
+
+interface InfoLineProps {
+  label: string;
+  value: string;
+}
+
+function InfoLine({ label, value }: InfoLineProps) {
+  return (
+    <div className="rounded-md border border-line bg-white px-3 py-2">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 break-all text-sm font-medium text-ink">{value}</div>
+    </div>
   );
 }
 
@@ -849,13 +1043,27 @@ function toggleAttribute(
   });
 }
 
-function numberField(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function ruleLabel(code: PlayRuleCode, rules: Array<{ code: PlayRuleCode; label: string }>) {
   return rules.find((rule) => rule.code === code)?.label ?? code;
+}
+
+function groupBuyProgressPercent(plan: GroupBuyPlan) {
+  if (plan.totalAmountMinor <= 0) {
+    return 0;
+  }
+
+  return Math.min(
+    100,
+    Math.round((plan.filledAmountMinor / plan.totalAmountMinor) * 100),
+  );
+}
+
+function participantPercent(amountMinor: number, plan: GroupBuyPlan) {
+  if (plan.totalAmountMinor <= 0) {
+    return 0;
+  }
+
+  return Math.round((amountMinor / plan.totalAmountMinor) * 10000) / 100;
 }
 
 function statusText(status: OrderStatus) {
@@ -872,6 +1080,17 @@ function orderSourceText(source: OrderDetail['orderSource']) {
   return source === 'groupBuy' ? '合买下单' : '独立下单';
 }
 
+function groupBuyStatusText(status: GroupBuyPlanStatus) {
+  const labels: Record<GroupBuyPlanStatus, string> = {
+    cancelled: '已取消',
+    draft: '草稿',
+    filled: '已满单',
+    open: '进行中',
+    settled: '已结算',
+  };
+  return labels[status];
+}
+
 function statusColor(status: OrderStatus) {
   const colors: Record<OrderStatus, 'blue' | 'green' | 'grey' | 'red'> = {
     cancelled: 'grey',
@@ -880,4 +1099,20 @@ function statusColor(status: OrderStatus) {
     won: 'green',
   };
   return colors[status];
+}
+
+function groupBuyStatusColor(status: GroupBuyPlanStatus) {
+  const colors = {
+    cancelled: 'grey',
+    draft: 'blue',
+    filled: 'green',
+    open: 'cyan',
+    settled: 'teal',
+  } as const satisfies Record<GroupBuyPlanStatus, string>;
+
+  return colors[status];
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : '接口请求失败';
 }

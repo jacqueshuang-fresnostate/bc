@@ -68,9 +68,10 @@ use crate::{
         },
         user::{
             AdminPasswordResetRequest, AdminSaveRequest, AdminStatusRequest, AdminSummary,
-            RegistrationConfig, UserKind, UserStatus, UserStatusRequest, UserSummary,
+            RegistrationConfig, UserKind, UserPasswordResetRequest, UserStatus, UserStatusRequest,
+            UserSummary,
         },
-        withdrawal::WithdrawalOrderSummary,
+        withdrawal::{WithdrawalOrderStatus, WithdrawalOrderSummary},
     },
     error::{ApiError, ApiResult},
     response::ApiEnvelope,
@@ -163,6 +164,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/users", get(list_users).post(create_user))
         .route("/users/{id}", get(get_user).put(update_user))
+        .route("/users/{id}/password", patch(reset_user_password))
         .route("/users/{id}/status", patch(set_user_status))
         .route("/admins", get(list_admins).post(create_admin))
         .route("/admins/{id}", get(get_admin).put(update_admin))
@@ -263,6 +265,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/orders", get(list_orders).post(create_order))
         .route("/orders/clear", delete(clear_bet_orders))
         .route("/orders/{id}", get(get_order))
+        .route("/orders/{id}/group-buy-plan", get(get_order_group_buy_plan))
         .route("/orders/{id}/cancel", patch(cancel_order))
         .route("/lotteries", get(list_lotteries).post(create_lottery))
         .route(
@@ -628,6 +631,9 @@ async fn normalize_admin_draw_control_target(
         payload.target_order_id = None;
         return Ok(());
     }
+    if !lottery.draw_control_enabled {
+        return Err(ApiError::BadRequest("该彩种未开启开奖号码控制".to_string()));
+    }
 
     match payload.target_scope {
         DrawControlTargetScope::Lottery => {
@@ -766,6 +772,7 @@ struct UserListQuery {
     page_size: Option<usize>,
     sort_by: Option<String>,
     sort_direction: Option<String>,
+    status: Option<UserStatus>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1014,6 +1021,15 @@ fn sort_users(users: &mut [UserSummary], query: &UserListQuery) -> ApiResult<()>
     });
 
     Ok(())
+}
+
+/// 按用户状态过滤后台用户列表；未传状态时保留全部用户。
+fn filter_users_by_status(users: &mut Vec<UserSummary>, status: Option<&UserStatus>) {
+    let Some(status) = status else {
+        return;
+    };
+
+    users.retain(|user| &user.status == status);
 }
 
 /// 解析用户列表排序字段，默认按用户 ID 排序。
@@ -1754,6 +1770,7 @@ async fn list_users(
     Query(query): Query<UserListQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminUserSummary>>>> {
     let mut users = users_with_financial_balances(&state).await?;
+    filter_users_by_status(&mut users, query.status.as_ref());
     sort_users(&mut users, &query)?;
     let usernames = username_map_from_users(&users);
     let users = users
@@ -1811,6 +1828,19 @@ async fn set_user_status(
     Json(payload): Json<UserStatusRequest>,
 ) -> ApiResult<Json<ApiEnvelope<AdminUserSummary>>> {
     let user = state.access.set_user_status(&id, payload.status).await?;
+    let user = user_with_financial_balance_from_summary(&state, user).await?;
+    let user = admin_user_summary(&state, user).await?;
+
+    Ok(Json(ApiEnvelope::success(user)))
+}
+
+/// 后台重置普通用户登录密码。
+async fn reset_user_password(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<UserPasswordResetRequest>,
+) -> ApiResult<Json<ApiEnvelope<AdminUserSummary>>> {
+    let user = state.access.reset_user_password(&id, payload).await?;
     let user = user_with_financial_balance_from_summary(&state, user).await?;
     let user = admin_user_summary(&state, user).await?;
 
@@ -2747,6 +2777,28 @@ async fn get_order(
     Ok(Json(ApiEnvelope::success(order)))
 }
 
+/// 按投注订单反查合买计划详情，供订单列表查看该合买订单的全部认购记录。
+async fn get_order_group_buy_plan(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
+    let order = state.orders.get(&id).await?;
+    if order.order_source != OrderSource::GroupBuy {
+        return Err(ApiError::BadRequest("该订单不是合买下单".to_string()));
+    }
+
+    let plans = state
+        .group_buys
+        .plans_for_order_ids(std::slice::from_ref(&order.id))
+        .await?;
+    let plan = plans
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::NotFound("合买订单认购记录不存在".to_string()))?;
+
+    Ok(Json(ApiEnvelope::success(plan)))
+}
+
 /// 后台代创建投注订单并扣款。
 async fn create_order(
     State(state): State<AppState>,
@@ -2850,6 +2902,7 @@ async fn agent_rebate_summaries(state: &AppState) -> ApiResult<Vec<AgentRebateSu
     let accounts = state.finance.accounts().await?;
     let entries = state.finance.ledger_entries().await?;
     let invite_records = state.invites.list().await?;
+    let withdrawals = state.withdrawals.list().await?;
     let account_by_user_id = accounts
         .into_iter()
         .map(|account| (account.user_id.clone(), account))
@@ -2864,6 +2917,7 @@ async fn agent_rebate_summaries(state: &AppState) -> ApiResult<Vec<AgentRebateSu
                 &users,
                 &invite_records,
                 &entries,
+                &withdrawals,
                 &account_by_user_id,
             )
         })
@@ -2882,6 +2936,7 @@ async fn agent_rebate_summary_for_agent(
     let accounts = state.finance.accounts().await?;
     let entries = state.finance.ledger_entries().await?;
     let invite_records = state.invites.list().await?;
+    let withdrawals = state.withdrawals.list().await?;
     let account_by_user_id = accounts
         .into_iter()
         .map(|account| (account.user_id.clone(), account))
@@ -2892,6 +2947,7 @@ async fn agent_rebate_summary_for_agent(
         &users,
         &invite_records,
         &entries,
+        &withdrawals,
         &account_by_user_id,
     )
 }
@@ -2902,6 +2958,7 @@ fn agent_rebate_summary_from_data(
     users: &[UserSummary],
     invite_records: &[InviteRecord],
     entries: &[LedgerEntry],
+    withdrawals: &[WithdrawalOrderSummary],
     account_by_user_id: &BTreeMap<String, FinancialAccountSummary>,
 ) -> ApiResult<AgentRebateSummary> {
     let mut total_rebate_minor = 0_i64;
@@ -2947,11 +3004,16 @@ fn agent_rebate_summary_from_data(
         .unwrap_or_default();
     let withdrawable_rebate_minor = pending_rebate_minor.min(account_available_balance_minor);
 
+    let direct_invitee_ids = direct_invitee_ids(&agent.id, users, invite_records);
+    let direct_invitee_withdrawal_minor =
+        approved_withdrawal_total_for_users(withdrawals, &direct_invitee_ids);
+
     Ok(AgentRebateSummary {
         account_available_balance_minor,
         agent_user_id: agent.id.clone(),
         agent_username: agent.username.clone(),
-        direct_invitee_count: direct_invitee_ids(&agent.id, users, invite_records).len(),
+        direct_invitee_count: direct_invitee_ids.len(),
+        direct_invitee_withdrawal_minor,
         invite_code: agent.invite_code.clone(),
         last_rebate_at,
         pending_rebate_minor,
@@ -2970,11 +3032,13 @@ async fn agent_rebate_records(
     let users = state.access.users().await?;
     let entries = state.finance.ledger_entries().await?;
     let recharges = state.recharges.list().await?;
+    let withdrawals = state.withdrawals.list().await?;
     Ok(agent_rebate_records_from_data(
         agent_user_id,
         &users,
         &entries,
         &recharges,
+        &withdrawals,
     ))
 }
 
@@ -2984,6 +3048,7 @@ fn agent_rebate_records_from_data(
     users: &[UserSummary],
     entries: &[LedgerEntry],
     recharges: &[RechargeOrderSummary],
+    withdrawals: &[WithdrawalOrderSummary],
 ) -> Vec<AgentRebateRecord> {
     let users_by_id = users
         .iter()
@@ -2993,6 +3058,7 @@ fn agent_rebate_records_from_data(
         .iter()
         .map(|order| (order.id.as_str(), order))
         .collect::<BTreeMap<_, _>>();
+    let invitee_withdrawal_totals = invitee_withdrawal_totals(withdrawals);
 
     entries
         .iter()
@@ -3011,6 +3077,10 @@ fn agent_rebate_records_from_data(
                     .as_deref()
                     .and_then(|user_id| users_by_id.get(user_id).map(|user| user.username.clone()))
             });
+            let invitee_total_withdrawal_minor = invitee_user_id
+                .as_deref()
+                .and_then(|user_id| invitee_withdrawal_totals.get(user_id).copied())
+                .unwrap_or_default();
             let agent_username = users_by_id
                 .get(entry.user_id.as_str())
                 .map(|user| user.username.clone())
@@ -3022,6 +3092,7 @@ fn agent_rebate_records_from_data(
                 created_at: entry.created_at.clone(),
                 invitee_user_id,
                 invitee_username,
+                invitee_total_withdrawal_minor,
                 ledger_entry_id: entry.id.clone(),
                 rebate_amount_minor: entry.amount_minor,
                 recharge_amount_minor: recharge.map(|order| order.amount_minor),
@@ -3029,6 +3100,34 @@ fn agent_rebate_records_from_data(
             }
         })
         .collect()
+}
+
+/// 按用户汇总已通过提现金额，用于代理返利详情展示下级实际提现总额。
+fn invitee_withdrawal_totals(withdrawals: &[WithdrawalOrderSummary]) -> BTreeMap<String, i64> {
+    let mut totals = BTreeMap::new();
+    for order in withdrawals
+        .iter()
+        .filter(|order| order.status == WithdrawalOrderStatus::Approved)
+    {
+        let entry = totals.entry(order.user_id.clone()).or_insert(0_i64);
+        *entry = entry.saturating_add(order.amount_minor.max(0));
+    }
+    totals
+}
+
+/// 汇总指定用户集合的已通过提现金额，用于代理详情顶部展示直属下级累计提现。
+fn approved_withdrawal_total_for_users(
+    withdrawals: &[WithdrawalOrderSummary],
+    user_ids: &BTreeSet<String>,
+) -> i64 {
+    withdrawals
+        .iter()
+        .filter(|order| {
+            order.status == WithdrawalOrderStatus::Approved && user_ids.contains(&order.user_id)
+        })
+        .fold(0_i64, |total, order| {
+            total.saturating_add(order.amount_minor.max(0))
+        })
 }
 
 /// 收集代理的直属下级 ID，合并后台邀请关系和注册时绑定的上级代理。
@@ -3362,8 +3461,8 @@ mod tests {
     use super::{
         admin_user_summary_with_usernames, agent_rebate_records_from_data,
         agent_rebate_summary_from_data, align_draw_issue_plan_after_sale_on,
-        finance_overview_for_query, normalize_admin_draw_control_target, page_items,
-        required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
+        filter_users_by_status, finance_overview_for_query, normalize_admin_draw_control_target,
+        page_items, required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
         should_include_robot_initiated_group_buy_plan, should_include_user_scoped_record,
         should_match_user_filter, sort_agent_rebate_records_by_time_desc,
         sort_financial_accounts_by_latest_user_desc, sort_ledger_entries_by_time_desc,
@@ -3529,6 +3628,7 @@ mod tests {
             page_size: Some(2),
             sort_by: Some("balanceMinor".to_string()),
             sort_direction: Some("desc".to_string()),
+            status: None,
         };
 
         sort_users(&mut users, &query).expect("users can be sorted");
@@ -3554,6 +3654,7 @@ mod tests {
             page_size: Some(2),
             sort_by: Some("id".to_string()),
             sort_direction: None,
+            status: None,
         };
 
         sort_users(&mut users, &query).expect("users can be sorted with default direction");
@@ -3566,6 +3667,23 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["U10003", "U10002"]
         );
+    }
+
+    #[test]
+    /// 后台用户列表可以按锁定状态过滤，便于运营集中处理异常账号。
+    fn user_list_status_filter_keeps_only_locked_users() {
+        let mut users = vec![
+            test_user("U10001", "alice", 300),
+            test_user("U10002", "bob", 100),
+            test_user("U10003", "carol", 200),
+        ];
+        users[1].status = UserStatus::Locked;
+
+        filter_users_by_status(&mut users, Some(&UserStatus::Locked));
+
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].id, "U10002");
+        assert_eq!(users[0].status, UserStatus::Locked);
     }
 
     #[test]
@@ -3709,12 +3827,27 @@ mod tests {
                 user_id: agent.id.clone(),
             },
         );
+        let withdrawals = vec![test_withdrawal_order_for_user(
+            "W000000000001",
+            &invitee.id,
+            &invitee.username,
+            1_800,
+            WithdrawalOrderStatus::Approved,
+            "2026-06-12 12:30:00",
+        )];
 
-        let summary =
-            agent_rebate_summary_from_data(&agent, &users, &invite_records, &entries, &accounts)
-                .expect("agent rebate summary can be calculated");
+        let summary = agent_rebate_summary_from_data(
+            &agent,
+            &users,
+            &invite_records,
+            &entries,
+            &withdrawals,
+            &accounts,
+        )
+        .expect("agent rebate summary can be calculated");
 
         assert_eq!(summary.direct_invitee_count, 1);
+        assert_eq!(summary.direct_invitee_withdrawal_minor, 1_800);
         assert_eq!(summary.total_rebate_minor, 350);
         assert_eq!(summary.withdrawn_rebate_minor, 120);
         assert_eq!(summary.pending_rebate_minor, 230);
@@ -3753,8 +3886,21 @@ mod tests {
             user_id: invitee.id.clone(),
             username: invitee.username.clone(),
         }];
-        let mut records =
-            agent_rebate_records_from_data(Some(&agent.id), &users, &entries, &recharges);
+        let withdrawals = vec![test_withdrawal_order_for_user(
+            "W000000000010",
+            &invitee.id,
+            &invitee.username,
+            2_500,
+            WithdrawalOrderStatus::Approved,
+            "2026-06-12 12:10:00",
+        )];
+        let mut records = agent_rebate_records_from_data(
+            Some(&agent.id),
+            &users,
+            &entries,
+            &recharges,
+            &withdrawals,
+        );
         sort_agent_rebate_records_by_time_desc(&mut records);
 
         assert_eq!(records.len(), 1);
@@ -3766,6 +3912,7 @@ mod tests {
         );
         assert_eq!(records[0].recharge_amount_minor, Some(10_000));
         assert_eq!(records[0].rebate_amount_minor, 350);
+        assert_eq!(records[0].invitee_total_withdrawal_minor, 2_500);
     }
 
     #[tokio::test]
@@ -3888,6 +4035,7 @@ mod tests {
             agent_id: None,
             avatar_url: String::new(),
             balance_minor,
+            contact_qq: String::new(),
             email: None,
             id: id.to_string(),
             invite_code: format!("{id}CODE"),
@@ -3956,19 +4104,37 @@ mod tests {
     }
 
     fn test_withdrawal_order(id: &str, created_at: &str) -> WithdrawalOrderSummary {
+        test_withdrawal_order_for_user(
+            id,
+            "U10001",
+            "alice",
+            1000,
+            WithdrawalOrderStatus::Pending,
+            created_at,
+        )
+    }
+
+    fn test_withdrawal_order_for_user(
+        id: &str,
+        user_id: &str,
+        username: &str,
+        amount_minor: i64,
+        status: WithdrawalOrderStatus,
+        created_at: &str,
+    ) -> WithdrawalOrderSummary {
         WithdrawalOrderSummary {
-            account_holder: "alice".to_string(),
+            account_holder: username.to_string(),
             account_number: "13800000000".to_string(),
-            amount_minor: 1000,
+            amount_minor,
             bank_name: None,
             created_at: created_at.to_string(),
             id: id.to_string(),
             method_id: "WM10001".to_string(),
             method_type: WithdrawalMethodType::Alipay,
             reviewed_at: None,
-            status: WithdrawalOrderStatus::Pending,
-            user_id: "U10001".to_string(),
-            username: "alice".to_string(),
+            status,
+            user_id: user_id.to_string(),
+            username: username.to_string(),
         }
     }
 }

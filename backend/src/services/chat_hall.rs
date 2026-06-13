@@ -1063,6 +1063,7 @@ mod tests {
             username: username.to_string(),
             email: None,
             avatar_url: avatar_url.to_string(),
+            contact_qq: String::new(),
             kind: UserKind::Regular,
             status: UserStatus::Active,
             balance_minor: 0,
