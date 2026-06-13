@@ -267,12 +267,13 @@ export function RebateManagementPage({
               </div>
             ) : statistics.items.length > 0 ? (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1180px] text-left text-sm">
+                <table className="w-full min-w-[1280px] text-left text-sm">
                   <thead className="border-b border-line text-xs text-slate-500">
                     <tr>
                       <th className="py-2 pr-4 font-medium">代理</th>
                       <th className="py-2 pr-4 font-medium">邀请码</th>
                       <th className="py-2 pr-4 font-medium">直属下级</th>
+                      <th className="py-2 pr-4 font-medium">下级总充值</th>
                       <th className="py-2 pr-4 font-medium">返利笔数</th>
                       <th className="py-2 pr-4 font-medium">返利总额</th>
                       <th className="py-2 pr-4 font-medium">已提现</th>
@@ -296,6 +297,9 @@ export function RebateManagementPage({
                         </td>
                         <td className="py-3 pr-4 text-slate-600">
                           {agent.directInviteeCount}
+                        </td>
+                        <td className="py-3 pr-4 text-slate-600">
+                          {formatMoney(agent.directInviteeRechargeMinor)}
                         </td>
                         <td className="py-3 pr-4 text-slate-600">
                           {agent.rebateRecordCount}
@@ -766,6 +770,9 @@ export function RebateManagementPage({
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <Tag color="green">
+                    下级总充值 {formatMoney(currentSelectedAgent.directInviteeRechargeMinor)}
+                  </Tag>
                   <Tag color="purple">
                     下级总提现 {formatMoney(currentSelectedAgent.directInviteeWithdrawalMinor)}
                   </Tag>
@@ -774,10 +781,14 @@ export function RebateManagementPage({
                   </Tag>
                 </div>
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
                 <SummaryAmount label="返利总额" value={currentSelectedAgent.totalRebateMinor} />
                 <SummaryAmount label="已提现" value={currentSelectedAgent.withdrawnRebateMinor} />
                 <SummaryAmount label="待处理" value={currentSelectedAgent.pendingRebateMinor} />
+                <SummaryAmount
+                  label="下级总充值"
+                  value={currentSelectedAgent.directInviteeRechargeMinor}
+                />
                 <SummaryAmount
                   label="下级总提现"
                   value={currentSelectedAgent.directInviteeWithdrawalMinor}
@@ -857,12 +868,13 @@ export function RebateManagementPage({
                 </div>
               ) : records.items.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[900px] text-left text-sm">
+                  <table className="w-full min-w-[1040px] text-left text-sm">
                     <thead className="border-b border-line text-xs text-slate-500">
                       <tr>
                         <th className="py-2 pr-4 font-medium">下级用户</th>
                         <th className="py-2 pr-4 font-medium">充值订单</th>
                         <th className="py-2 pr-4 font-medium">充值金额</th>
+                        <th className="py-2 pr-4 font-medium">用户总充值</th>
                         <th className="py-2 pr-4 font-medium">下级总提现</th>
                         <th className="py-2 pr-4 font-medium">返利金额</th>
                         <th className="py-2 pr-4 font-medium">返利时间</th>
@@ -886,6 +898,9 @@ export function RebateManagementPage({
                             {record.rechargeAmountMinor === null
                               ? '-'
                               : formatMoney(record.rechargeAmountMinor)}
+                          </td>
+                          <td className="py-3 pr-4 text-slate-600">
+                            {formatMoney(record.inviteeTotalRechargeMinor)}
                           </td>
                           <td className="py-3 pr-4 text-slate-600">
                             {formatMoney(record.inviteeTotalWithdrawalMinor)}

@@ -1,5 +1,5 @@
 import type { PlayCategory } from '../types/dashboard';
-import type { PlayRuleCode } from '../types/playRules';
+import type { PlayRuleCode, PlayRuleSummary } from '../types/playRules';
 
 export function playCategoryForRule(code: PlayRuleCode): PlayCategory {
   if (isDirectRule(code)) {
@@ -35,6 +35,13 @@ export function isGroupSixRule(code: PlayRuleCode) {
 
 export function formatOdds(oddsBasisPoints: number) {
   return `${(oddsBasisPoints / 10000).toFixed(2)} 倍`;
+}
+
+export function formatPlayRuleLabel(
+  code: PlayRuleCode,
+  rules: Array<Pick<PlayRuleSummary, 'code' | 'label'>>,
+) {
+  return rules.find((rule) => rule.code === code)?.label ?? code;
 }
 
 export function oddsBasisPointsToInput(oddsBasisPoints: number) {

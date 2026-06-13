@@ -24,6 +24,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
 import { OrderBetInfo } from '../components/OrderBetInfo';
 import { useLotteryConsole } from '../hooks/useLotteryConsole';
+import { usePlayRules } from '../hooks/usePlayRules';
 import type { DrawMode, LotteryKind } from '../types/dashboard';
 import type {
   DrawControlTargetScope,
@@ -32,6 +33,7 @@ import type {
   LotteryDrawControl,
 } from '../types/draws';
 import type { OrderDetail, OrderStatus } from '../types/orders';
+import type { PlayRuleSummary } from '../types/playRules';
 import type { DrawSchedulerStatus } from '../types/scheduler';
 import { formatDateTime, formatMoney } from '../utils/format';
 import {
@@ -39,6 +41,7 @@ import {
   lotteryNumberTypeText as numberTypeText,
 } from '../utils/lotteries';
 import { formatBetInfoSummary } from '../utils/orderBetInfo';
+import { formatPlayRuleLabel } from '../utils/playRules';
 
 interface LotteryConsolePageProps {
   onDashboardRefresh: () => void;
@@ -95,6 +98,7 @@ export function LotteryConsolePage({
     saveDrawControl,
     syncDrawSource,
   } = useLotteryConsole();
+  const { rules: playRules } = usePlayRules();
   const [now, setNow] = useState(() => new Date());
   const [statusFilter, setStatusFilter] =
     useState<LotteryConsoleStatusFilter>('saleEnabled');
@@ -197,7 +201,7 @@ export function LotteryConsolePage({
       return;
     }
     setSelectedControlItem(item);
-    setControlForm(drawControlFormFromControl(item.drawControl));
+    setControlForm(drawControlFormFromControl(item.drawControl, item));
     setControlError(null);
   };
 
@@ -341,6 +345,7 @@ export function LotteryConsolePage({
         error={controlError}
         form={controlForm}
         item={selectedControlItem}
+        playRules={playRules}
         saving={controlSaving}
         visible={Boolean(selectedControlItem)}
         onChange={setControlForm}
@@ -614,6 +619,7 @@ function DrawControlSideSheet({
   onChange,
   onClose,
   onSubmit,
+  playRules,
   saving,
   visible,
 }: {
@@ -623,6 +629,7 @@ function DrawControlSideSheet({
   onChange: (form: LotteryDrawControlFormState) => void;
   onClose: () => void;
   onSubmit: () => void;
+  playRules: PlayRuleSummary[];
   saving: boolean;
   visible: boolean;
 }) {
@@ -813,9 +820,11 @@ function DrawControlSideSheet({
                           {formatDateTime(order.createdAt, order.createdAt || '-')}
                         </td>
                         <td className="py-2 pr-3 text-slate-600">{order.issue}</td>
-                        <td className="py-2 pr-3 text-slate-600">{order.ruleCode}</td>
+                        <td className="py-2 pr-3 text-slate-600">
+                          {formatPlayRuleLabel(order.ruleCode, playRules)}
+                        </td>
                         <td className="py-2 pr-3">
-                          <OrderBetInfo compact expandedLimit={6} order={order} />
+                          <OrderBetInfo compact order={order} showExpandedBets={false} />
                         </td>
                         <td className="py-2 pr-3 text-slate-600">
                           {formatMoney(order.amountMinor)}
@@ -1051,19 +1060,27 @@ function emptyDrawControlForm(): LotteryDrawControlFormState {
     drawNumber: '',
     targetIssue: '',
     targetOrderId: '',
-    targetScope: 'lottery',
+    targetScope: 'issue',
   };
 }
 
 function drawControlFormFromControl(
   control: LotteryDrawControl | null,
+  item: LotteryConsoleItem | null,
 ): LotteryDrawControlFormState {
+  const targetScope = control?.enabled ? control.targetScope ?? 'issue' : 'issue';
+  const targetOrder = item?.orders.find((order) => order.id === control?.targetOrderId);
+  const defaultIssue = sellingIssueForControl(item);
+
   return {
     enabled: control?.enabled ?? false,
     drawNumber: control?.drawNumber ?? '',
-    targetIssue: control?.targetIssue ?? '',
-    targetOrderId: control?.targetOrderId ?? '',
-    targetScope: control?.targetScope ?? 'lottery',
+    targetIssue:
+      targetScope === 'lottery'
+        ? ''
+        : control?.targetIssue ?? targetOrder?.issue ?? defaultIssue,
+    targetOrderId: targetScope === 'order' ? control?.targetOrderId ?? '' : '',
+    targetScope,
   };
 }
 
@@ -1083,16 +1100,19 @@ function controlFormWithScope(
   if (targetScope === 'issue') {
     return {
       ...form,
-      targetIssue: form.targetIssue || item?.currentIssue?.issue || item?.issues[0]?.issue || '',
+      targetIssue: form.targetIssue || sellingIssueForControl(item),
       targetOrderId: '',
       targetScope,
     };
   }
 
+  const defaultIssue = sellingIssueForControl(item);
+  const candidateOrders = controlCandidateOrders(item);
   const order =
     item?.orders.find((order) => order.id === form.targetOrderId) ??
-    controlCandidateOrders(item).find((order) => order.issue === item?.currentIssue?.issue) ??
-    controlCandidateOrders(item)[0] ??
+    candidateOrders.find((order) => order.issue === defaultIssue) ??
+    candidateOrders.find((order) => order.issue === item?.currentIssue?.issue) ??
+    candidateOrders[0] ??
     null;
 
   return {
@@ -1105,6 +1125,24 @@ function controlFormWithScope(
 
 function controlCandidateOrders(item: LotteryConsoleItem | null) {
   return (item?.orders ?? []).filter((order) => order.status === 'pendingDraw');
+}
+
+function sellingIssueForControl(item: LotteryConsoleItem | null | undefined) {
+  if (item?.currentIssue?.status === 'open') {
+    return item.currentIssue.issue;
+  }
+
+  const nearestOpenIssue = (item?.issues ?? [])
+    .filter((issue) => issue.status === 'open')
+    .sort((left, right) => issueTimeValue(left) - issueTimeValue(right))[0];
+  if (nearestOpenIssue) {
+    return nearestOpenIssue.issue;
+  }
+
+  const latestKnownIssue = [...(item?.issues ?? [])].sort(
+    (left, right) => issueTimeValue(right) - issueTimeValue(left),
+  )[0];
+  return item?.currentIssue?.issue ?? latestKnownIssue?.issue ?? '';
 }
 
 function visibleConsoleOrders(

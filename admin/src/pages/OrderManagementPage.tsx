@@ -38,6 +38,7 @@ import { formatDateTime, formatMoney } from '../utils/format';
 import { yuanInputToMinor } from '../utils/moneyInput';
 import {
   formatOdds,
+  formatPlayRuleLabel,
   isBankerRule,
   isBigSmallOddEvenRule,
   isDirectRule,
@@ -392,7 +393,9 @@ export function OrderManagementPage({
                         <div className="font-medium text-ink">{order.lotteryName}</div>
                         <div className="mt-1 text-xs text-slate-400">{order.lotteryId}</div>
                       </td>
-                      <td className="py-3 pr-4 text-slate-600">{ruleLabel(order.ruleCode, rules)}</td>
+                      <td className="py-3 pr-4 text-slate-600">
+                        {formatPlayRuleLabel(order.ruleCode, rules)}
+                      </td>
                       <td className="py-3 pr-4">
                         <OrderBetInfo compact order={order} showExpandedBets={false} />
                       </td>
@@ -644,7 +647,7 @@ export function OrderManagementPage({
                   <InfoLine label="期号" value={participationPlan.issue || '-'} />
                   <InfoLine
                     label="玩法"
-                    value={ruleLabel(participationOrder.ruleCode, rules)}
+                    value={formatPlayRuleLabel(participationOrder.ruleCode, rules)}
                   />
                   <InfoLine
                     label="发起人"
@@ -1041,10 +1044,6 @@ function toggleAttribute(
       : [...current[key], value];
     return { ...current, [key]: selected };
   });
-}
-
-function ruleLabel(code: PlayRuleCode, rules: Array<{ code: PlayRuleCode; label: string }>) {
-  return rules.find((rule) => rule.code === code)?.label ?? code;
 }
 
 function groupBuyProgressPercent(plan: GroupBuyPlan) {

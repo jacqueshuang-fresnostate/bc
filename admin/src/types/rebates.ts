@@ -15,6 +15,7 @@ export interface AgentRebateSummary {
   agentUserId: string;
   agentUsername: string;
   directInviteeCount: number;
+  directInviteeRechargeMinor: number;
   directInviteeWithdrawalMinor: number;
   inviteCode: string;
   lastRebateAt: string | null;
@@ -31,6 +32,7 @@ export interface AgentRebateRecord {
   createdAt: string;
   inviteeUserId: string | null;
   inviteeUsername: string | null;
+  inviteeTotalRechargeMinor: number;
   inviteeTotalWithdrawalMinor: number;
   ledgerEntryId: string;
   rebateAmountMinor: number;

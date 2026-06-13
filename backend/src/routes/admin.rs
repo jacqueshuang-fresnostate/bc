@@ -2932,6 +2932,7 @@ async fn agent_rebate_summaries(state: &AppState) -> ApiResult<Vec<AgentRebateSu
     let accounts = state.finance.accounts().await?;
     let entries = state.finance.ledger_entries().await?;
     let invite_records = state.invites.list().await?;
+    let recharges = state.recharges.list().await?;
     let withdrawals = state.withdrawals.list().await?;
     let account_by_user_id = accounts
         .into_iter()
@@ -2947,6 +2948,7 @@ async fn agent_rebate_summaries(state: &AppState) -> ApiResult<Vec<AgentRebateSu
                 &users,
                 &invite_records,
                 &entries,
+                &recharges,
                 &withdrawals,
                 &account_by_user_id,
             )
@@ -2966,6 +2968,7 @@ async fn agent_rebate_summary_for_agent(
     let accounts = state.finance.accounts().await?;
     let entries = state.finance.ledger_entries().await?;
     let invite_records = state.invites.list().await?;
+    let recharges = state.recharges.list().await?;
     let withdrawals = state.withdrawals.list().await?;
     let account_by_user_id = accounts
         .into_iter()
@@ -2977,6 +2980,7 @@ async fn agent_rebate_summary_for_agent(
         &users,
         &invite_records,
         &entries,
+        &recharges,
         &withdrawals,
         &account_by_user_id,
     )
@@ -2988,6 +2992,7 @@ fn agent_rebate_summary_from_data(
     users: &[UserSummary],
     invite_records: &[InviteRecord],
     entries: &[LedgerEntry],
+    recharges: &[RechargeOrderSummary],
     withdrawals: &[WithdrawalOrderSummary],
     account_by_user_id: &BTreeMap<String, FinancialAccountSummary>,
 ) -> ApiResult<AgentRebateSummary> {
@@ -3035,6 +3040,8 @@ fn agent_rebate_summary_from_data(
     let withdrawable_rebate_minor = pending_rebate_minor.min(account_available_balance_minor);
 
     let direct_invitee_ids = direct_invitee_ids(&agent.id, users, invite_records);
+    let direct_invitee_recharge_minor =
+        paid_recharge_total_for_users(recharges, &direct_invitee_ids);
     let direct_invitee_withdrawal_minor =
         approved_withdrawal_total_for_users(withdrawals, &direct_invitee_ids);
 
@@ -3043,6 +3050,7 @@ fn agent_rebate_summary_from_data(
         agent_user_id: agent.id.clone(),
         agent_username: agent.username.clone(),
         direct_invitee_count: direct_invitee_ids.len(),
+        direct_invitee_recharge_minor,
         direct_invitee_withdrawal_minor,
         invite_code: agent.invite_code.clone(),
         last_rebate_at,
@@ -3088,6 +3096,7 @@ fn agent_rebate_records_from_data(
         .iter()
         .map(|order| (order.id.as_str(), order))
         .collect::<BTreeMap<_, _>>();
+    let invitee_recharge_totals = invitee_recharge_totals(recharges);
     let invitee_withdrawal_totals = invitee_withdrawal_totals(withdrawals);
 
     entries
@@ -3111,6 +3120,10 @@ fn agent_rebate_records_from_data(
                 .as_deref()
                 .and_then(|user_id| invitee_withdrawal_totals.get(user_id).copied())
                 .unwrap_or_default();
+            let invitee_total_recharge_minor = invitee_user_id
+                .as_deref()
+                .and_then(|user_id| invitee_recharge_totals.get(user_id).copied())
+                .unwrap_or_default();
             let agent_username = users_by_id
                 .get(entry.user_id.as_str())
                 .map(|user| user.username.clone())
@@ -3122,6 +3135,7 @@ fn agent_rebate_records_from_data(
                 created_at: entry.created_at.clone(),
                 invitee_user_id,
                 invitee_username,
+                invitee_total_recharge_minor,
                 invitee_total_withdrawal_minor,
                 ledger_entry_id: entry.id.clone(),
                 rebate_amount_minor: entry.amount_minor,
@@ -3130,6 +3144,19 @@ fn agent_rebate_records_from_data(
             }
         })
         .collect()
+}
+
+/// 按用户汇总已入账充值金额，用于代理返利详情展示下级实际充值总额。
+fn invitee_recharge_totals(recharges: &[RechargeOrderSummary]) -> BTreeMap<String, i64> {
+    let mut totals = BTreeMap::new();
+    for order in recharges
+        .iter()
+        .filter(|order| order.status == RechargeOrderStatus::Paid)
+    {
+        let entry = totals.entry(order.user_id.clone()).or_insert(0_i64);
+        *entry = entry.saturating_add(order.amount_minor.max(0));
+    }
+    totals
 }
 
 /// 按用户汇总已通过提现金额，用于代理返利详情展示下级实际提现总额。
@@ -3143,6 +3170,21 @@ fn invitee_withdrawal_totals(withdrawals: &[WithdrawalOrderSummary]) -> BTreeMap
         *entry = entry.saturating_add(order.amount_minor.max(0));
     }
     totals
+}
+
+/// 汇总指定用户集合的已入账充值金额，用于代理详情顶部展示直属下级累计充值。
+fn paid_recharge_total_for_users(
+    recharges: &[RechargeOrderSummary],
+    user_ids: &BTreeSet<String>,
+) -> i64 {
+    recharges
+        .iter()
+        .filter(|order| {
+            order.status == RechargeOrderStatus::Paid && user_ids.contains(&order.user_id)
+        })
+        .fold(0_i64, |total, order| {
+            total.saturating_add(order.amount_minor.max(0))
+        })
 }
 
 /// 汇总指定用户集合的已通过提现金额，用于代理详情顶部展示直属下级累计提现。
@@ -3865,18 +3907,38 @@ mod tests {
             WithdrawalOrderStatus::Approved,
             "2026-06-12 12:30:00",
         )];
+        let recharges = vec![
+            test_recharge_order_for_user(
+                "R000000000001",
+                &invitee.id,
+                &invitee.username,
+                10_000,
+                RechargeOrderStatus::Paid,
+                "2026-06-12 10:55:00",
+            ),
+            test_recharge_order_for_user(
+                "R000000000002",
+                &invitee.id,
+                &invitee.username,
+                5_000,
+                RechargeOrderStatus::Pending,
+                "2026-06-12 10:58:00",
+            ),
+        ];
 
         let summary = agent_rebate_summary_from_data(
             &agent,
             &users,
             &invite_records,
             &entries,
+            &recharges,
             &withdrawals,
             &accounts,
         )
         .expect("agent rebate summary can be calculated");
 
         assert_eq!(summary.direct_invitee_count, 1);
+        assert_eq!(summary.direct_invitee_recharge_minor, 10_000);
         assert_eq!(summary.direct_invitee_withdrawal_minor, 1_800);
         assert_eq!(summary.total_rebate_minor, 350);
         assert_eq!(summary.withdrawn_rebate_minor, 120);
@@ -3941,6 +4003,7 @@ mod tests {
             Some("R000000000001")
         );
         assert_eq!(records[0].recharge_amount_minor, Some(10_000));
+        assert_eq!(records[0].invitee_total_recharge_minor, 10_000);
         assert_eq!(records[0].rebate_amount_minor, 350);
         assert_eq!(records[0].invitee_total_withdrawal_minor, 2_500);
     }
@@ -4117,8 +4180,26 @@ mod tests {
     }
 
     fn test_recharge_order(id: &str, created_at: &str) -> RechargeOrderSummary {
+        test_recharge_order_for_user(
+            id,
+            "U10001",
+            "alice",
+            1000,
+            RechargeOrderStatus::Pending,
+            created_at,
+        )
+    }
+
+    fn test_recharge_order_for_user(
+        id: &str,
+        user_id: &str,
+        username: &str,
+        amount_minor: i64,
+        status: RechargeOrderStatus,
+        created_at: &str,
+    ) -> RechargeOrderSummary {
         RechargeOrderSummary {
-            amount_minor: 1000,
+            amount_minor,
             channel: RechargeChannel::CustomerService,
             created_at: created_at.to_string(),
             id: id.to_string(),
@@ -4126,10 +4207,10 @@ mod tests {
             pay_type: None,
             payment_url: None,
             provider_trade_no: None,
-            status: RechargeOrderStatus::Pending,
+            status,
             support_conversation_id: None,
-            user_id: "U10001".to_string(),
-            username: "alice".to_string(),
+            user_id: user_id.to_string(),
+            username: username.to_string(),
         }
     }
 
