@@ -611,7 +611,7 @@ export function OrderManagementPage({
           aria-label="合买认购详情"
           title="合买认购详情"
           visible={participationSheetVisible}
-          width={720}
+          width="80%"
           onCancel={() => setParticipationSheetVisible(false)}
         >
           {participationLoading ? (

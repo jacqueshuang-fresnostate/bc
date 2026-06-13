@@ -765,16 +765,21 @@ export function RebateManagementPage({
                     {currentSelectedAgent.agentUserId} · 邀请码 {currentSelectedAgent.inviteCode}
                   </div>
                 </div>
-                <Tag color={currentSelectedAgent.withdrawableRebateMinor > 0 ? 'red' : 'grey'}>
-                  可处理 {formatMoney(currentSelectedAgent.withdrawableRebateMinor)}
-                </Tag>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Tag color="purple">
+                    下级总提现 {formatMoney(currentSelectedAgent.directInviteeWithdrawalMinor)}
+                  </Tag>
+                  <Tag color={currentSelectedAgent.withdrawableRebateMinor > 0 ? 'red' : 'grey'}>
+                    可处理 {formatMoney(currentSelectedAgent.withdrawableRebateMinor)}
+                  </Tag>
+                </div>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <SummaryAmount label="返利总额" value={currentSelectedAgent.totalRebateMinor} />
                 <SummaryAmount label="已提现" value={currentSelectedAgent.withdrawnRebateMinor} />
                 <SummaryAmount label="待处理" value={currentSelectedAgent.pendingRebateMinor} />
                 <SummaryAmount
-                  label="下级提现"
+                  label="下级总提现"
                   value={currentSelectedAgent.directInviteeWithdrawalMinor}
                 />
                 <SummaryAmount

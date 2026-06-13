@@ -492,6 +492,12 @@ export function updateUser(id: string, payload: UserSummary) {
   });
 }
 
+export function deleteUser(id: string) {
+  return requestJson<AdminUserSummary>(`/api/admin/users/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
 export function setUserStatus(id: string, payload: StatusUpdateRequest) {
   return requestJson<AdminUserSummary>(
     `/api/admin/users/${encodeURIComponent(id)}/status`,

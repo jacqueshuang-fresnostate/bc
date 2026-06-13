@@ -223,6 +223,7 @@ export function AccessManagementPage({
     refresh,
     registration,
     removeRole,
+    removeUser,
     reloadMemoryCache,
     resetPassword,
     resetUserLoginPassword,
@@ -356,6 +357,28 @@ export function AccessManagementPage({
     onDashboardRefresh();
   };
 
+  const deleteUserFromList = async (user: AdminUserSummary) => {
+    const confirmed = window.confirm(
+      `确定删除用户「${user.username}」（${user.id}）吗？删除后该账号无法登录，历史订单、资金流水会继续保留用户 ID 作为审计线索。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await removeUser(user.id);
+      if (editingUserId === user.id) {
+        setEditingUserId(null);
+        setUserForm(emptyUserForm());
+        setUserSheetVisible(false);
+      }
+      Toast.success('用户已删除');
+      onDashboardRefresh();
+    } catch (error) {
+      Toast.error(error instanceof Error ? error.message : '用户删除失败');
+    }
+  };
+
   const submitRegistration = async () => {
     if (!registrationForm) {
       return;
@@ -427,6 +450,7 @@ export function AccessManagementPage({
             setUserForm(userFormFromSummary(user));
             setUserSheetVisible(true);
           }}
+          onDelete={(user) => void deleteUserFromList(user)}
           onNew={() => {
             setEditingUserId(null);
             setUserForm(emptyUserForm());
@@ -539,6 +563,7 @@ function UserSection({
   form,
   loading,
   onClose,
+  onDelete,
   onEdit,
   onNew,
   onOpenLedger,
@@ -566,6 +591,7 @@ function UserSection({
   form: UserFormState;
   loading: boolean;
   onClose: () => void;
+  onDelete: (user: AdminUserSummary) => void;
   onEdit: (user: AdminUserSummary) => void;
   onNew: () => void;
   onOpenLedger: (user: AdminUserSummary) => void;
@@ -753,25 +779,28 @@ function UserSection({
                         流水
                       </Button>
                       <Button
-                        disabled={user.status === 'active'}
-                        size="small"
-                        onClick={() => onStatus(user.id, 'active')}
-                      >
-                        启用
-                      </Button>
-                      <Button
-                        disabled={user.status === 'suspended'}
+                        disabled={user.status !== 'active'}
                         size="small"
                         onClick={() => onStatus(user.id, 'suspended')}
                       >
-                        停用
+                        {inactiveUserStatusActionLabel(user.status)}
                       </Button>
+                      {user.status !== 'active' ? (
+                        <Button
+                          size="small"
+                          onClick={() => onStatus(user.id, 'active')}
+                        >
+                          {user.status === 'locked' ? '解除锁定' : '启用'}
+                        </Button>
+                      ) : null}
                       <Button
-                        disabled={user.status === 'locked'}
+                        disabled={saving}
+                        icon={<Trash2 size={14} />}
                         size="small"
-                        onClick={() => onStatus(user.id, 'locked')}
+                        type="danger"
+                        onClick={() => onDelete(user)}
                       >
-                        锁定
+                        删除
                       </Button>
                     </div>
                   </td>
@@ -791,16 +820,18 @@ function UserSection({
       >
         <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
           <Field label="用户 ID">
-            <Input
-              className="form-input"
-              disabled
-              value={form.id}
-            />
-            <p className="text-xs text-slate-400">用户 ID 由系统生成，创建后不可编辑。</p>
+            <Input className="form-input" disabled value={form.id} />
+            <p className="text-xs text-slate-400">
+              用户 ID 由系统生成，创建后不可编辑。
+            </p>
           </Field>
-          <Field label="用户名">
+          <Field
+            description={editingId ? '用户名创建后不可编辑。' : undefined}
+            label="用户名"
+          >
             <Input
               className="form-input"
+              disabled={Boolean(editingId)}
               value={form.username}
               onChange={(value) =>
                 setFormValue(onSetForm, 'username', value)
@@ -842,31 +873,34 @@ function UserSection({
             </p>
           </Field>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-          <Field label="用户类型">
-            <Select
-              className="form-input"
-              value={form.kind}
-              onChange={(value) =>
-                setFormValue(onSetForm, 'kind', (value as UserKind) || 'regular')
-              }
+            <Field label="用户类型">
+              <Select
+                className="form-input"
+                value={form.kind}
+                onChange={(value) =>
+                  setFormValue(onSetForm, 'kind', (value as UserKind) || 'regular')
+                }
+              >
+                <Select.Option value="regular">普通用户</Select.Option>
+                <Select.Option value="agent">代理</Select.Option>
+              </Select>
+            </Field>
+            <Field
+              description="停用用于运营主动禁用账号；锁定用于安全异常冻结账号。两种状态都会禁止登录，列表快捷操作只保留启用/停用。"
+              label="状态"
             >
-              <Select.Option value="regular">普通用户</Select.Option>
-              <Select.Option value="agent">代理</Select.Option>
-            </Select>
-          </Field>
-          <Field label="状态">
-            <Select
-              className="form-input"
-              value={form.status}
-              onChange={(value) =>
-                setFormValue(onSetForm, 'status', (value as UserStatus) || 'active')
-              }
-            >
-              <Select.Option value="active">启用</Select.Option>
-              <Select.Option value="suspended">停用</Select.Option>
-              <Select.Option value="locked">锁定</Select.Option>
-            </Select>
-          </Field>
+              <Select
+                className="form-input"
+                value={form.status}
+                onChange={(value) =>
+                  setFormValue(onSetForm, 'status', (value as UserStatus) || 'active')
+                }
+              >
+                <Select.Option value="active">启用</Select.Option>
+                <Select.Option value="suspended">停用</Select.Option>
+                <Select.Option value="locked">锁定</Select.Option>
+              </Select>
+            </Field>
           </div>
           <Field label="账户余额">
             <Input
@@ -874,7 +908,9 @@ function UserSection({
               disabled
               value={formatMoney(numberField(form.balanceMinor))}
             />
-            <p className="text-xs text-slate-400">余额只能通过财务管理的手动调账入口调整。</p>
+            <p className="text-xs text-slate-400">
+              余额只能通过财务管理的手动调账入口调整。
+            </p>
           </Field>
           <Field label="上级代理 ID">
             <Input
@@ -2095,11 +2131,24 @@ function ImageBedTestPanel({
   );
 }
 
-function Field({ children, label }: { children: ReactNode; label: string }) {
+function Field({
+  children,
+  description,
+  label,
+}: {
+  children: ReactNode;
+  description?: string;
+  label: string;
+}) {
   return (
     <label className="block text-sm font-medium text-slate-600">
       <span className="mb-1 block">{label}</span>
       {children}
+      {description ? (
+        <span className="mt-1 block text-xs font-normal text-slate-400">
+          {description}
+        </span>
+      ) : null}
     </label>
   );
 }
@@ -2453,6 +2502,13 @@ function userStatusText(status: UserStatus) {
     suspended: '停用',
   };
   return labels[status];
+}
+
+function inactiveUserStatusActionLabel(status: UserStatus) {
+  if (status === 'active') {
+    return '停用';
+  }
+  return status === 'locked' ? '已锁定' : '已停用';
 }
 
 function userStatusColor(status: UserStatus) {

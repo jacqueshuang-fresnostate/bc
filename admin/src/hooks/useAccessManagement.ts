@@ -4,6 +4,7 @@ import {
   createRole,
   createUser,
   deleteRole,
+  deleteUser,
   fetchAdmins,
   fetchRegistrationConfig,
   fetchRoles,
@@ -132,6 +133,22 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
       setUserPage((current) => replacePageUser(current, saved));
       refresh();
       return saved;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
+  const removeUser = useCallback(async (id: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const deleted = await deleteUser(id);
+      setUserPage((current) => removePageUser(current, id));
+      refresh();
+      return deleted;
     } catch (requestError) {
       setError(errorMessage(requestError));
       throw requestError;
@@ -299,6 +316,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     loading,
     refresh,
     registration,
+    removeUser,
     removeRole,
     reloadMemoryCache,
     resetPassword,
@@ -330,6 +348,14 @@ function replacePageUser(page: UserPage, user: AdminUserSummary): UserPage {
     items: page.items.some((current) => current.id === user.id)
       ? page.items.map((current) => (current.id === user.id ? user : current))
       : page.items,
+  };
+}
+
+function removePageUser(page: UserPage, userId: string): UserPage {
+  return {
+    ...page,
+    items: page.items.filter((user) => user.id !== userId),
+    totalCount: Math.max(0, page.totalCount - 1),
   };
 }
 

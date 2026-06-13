@@ -1,5 +1,69 @@
 # TODO
 
+## 2026-06-14 06:05 HKT 用户维护用户名不可编辑
+
+- 完成任务：用户维护中已有用户的用户名改为只读。
+- 解决问题：
+  - 用户名是登录标识和历史业务审计的重要显示口径，后台维护时可编辑会导致订单、资金流水、客服记录等历史核对口径变化。
+  - 只在前端禁用不够安全，直接调用更新接口仍可能改名。
+- 实施内容：
+  - 后台用户维护 `SideSheet` 编辑已有用户时禁用“用户名”输入框，并提示“用户名创建后不可编辑”。
+  - 新建用户时用户名输入框保持可编辑。
+  - 后端 `AccessStore::update_user()` 强制保留原用户名，同时继续保留原余额、邀请码和头像。
+  - 更新后端单元测试，覆盖传入不同用户名时仍返回原用户名。
+  - 同步更新架构说明。
+- 验证结果：`cargo test --manifest-path backend/Cargo.toml access_repository_update_preserves_username_balance_and_invite_code -- --nocapture`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍保留既有的大 chunk 提示。
+
+## 2026-06-14 05:58 HKT 用户列表支持删除用户
+
+- 完成任务：后台用户列表新增删除用户能力。
+- 解决问题：
+  - 用户管理只能停用或锁定账号，无法清理测试账号、重复账号或确认不再使用的账号。
+  - 直接硬删用户可能误删有余额或仍作为上级代理的账号，导致财务和代理关系断链。
+- 实施内容：
+  - 后端新增 `DELETE /api/admin/users/{id}`，删除用户基础资料并清理用户密码哈希、会话、重置码和提现方式。
+  - 删除前校验资金账户余额和冻结金额必须为 0；仍有下级用户引用该用户为上级代理时拒绝删除。
+  - 历史订单、资金流水、充值和提现记录不随用户删除，继续保留用户 ID 作为审计线索。
+  - 后台用户列表操作列新增“删除”危险按钮，点击前弹出确认提示，删除成功后刷新用户列表和系统概览。
+  - OpenAPI 文档同步登记用户删除接口。
+  - 同步更新架构说明。
+- 验证结果：`cargo test --manifest-path backend/Cargo.toml access_repository_deletes_user_and_access_artifacts -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml access_repository_rejects_delete_user_with_direct_invitees -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍保留既有的大 chunk 提示。
+
+## 2026-06-14 05:51 HKT 用户列表停用和锁定职责拆分
+
+- 完成任务：用户列表操作列去掉单独“锁定”快捷操作，把“停用/锁定”的使用场景拆开。
+- 解决问题：
+  - 用户列表同时展示“停用”和“锁定”按钮，两者都会禁止用户登录，运营扫描列表时容易认为是重复功能。
+  - 后端此前对停用和锁定用户统一返回“用户账号未激活”，用户端无法知道账号是运营停用还是安全锁定。
+- 实施内容：
+  - 用户列表快捷操作只保留“停用”和“启用/解除锁定”，锁定状态只在用户维护 `SideSheet` 的状态下拉中维护。
+  - 用户维护状态字段增加说明：停用用于运营主动禁用账号，锁定用于安全异常冻结账号，两种状态都会禁止登录。
+  - 后端用户登录和 token 恢复时区分停用、锁定错误文案，分别返回“用户账号已停用”和“用户账号已锁定”。
+  - 新增后端测试覆盖停用登录、锁定登录和锁定会话恢复三种拒绝场景。
+  - 同步更新架构说明。
+- 验证结果：`cargo test --manifest-path backend/Cargo.toml access_repository_distinguishes_suspended_and_locked_user_login_errors -- --nocapture`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍保留既有的大 chunk 提示。
+
+## 2026-06-14 05:41 HKT 代理返利详情显示下级总提现
+
+- 完成任务：代理返利详情抽屉中明确显示直属下级总提现金额。
+- 解决问题：
+  - 详情顶部原汇总文案为“下级提现”，运营不容易确认这是下级已通过提现的总额；查看时需要从明细表格再人工理解。
+- 实施内容：
+  - 代理返利详情标题右侧新增“下级总提现”金额标签。
+  - 顶部金额汇总项从“下级提现”改为“下级总提现”。
+  - 同步更新架构说明。
+- 验证结果：后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍保留既有的大 chunk 提示。
+
+## 2026-06-14 05:39 HKT 订单合买认购详情抽屉宽度调整
+
+- 完成任务：订单列表中的“合买认购详情” `SideSheet` 宽度调整为 80%。
+- 解决问题：
+  - 原固定 720px 宽度在展示合买计划、投注内容和认购记录表格时空间偏窄，运营查看金额、份数和用户信息不够舒展。
+- 实施内容：
+  - 将 `OrderManagementPage.tsx` 中合买认购详情抽屉 `width={720}` 改为 `width="80%"`。
+  - 同步更新架构说明。
+- 验证结果：后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍保留既有的大 chunk 提示。
+
 ## 2026-06-14 04:53 HKT 订单列表查看合买认购详情
 
 - 完成任务：订单管理列表中，合买下单的订单支持直接查看对应合买计划的认购详情。

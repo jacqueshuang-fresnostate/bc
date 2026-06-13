@@ -163,6 +163,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Json,
     ),
     doc(
+        "delete",
+        "/admin/users/{id}",
+        "用户管理",
+        "删除用户",
+        "删除用户账号资料和访问凭据；历史资金、订单和流水继续保留用户 ID 作为审计线索。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
         "patch",
         "/admin/users/{id}/status",
         "用户管理",
@@ -1903,6 +1912,7 @@ mod tests {
         assert_eq!(document["openapi"].as_str(), Some("3.1.0"));
         assert!(document["paths"]["/health"]["get"].is_object());
         assert!(document["paths"]["/admin/users"]["get"].is_object());
+        assert!(document["paths"]["/admin/users/{id}"]["delete"].is_object());
         assert!(document["paths"]["/admin/advertisements"]["get"].is_object());
         assert!(document["paths"]["/admin/finance-overview"]["get"].is_object());
         assert!(document["paths"]["/admin/recharge-orders"]["get"].is_object());

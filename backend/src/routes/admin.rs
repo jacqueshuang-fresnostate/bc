@@ -163,7 +163,10 @@ pub fn router(state: AppState) -> Router<AppState> {
             post(reply_support_conversation),
         )
         .route("/users", get(list_users).post(create_user))
-        .route("/users/{id}", get(get_user).put(update_user))
+        .route(
+            "/users/{id}",
+            get(get_user).put(update_user).delete(delete_user),
+        )
         .route("/users/{id}/password", patch(reset_user_password))
         .route("/users/{id}/status", patch(set_user_status))
         .route("/admins", get(list_admins).post(create_admin))
@@ -1821,6 +1824,18 @@ async fn update_user(
     Ok(Json(ApiEnvelope::success(user)))
 }
 
+/// 后台删除用户账号资料；历史资金、订单等业务记录继续保留用户 ID 作为审计线索。
+async fn delete_user(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<AdminUserSummary>>> {
+    ensure_user_can_be_deleted(&state, &id).await?;
+    let user = state.access.delete_user(&id).await?;
+    let user = admin_user_summary(&state, user).await?;
+
+    Ok(Json(ApiEnvelope::success(user)))
+}
+
 /// 后台切换用户状态。
 async fn set_user_status(
     State(state): State<AppState>,
@@ -1889,6 +1904,21 @@ fn user_with_account_balance(
         user.balance_minor = account.available_balance_minor;
     }
     user
+}
+
+/// 删除用户前校验资金账户是否已经处理完毕，避免把有余额或冻结资金的账号移出用户列表。
+async fn ensure_user_can_be_deleted(state: &AppState, id: &str) -> ApiResult<()> {
+    state.access.get_user(id).await?;
+    let accounts = state.finance.accounts().await?;
+    if let Some(account) = accounts.iter().find(|account| account.user_id == id) {
+        if account.available_balance_minor != 0 || account.frozen_balance_minor != 0 {
+            return Err(ApiError::Conflict(
+                "用户资金账户仍有余额或冻结金额，请先通过财务处理后再删除用户".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// 为后台用户展示项补充上级代理用户名。

@@ -148,6 +148,20 @@ impl AccessRepository {
         Ok(result)
     }
 
+    /// 删除用户账号资料，并同步清理该用户的登录凭据、会话、重置码和提现方式。
+    pub async fn delete_user(&self, id: &str) -> ApiResult<UserSummary> {
+        let (result, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let result = store.delete_user(id)?;
+            (result, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(result)
+    }
+
     /// 修改用户状态（启用/锁定/禁用），用于快速停用异常账户。
     pub async fn set_user_status(&self, id: &str, status: UserStatus) -> ApiResult<UserSummary> {
         let (result, snapshot) = {
@@ -1303,7 +1317,7 @@ impl AccessStore {
         Ok(user)
     }
 
-    /// 更新内存用户：余额、邀请码和头像分别归属专门链路，用户维护只允许改基础资料和状态。
+    /// 更新内存用户：用户名、余额、邀请码和头像分别归属专门链路，用户维护只允许改联系方式、类型、状态和上级代理。
     fn update_user(&mut self, id: &str, user: UserSummary) -> ApiResult<UserSummary> {
         let mut user = normalize_user(user)?;
         if id != user.id {
@@ -1316,12 +1330,40 @@ impl AccessStore {
             .get(id)
             .cloned()
             .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))?;
+        user.username = existing.username;
         user.balance_minor = existing.balance_minor;
         user.invite_code = existing.invite_code;
         user.avatar_url = existing.avatar_url;
 
         self.users.insert(id.to_string(), user.clone());
         Ok(user)
+    }
+
+    /// 删除用户资料，并清理访问控制仓储内与该用户直接绑定的数据。
+    fn delete_user(&mut self, id: &str) -> ApiResult<UserSummary> {
+        if self
+            .users
+            .values()
+            .any(|user| user.agent_id.as_deref() == Some(id))
+        {
+            return Err(ApiError::Conflict(
+                "该用户仍有下级用户，请先调整下级代理关系".to_string(),
+            ));
+        }
+
+        let removed = self
+            .users
+            .remove(id)
+            .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))?;
+
+        self.user_password_hashes.remove(id);
+        self.user_sessions.retain(|_, user_id| user_id != id);
+        self.user_password_reset_tokens
+            .retain(|_, record| record.user_id != id);
+        self.user_withdrawal_methods
+            .retain(|_, method| method.user_id != id);
+
+        Ok(removed)
     }
 
     /// 处理用户注册：校验注册策略、邀请码和唯一性，并创建用户和密码记录。
@@ -1449,7 +1491,9 @@ impl AccessStore {
             .clone();
 
         if user.status != UserStatus::Active {
-            return Err(ApiError::Forbidden("用户账号未激活".to_string()));
+            return Err(ApiError::Forbidden(
+                inactive_user_status_message(&user.status).to_string(),
+            ));
         }
 
         let password_hash = self
@@ -1480,7 +1524,9 @@ impl AccessStore {
             .ok_or_else(|| ApiError::Unauthorized("登录已过期，请重新登录".to_string()))?;
         let user = self.get_user(user_id)?;
         if user.status != UserStatus::Active {
-            return Err(ApiError::Forbidden("用户账号未激活".to_string()));
+            return Err(ApiError::Forbidden(
+                inactive_user_status_message(&user.status).to_string(),
+            ));
         }
 
         Ok(UserAuthSession {
@@ -2117,6 +2163,15 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
     Ok(user)
 }
 
+/// 按用户状态返回登录拦截文案，让停用和锁定在用户端表现为不同原因。
+fn inactive_user_status_message(status: &UserStatus) -> &'static str {
+    match status {
+        UserStatus::Suspended => "用户账号已停用",
+        UserStatus::Locked => "用户账号已锁定",
+        UserStatus::Active => "用户账号未激活",
+    }
+}
+
 /// 标准化用户 QQ 联系方式：允许为空，填写时必须是 5-12 位数字。
 fn normalize_contact_qq(value: String) -> ApiResult<String> {
     let value = value.trim().to_string();
@@ -2749,6 +2804,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn access_repository_rejects_delete_user_with_direct_invitees() {
+        let access = AccessRepository::memory_seeded();
+
+        let error = access
+            .delete_user("U90001")
+            .await
+            .expect_err("agent with direct invitees cannot be deleted");
+
+        assert!(
+            matches!(error, ApiError::Conflict(message) if message == "该用户仍有下级用户，请先调整下级代理关系")
+        );
+    }
+
+    #[tokio::test]
+    async fn access_repository_deletes_user_and_access_artifacts() {
+        let access = AccessRepository::memory_seeded();
+        let session = access
+            .login_user(UserLoginRequest {
+                login_key: "demo_user".to_string(),
+                password: "12345678".to_string(),
+            })
+            .await
+            .expect("active user can login");
+        let reset = access
+            .request_forgot_password(UserForgotPasswordRequest {
+                login_key: "demo_user".to_string(),
+            })
+            .await
+            .expect("reset token can be created");
+        let method = access
+            .create_withdrawal_method(
+                "U10001",
+                WithdrawalMethodRequest {
+                    method_type: WithdrawalMethodType::Alipay,
+                    account_holder: "测试用户".to_string(),
+                    account_number: "demo@example.com".to_string(),
+                    bank_name: None,
+                    is_default: true,
+                },
+            )
+            .await
+            .expect("withdrawal method can be created");
+
+        let deleted = access
+            .delete_user("U10001")
+            .await
+            .expect("regular user can be deleted");
+
+        assert_eq!(deleted.id, "U10001");
+        assert!(matches!(
+            access.get_user("U10001").await,
+            Err(ApiError::NotFound(_))
+        ));
+        assert!(matches!(
+            access.session_from_user_token(&session.token).await,
+            Err(ApiError::Unauthorized(_))
+        ));
+        assert!(matches!(
+            access.list_withdrawal_methods("U10001").await,
+            Err(ApiError::NotFound(_))
+        ));
+
+        let store = access.inner.read().expect("access store can be read");
+        assert!(!store.user_password_hashes.contains_key("U10001"));
+        assert!(!store
+            .user_password_reset_tokens
+            .contains_key(&reset.reset_token));
+        assert!(!store.user_withdrawal_methods.contains_key(&method.id));
+    }
+
+    #[tokio::test]
     async fn access_repository_generates_unique_invite_codes() {
         let access = AccessRepository::memory_seeded();
         let first = access
@@ -2788,7 +2914,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn access_repository_update_preserves_balance_and_invite_code() {
+    async fn access_repository_update_preserves_username_balance_and_invite_code() {
         let access = AccessRepository::memory_seeded();
         let original = access.get_user("U10001").await.expect("seed user exists");
 
@@ -2811,7 +2937,7 @@ mod tests {
             .await
             .expect("user can be updated");
 
-        assert_eq!(updated.username, "renamed_demo");
+        assert_eq!(updated.username, original.username);
         assert_eq!(updated.balance_minor, original.balance_minor);
         assert_eq!(updated.invite_code, original.invite_code);
         assert_eq!(updated.avatar_url, original.avatar_url);
@@ -3136,6 +3262,64 @@ mod tests {
             .user_sessions
             .keys()
             .all(|token| token.starts_with(SESSION_TOKEN_HASH_PREFIX)));
+    }
+
+    #[tokio::test]
+    async fn access_repository_distinguishes_suspended_and_locked_user_login_errors() {
+        let access = AccessRepository::memory_seeded();
+
+        access
+            .set_user_status("U10001", UserStatus::Suspended)
+            .await
+            .expect("user can be suspended");
+        let suspended_error = access
+            .login_user(UserLoginRequest {
+                login_key: "demo_user".to_string(),
+                password: "12345678".to_string(),
+            })
+            .await
+            .expect_err("suspended user cannot login");
+        assert!(matches!(
+            suspended_error,
+            ApiError::Forbidden(message) if message == "用户账号已停用"
+        ));
+
+        access
+            .set_user_status("U10001", UserStatus::Active)
+            .await
+            .expect("user can be enabled");
+        let session = access
+            .login_user(UserLoginRequest {
+                login_key: "demo_user".to_string(),
+                password: "12345678".to_string(),
+            })
+            .await
+            .expect("active user can login");
+        access
+            .set_user_status("U10001", UserStatus::Locked)
+            .await
+            .expect("user can be locked");
+
+        let locked_login_error = access
+            .login_user(UserLoginRequest {
+                login_key: "demo_user".to_string(),
+                password: "12345678".to_string(),
+            })
+            .await
+            .expect_err("locked user cannot login");
+        assert!(matches!(
+            locked_login_error,
+            ApiError::Forbidden(message) if message == "用户账号已锁定"
+        ));
+
+        let locked_session_error = access
+            .session_from_user_token(&session.token)
+            .await
+            .expect_err("locked user session cannot be restored");
+        assert!(matches!(
+            locked_session_error,
+            ApiError::Forbidden(message) if message == "用户账号已锁定"
+        ));
     }
 
     #[tokio::test]
