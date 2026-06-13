@@ -104,7 +104,9 @@ pub struct SupportReplyRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 用户端继续回复自己客服会话时提交的内容。
+/// 用户端继续回复自己客服会话时提交的内容，支持文本和已上传图床的图片消息。
 pub struct UserSupportReplyRequest {
-    pub content: String,
+    pub content: Option<String>,
+    pub message_type: Option<SupportMessageType>,
+    pub image_url: Option<String>,
 }

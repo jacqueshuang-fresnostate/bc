@@ -606,7 +606,7 @@ impl SupportStore {
             )));
         }
 
-        let content = required_trimmed(request.content, "support user message content")?;
+        let (message_type, content, image_url) = normalize_user_reply_content(request)?;
         let next_index = conversation.messages.len() + 1;
         let now = current_time_label();
 
@@ -615,9 +615,9 @@ impl SupportStore {
             author: SupportMessageAuthor::User,
             author_id: user.id.clone(),
             author_name: user.username.clone(),
-            message_type: SupportMessageType::Text,
+            message_type,
             content,
-            image_url: None,
+            image_url,
             created_at: now.clone(),
         });
         if matches!(
@@ -681,35 +681,62 @@ fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     Ok(value)
 }
 
+/// 标准化用户端客服回复，文本要求内容非空，图片要求提供 http/https 链接。
+fn normalize_user_reply_content(
+    request: UserSupportReplyRequest,
+) -> ApiResult<(SupportMessageType, String, Option<String>)> {
+    normalize_support_message_content(
+        request.content,
+        request.message_type,
+        request.image_url,
+        "客服消息内容不能为空",
+        "客服图片链接不能为空",
+        "客服图片链接必须是 http 或 https 地址",
+    )
+}
+
 /// 标准化后台客服回复，文本消息要求内容非空，图片消息要求提供 http/https 图片链接。
 fn normalize_reply_content(
     request: SupportReplyRequest,
 ) -> ApiResult<(SupportMessageType, String, Option<String>)> {
-    let message_type = request.message_type.unwrap_or(SupportMessageType::Text);
-    let content = request
-        .content
+    normalize_support_message_content(
+        request.content,
+        request.message_type,
+        request.image_url,
+        "客服回复内容不能为空",
+        "客服图片链接不能为空",
+        "客服图片链接必须是 http 或 https 地址",
+    )
+}
+
+/// 标准化客服消息内容，统一约束用户端和后台端图片消息契约。
+fn normalize_support_message_content(
+    content: Option<String>,
+    message_type: Option<SupportMessageType>,
+    image_url: Option<String>,
+    text_required_message: &str,
+    image_required_message: &str,
+    image_format_message: &str,
+) -> ApiResult<(SupportMessageType, String, Option<String>)> {
+    let message_type = message_type.unwrap_or(SupportMessageType::Text);
+    let content = content
         .map(|value| value.trim().to_string())
         .unwrap_or_default();
 
     match message_type {
         SupportMessageType::Text => {
             if content.is_empty() {
-                return Err(ApiError::BadRequest(
-                    "support reply content is required".to_string(),
-                ));
+                return Err(ApiError::BadRequest(text_required_message.to_string()));
             }
             Ok((SupportMessageType::Text, content, None))
         }
         SupportMessageType::Image => {
-            let image_url = request
-                .image_url
+            let image_url = image_url
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
-                .ok_or_else(|| ApiError::BadRequest("客服图片链接不能为空".to_string()))?;
+                .ok_or_else(|| ApiError::BadRequest(image_required_message.to_string()))?;
             if !is_http_image_url(&image_url) {
-                return Err(ApiError::BadRequest(
-                    "客服图片链接必须是 http 或 https 地址".to_string(),
-                ));
+                return Err(ApiError::BadRequest(image_format_message.to_string()));
             }
             Ok((SupportMessageType::Image, content, Some(image_url)))
         }
@@ -1036,7 +1063,9 @@ mod tests {
                 "CS-10001",
                 &user,
                 UserSupportReplyRequest {
-                    content: "我再补充一条充值凭证。".to_string(),
+                    content: Some("我再补充一条充值凭证。".to_string()),
+                    image_url: None,
+                    message_type: None,
                 },
             )
             .await
@@ -1046,6 +1075,44 @@ mod tests {
         assert_eq!(updated.unread_count, 2);
         assert_eq!(updated.user_unread_count, 0);
         assert_eq!(support.list_for_user("U10001").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn support_repository_allows_user_image_reply() {
+        let support = SupportRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let user = access
+            .users
+            .iter()
+            .find(|user| user.id == "U10001")
+            .cloned()
+            .expect("seed user exists");
+
+        let updated = support
+            .user_reply(
+                "CS-10001",
+                &user,
+                UserSupportReplyRequest {
+                    content: Some("用户上传充值截图。".to_string()),
+                    image_url: Some("https://oss.example.test/user-proof.png".to_string()),
+                    message_type: Some(SupportMessageType::Image),
+                },
+            )
+            .await
+            .expect("user image reply can be added");
+        let message = updated.messages.last().expect("user image message exists");
+
+        assert_eq!(message.message_type, SupportMessageType::Image);
+        assert_eq!(
+            message.image_url.as_deref(),
+            Some("https://oss.example.test/user-proof.png")
+        );
+        assert_eq!(message.content, "用户上传充值截图。");
+        assert_eq!(updated.unread_count, 2);
+        assert_eq!(updated.user_unread_count, 0);
     }
 
     #[tokio::test]
@@ -1121,7 +1188,9 @@ mod tests {
                 "CS-10001",
                 &user,
                 UserSupportReplyRequest {
-                    content: "我已经补充付款凭证，请继续处理。".to_string(),
+                    content: Some("我已经补充付款凭证，请继续处理。".to_string()),
+                    image_url: None,
+                    message_type: None,
                 },
             )
             .await
@@ -1188,7 +1257,9 @@ mod tests {
                 "CS-10002",
                 &user,
                 UserSupportReplyRequest {
-                    content: "这不是我的会话。".to_string(),
+                    content: Some("这不是我的会话。".to_string()),
+                    image_url: None,
+                    message_type: None,
                 },
             )
             .await

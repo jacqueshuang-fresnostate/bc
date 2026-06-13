@@ -26,8 +26,8 @@ const active = computed(() => {
   if (route.path === '/') return 0
   if (route.path.startsWith('/group-buy')) return 1
   if (route.path.startsWith('/chat-hall')) return 2
-  if (route.path.startsWith('/history') || route.path.startsWith('/orders')) return 3
-  if (route.path.startsWith('/me')) return 4
+  if (route.path.startsWith('/history')) return 3
+  if (route.path.startsWith('/me') || route.path.startsWith('/orders')) return 4
   return 0
 })
 

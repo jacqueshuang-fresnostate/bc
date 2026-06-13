@@ -8,6 +8,7 @@ import {
   fetchSupportConversations,
   isVisibleSupportConversation,
   replySupportConversation,
+  uploadSupportImage,
   type SupportConversation,
   type SupportMessage,
 } from '../api/user'
@@ -23,6 +24,7 @@ const supportUnreadStore = useSupportUnreadStore()
 const draft = ref('')
 const loading = ref(false)
 const sending = ref(false)
+const uploadingImage = ref(false)
 const emojiPickerVisible = ref(false)
 const emojiPickerLoading = ref(false)
 const emojiPickerError = ref('')
@@ -30,12 +32,14 @@ const conversations = ref<SupportConversation[]>([])
 const activeConversationId = ref('')
 const currentConversation = ref<SupportConversation | null>(null)
 const messageInputRef = ref<HTMLInputElement | null>(null)
+const imageInputRef = ref<HTMLInputElement | null>(null)
 const emojiPickerHostRef = ref<HTMLElement | null>(null)
 let emojiPickerElement: HTMLElement | null = null
 
 const messages = computed(() => currentConversation.value?.messages || [])
 const adminOnline = computed(() => Boolean(currentConversation.value?.assignedAdminName))
-const canSend = computed(() => Boolean(currentConversation.value) && draft.value.trim().length > 0 && !sending.value)
+const canSend = computed(() => Boolean(currentConversation.value) && draft.value.trim().length > 0 && !sending.value && !uploadingImage.value)
+const canUploadImage = computed(() => Boolean(currentConversation.value) && !sending.value && !uploadingImage.value)
 const supportStatusText = computed(() => {
   if (!currentConversation.value) return '请先从充值页发起客服直充'
   return adminOnline.value ? '客服已接入' : '客服会在这里继续回复'
@@ -161,6 +165,55 @@ async function sendMessage() {
     showToast(errorMessage(error, '发送失败'))
   } finally {
     sending.value = false
+  }
+}
+
+function openImagePicker() {
+  if (!currentConversation.value) {
+    showToast('请先从充值页发起客服直充')
+    return
+  }
+  if (sending.value || uploadingImage.value) return
+  imageInputRef.value?.click()
+}
+
+async function onImageFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!(file instanceof File)) {
+    input.value = ''
+    return
+  }
+  await sendImageMessage(file)
+  input.value = ''
+}
+
+async function sendImageMessage(file: File) {
+  if (!currentConversation.value) {
+    showToast('请先从充值页发起客服直充')
+    return
+  }
+  if (file.type && !file.type.startsWith('image/')) {
+    showToast('请选择图片文件')
+    return
+  }
+
+  uploadingImage.value = true
+  try {
+    const { imageUrl } = await uploadSupportImage(file)
+    const updatedConversation = await replySupportConversation(currentConversation.value.id, {
+      content: file.name || '图片',
+      imageUrl,
+      messageType: 'image',
+    })
+    currentConversation.value = updatedConversation
+    emojiPickerVisible.value = false
+    replaceConversationInList(updatedConversation)
+    showToast('图片已发送')
+  } catch (error) {
+    showToast(errorMessage(error, '图片发送失败'))
+  } finally {
+    uploadingImage.value = false
   }
 }
 
@@ -423,10 +476,27 @@ onBeforeUnmount(() => {
     </Teleport>
 
     <div class="support-input-bar">
+      <input
+        ref="imageInputRef"
+        accept="image/*"
+        class="file-input"
+        type="file"
+        :disabled="!canUploadImage"
+        @change="onImageFileChange"
+      />
+      <button
+        class="support-input-bar__attach"
+        type="button"
+        :disabled="!canUploadImage"
+        :aria-label="uploadingImage ? '正在发送图片' : '发送图片'"
+        @click="openImagePicker"
+      >
+        <LucideIcon name="camera" />
+      </button>
       <button
         class="support-input-bar__emoji"
         type="button"
-        :disabled="!currentConversation || sending"
+        :disabled="!currentConversation || sending || uploadingImage"
         :aria-pressed="emojiPickerVisible"
         aria-label="选择表情"
         @click="toggleEmojiPicker"
@@ -438,8 +508,9 @@ onBeforeUnmount(() => {
         v-model="draft"
         class="support-input-bar__field"
         maxlength="2000"
-        :placeholder="currentConversation ? '输入消息...' : '请先发起客服直充'"
+        :placeholder="uploadingImage ? '正在发送图片...' : (currentConversation ? '输入消息...' : '请先发起客服直充')"
         type="text"
+        :disabled="uploadingImage"
         @keyup.enter="sendMessage"
       />
       <button class="support-input-bar__send" type="button" :disabled="!canSend" aria-label="发送" @click="sendMessage">

@@ -259,6 +259,16 @@ export type SupportConversation = {
   messages: SupportMessage[]
 }
 
+export type SupportImageUploadResponse = {
+  imageUrl: string
+}
+
+export type SendSupportMessagePayload = {
+  content?: string
+  imageUrl?: string
+  messageType?: SupportMessageType
+}
+
 export type ChatHallMessage = {
   id: string
   userId: string
@@ -623,10 +633,22 @@ export async function fetchSupportConversation(id: string) {
   )
 }
 
-export async function replySupportConversation(id: string, content: string) {
+export async function uploadSupportImage(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return unwrapApiData<SupportImageUploadResponse>(
+    await http.post('/user/support/images/upload', formData),
+  )
+}
+
+export async function replySupportConversation(id: string, payload: SendSupportMessagePayload | string) {
+  const normalizedPayload = typeof payload === 'string' ? { content: payload } : payload
   return normalizeSupportConversation(
     unwrapApiData<unknown>(
-      await http.post(`/user/support/conversations/${encodeURIComponent(id)}/messages`, { content }),
+      await http.post(
+        `/user/support/conversations/${encodeURIComponent(id)}/messages`,
+        normalizedPayload,
+      ),
     ),
   )
 }

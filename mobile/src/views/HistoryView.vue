@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import DrawResultCard from '../components/lottery/DrawResultCard.vue'
-import HistoryTabs from '../components/lottery/HistoryTabs.vue'
 import LotteryGroupFilter from '../components/lottery/LotteryGroupFilter.vue'
 import SelectedLotteryHistorySheet from '../components/lottery/SelectedLotteryHistorySheet.vue'
 import BetOrderCard from '../components/orders/BetOrderCard.vue'
@@ -21,7 +20,7 @@ const userDataStore = useMobileUserDataStore()
 const { branding } = storeToRefs(brandingStore)
 const { profile } = storeToRefs(userDataStore)
 
-const activeTab = ref<'draws' | 'orders'>(route.path === '/orders' ? 'orders' : 'draws')
+const pageMode = computed<'draws' | 'orders'>(() => route.path === '/orders' ? 'orders' : 'draws')
 const balance = computed(() => profile.value?.balance || '0.00')
 
 const {
@@ -61,11 +60,18 @@ async function loadBalance() {
   } catch {}
 }
 
-function setActiveTab(tab: 'draws' | 'orders') {
-  activeTab.value = tab
+function loadCurrentPage() {
+  loadBalance()
+  if (pageMode.value === 'orders') {
+    loadOrders()
+    return
+  }
+  loadLotteryGroups()
+  loadDrawHistory()
 }
 
 watch(activeGroupCode, () => {
+  if (pageMode.value !== 'draws') return
   selectedLotteryVisible.value = false
   selectedLotteryCode.value = null
   selectedLotteryName.value = ''
@@ -75,20 +81,18 @@ watch(activeGroupCode, () => {
 
 watch(() => props.wsMessage, (msg) => {
   if (msg?.event === 'draw_result') {
-    loadDrawHistory()
-    if (selectedLotteryVisible.value && selectedLotteryCode.value) {
-      loadSelectedDrawHistory(selectedLotteryCode.value)
+    if (pageMode.value === 'draws') {
+      loadDrawHistory()
+      if (selectedLotteryVisible.value && selectedLotteryCode.value) {
+        loadSelectedDrawHistory(selectedLotteryCode.value)
+      }
+    } else {
+      loadOrders()
     }
-    loadOrders()
   }
 })
 
-onMounted(() => {
-  loadBalance()
-  loadLotteryGroups()
-  loadDrawHistory()
-  loadOrders()
-})
+watch(() => route.path, () => loadCurrentPage(), { immediate: true })
 </script>
 
 <template>
@@ -110,15 +114,10 @@ onMounted(() => {
     </header>
 
     <main class="history-content">
-      <!-- 历史页仅负责品牌、标签与模块编排。 -->
-      <HistoryTabs :active-tab="activeTab" @change="setActiveTab" />
-
-      <section v-if="activeTab === 'draws'" class="draw-panel" role="tabpanel">
+      <!-- 开奖页只展示最新开奖；注单记录从“我的”进入。 -->
+      <section v-if="pageMode === 'draws'" class="draw-panel">
         <div class="draw-panel__header">
-          <div>
-            <p>最新开奖</p>
-            <h2>最新开奖</h2>
-          </div>
+          <h2>最新开奖</h2>
         </div>
 
         <LotteryGroupFilter
@@ -141,9 +140,9 @@ onMounted(() => {
         </div>
       </section>
 
-      <section v-else class="orders-panel" role="tabpanel">
+      <section v-else class="orders-panel">
         <div class="orders-panel__header">
-          <h2>注单记录</h2>
+          <h2>我的注单</h2>
         </div>
         <div v-if="loadingOrders" class="state-block">
           <van-loading>加载中...</van-loading>
@@ -215,14 +214,6 @@ onMounted(() => {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 16px;
-}
-
-.draw-panel__header p {
-  margin: 0 0 4px;
-  color: #8e706d;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
 }
 
 .draw-panel__header h2 {

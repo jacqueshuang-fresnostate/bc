@@ -27,6 +27,18 @@ interface UserRecordFilter {
   username: string;
 }
 
+const COMMON_NAVIGATION_ORDER = [
+  'support',
+  'finance',
+  'users',
+  'group-buy',
+  'orders',
+  'lottery-console',
+  'settlements',
+  'invite',
+  'rebate',
+];
+
 export function App() {
   useResizableAdminTables();
   const {
@@ -56,14 +68,14 @@ export function App() {
         })),
       ) ?? [];
 
-    return [
+    return orderNavigationItems([
       {
         key: 'dashboard',
         label: '系统概览',
         group: '工作台',
       },
       ...moduleItems,
-    ];
+    ]);
   }, [filteredData]);
 
   useEffect(() => {
@@ -176,6 +188,24 @@ export function App() {
       )}
     </AppShell>
   );
+}
+
+function orderNavigationItems(items: NavigationItem[]): NavigationItem[] {
+  const itemByKey = new Map(items.map((item) => [item.key, item]));
+  const commonItems = COMMON_NAVIGATION_ORDER.flatMap((key) => {
+    const item = itemByKey.get(key);
+    return item ? [{ ...item, group: '常用' }] : [];
+  });
+  const commonKeys = new Set(COMMON_NAVIGATION_ORDER);
+  const infrequentItems = items
+    .filter((item) => !commonKeys.has(item.key))
+    .map((item, index) => ({
+      ...item,
+      group: '不常用',
+      label: `${String(index + 1).padStart(2, '0')}. ${item.label}`,
+    }));
+
+  return [...commonItems, ...infrequentItems];
 }
 
 function filterDashboardByScopes(

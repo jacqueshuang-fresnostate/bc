@@ -575,7 +575,7 @@ function UserSection({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-2">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap text-sm text-slate-600">
               <span className="text-xs font-medium text-slate-500">排序</span>
               <Select
                 className="form-input min-w-[132px]"

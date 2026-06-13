@@ -38,6 +38,7 @@ const inviterText = computed(() => {
 
 const accountItems = computed(() => [
   { key: 'security', label: '安全中心与密码', icon: 'shield_lock', value: profile.value?.email ? '已绑定' : '未绑定', hint: profile.value?.email || '' },
+  { key: 'orders', label: '我的注单', icon: 'receipt_text', hint: '查看独立下注与合买注单' },
   { key: 'ledger', label: '资金流水', icon: 'payments', hint: '查看充值、投注、提现与派奖记录' },
   { key: 'withdrawal', label: '提现管理', icon: 'account_balance', hint: '管理收款信息' },
 ])
@@ -87,6 +88,7 @@ function statusText(status: string) {
 
 function onAccountItem(item: { key: string }) {
   if (item.key === 'security') router.push('/security-center')
+  if (item.key === 'orders') router.push('/orders')
   if (item.key === 'agentCenter') router.push('/agent-center')
   if (item.key === 'ledger') router.push('/ledger')
   if (item.key === 'withdrawal') router.push('/withdrawal-methods')

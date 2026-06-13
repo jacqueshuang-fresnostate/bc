@@ -105,6 +105,13 @@ const ROBOT_GROUP_BUY_DISPLAY_NAMES: &[&str] = &[
     "海棠会员",
 ];
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 用户端客服图片上传响应，只返回可写入客服消息的图片链接。
+struct SupportImageUploadResponse {
+    image_url: String,
+}
+
 /// 组装并返回当前用户模块对应的路由树。
 pub fn router(state: AppState) -> Router<AppState> {
     let protected_routes = Router::new()
@@ -173,6 +180,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/support/conversations/{id}/messages",
             post(reply_user_support_conversation),
         )
+        .route("/support/images/upload", post(upload_user_support_image))
         .route(
             "/support/conversations/{id}/read",
             post(mark_user_support_conversation_read),
@@ -474,6 +482,28 @@ async fn upload_avatar_to_image_bed(state: &AppState, payload: Multipart) -> Api
     .await?;
 
     image_bed_value_as_url(&output, "图床返回的头像链接")
+}
+
+/// 当前用户上传客服图片：后端读取图床配置代理上传，并返回图片链接供消息发送使用。
+async fn upload_user_support_image(
+    State(state): State<AppState>,
+    payload: Multipart,
+) -> ApiResult<Json<ApiEnvelope<SupportImageUploadResponse>>> {
+    let output = upload_configured_image_bed_file(
+        &state.access,
+        payload,
+        ImageBedUploadOptions {
+            image_only: true,
+            missing_file_message: "未检测到客服图片文件字段",
+            default_file_name: "support-image.png",
+        },
+    )
+    .await?;
+    let image_url = image_bed_value_as_url(&output, "图床返回的客服图片链接")?;
+
+    Ok(Json(ApiEnvelope::success(SupportImageUploadResponse {
+        image_url,
+    })))
 }
 
 /// 注销当前用户登录会话。

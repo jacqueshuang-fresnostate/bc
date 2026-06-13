@@ -3204,9 +3204,37 @@
 - 实施内容：后端新增代理申请领域模型、仓储、数据库表和用户端/后台接口；后台“返利管理”新增“代理申请”Tab 和审核 `SideSheet`；手机端 `/agent-center` 支持普通玩家提交申请、查看待审核/驳回状态，代理继续查看邀请码和直属下级返利数据；OpenAPI 和架构说明同步更新。
 - 验证结果：后端 `cargo fmt`、`cargo fmt --check`、`cargo check`、`cargo test agent_application -- --nocapture`、`cargo test openapi_document_contains_core_paths -- --nocapture` 和全量 `cargo test -- --nocapture` 均通过（299 个测试成功）；后台 `npm run build`、手机端 `pnpm build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
 
+## 2026-06-13 22:44 HKT 后台用户列表排序栏不换行
+
+- 完成任务：调整后台用户列表排序工具栏的布局。
+- 解决问题：用户列表中排序字段、排序方向等控件使用 `flex-wrap` 时会在窄宽度下换行，影响运营扫描和操作连贯性。
+- 实施内容：将排序栏内部容器改为 `flex-nowrap`，增加 `whitespace-nowrap` 和横向溢出滚动，保证控件保持单行展示。
+- 验证结果：后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
+
 ## 2026-06-13 22:33 HKT 手机端首页普通彩种卡片参考草图改版
 
 - 完成任务：按用户提供的手绘结构调整手机端首页普通分类彩种卡片。
 - 解决问题：普通分类彩种卡片需要更接近“左侧彩种信息、右侧 Logo、底部开奖号码”的扫描结构，减少信息堆叠带来的拥挤感。
 - 实施内容：`HomeDrawCard.vue` 普通卡片改为 CSS Grid 两列布局；彩种名和状态同行、期号单独一行、Logo 右侧靠下、开奖号码左下单行滚动展示；主推卡和高频极速二级卡不变。
 - 验证结果：手机端 `pnpm build` 通过，`git diff --check` 通过；尝试用内置浏览器打开本地 Vite 预览时浏览器插件返回不可用，未完成可视截图验证。
+
+## 2026-06-14 00:09 HKT 手机端开奖页与我的注单入口拆分
+
+- 完成任务：把手机端“我的注单”入口移动到“我的”页面，并让“开奖”页只展示最新开奖。
+- 解决问题：原来“开奖”页用 Tab 同时承载“开奖结果”和“我的注单”，个人订单入口放在开奖页内不够清晰。
+- 实施内容：`/history` 改为只渲染最新开奖；`/orders` 继续渲染我的注单但底部导航高亮“我的”；个人中心账户功能区新增“我的注单”入口；移除已废弃的 `HistoryTabs` 组件。
+- 验证结果：手机端 `pnpm build`、`pnpm test` 和 `git diff --check` 均通过；当前手机端测试脚本显示 0 个测试用例。
+
+## 2026-06-14 00:23 HKT 管理端侧边栏常用功能优先
+
+- 完成任务：按运营常用顺序重排管理端侧边栏。
+- 解决问题：原侧边栏按后端模块分组展示，高频入口分散在不同分组里，客服、财务、用户、合买、订单和开奖处理时需要来回查找。
+- 实施内容：后台导航组装时新增常用模块排序规则，依次展示在线客服、财务管理、用户管理、合买管理、订单管理、彩种控制台、计奖派奖、邀请管理、返利管理；未列入常用的模块统一放入“不常用”分组，并自动加两位序号。
+- 验证结果：后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
+
+## 2026-06-14 00:42 HKT 手机端在线客服发送图片
+
+- 完成任务：补齐手机端在线客服发送图片能力。
+- 解决问题：后台客服可以发送图片，手机端此前只能查看图片和发送文字，用户无法在客服会话中上传充值凭证或问题截图。
+- 实施内容：后端用户客服回复支持 `messageType=image`、`imageUrl` 和可选说明；新增 `/api/user/support/images/upload` 图床代理上传接口；手机端 `/support` 输入栏新增图片按钮，选择图片后上传并自动发送图片消息，发送过程中禁用输入和按钮；同步把客服回复空内容校验文案改为中文提示。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml support_repository_allows_user_image_reply -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml support_repository_allows_user_to_continue_owned_conversation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、手机端 `pnpm build`、手机端 `pnpm test` 和 `git diff --check` 均通过；当前手机端测试脚本显示 0 个测试用例。
