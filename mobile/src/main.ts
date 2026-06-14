@@ -12,6 +12,7 @@ import App from './App.vue'
 import router from './router'
 import { useAuthStore } from './stores/auth'
 import { useBrandingStore } from './stores/branding'
+import { preloadMobileRoutes } from './utils/preloadMobileRoutes'
 
 async function bootstrap() {
   const app = createApp(App)
@@ -20,7 +21,6 @@ async function bootstrap() {
 
   const auth = useAuthStore(pinia)
   const branding = useBrandingStore(pinia)
-  await branding.loadBranding()
   await auth.loadTokens()
 
   app.use(router)
@@ -33,6 +33,8 @@ async function bootstrap() {
   components.forEach(c => app.use(c))
 
   app.mount('#app')
+  void branding.loadBranding()
+  preloadMobileRoutes()
 }
 
 bootstrap().catch((error) => {

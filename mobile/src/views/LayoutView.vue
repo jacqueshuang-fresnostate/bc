@@ -34,7 +34,10 @@ const active = computed(() => {
 const hideBottomNav = computed(() => route.path === '/support' || route.path.startsWith('/bet') || ['/deposit', '/withdraw', '/withdrawal-methods', '/ledger', '/orders', '/security-center'].includes(route.path))
 
 function onChange(path: string) {
-  router.push(path)
+  if (route.path === path) {
+    return
+  }
+  void router.push(path)
 }
 
 function refreshSupportUnreadSilently(force = false) {

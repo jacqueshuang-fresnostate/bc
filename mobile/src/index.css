@@ -8,6 +8,46 @@ body,
   margin: 0;
 }
 
+html {
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  overscroll-behavior-y: none;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a,
+[role="button"],
+.van-button,
+.van-cell,
+.van-tab,
+.van-tabbar-item,
+.van-dropdown-menu__bar,
+.van-dropdown-item__option {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a,
+[role="button"],
+.van-button,
+.van-tab,
+.van-tabbar-item {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button:disabled,
+[aria-disabled="true"],
+.van-button--disabled {
+  touch-action: auto;
+}
+
 :root {
   --mobile-status-safe-top: max(1.75rem, env(safe-area-inset-top, 0px));
   --mobile-brand-header-height: calc(4rem + var(--mobile-status-safe-top));
@@ -125,17 +165,17 @@ input::placeholder {
 
 .mobile-route-fade-enter-active,
 .mobile-route-fade-leave-active {
-  transition: opacity 180ms ease-out, transform 180ms ease-out;
+  transition: opacity 96ms ease-out, transform 96ms ease-out;
 }
 
 .mobile-route-fade-enter-from {
   opacity: 0;
-  transform: translate3d(0, 8px, 0);
+  transform: translate3d(0, 4px, 0);
 }
 
 .mobile-route-fade-leave-to {
   opacity: 0;
-  transform: translate3d(0, -6px, 0);
+  transform: translate3d(0, -3px, 0);
 }
 
 @media (prefers-reduced-motion: reduce) {
