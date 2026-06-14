@@ -4044,6 +4044,7 @@ if !has_scope(scopes, &PermissionScope::Finance) {
 | `enabled=true` 且 `drawNumber` 为空 | HTTP 400，返回控制开奖号码必填 |
 | `targetScope=issue` 且 `targetIssue` 为空 | HTTP 400，返回控制期号不能为空 |
 | `targetScope=issue` 且期号不属于当前彩种 | HTTP 404 或 400，返回期号校验错误 |
+| `targetScope=issue` 且期号已开奖或已取消 | HTTP 200，自动保存为关闭控制并清空控制目标 |
 | `targetScope=order` 且 `targetOrderId` 为空 | HTTP 400，返回目标订单不能为空 |
 | `targetScope=order` 且订单不属于当前彩种 | HTTP 400，返回目标订单不属于当前彩种 |
 | `targetScope=order` 且订单不是 `pendingDraw` | HTTP 400，返回只能控制待开奖订单 |

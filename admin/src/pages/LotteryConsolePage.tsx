@@ -449,7 +449,7 @@ function LotteryConsoleCard({
   onSyncSource: (item: LotteryConsoleItem) => void;
   syncing: boolean;
 }) {
-  const { currentIssue, drawControl, lottery, recentDrawnIssue } = item;
+  const { currentIssue, lottery, recentDrawnIssue } = item;
   const currentIssueDrawNumber =
     currentIssue?.status === 'drawn' && currentIssue.drawNumber
       ? currentIssue.drawNumber
@@ -457,7 +457,8 @@ function LotteryConsoleCard({
   const drawNumber = currentIssueDrawNumber ?? recentDrawnIssue?.drawNumber ?? null;
   const drawNumberLabel = currentIssueDrawNumber ? '本期开奖' : '最近开奖';
   const controlAllowed = lottery.drawControlEnabled;
-  const controlEnabled = controlAllowed && Boolean(drawControl?.enabled);
+  const visibleDrawControl = controlAllowed ? displayableDrawControl(item, now) : null;
+  const controlEnabled = Boolean(visibleDrawControl);
   const currentOrderAmountMinor = item.currentIssueOrders.reduce(
     (total, order) => total + order.amountMinor,
     0,
@@ -553,17 +554,22 @@ function LotteryConsoleCard({
             }`}
             title={
               controlEnabled
-                ? drawControl?.drawNumber ?? '-'
+                ? visibleDrawControl?.drawNumber ?? '-'
                 : controlAllowed
                   ? '未启用'
                   : '未开启控制'
             }
           >
-            {controlEnabled ? drawControl?.drawNumber ?? '-' : controlAllowed ? '未启用' : '未开启控制'}
+            {controlEnabled
+              ? visibleDrawControl?.drawNumber ?? '-'
+              : controlAllowed
+                ? '未启用'
+                : '未开启控制'}
           </div>
-          {controlAllowed && drawControl?.updatedAt ? (
+          {controlAllowed && visibleDrawControl?.updatedAt ? (
             <div className="mt-0.5 truncate text-[11px] text-slate-500">
-              {controlTargetText(drawControl)} · 更新 {formatTimePoint(drawControl.updatedAt)}
+              {controlTargetText(visibleDrawControl)} · 更新{' '}
+              {formatTimePoint(visibleDrawControl.updatedAt)}
             </div>
           ) : null}
         </div>
@@ -664,8 +670,8 @@ function DrawControlSideSheet({
   const controlIssues = item ? controlCandidateIssues(item) : [];
   const controlOrders = item ? controlCandidateOrders(item) : [];
   const visibleOrders = item ? visibleConsoleOrders(item, form) : [];
-  const targetIssueDrawn = controlFormTargetsDrawnIssue(item, form);
-  const targetSelectDisabled = !form.enabled && !targetIssueDrawn;
+  const targetIssueInactive = controlFormTargetsInactiveIssue(item, form);
+  const targetSelectDisabled = !form.enabled && !targetIssueInactive;
   const saveDisabled =
     saving ||
     (form.enabled &&
@@ -705,7 +711,7 @@ function DrawControlSideSheet({
             <input
               checked={form.enabled}
               className="h-4 w-4 rounded border-line text-teal-600"
-              disabled={targetIssueDrawn}
+              disabled={targetIssueInactive}
               type="checkbox"
               onChange={(event) =>
                 onChange(
@@ -719,11 +725,11 @@ function DrawControlSideSheet({
             <span>启用控制开奖</span>
           </label>
 
-          {targetIssueDrawn ? (
+          {targetIssueInactive ? (
             <Banner
               type="warning"
-              title="指定期号已开奖"
-              description="已开奖期号不能继续启用开奖号码控制，系统已自动取消勾选。请选择未开奖期号后再启用。"
+              title="指定期号已结束"
+              description="已开奖或已取消期号不能继续启用开奖号码控制，系统已自动取消勾选。请选择未结束期号后再启用。"
             />
           ) : null}
 
@@ -1178,7 +1184,7 @@ function normalizeControlFormForIssueStatus(
   item: LotteryConsoleItem | null,
   form: LotteryDrawControlFormState,
 ): LotteryDrawControlFormState {
-  if (!form.enabled || !controlFormTargetsDrawnIssue(item, form)) {
+  if (!form.enabled || !controlFormTargetsInactiveIssue(item, form)) {
     return form;
   }
 
@@ -1188,7 +1194,7 @@ function normalizeControlFormForIssueStatus(
   };
 }
 
-function controlFormTargetsDrawnIssue(
+function controlFormTargetsInactiveIssue(
   item: LotteryConsoleItem | null,
   form: LotteryDrawControlFormState,
 ) {
@@ -1199,7 +1205,8 @@ function controlFormTargetsDrawnIssue(
   if (!targetIssue) {
     return false;
   }
-  return issueStatusForControl(item, targetIssue) === 'drawn';
+  const status = issueStatusForControl(item, targetIssue);
+  return status === 'drawn' || status === 'cancelled';
 }
 
 function issueStatusForControl(
@@ -1211,9 +1218,57 @@ function issueStatusForControl(
   );
 }
 
+function displayableDrawControl(item: LotteryConsoleItem, now: Date) {
+  const control = item.drawControl;
+  if (!control?.enabled) {
+    return null;
+  }
+
+  if (control.targetScope === 'lottery') {
+    return control;
+  }
+
+  const targetIssue = targetIssueForDrawControl(item, control);
+  if (!targetIssue || !issueStillDisplayableForControl(targetIssue, now)) {
+    return null;
+  }
+
+  return control;
+}
+
+function targetIssueForDrawControl(
+  item: LotteryConsoleItem,
+  control: LotteryDrawControl,
+) {
+  const explicitIssue = control.targetIssue?.trim();
+  if (explicitIssue) {
+    return item.issues.find((issue) => issue.issue === explicitIssue) ?? null;
+  }
+
+  if (control.targetScope !== 'order' || !control.targetOrderId) {
+    return null;
+  }
+
+  const order = item.orders.find((order) => order.id === control.targetOrderId);
+  if (!order) {
+    return null;
+  }
+
+  return item.issues.find((issue) => issue.issue === order.issue) ?? null;
+}
+
+function issueStillDisplayableForControl(issue: DrawIssue, now: Date) {
+  if (issue.status !== 'open' && issue.status !== 'closed') {
+    return false;
+  }
+
+  const scheduledAt = parseTimeLabel(issue.scheduledAt);
+  return scheduledAt === null || scheduledAt >= now.getTime();
+}
+
 function controlCandidateIssues(item: LotteryConsoleItem | null) {
   return [...(item?.issues ?? [])]
-    .filter((issue) => issue.status !== 'drawn')
+    .filter((issue) => issue.status === 'open' || issue.status === 'closed')
     .sort((left, right) => issueTimeValue(left) - issueTimeValue(right));
 }
 

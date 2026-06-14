@@ -651,7 +651,10 @@ async fn normalize_admin_draw_control_target(
                 .draws
                 .get_by_lottery_issue(&lottery.id, &issue)
                 .await?;
-            if draw_issue.status == DrawIssueStatus::Drawn {
+            if matches!(
+                draw_issue.status,
+                DrawIssueStatus::Drawn | DrawIssueStatus::Cancelled
+            ) {
                 payload.enabled = false;
                 payload.target_scope = DrawControlTargetScope::Lottery;
                 payload.target_issue = None;
@@ -4156,6 +4159,47 @@ mod tests {
         normalize_admin_draw_control_target(&state, &lottery, &mut payload)
             .await
             .expect("drawn issue target can be normalized");
+
+        assert!(!payload.enabled);
+        assert_eq!(payload.target_scope, DrawControlTargetScope::Lottery);
+        assert_eq!(payload.target_issue, None);
+        assert_eq!(payload.target_order_id, None);
+    }
+
+    #[tokio::test]
+    /// 指定期号已经取消时，后台保存控奖也会自动关闭控制，避免控奖配置残留到无效期号。
+    async fn draw_control_issue_target_disables_when_issue_cancelled() {
+        let state = test_state();
+        let lottery = state.lotteries.get("ssc60").await.expect("lottery exists");
+        let issue = state
+            .draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "202606052202".to_string(),
+                    scheduled_at: "2026-06-05 22:02:00".to_string(),
+                    sale_closed_at: "2026-06-05 22:01:30".to_string(),
+                },
+            )
+            .await
+            .expect("issue can be created");
+        state
+            .draws
+            .cancel(&issue.id)
+            .await
+            .expect("issue can be cancelled");
+        let mut payload = SaveLotteryDrawControlRequest {
+            enabled: true,
+            draw_number: Some("5,4,3,2,1".to_string()),
+            target_scope: DrawControlTargetScope::Issue,
+            target_issue: Some(issue.issue.clone()),
+            target_order_id: None,
+        };
+
+        normalize_admin_draw_control_target(&state, &lottery, &mut payload)
+            .await
+            .expect("cancelled issue target can be normalized");
 
         assert!(!payload.enabled);
         assert_eq!(payload.target_scope, DrawControlTargetScope::Lottery);
