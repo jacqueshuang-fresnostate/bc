@@ -115,6 +115,7 @@ function normalizeGroupBuyPlan(item: any): GroupBuyPlan {
     created_at: item?.createdAt ? String(item.createdAt) : undefined,
     updated_at: item?.updatedAt ? String(item.updatedAt) : undefined,
     participant_count: Number(item?.participantCount || 0),
+    participants: normalizeGroupBuyParticipants(item?.participants),
     initiator_display: String(item?.initiatorDisplay || ''),
     initiator_avatar_url: String(item?.initiatorAvatarUrl || item?.initiator_avatar_url || ''),
     my_participation: myParticipation
@@ -126,6 +127,22 @@ function normalizeGroupBuyPlan(item: any): GroupBuyPlan {
         }
       : null,
   }
+}
+
+function normalizeGroupBuyParticipants(items: any) {
+  if (!Array.isArray(items)) return []
+  return items.map(item => {
+    const amountMinor = Number(item?.amountMinor || item?.amount_minor || 0)
+    return {
+      id: String(item?.id || ''),
+      display_name: String(item?.displayName || item?.display_name || item?.username || '会员'),
+      amount: minorToMoney(amountMinor),
+      amount_minor: amountMinor,
+      shares: Number(item?.shareCount || item?.share_count || 0),
+      is_mine: Boolean(item?.isMine || item?.is_mine),
+      created_at: item?.createdAt || item?.created_at ? String(item?.createdAt || item?.created_at) : undefined,
+    }
+  })
 }
 
 function moneyToMinor(value: string | number) {

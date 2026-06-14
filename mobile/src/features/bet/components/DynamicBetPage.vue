@@ -10,7 +10,7 @@ import { createGroupBuyPlan } from '../../group-buy/api'
 import { calculateFixedShareCount, calculateRecommendedSelfShares, calculateRequiredSelfShares } from '../../group-buy/presentation'
 import { useBetBatchSubmit } from '../composables/useBetBatchSubmit'
 import { useBetPageConfig } from '../dynamic/useBetPageConfig'
-import { limitPositionValues } from '../dynamic/positionLimits'
+import { limitPositionValues, randomLimitPositionValues, randomSubsetValues } from '../dynamic/positionLimits'
 import { useDynamicBetEngine } from '../dynamic/useDynamicBetEngine'
 import type { BetCartItem, DynamicBetPlay } from '../dynamic/types'
 import BetCartSheet from './BetCartSheet.vue'
@@ -229,12 +229,12 @@ function selectAllPosition(positionKey: string) {
     const oppositeKey = play.positions[index === 0 ? 1 : 0]?.key
     const oppositeValues = new Set(oppositeKey ? engine.selections.value[oppositeKey] || [] : [])
     const availableDigits = play.digits.filter(digit => !oppositeValues.has(digit))
-    const dantuoValues = index === 0 ? availableDigits.slice(0, play.position_grid_kind === 'group6_dantuo' ? 2 : 1) : availableDigits
-    engine.setPositionNumbers(positionKey, limitPositionValues(play, positionKey, dantuoValues))
+    const dantuoValues = index === 0 ? randomSubsetValues(availableDigits, play.position_grid_kind === 'group6_dantuo' ? 2 : 1) : availableDigits
+    engine.setPositionNumbers(positionKey, randomLimitPositionValues(play, positionKey, dantuoValues))
     return
   }
   // 位置玩法的全选来源于当前玩法 digits，避免跨玩法复用旧号码池。
-  engine.setPositionNumbers(positionKey, limitPositionValues(play, positionKey, play.digits))
+  engine.setPositionNumbers(positionKey, randomLimitPositionValues(play, positionKey, play.digits))
 }
 
 function selectPresetPosition(positionKey: string, values: string[]) {

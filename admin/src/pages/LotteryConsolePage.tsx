@@ -154,6 +154,20 @@ export function LotteryConsolePage({
       ),
     [searchMatchedItems, statusFilter, now],
   );
+  const selectedControlLotteryId = selectedControlItem?.lottery.id ?? null;
+
+  useEffect(() => {
+    if (!selectedControlLotteryId) {
+      return;
+    }
+    const nextItem = items.find((item) => item.lottery.id === selectedControlLotteryId);
+    if (!nextItem) {
+      setSelectedControlItem(null);
+      return;
+    }
+    setSelectedControlItem(nextItem);
+    setControlForm((current) => normalizeControlFormForIssueStatus(nextItem, current));
+  }, [items, selectedControlLotteryId]);
 
   const metrics = useMemo(() => {
     const saleEnabledCount = lotteries.filter((lottery) => lottery.saleEnabled).length;
@@ -201,7 +215,12 @@ export function LotteryConsolePage({
       return;
     }
     setSelectedControlItem(item);
-    setControlForm(drawControlFormFromControl(item.drawControl, item));
+    setControlForm(
+      normalizeControlFormForIssueStatus(
+        item,
+        drawControlFormFromControl(item.drawControl, item),
+      ),
+    );
     setControlError(null);
   };
 
@@ -218,13 +237,20 @@ export function LotteryConsolePage({
     setControlSaving(true);
     setControlError(null);
     try {
-      const trimmedDrawNumber = controlForm.drawNumber.trim();
+      const normalizedForm = normalizeControlFormForIssueStatus(
+        selectedControlItem,
+        controlForm,
+      );
+      if (normalizedForm !== controlForm) {
+        setControlForm(normalizedForm);
+      }
+      const trimmedDrawNumber = normalizedForm.drawNumber.trim();
       await saveDrawControl(selectedControlItem.lottery.id, {
-        enabled: controlForm.enabled,
-        drawNumber: controlForm.enabled ? trimmedDrawNumber || null : null,
-        targetIssue: controlForm.enabled ? controlForm.targetIssue.trim() || null : null,
-        targetOrderId: controlForm.enabled ? controlForm.targetOrderId.trim() || null : null,
-        targetScope: controlForm.targetScope,
+        enabled: normalizedForm.enabled,
+        drawNumber: normalizedForm.enabled ? trimmedDrawNumber || null : null,
+        targetIssue: normalizedForm.enabled ? normalizedForm.targetIssue.trim() || null : null,
+        targetOrderId: normalizedForm.enabled ? normalizedForm.targetOrderId.trim() || null : null,
+        targetScope: normalizedForm.targetScope,
       });
       closeControlSheet();
       refresh();
@@ -637,6 +663,8 @@ function DrawControlSideSheet({
   const inputMeta = lottery ? drawNumberInputMeta(lottery.numberType) : null;
   const controlOrders = item ? controlCandidateOrders(item) : [];
   const visibleOrders = item ? visibleConsoleOrders(item, form) : [];
+  const targetIssueDrawn = controlFormTargetsDrawnIssue(item, form);
+  const targetSelectDisabled = !form.enabled && !targetIssueDrawn;
   const saveDisabled =
     saving ||
     (form.enabled &&
@@ -676,13 +704,27 @@ function DrawControlSideSheet({
             <input
               checked={form.enabled}
               className="h-4 w-4 rounded border-line text-teal-600"
+              disabled={targetIssueDrawn}
               type="checkbox"
               onChange={(event) =>
-                onChange({ ...form, enabled: event.target.checked })
+                onChange(
+                  normalizeControlFormForIssueStatus(item, {
+                    ...form,
+                    enabled: event.target.checked,
+                  }),
+                )
               }
             />
             <span>启用控制开奖</span>
           </label>
+
+          {targetIssueDrawn ? (
+            <Banner
+              type="warning"
+              title="指定期号已开奖"
+              description="已开奖期号不能继续启用开奖号码控制，系统已自动取消勾选。请选择未开奖期号后再启用。"
+            />
+          ) : null}
 
           <Field label={`开奖号码（${numberTypeText(lottery.numberType)}）`}>
             <Input
@@ -700,7 +742,7 @@ function DrawControlSideSheet({
           <Field label="控制范围">
             <Select
               className="w-full"
-              disabled={!form.enabled}
+              disabled={targetSelectDisabled}
               value={form.targetScope}
               onChange={(value) =>
                 onChange(controlFormWithScope(item, form, String(value) as DrawControlTargetScope))
@@ -716,15 +758,11 @@ function DrawControlSideSheet({
             <Field label="控制期号">
               <Select
                 className="w-full"
-                disabled={!form.enabled}
+                disabled={targetSelectDisabled}
                 placeholder="请选择要控制的期号"
                 value={form.targetIssue || undefined}
                 onChange={(value) =>
-                  onChange({
-                    ...form,
-                    targetIssue: String(value ?? ''),
-                    targetOrderId: '',
-                  })
+                  onChange(controlFormWithIssue(item, form, String(value ?? '')))
                 }
               >
                 {(item?.issues ?? []).map((issue) => (
@@ -740,7 +778,7 @@ function DrawControlSideSheet({
             <Field label="目标订单">
               <Select
                 className="w-full"
-                disabled={!form.enabled}
+                disabled={targetSelectDisabled}
                 placeholder="请选择要控制的订单"
                 value={form.targetOrderId || undefined}
                 onChange={(value) => {
@@ -1098,12 +1136,12 @@ function controlFormWithScope(
     };
   }
   if (targetScope === 'issue') {
-    return {
+    return normalizeControlFormForIssueStatus(item, {
       ...form,
       targetIssue: form.targetIssue || sellingIssueForControl(item),
       targetOrderId: '',
       targetScope,
-    };
+    });
   }
 
   const defaultIssue = sellingIssueForControl(item);
@@ -1121,6 +1159,55 @@ function controlFormWithScope(
     targetOrderId: order?.id ?? '',
     targetScope,
   };
+}
+
+function controlFormWithIssue(
+  item: LotteryConsoleItem | null,
+  form: LotteryDrawControlFormState,
+  targetIssue: string,
+): LotteryDrawControlFormState {
+  return normalizeControlFormForIssueStatus(item, {
+    ...form,
+    targetIssue,
+    targetOrderId: '',
+  });
+}
+
+function normalizeControlFormForIssueStatus(
+  item: LotteryConsoleItem | null,
+  form: LotteryDrawControlFormState,
+): LotteryDrawControlFormState {
+  if (!form.enabled || !controlFormTargetsDrawnIssue(item, form)) {
+    return form;
+  }
+
+  return {
+    ...form,
+    enabled: false,
+  };
+}
+
+function controlFormTargetsDrawnIssue(
+  item: LotteryConsoleItem | null,
+  form: LotteryDrawControlFormState,
+) {
+  if (form.targetScope !== 'issue') {
+    return false;
+  }
+  const targetIssue = form.targetIssue.trim();
+  if (!targetIssue) {
+    return false;
+  }
+  return issueStatusForControl(item, targetIssue) === 'drawn';
+}
+
+function issueStatusForControl(
+  item: LotteryConsoleItem | null,
+  targetIssue: string,
+): DrawIssueStatus | null {
+  return (
+    item?.issues.find((issue) => issue.issue === targetIssue.trim())?.status ?? null
+  );
 }
 
 function controlCandidateOrders(item: LotteryConsoleItem | null) {

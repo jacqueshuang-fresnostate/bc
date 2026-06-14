@@ -34,6 +34,7 @@ export type UserBetOrderDetail = {
   stakeCount: number
   unitAmountMinor: number
   amountMinor: number
+  groupBuyPlanId?: string | null
   participationAmountMinor?: number | null
   participationPayoutMinor?: number | null
   oddsBasisPoints: number
@@ -163,6 +164,7 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     created_at?: string
     draw_number?: string | null
     draw_result?: string | null
+    group_buy_plan_id?: string | null
     result?: string | null
     settled_at?: string | null
   }
@@ -185,6 +187,7 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     order_source: order.orderSource,
     source_name: order.orderSource,
     is_group_buy: isGroupBuy,
+    group_buy_plan_id: order.groupBuyPlanId || rawOrder.group_buy_plan_id || null,
     lottery_code: order.lotteryId,
     lottery_name: order.lotteryName,
     play_code: order.ruleCode,

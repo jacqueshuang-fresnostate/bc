@@ -1093,7 +1093,7 @@ await createOrder({
 - `direct`：用户独立下单。
 - `groupBuy`：合买满单后生成的真实投注订单。
 
-当 `orderSource=groupBuy` 且当前登录用户参与了对应合买计划时，用户注单列表必须额外返回 `participationAmountMinor`，表示当前用户在该合买订单中的实际认购金额；如果同一用户对同一合买计划有多条参与记录，需要按参与记录累加。中奖后还必须返回 `participationPayoutMinor`，表示当前用户按参与比例实际分到的派奖金额；该值优先来自真实 `payoutCredit` 资金流水，历史缺失流水时可按合买参与比例和最后一名承接余数规则计算展示兜底。普通独立订单不返回这两个参与字段，手机端不能把合买真实订单的 `amountMinor` 或整单 `payoutMinor` 当成当前用户实际参与金额或个人中奖金额展示。
+当 `orderSource=groupBuy` 且当前登录用户参与了对应合买计划时，用户注单列表必须额外返回 `groupBuyPlanId`、`participationAmountMinor`，其中 `groupBuyPlanId` 用于手机端注单详情懒加载合买计划参与人列表，`participationAmountMinor` 表示当前用户在该合买订单中的实际认购金额；如果同一用户对同一合买计划有多条参与记录，需要按参与记录累加。中奖后还必须返回 `participationPayoutMinor`，表示当前用户按参与比例实际分到的派奖金额；该值优先来自真实 `payoutCredit` 资金流水，历史缺失流水时可按合买参与比例和最后一名承接余数规则计算展示兜底。普通独立订单不返回这些合买参与字段，手机端不能把合买真实订单的 `amountMinor` 或整单 `payoutMinor` 当成当前用户实际参与金额或个人中奖金额展示。
 
 用户注单列表的归属口径必须同时覆盖两类数据：
 
@@ -1124,6 +1124,7 @@ await createOrder({
 | 当前用户余额不足 | HTTP 400/409，沿用财务账户余额校验错误 |
 | 扣款失败 | 回滚本次未入账订单，返回财务错误 |
 | 用户参与合买且计划已成单 | `GET /api/user/bet/orders` 返回对应 `orderSource=groupBuy` 注单 |
+| 用户参与合买且计划已成单 | 返回 `groupBuyPlanId`，手机端注单详情可据此拉取参与人列表 |
 | 用户参与合买且计划已成单 | 返回 `participationAmountMinor` 作为当前用户参与金额 |
 | 用户参与合买且中奖已派奖 | 返回 `participationPayoutMinor` 作为当前用户个人派奖金额 |
 | 用户参与合买但计划未满单 | 不返回注单，继续由“我的合买”展示计划进度 |
@@ -3175,6 +3176,7 @@ await createInvitation({
 20. 后台 `GET /api/admin/group-buy/plans` 不传 `includeRobotData` 时等同于 `false`，默认过滤 `initiatorUserId` 为系统合买机器人账户的计划；传 `includeRobotData=true` 时才展示机器人发起计划。机器人作为参与人补单的普通用户发起计划不能被过滤掉。
 21. 后台计划列表摘要必须返回 `createdAt`，后台合买计划列表需要直接显示该创建时间，方便运营核对计划生成顺序。
 22. 用户端 `/api/user/group-buy/plans`、`/api/user/group-buy/plans/{id}` 和 `/api/user/group-buy/my` 返回的 `initiatorAvatarUrl` 只面向普通用户发起计划，从当前用户资料按 `initiatorUserId` 动态读取；机器人计划必须返回空字符串，避免暴露机器人账号头像。
+23. 用户端 `/api/user/group-buy/plans/{id}` 返回 `participants` 参与人摘要，字段包含 `id`、脱敏 `displayName`、`amountMinor`、`shareCount`、`isMine` 和 `createdAt`；用户端不得返回完整用户名、用户 ID 或机器人账号给普通用户页面。
 
 ### 4. 校验与错误矩阵
 

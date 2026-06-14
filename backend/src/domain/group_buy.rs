@@ -190,6 +190,18 @@ pub struct GroupBuyParticipationSummary {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 用户端展示的合买参与人摘要，隐藏真实用户名和用户 ID，只暴露核对认购所需信息。
+pub struct UserGroupBuyParticipantSummary {
+    pub id: String,
+    pub display_name: String,
+    pub amount_minor: i64,
+    pub share_count: u32,
+    pub is_mine: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 /// 手机端合买大厅和我的合买列表使用的计划展示数据。
 pub struct UserGroupBuyPlan {
     pub id: String,
@@ -212,6 +224,8 @@ pub struct UserGroupBuyPlan {
     pub progress_percent: u32,
     pub status: GroupBuyPlanStatus,
     pub participant_count: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub participants: Vec<UserGroupBuyParticipantSummary>,
     pub initiator_display: String,
     pub initiator_avatar_url: String,
     pub my_participation: Option<GroupBuyParticipationSummary>,

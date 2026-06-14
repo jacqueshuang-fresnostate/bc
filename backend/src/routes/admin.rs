@@ -646,10 +646,17 @@ async fn normalize_admin_draw_control_target(
         }
         DrawControlTargetScope::Issue => {
             let issue = required_admin_control_value(payload.target_issue.as_deref(), "控制期号")?;
-            state
+            let draw_issue = state
                 .draws
                 .get_by_lottery_issue(&lottery.id, &issue)
                 .await?;
+            if draw_issue.status == DrawIssueStatus::Drawn {
+                payload.enabled = false;
+                payload.target_scope = DrawControlTargetScope::Lottery;
+                payload.target_issue = None;
+                payload.target_order_id = None;
+                return Ok(());
+            }
             payload.target_issue = Some(issue);
             payload.target_order_id = None;
             Ok(())
@@ -3545,7 +3552,10 @@ mod tests {
     use crate::{
         app::AppState,
         domain::{
-            draw::{DrawControlTargetScope, DrawIssueStatus, SaveLotteryDrawControlRequest},
+            draw::{
+                CreateDrawIssueRequest, DrawControlTargetScope, DrawIssueResultRequest,
+                DrawIssueStatus, SaveLotteryDrawControlRequest,
+            },
             finance::{
                 AdminFinancialAccountSummary, FinancialAccountSummary, LedgerEntry, LedgerEntryKind,
             },
@@ -4093,6 +4103,52 @@ mod tests {
 
         assert_eq!(payload.target_issue.as_deref(), Some("202606052200"));
         assert_eq!(payload.target_order_id.as_deref(), Some(order.id.as_str()));
+    }
+
+    #[tokio::test]
+    /// 指定期号已经开奖时，后台保存控奖会自动关闭控制，避免控奖配置残留到已结束期号。
+    async fn draw_control_issue_target_disables_when_issue_drawn() {
+        let state = test_state();
+        let lottery = state.lotteries.get("ssc60").await.expect("lottery exists");
+        let issue = state
+            .draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "202606052201".to_string(),
+                    scheduled_at: "2026-06-05 22:01:00".to_string(),
+                    sale_closed_at: "2026-06-05 22:00:30".to_string(),
+                },
+            )
+            .await
+            .expect("issue can be created");
+        state
+            .draws
+            .draw(
+                &issue.id,
+                DrawIssueResultRequest {
+                    draw_number: Some("1,2,3,4,5".to_string()),
+                },
+            )
+            .await
+            .expect("issue can be drawn");
+        let mut payload = SaveLotteryDrawControlRequest {
+            enabled: true,
+            draw_number: Some("5,4,3,2,1".to_string()),
+            target_scope: DrawControlTargetScope::Issue,
+            target_issue: Some(issue.issue.clone()),
+            target_order_id: None,
+        };
+
+        normalize_admin_draw_control_target(&state, &lottery, &mut payload)
+            .await
+            .expect("drawn issue target can be normalized");
+
+        assert!(!payload.enabled);
+        assert_eq!(payload.target_scope, DrawControlTargetScope::Lottery);
+        assert_eq!(payload.target_issue, None);
+        assert_eq!(payload.target_order_id, None);
     }
 
     fn test_state() -> AppState {

@@ -44,10 +44,11 @@ const {
 const {
   orders,
   selectedOrder,
-  selectedOrderNumbers,
+  selectedGroupBuyParticipants,
   selectedDrawNumbers,
   selectedOrderNumber,
   loadingOrders,
+  loadingGroupBuyParticipants,
   loadOrders,
   openOrderDetail,
   closeOrderDetail,
@@ -195,7 +196,8 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
     <OrderDetailSheet
       v-if="selectedOrder"
       :selected-order="selectedOrder"
-      :selected-order-numbers="selectedOrderNumbers"
+      :group-buy-participants="selectedGroupBuyParticipants"
+      :loading-group-buy-participants="loadingGroupBuyParticipants"
       :selected-draw-numbers="selectedDrawNumbers"
       :selected-order-number="selectedOrderNumber"
       @close="closeOrderDetail"

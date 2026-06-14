@@ -31,7 +31,8 @@ use crate::{
         AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyCreateOptions,
         GroupBuyCreateSettings, GroupBuyParticipationSummary, GroupBuyPlan, GroupBuyPlanStatus,
         GroupBuySelectOption, UserCreateGroupBuyPlanRequest, UserGroupBuyActionResponse,
-        UserGroupBuyPlan, UserGroupBuyPlanPage, UserJoinGroupBuyPlanRequest,
+        UserGroupBuyParticipantSummary, UserGroupBuyPlan, UserGroupBuyPlanPage,
+        UserJoinGroupBuyPlanRequest,
     },
     domain::invite::{InviteRecord, InviteStatus},
     domain::lottery::LotteryKind,
@@ -66,6 +67,7 @@ use crate::{
     services::{
         business_database::enum_to_string,
         group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
+        group_buy_robot::is_group_buy_robot_user_id,
         image_bed::{
             image_bed_value_as_url, upload_configured_image_bed_file, ImageBedUploadOptions,
         },
@@ -807,14 +809,17 @@ struct UserBetOrderDetailResponse {
     #[serde(flatten)]
     order: OrderDetail,
     #[serde(skip_serializing_if = "Option::is_none")]
+    group_buy_plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     participation_amount_minor: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     participation_payout_minor: Option<i64>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 /// 当前用户在一张合买真实订单里的个人份额，供注单列表展示使用。
 struct UserGroupBuyOrderShare {
+    plan_id: String,
     amount_minor: i64,
     payout_minor: Option<i64>,
 }
@@ -848,10 +853,13 @@ fn user_visible_bet_orders(
             None
         };
         if order.user_id == user_id || group_buy_share.is_some() {
-            let participation_amount_minor = group_buy_share.map(|share| share.amount_minor);
+            let group_buy_plan_id = group_buy_share.as_ref().map(|share| share.plan_id.clone());
+            let participation_amount_minor =
+                group_buy_share.as_ref().map(|share| share.amount_minor);
             let participation_payout_minor = group_buy_share.and_then(|share| share.payout_minor);
             visible_orders.push(UserBetOrderDetailResponse {
                 order,
+                group_buy_plan_id,
                 participation_amount_minor,
                 participation_payout_minor,
             });
@@ -891,6 +899,7 @@ fn user_group_buy_order_share(
         ledger_entries,
     )?;
     Ok(Some(UserGroupBuyOrderShare {
+        plan_id: plan.id.clone(),
         amount_minor,
         payout_minor,
     }))
@@ -1126,7 +1135,13 @@ async fn get_user_group_buy_plan(
     let lotteries = state.lotteries.list().await?;
     let access = state.access.snapshot().await?;
     let plan = state.group_buys.get(&id).await?;
-    let plan = user_group_buy_plan(&plan, &lotteries, Some(&session.user.id), &access.users)?;
+    let plan = user_group_buy_plan(
+        &plan,
+        &lotteries,
+        Some(&session.user.id),
+        &access.users,
+        true,
+    )?;
 
     Ok(Json(ApiEnvelope::success(plan)))
 }
@@ -1148,7 +1163,15 @@ async fn list_my_group_buy_plans(
                 .iter()
                 .any(|participant| participant.user_id == session.user.id)
         })
-        .map(|plan| user_group_buy_plan(&plan, &lotteries, Some(&session.user.id), &access.users))
+        .map(|plan| {
+            user_group_buy_plan(
+                &plan,
+                &lotteries,
+                Some(&session.user.id),
+                &access.users,
+                false,
+            )
+        })
         .collect::<ApiResult<Vec<_>>>()?;
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyPlanPage { items })))
@@ -1325,7 +1348,13 @@ async fn create_user_group_buy_plan(
     )
     .await;
     let account = state.finance.account_or_create(&session.user.id).await?;
-    let plan = user_group_buy_plan(&plan, &[lottery], Some(&session.user.id), &access.users)?;
+    let plan = user_group_buy_plan(
+        &plan,
+        &[lottery],
+        Some(&session.user.id),
+        &access.users,
+        true,
+    )?;
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyActionResponse {
         plan,
@@ -1444,7 +1473,13 @@ async fn join_user_group_buy_plan(
     .await;
     let account = state.finance.account_or_create(&session.user.id).await?;
     let lotteries = state.lotteries.list().await?;
-    let plan = user_group_buy_plan(&updated, &lotteries, Some(&session.user.id), &access.users)?;
+    let plan = user_group_buy_plan(
+        &updated,
+        &lotteries,
+        Some(&session.user.id),
+        &access.users,
+        true,
+    )?;
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyActionResponse {
         plan,
@@ -1498,7 +1533,7 @@ async fn user_group_buy_plans(
                 GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open | GroupBuyPlanStatus::Filled
             )
         })
-        .map(|plan| user_group_buy_plan(&plan, lotteries, Some(user_id), &access.users))
+        .map(|plan| user_group_buy_plan(&plan, lotteries, Some(user_id), &access.users, false))
         .collect()
 }
 
@@ -1508,6 +1543,7 @@ fn user_group_buy_plan(
     lotteries: &[LotteryKind],
     user_id: Option<&str>,
     users: &[UserSummary],
+    include_participants: bool,
 ) -> ApiResult<UserGroupBuyPlan> {
     let lottery = lotteries
         .iter()
@@ -1548,12 +1584,61 @@ fn user_group_buy_plan(
         progress_percent,
         status: plan.status.clone(),
         participant_count: plan.participants.len(),
+        participants: if include_participants {
+            user_group_buy_participants(plan, user_id)
+        } else {
+            Vec::new()
+        },
         initiator_display: user_group_buy_initiator_display(plan),
         initiator_avatar_url: user_group_buy_initiator_avatar_url(plan, users),
         my_participation,
         created_at: plan.created_at.clone(),
         updated_at: plan.updated_at.clone(),
     })
+}
+
+/// 生成手机端合买参与人展示列表，名称统一脱敏，当前用户标记为“我”。
+fn user_group_buy_participants(
+    plan: &GroupBuyPlan,
+    user_id: Option<&str>,
+) -> Vec<UserGroupBuyParticipantSummary> {
+    plan.participants
+        .iter()
+        .map(|participant| {
+            let is_mine = user_id
+                .map(|user_id| participant.user_id == user_id)
+                .unwrap_or(false);
+            UserGroupBuyParticipantSummary {
+                id: participant.id.clone(),
+                display_name: user_group_buy_participant_display(participant, is_mine),
+                amount_minor: participant.amount_minor,
+                share_count: participant.share_count,
+                is_mine,
+                created_at: participant.created_at.clone(),
+            }
+        })
+        .collect()
+}
+
+/// 生成单个合买参与人的用户端展示名，避免暴露机器人和完整用户名。
+fn user_group_buy_participant_display(
+    participant: &crate::domain::group_buy::GroupBuyParticipant,
+    is_mine: bool,
+) -> String {
+    if is_mine {
+        return "我".to_string();
+    }
+    if is_group_buy_robot_user_id(&participant.user_id) {
+        let base_hash = stable_group_buy_display_hash(&participant.id);
+        let base = ROBOT_GROUP_BUY_DISPLAY_NAMES
+            .get(base_hash as usize % ROBOT_GROUP_BUY_DISPLAY_NAMES.len())
+            .copied()
+            .unwrap_or("幸运会员");
+        let suffix = base_hash % 9_000 + 1_000;
+        return mask_group_buy_initiator_display(&format!("{base}{suffix}"));
+    }
+
+    mask_group_buy_initiator_display(&participant.username)
 }
 
 /// 生成手机端合买计划标题。
@@ -1996,8 +2081,13 @@ async fn share_chat_hall_group_buy_plan(
     }
     let lotteries = state.lotteries.list().await?;
     let access = state.access.snapshot().await?;
-    let plan_summary =
-        user_group_buy_plan(&plan, &lotteries, Some(&session.user.id), &access.users)?;
+    let plan_summary = user_group_buy_plan(
+        &plan,
+        &lotteries,
+        Some(&session.user.id),
+        &access.users,
+        false,
+    )?;
     let message = state
         .chat_hall
         .share_group_buy_plan(
@@ -2411,10 +2501,10 @@ mod tests {
             "合买机器人 20260605200100",
         );
 
-        let first_view =
-            user_group_buy_plan(&first_plan, &lotteries, None, &[]).expect("robot plan can map");
-        let second_view =
-            user_group_buy_plan(&second_plan, &lotteries, None, &[]).expect("robot plan can map");
+        let first_view = user_group_buy_plan(&first_plan, &lotteries, None, &[], false)
+            .expect("robot plan can map");
+        let second_view = user_group_buy_plan(&second_plan, &lotteries, None, &[], false)
+            .expect("robot plan can map");
 
         assert_ne!(first_view.initiator_display, "agent_alpha");
         assert_eq!(first_view.initiator_avatar_url, "");
@@ -2437,7 +2527,8 @@ mod tests {
             "用户发起合买",
         );
 
-        let view = user_group_buy_plan(&plan, &lotteries, None, &[]).expect("normal plan can map");
+        let view =
+            user_group_buy_plan(&plan, &lotteries, None, &[], false).expect("normal plan can map");
 
         assert_eq!(view.initiator_display, "regu********");
         assert_eq!(view.title, "用户发起合买");
@@ -2462,9 +2553,9 @@ mod tests {
             "合买机器人 20260605200000",
         );
 
-        let view = user_group_buy_plan(&plan, &lotteries, None, &[user.clone()])
+        let view = user_group_buy_plan(&plan, &lotteries, None, &[user.clone()], false)
             .expect("normal plan can map");
-        let robot_view = user_group_buy_plan(&robot_plan, &lotteries, None, &[user])
+        let robot_view = user_group_buy_plan(&robot_plan, &lotteries, None, &[user], false)
             .expect("robot plan can map");
 
         assert_eq!(
@@ -2472,6 +2563,80 @@ mod tests {
             "https://cdn.example.com/avatar.png"
         );
         assert_eq!(robot_view.initiator_avatar_url, "");
+    }
+
+    #[test]
+    /// 验证用户端合买详情参与人列表只展示脱敏信息，并标记当前用户。
+    fn user_group_buy_plan_returns_masked_participants() {
+        let lotteries = vec![test_group_buy_lottery()];
+        let mut plan = test_group_buy_plan(
+            "G-USER-PARTICIPANTS-001",
+            "20260605200000",
+            "regular_user",
+            "用户发起合买",
+        );
+        plan.initiator_user_id = "U10001".to_string();
+        plan.participants = vec![
+            GroupBuyParticipant {
+                id: "G-USER-PARTICIPANTS-001-P001".to_string(),
+                user_id: "U10001".to_string(),
+                username: "爱情819281".to_string(),
+                amount_minor: 1_000,
+                share_count: 1,
+                note: "发起人认购".to_string(),
+                created_at: "2026-06-05 20:00:00".to_string(),
+            },
+            GroupBuyParticipant {
+                id: "G-USER-PARTICIPANTS-001-P002".to_string(),
+                user_id: "U20002".to_string(),
+                username: "current_user".to_string(),
+                amount_minor: 2_000,
+                share_count: 2,
+                note: "用户认购".to_string(),
+                created_at: "2026-06-05 20:01:00".to_string(),
+            },
+            GroupBuyParticipant {
+                id: "G-USER-PARTICIPANTS-001-P003".to_string(),
+                user_id: "U90001".to_string(),
+                username: "agent_alpha".to_string(),
+                amount_minor: 2_000,
+                share_count: 2,
+                note: "机器人补单".to_string(),
+                created_at: "2026-06-05 20:02:00".to_string(),
+            },
+        ];
+
+        let view = user_group_buy_plan(&plan, &lotteries, Some("U20002"), &[], true)
+            .expect("合买计划可以转换为用户端详情");
+
+        assert_eq!(view.participant_count, 3);
+        assert_eq!(view.participants[0].display_name, "爱情81****");
+        assert_eq!(view.participants[0].amount_minor, 1_000);
+        assert!(!view.participants[0].is_mine);
+        assert_eq!(view.participants[1].display_name, "我");
+        assert!(view.participants[1].is_mine);
+        assert_eq!(view.participants[1].share_count, 2);
+        assert!(!view.participants[2].display_name.contains("agent"));
+        assert!(!view.participants[2].display_name.contains("机器人"));
+        assert!(view.participants[2].display_name.contains('*'));
+    }
+
+    #[test]
+    /// 验证用户端合买列表转换默认不携带参与人明细，避免列表接口变重。
+    fn user_group_buy_plan_omits_participants_for_list_response() {
+        let lotteries = vec![test_group_buy_lottery()];
+        let plan = test_group_buy_plan(
+            "G-USER-LIST-001",
+            "20260605200000",
+            "regular_user",
+            "用户发起合买",
+        );
+
+        let view = user_group_buy_plan(&plan, &lotteries, Some("U90001"), &[], false)
+            .expect("合买列表可以转换");
+
+        assert_eq!(view.participant_count, 1);
+        assert!(view.participants.is_empty());
     }
 
     #[test]
@@ -2569,10 +2734,15 @@ mod tests {
             .expect("参与的合买订单应进入注单列表");
         assert_eq!(group_buy_item.participation_amount_minor, Some(3_000));
         assert_eq!(group_buy_item.participation_payout_minor, None);
+        assert_eq!(
+            group_buy_item.group_buy_plan_id.as_deref(),
+            Some("G-USER-ORDER-001")
+        );
         let direct_item = visible
             .iter()
             .find(|item| item.order.order_source == OrderSource::Direct)
             .expect("独立订单应进入注单列表");
+        assert_eq!(direct_item.group_buy_plan_id, None);
         assert_eq!(direct_item.participation_amount_minor, None);
         assert_eq!(direct_item.participation_payout_minor, None);
     }

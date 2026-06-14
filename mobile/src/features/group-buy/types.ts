@@ -5,6 +5,16 @@ export type GroupBuyParticipation = {
   amount: string
 }
 
+export type GroupBuyParticipant = {
+  id: string
+  display_name: string
+  amount: string
+  amount_minor: number
+  shares: number
+  is_mine: boolean
+  created_at?: string
+}
+
 export type GroupBuyPlan = {
   id: string
   order_id?: string | null
@@ -28,6 +38,7 @@ export type GroupBuyPlan = {
   created_at?: string
   updated_at?: string
   participant_count: number
+  participants: GroupBuyParticipant[]
   initiator_display: string
   initiator_avatar_url: string
   my_participation?: GroupBuyParticipation | null

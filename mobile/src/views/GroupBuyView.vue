@@ -9,6 +9,7 @@ import { fetchGroupBuyDetail } from '../features/group-buy/api'
 import { useGroupBuyHall } from '../features/group-buy/composables/useGroupBuyHall'
 import { useGroupBuyDetail } from '../features/group-buy/composables/useGroupBuyDetail'
 import { useGroupBuyCreate } from '../features/group-buy/composables/useGroupBuyCreate'
+import type { GroupBuyParticipant } from '../features/group-buy/types'
 import {
   canJoinPlan,
   formatMoney,
@@ -22,6 +23,7 @@ import {
   progressTrackWidth,
   statusText,
 } from '../features/group-buy/presentation'
+import { formatDateTime } from '../utils/lotteryFormat'
 
 const route = useRoute()
 const brandingStore = useBrandingStore()
@@ -94,6 +96,27 @@ const {
 async function createGroupBuy() {
   const createdPlan = await submitCreateGroupBuy()
   selectedGroupBuy.value = createdPlan || selectedGroupBuy.value
+}
+
+function participantName(participant: GroupBuyParticipant) {
+  return participant.display_name || '会员'
+}
+
+function participantAvatarText(participant: GroupBuyParticipant) {
+  return participantName(participant).trim().slice(0, 1).toUpperCase() || '会'
+}
+
+function participantAmountText(participant: GroupBuyParticipant) {
+  return formatMoney(participant.amount)
+}
+
+function participantSharesText(participant: GroupBuyParticipant) {
+  const shares = Number(participant.shares || 0)
+  return `${Number.isFinite(shares) ? shares : 0}份`
+}
+
+function participantTimeText(participant: GroupBuyParticipant) {
+  return formatDateTime(participant.created_at)
 }
 
 async function openPlanFromQuery() {
@@ -420,6 +443,46 @@ onMounted(async () => {
                 <div class="flex justify-between gap-4"><span class="text-stone-500">成单订单</span><b class="text-right">{{ selectedGroupBuy.order_id || '未成单' }}</b></div>
                 <div class="flex justify-between gap-4"><span class="text-stone-500">号码</span><b class="text-right">{{ selectedGroupBuy.numbers }}</b></div>
                 <div class="flex justify-between gap-4"><span class="text-stone-500">我的参与</span><b class="text-right">{{ selectedGroupBuy.my_participation ? `${selectedGroupBuy.my_participation.amount}元` : '暂未参与' }}</b></div>
+              </div>
+            </div>
+
+            <div class="rounded-3xl bg-white p-4 shadow-sm">
+              <div class="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p class="text-xs font-bold text-stone-400">参与人</p>
+                  <h3 class="mt-0.5 font-headline text-base font-black text-stone-950">认购明细</h3>
+                </div>
+                <span class="rounded-full bg-red-50 px-2.5 py-1 text-xs font-black text-red-900">
+                  {{ selectedGroupBuy.participant_count || selectedGroupBuy.participants?.length || 0 }}人
+                </span>
+              </div>
+              <div v-if="selectedGroupBuy.participants?.length" class="space-y-2">
+                <article
+                  v-for="participant in selectedGroupBuy.participants"
+                  :key="participant.id"
+                  class="flex items-center justify-between gap-3 rounded-2xl bg-stone-50 p-2.5"
+                  :class="{ 'bg-red-50 ring-1 ring-red-100': participant.is_mine }"
+                >
+                  <div class="flex min-w-0 items-center gap-2.5">
+                    <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white font-headline text-sm font-black text-red-900 shadow-sm">
+                      {{ participantAvatarText(participant) }}
+                    </div>
+                    <div class="min-w-0">
+                      <div class="flex min-w-0 items-center gap-1.5">
+                        <b class="truncate text-sm font-black text-stone-950">{{ participantName(participant) }}</b>
+                        <span v-if="participant.is_mine" class="shrink-0 rounded-full bg-red-900 px-1.5 py-0.5 text-[10px] font-bold text-white">我</span>
+                      </div>
+                      <span class="mt-0.5 block truncate text-[11px] text-stone-500">{{ participantTimeText(participant) }}</span>
+                    </div>
+                  </div>
+                  <div class="shrink-0 text-right">
+                    <b class="block font-headline text-sm font-black text-red-900">{{ participantAmountText(participant) }}</b>
+                    <span class="mt-0.5 block text-[11px] font-medium text-stone-500">{{ participantSharesText(participant) }}</span>
+                  </div>
+                </article>
+              </div>
+              <div v-else class="rounded-2xl bg-stone-50 px-3 py-4 text-center text-xs font-medium text-stone-500">
+                暂无参与人记录
               </div>
             </div>
 

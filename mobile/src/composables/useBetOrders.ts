@@ -1,13 +1,15 @@
 import { computed, ref } from 'vue'
 import type { Router } from 'vue-router'
 import { fetchUserBetOrders } from '../api/bet'
-import { orderBetNumbers, orderDrawNumbers, orderNumber } from '../utils/lotteryFormat'
+import { fetchGroupBuyDetail } from '../features/group-buy/api'
+import { orderDrawNumbers, orderNumber } from '../utils/lotteryFormat'
 
 export function useBetOrders(router: Router) {
   const orders = ref<any[]>([])
   const selectedOrder = ref<any | null>(null)
+  const selectedGroupBuyParticipants = ref<any[]>([])
   const loadingOrders = ref(false)
-  const selectedOrderNumbers = computed(() => selectedOrder.value ? orderBetNumbers(selectedOrder.value) : [])
+  const loadingGroupBuyParticipants = ref(false)
   const selectedDrawNumbers = computed(() => selectedOrder.value ? orderDrawNumbers(selectedOrder.value) : [])
   const selectedOrderNumber = computed(() => selectedOrder.value ? orderNumber(selectedOrder.value) : '')
 
@@ -22,12 +24,31 @@ export function useBetOrders(router: Router) {
     }
   }
 
-  function openOrderDetail(order: any) {
+  async function openOrderDetail(order: any) {
     selectedOrder.value = order
+    await loadSelectedGroupBuyParticipants(order)
   }
 
   function closeOrderDetail() {
     selectedOrder.value = null
+    selectedGroupBuyParticipants.value = []
+    loadingGroupBuyParticipants.value = false
+  }
+
+  async function loadSelectedGroupBuyParticipants(order: any) {
+    selectedGroupBuyParticipants.value = []
+    const planId = order?.group_buy_plan_id || order?.groupBuyPlanId
+    if (!order?.is_group_buy || !planId) return
+    loadingGroupBuyParticipants.value = true
+    try {
+      const result = await fetchGroupBuyDetail(String(planId))
+      if (selectedOrder.value?.id !== order.id) return
+      selectedGroupBuyParticipants.value = result.data.participants || []
+    } catch {
+      if (selectedOrder.value?.id === order.id) selectedGroupBuyParticipants.value = []
+    } finally {
+      if (selectedOrder.value?.id === order.id) loadingGroupBuyParticipants.value = false
+    }
   }
 
   async function copyOrderNumber() {
@@ -46,10 +67,11 @@ export function useBetOrders(router: Router) {
   return {
     orders,
     selectedOrder,
-    selectedOrderNumbers,
+    selectedGroupBuyParticipants,
     selectedDrawNumbers,
     selectedOrderNumber,
     loadingOrders,
+    loadingGroupBuyParticipants,
     loadOrders,
     openOrderDetail,
     closeOrderDetail,
