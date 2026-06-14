@@ -488,7 +488,7 @@ onBeforeUnmount(() => {
   <MobilePageShell>
     <MobileTopBar :title="config?.lottery.name || lotteryCode" :balance="balance" @back="router.back()" />
 
-    <main class="mx-auto max-w-md space-y-3 px-4 pb-[calc(9rem+env(safe-area-inset-bottom))] pt-4">
+    <main class="bet-page-main mx-auto max-w-md space-y-3 px-4 pt-4" :class="{ 'bet-page-main--group-buy': groupBuyMode }">
       <BetRoundInfoCard :issue="config?.round.issue || ''" :status="config?.round.status || ''" :countdown-text="countdownText" :latest-issue="latestIssue" :latest-numbers="latestNumbers" />
 
       <button
@@ -618,6 +618,10 @@ onBeforeUnmount(() => {
       :submitting="submittingOrder"
       :add-text="addButtonText"
       :submit-text="submitButtonDisplayText"
+      :group-buy-mode="groupBuyMode"
+      :group-buy-self-shares="groupBuySafeSelfShares"
+      :group-buy-share-count="groupBuySafeShareCount"
+      :group-buy-payment-amount="groupBuyPaymentAmount"
       @add="addDraftToCart"
       @submit="submitCart"
       @edit="openCartSheet"
@@ -648,6 +652,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.bet-page-main {
+  padding-bottom: calc(9rem + env(safe-area-inset-bottom));
+}
+
+.bet-page-main--group-buy {
+  padding-bottom: calc(13rem + env(safe-area-inset-bottom));
+}
+
 .play-select-popup {
   overflow: hidden;
   background: transparent;

@@ -70,6 +70,15 @@ impl GroupBuyRepository {
             .map(|store| store.list_details())
     }
 
+    /// 一键清除已结束合买计划历史；未完成计划会拒绝清除，避免资金和结算失去追溯。
+    pub async fn clear_records(&self) -> ApiResult<usize> {
+        self.mutate_and_persist_if(|store| {
+            let deleted_count = store.clear_records()?;
+            Ok((deleted_count, deleted_count > 0))
+        })
+        .await
+    }
+
     /// 按 ID 查询单条记录。
     pub async fn get(&self, id: &str) -> ApiResult<GroupBuyPlan> {
         self.inner
@@ -518,6 +527,29 @@ impl GroupBuyStore {
             .into_iter()
             .cloned()
             .collect()
+    }
+
+    /// 清除已结束的合买计划和参与记录；仍在流转中的计划必须先取消或结算。
+    fn clear_records(&mut self) -> ApiResult<usize> {
+        let active_count = self
+            .plans
+            .values()
+            .filter(|plan| {
+                !matches!(
+                    plan.status,
+                    GroupBuyPlanStatus::Cancelled | GroupBuyPlanStatus::Settled
+                )
+            })
+            .count();
+        if active_count > 0 {
+            return Err(ApiError::BadRequest(format!(
+                "存在 {active_count} 条未完成合买计划，请先取消或结算后再清除记录"
+            )));
+        }
+
+        let deleted_count = self.plans.len();
+        self.plans.clear();
+        Ok(deleted_count)
     }
 
     /// 按订单 ID 查找已经成单的合买计划。
@@ -1158,6 +1190,33 @@ mod tests {
             &detail_issues[..3],
             ["20260602003", "20260602002", "20260602001"]
         );
+    }
+
+    #[test]
+    fn group_buy_store_rejects_clear_when_active_plans_exist() {
+        let mut store = GroupBuyStore::seeded();
+        let error = store
+            .clear_records()
+            .expect_err("active group buy plan cannot be cleared");
+
+        assert!(error.to_string().contains("未完成合买计划"));
+        assert_eq!(store.list().len(), 1);
+    }
+
+    #[test]
+    fn group_buy_store_clears_finished_records() {
+        let mut store = GroupBuyStore::seeded();
+        for plan in store.plans.values_mut() {
+            plan.status = GroupBuyPlanStatus::Settled;
+        }
+
+        assert_eq!(
+            store
+                .clear_records()
+                .expect("finished group buy plans can be cleared"),
+            1
+        );
+        assert!(store.list().is_empty());
     }
 
     #[tokio::test]

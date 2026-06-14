@@ -132,6 +132,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/group-buy/plans",
             get(list_group_buy_plans).post(create_group_buy_plan),
         )
+        .route("/group-buy/plans/clear", delete(clear_group_buy_plans))
         .route(
             "/group-buy/plans/{id}",
             get(get_group_buy_plan).put(update_group_buy_plan),
@@ -1422,6 +1423,17 @@ async fn list_group_buy_plans(
         .collect();
 
     Ok(Json(ApiEnvelope::success(page_items(plans, query))))
+}
+
+/// 一键清除已结束合买计划历史；存在未完成计划时由仓储拒绝执行。
+async fn clear_group_buy_plans(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
+    let deleted_count = state.group_buys.clear_records().await?;
+
+    Ok(Json(ApiEnvelope::success(ClearRecordsResult {
+        deleted_count,
+    })))
 }
 
 /// 返回指定合买计划详情。

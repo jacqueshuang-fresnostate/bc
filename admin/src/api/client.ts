@@ -399,6 +399,12 @@ export function addGroupBuyParticipant(
   );
 }
 
+export function clearGroupBuyRecords() {
+  return requestJson<ClearRecordsResult>('/api/admin/group-buy/plans/clear', {
+    method: 'DELETE',
+  });
+}
+
 export function fetchInvitations(signal?: AbortSignal) {
   return requestJson<InviteRecord[]>('/api/admin/invitations', { signal });
 }

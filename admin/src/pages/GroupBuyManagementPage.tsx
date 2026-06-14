@@ -11,7 +11,7 @@ import {
   TextArea,
   Toast,
 } from '@douyinfe/semi-ui';
-import { Eye, Plus, RefreshCcw, Save, Users } from 'lucide-react';
+import { Eye, Plus, RefreshCcw, Save, Trash2, Users } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -74,6 +74,7 @@ export function GroupBuyManagementPage({
   const [detailPlanId, setDetailPlanId] = useState('');
   const {
     addParticipant,
+    clearRecords,
     create,
     drawIssues,
     error,
@@ -250,6 +251,26 @@ export function GroupBuyManagementPage({
     onDashboardRefresh();
   };
 
+  const clearGroupBuyPlanRecords = async () => {
+    if (
+      !window.confirm(
+        '确定一键清除合买计划列表吗？仅会删除已取消或已结算的历史计划；存在草稿、进行中或已满单未结算计划时系统会拒绝清除，且不会回滚资金流水或订单。',
+      )
+    ) {
+      return;
+    }
+    try {
+      const result = await clearRecords();
+      setDetailPlanId('');
+      setDetailSheetVisible(false);
+      setPlanPageNumber(1);
+      onDashboardRefresh();
+      Toast.success(`已清除 ${result.deletedCount} 条合买计划`);
+    } catch {
+      Toast.error('合买计划列表清除失败，请查看接口错误提示');
+    }
+  };
+
   return (
     <div className="space-y-5">
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -279,6 +300,15 @@ export function GroupBuyManagementPage({
           </Button>
           <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
             刷新
+          </Button>
+          <Button
+            disabled={saving || loading || planPage.totalCount === 0}
+            icon={<Trash2 size={16} />}
+            theme="solid"
+            type="danger"
+            onClick={() => void clearGroupBuyPlanRecords()}
+          >
+            一键清除合买计划列表
           </Button>
         </div>
       </section>

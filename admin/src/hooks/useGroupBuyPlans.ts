@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   addGroupBuyParticipant,
+  clearGroupBuyRecords,
   createGroupBuyPlan,
   fetchDrawIssues,
   fetchGroupBuyPlan,
@@ -159,8 +160,26 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
     [],
   );
 
+  const clearRecords = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await clearGroupBuyRecords();
+      setSelectedPlan(null);
+      setPlanPage(emptyPage);
+      refresh();
+      return result;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
   return {
     addParticipant,
+    clearRecords,
     create,
     drawIssues,
     error,

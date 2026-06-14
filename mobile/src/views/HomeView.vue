@@ -201,8 +201,9 @@ watch(heroBanners, (banners) => {
 </script>
 
 <template>
-  <div class="home-dashboard min-h-screen bg-surface text-on-surface font-body selection:bg-primary/10">
-    <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
+  <div class="home-dashboard relative min-h-screen overflow-x-hidden bg-surface text-on-surface font-body selection:bg-primary/10">
+    <div class="home-top-blush" aria-hidden="true"></div>
+    <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between border-b border-red-100/70 bg-white/72 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="flex items-center gap-3">
         <img
           :alt="`${branding.site_name} 标志`"
@@ -218,7 +219,7 @@ watch(heroBanners, (banners) => {
       </div>
     </header>
 
-    <main class="mobile-safe-main-top mx-auto max-w-2xl space-y-4 px-4 pb-28">
+    <main class="mobile-safe-main-top relative z-10 mx-auto max-w-2xl space-y-4 px-4 pb-28">
       <!-- 首页容器只负责品牌、数据加载与区块编排。 -->
       <section
         v-if="showBanner"
@@ -356,3 +357,20 @@ watch(heroBanners, (banners) => {
     </main>
   </div>
 </template>
+
+<style scoped>
+.home-top-blush {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 0;
+  height: calc(9.5rem + var(--mobile-status-safe-top, 0px));
+  pointer-events: none;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 225, 225, 0.96) 0%,
+      rgba(255, 238, 238, 0.74) 52%,
+      rgba(255, 248, 248, 0) 100%
+    );
+}
+</style>

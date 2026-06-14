@@ -661,6 +661,7 @@ function DrawControlSideSheet({
 }) {
   const lottery = item?.lottery ?? null;
   const inputMeta = lottery ? drawNumberInputMeta(lottery.numberType) : null;
+  const controlIssues = item ? controlCandidateIssues(item) : [];
   const controlOrders = item ? controlCandidateOrders(item) : [];
   const visibleOrders = item ? visibleConsoleOrders(item, form) : [];
   const targetIssueDrawn = controlFormTargetsDrawnIssue(item, form);
@@ -765,7 +766,7 @@ function DrawControlSideSheet({
                   onChange(controlFormWithIssue(item, form, String(value ?? '')))
                 }
               >
-                {(item?.issues ?? []).map((issue) => (
+                {controlIssues.map((issue) => (
                   <Select.Option key={issue.id} value={issue.issue}>
                     {issue.issue} · {statusText(issue.status)} · 开 {formatTimePoint(issue.scheduledAt)}
                   </Select.Option>
@@ -1210,6 +1211,12 @@ function issueStatusForControl(
   );
 }
 
+function controlCandidateIssues(item: LotteryConsoleItem | null) {
+  return [...(item?.issues ?? [])]
+    .filter((issue) => issue.status !== 'drawn')
+    .sort((left, right) => issueTimeValue(left) - issueTimeValue(right));
+}
+
 function controlCandidateOrders(item: LotteryConsoleItem | null) {
   return (item?.orders ?? []).filter((order) => order.status === 'pendingDraw');
 }
@@ -1219,14 +1226,15 @@ function sellingIssueForControl(item: LotteryConsoleItem | null | undefined) {
     return item.currentIssue.issue;
   }
 
-  const nearestOpenIssue = (item?.issues ?? [])
+  const candidateIssues = controlCandidateIssues(item ?? null);
+  const nearestOpenIssue = candidateIssues
     .filter((issue) => issue.status === 'open')
     .sort((left, right) => issueTimeValue(left) - issueTimeValue(right))[0];
   if (nearestOpenIssue) {
     return nearestOpenIssue.issue;
   }
 
-  const latestKnownIssue = [...(item?.issues ?? [])].sort(
+  const latestKnownIssue = candidateIssues.sort(
     (left, right) => issueTimeValue(right) - issueTimeValue(left),
   )[0];
   return item?.currentIssue?.issue ?? latestKnownIssue?.issue ?? '';

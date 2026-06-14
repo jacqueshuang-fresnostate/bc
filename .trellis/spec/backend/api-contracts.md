@@ -3015,6 +3015,7 @@ await createInvitation({
 - `GET /api/admin/group-buy/plans?page=1&pageSize=20&includeRobotData=false`
 - `GET /api/admin/group-buy/plans/{id}`
 - `POST /api/admin/group-buy/plans`
+- `DELETE /api/admin/group-buy/plans/clear`
 - `PUT /api/admin/group-buy/plans/{id}`
 - `POST /api/admin/group-buy/plans/{id}/participants`
 - `GET /api/user/group-buy/plans`
@@ -4983,8 +4984,8 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 
 ### 1. 范围 / 触发条件
 
-- 触发条件：后台运营需要导出用户充值记录，或在测试、运营维护场景中清理充值、提现、投注历史记录。
-- 范围：后台财务管理、订单管理、充值仓储、提现仓储、订单仓储、计奖派奖历史。
+- 触发条件：后台运营需要导出用户充值记录，或在测试、运营维护场景中清理充值、提现、投注、合买计划列表历史记录。
+- 范围：后台财务管理、订单管理、合买管理、充值仓储、提现仓储、订单仓储、合买仓储、计奖派奖历史。
 - 记录清理只处理历史记录，不做余额冲正，不删除资金流水，不重置流水号。
 
 ### 2. 签名
@@ -4993,6 +4994,7 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 - 清除充值记录：`DELETE /api/admin/recharge-orders/clear`
 - 清除提现记录：`DELETE /api/admin/withdrawal-orders/clear`
 - 清除投注记录：`DELETE /api/admin/orders/clear`
+- 清除合买计划列表：`DELETE /api/admin/group-buy/plans/clear`
 
 清理接口统一响应：
 
@@ -5010,6 +5012,7 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 - `/recharge-orders/clear` 允许清除所有充值订单历史，但不得回滚已入账余额或删除充值资金流水。
 - `/withdrawal-orders/clear` 在存在 `Pending` 提现申请时必须返回业务错误，要求管理员先审核或驳回，避免冻结余额失去对应申请。
 - `/orders/clear` 在存在 `PendingDraw` 投注订单时必须返回业务错误，要求管理员先开奖结算或取消订单，避免已扣款订单失去结算机会。
+- `/group-buy/plans/clear` 在存在 `Draft`、`Open` 或 `Filled` 合买计划时必须返回业务错误，要求管理员先取消、流单退款或开奖结算，避免合买扣款、退款或派奖失去业务记录。
 - 清除投注记录时必须同步清除 `order_settlement_runs` 和 `order_settlements` 对应内存快照/数据库记录，避免结算历史引用不存在的订单。
 - 清理充值、提现、投注记录后必须保留 `next_sequence` 或 `next_settlement_sequence`，后续新单号不能重复。
 
@@ -5024,12 +5027,15 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 | 清理提现记录且存在待审核申请 | 返回业务错误，不删除任何提现记录 |
 | 清理投注记录且存在待开奖订单 | 返回业务错误，不删除任何订单或结算记录 |
 | 清理投注记录且订单均已结束 | 删除订单和结算批次，返回删除订单数量 |
+| 清理合买记录且存在未完成计划 | 返回业务错误，不删除任何合买计划或参与记录 |
+| 清理合买记录且计划均已取消或已结算 | 删除合买计划和参与记录，返回删除计划数量 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：运营先导出充值 CSV，再清理充值记录，用户余额和资金流水仍保持不变。
 - Good：提现列表有待审核申请时点击清除，后台提示先审核或驳回，冻结余额仍有业务记录可追溯。
 - Good：投注订单已全部结算后点击清除，订单管理和计奖派奖历史同时清空。
+- Good：合买计划均已取消或已结算后点击清除，合买计划和参与记录清空，资金流水、投注订单和派奖记录保留。
 - Base：没有历史记录时点击清除，返回 `deletedCount=0` 并刷新页面。
 - Bad：清理投注订单但保留结算批次，导致计奖派奖页面展示孤儿结算。
 - Bad：清理提现待审核申请但不解冻资金，导致用户冻结余额无法追溯。
