@@ -6,6 +6,7 @@ import {
   Select,
   SideSheet,
   Spin,
+  Switch,
   Tag,
   Toast,
 } from '@douyinfe/semi-ui';
@@ -689,82 +690,53 @@ function DrawControlSideSheet({
     >
       {lottery ? (
         <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
-          <div className="rounded-md border border-line p-3">
-            <div className="text-base font-semibold text-ink">{lottery.name}</div>
-            <div className="mt-1 flex flex-wrap gap-2">
-              <Tag color="cyan">{numberTypeText(lottery.numberType)}</Tag>
-              <Tag color={drawModeColor(lottery.drawMode)}>
-                {drawModeText(lottery.drawMode)}
-              </Tag>
-            </div>
-          </div>
-
           {error ? (
-            <Banner
-              type="danger"
-              title="保存控制失败"
-              description={error}
-            />
+            <Banner type="danger" title="保存控制失败" description={error} />
           ) : null}
 
-          <label className="flex min-h-10 items-center gap-2 rounded border border-line px-3 py-2 text-sm text-slate-700">
-            <input
-              checked={form.enabled}
-              className="h-4 w-4 rounded border-line text-teal-600"
-              disabled={targetIssueInactive}
-              type="checkbox"
-              onChange={(event) =>
-                onChange(
-                  normalizeControlFormForIssueStatus(item, {
-                    ...form,
-                    enabled: event.target.checked,
-                  }),
-                )
-              }
-            />
-            <span>启用控制开奖</span>
-          </label>
+          <section className="grid gap-3 lg:grid-cols-[1fr_1.1fr_1.4fr]">
+            <div className="rounded-md border border-line bg-slate-50/70 p-3">
+              <div className="text-xs font-medium text-slate-500">控制彩种</div>
+              <div className="mt-2 truncate text-lg font-semibold text-ink" title={lottery.name}>
+                {lottery.name}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <Tag color="cyan">{numberTypeText(lottery.numberType)}</Tag>
+                <Tag color={drawModeColor(lottery.drawMode)}>
+                  {drawModeText(lottery.drawMode)}
+                </Tag>
+              </div>
+            </div>
 
-          {targetIssueInactive ? (
-            <Banner
-              type="warning"
-              title="指定期号已结束"
-              description="已开奖或已取消期号不能继续启用开奖号码控制，系统已自动取消勾选。请选择未结束期号后再启用。"
-            />
-          ) : null}
-
-          <Field label={`开奖号码（${numberTypeText(lottery.numberType)}）`}>
-            <Input
-              className="form-input font-mono"
-              disabled={!form.enabled}
-              maxLength={inputMeta?.maxLength}
-              placeholder={inputMeta?.placeholder}
-              value={form.drawNumber}
-              onChange={(value) =>
-                onChange({ ...form, drawNumber: value })
-              }
-            />
-          </Field>
-
-          <Field label="控制范围">
-            <Select
-              className="w-full"
-              disabled={targetSelectDisabled}
-              value={form.targetScope}
-              onChange={(value) =>
-                onChange(controlFormWithScope(item, form, String(value) as DrawControlTargetScope))
-              }
-            >
-              <Select.Option value="lottery">整个彩种后续开奖</Select.Option>
-              <Select.Option value="issue">指定期号</Select.Option>
-              <Select.Option value="order">指定订单所在期号</Select.Option>
-            </Select>
-          </Field>
-
-          {form.targetScope === 'issue' ? (
-            <Field label="控制期号">
+            <div className="rounded-md border border-line bg-white p-3">
+              <div className="text-xs font-medium text-slate-500">控制范围</div>
               <Select
-                className="w-full"
+                className="mt-2 w-full"
+                disabled={targetSelectDisabled}
+                value={form.targetScope}
+                onChange={(value) =>
+                  onChange(
+                    controlFormWithScope(
+                      item,
+                      form,
+                      String(value) as DrawControlTargetScope,
+                    ),
+                  )
+                }
+              >
+                <Select.Option value="lottery">整个彩种后续开奖</Select.Option>
+                <Select.Option value="issue">指定期号</Select.Option>
+                <Select.Option value="order">指定订单所在期号</Select.Option>
+              </Select>
+            </div>
+
+            <div className="rounded-md border border-line bg-white p-3">
+              <div className="text-xs font-medium text-slate-500">
+                {form.targetScope === 'order' ? '指定订单' : '控制期号'}
+              </div>
+              {form.targetScope === 'issue' ? (
+              <Select
+                className="mt-2 w-full"
                 disabled={targetSelectDisabled}
                 placeholder="请选择要控制的期号"
                 value={form.targetIssue || undefined}
@@ -778,13 +750,10 @@ function DrawControlSideSheet({
                   </Select.Option>
                 ))}
               </Select>
-            </Field>
-          ) : null}
-
-          {form.targetScope === 'order' ? (
-            <Field label="目标订单">
+              ) : null}
+              {form.targetScope === 'order' ? (
               <Select
-                className="w-full"
+                className="mt-2 w-full"
                 disabled={targetSelectDisabled}
                 placeholder="请选择要控制的订单"
                 value={form.targetOrderId || undefined}
@@ -812,8 +781,74 @@ function DrawControlSideSheet({
                   </Select.Option>
                 ))}
               </Select>
-            </Field>
-          ) : null}
+              ) : null}
+              {form.targetScope === 'lottery' ? (
+                <div className="mt-2 rounded border border-dashed border-line bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  当前设置将作用于该彩种后续所有未开奖期号。
+                </div>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="grid gap-3 lg:grid-cols-[1fr_1.25fr]">
+            <div className="rounded-md border border-line bg-white p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-medium text-slate-500">
+                    总开关（是/否）
+                  </div>
+                  <div className="mt-1 text-base font-semibold text-ink">
+                    {form.enabled ? '已启用控制开奖' : '未启用控制开奖'}
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    开启后将按下方号码开奖；关闭后恢复正常开奖流程。
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <Switch
+                    checked={form.enabled}
+                    disabled={targetIssueInactive}
+                    onChange={(checked) =>
+                      onChange(
+                        normalizeControlFormForIssueStatus(item, {
+                          ...form,
+                          enabled: checked,
+                        }),
+                      )
+                    }
+                  />
+                  <Tag color={form.enabled ? 'red' : 'grey'}>
+                    {form.enabled ? '是' : '否'}
+                  </Tag>
+                </div>
+              </div>
+              {targetIssueInactive ? (
+                <Banner
+                  className="mt-3"
+                  type="warning"
+                  title="指定期号已结束"
+                  description="已开奖或已取消期号不能继续启用开奖号码控制，系统已自动取消勾选。请选择未结束期号后再启用。"
+                />
+              ) : null}
+            </div>
+
+            <div className="rounded-md border border-line bg-white p-3">
+              <div className="text-xs font-medium text-slate-500">
+                开奖号码（{numberTypeText(lottery.numberType)}）
+              </div>
+              <Input
+                className="form-input mt-2 font-mono text-lg font-semibold"
+                disabled={!form.enabled}
+                maxLength={inputMeta?.maxLength}
+                placeholder={inputMeta?.placeholder}
+                value={form.drawNumber}
+                onChange={(value) => onChange({ ...form, drawNumber: value })}
+              />
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                多个号码用英文逗号分隔，例如 1,2,3,4,5。
+              </p>
+            </div>
+          </section>
 
           <section className="rounded-md border border-line p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">

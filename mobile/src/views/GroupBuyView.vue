@@ -195,125 +195,120 @@ onMounted(async () => {
     </header>
     <van-nav-bar v-else title="我的合买" left-arrow @click-left="activeTab = 'hall'" />
 
-    <van-tabs v-model:active="activeTab" sticky class="group-buy-tabs hidden-tab-header">
-      <van-tab title="大厅" name="hall">
-        <section class="group-buy-hall group-buy-hall-scroll mobile-safe-main-top-tight space-y-2 px-3 pb-4">
-          <div class="hallCategoryChips filterChips flex min-h-11 gap-2 overflow-x-auto pb-1">
-            <button
-              v-for="chip in hallCategoryChips"
-              :key="chip.value"
-              class="flex min-h-10 shrink-0 items-center justify-center rounded-xl px-4 py-2 text-xs font-bold leading-none transition"
-              :class="activeFilter === chip.value ? 'bg-red-900 !text-white shadow-md shadow-red-900/20' : 'bg-white text-stone-700 shadow-sm'"
-              @click="activeFilter = chip.value"
+    <section v-if="activeTab === 'hall'" class="group-buy-hall group-buy-hall-scroll mobile-safe-main-top-tight space-y-2 px-3 pb-4">
+      <div class="hallCategoryChips filterChips flex min-h-8 gap-1.5 overflow-x-auto px-0.5 pb-0.5">
+        <button
+          v-for="chip in hallCategoryChips"
+          :key="chip.value"
+          class="group-buy-category-chip flex h-7 shrink-0 items-center justify-center rounded-full px-3 text-[11px] font-black leading-none transition active:scale-[0.98]"
+          :aria-pressed="activeFilter === chip.value"
+          :class="activeFilter === chip.value ? 'group-buy-category-chip--active' : 'group-buy-category-chip--idle'"
+          @click="activeFilter = chip.value"
+        >
+          {{ chip.label }}
+        </button>
+      </div>
+
+      <van-loading v-if="loadingHall && !displayedHallItems.length" class="mx-auto my-8 block" />
+      <van-empty v-else-if="!displayedHallItems.length" description="暂无合买计划" />
+      <template v-else>
+        <article
+          v-for="item in displayedHallItems"
+          :key="item.id"
+          class="group-buy-plan-card rounded-xl bg-white px-3 py-2.5 shadow-[0_4px_14px_rgba(15,23,42,0.045)] transition active:scale-[0.99]"
+          @click="openDetail(item)"
+        >
+          <div class="flex min-w-0 items-start justify-between gap-2">
+            <div class="flex min-w-0 items-center gap-2">
+              <div class="group-buy-initiator-avatar flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-red-50 font-headline text-sm font-black text-red-800 ring-1 ring-red-900/10">
+                <CachedAvatarImage
+                  v-if="initiatorAvatarUrl(item)"
+                  :alt="`${initiatorDisplay(item)}头像`"
+                  class="h-full w-full object-cover"
+                  :src="initiatorAvatarUrl(item)"
+                >
+                  <span>{{ initiatorAvatarText(item) }}</span>
+                </CachedAvatarImage>
+                <span v-else>{{ initiatorAvatarText(item) }}</span>
+              </div>
+              <div class="min-w-0">
+                <h3 class="truncate font-headline text-sm font-black leading-tight text-stone-950">{{ item.lottery_name || item.title || formatPlanTitle(item) }}</h3>
+                <p class="mt-0.5 truncate text-[10px] font-medium text-stone-500">第{{ item.issue }}期 · {{ formatPlayName(item) }}</p>
+              </div>
+            </div>
+            <span
+              class="shrink-0 rounded-full px-2 py-1 text-[10px] font-black"
+              :class="canJoinPlan(item) ? 'bg-red-900 text-white' : 'bg-stone-200 text-stone-500'"
+              @click.stop="canJoinPlan(item) && openDetail(item)"
             >
-              {{ chip.label }}
-            </button>
+              {{ canJoinPlan(item) ? '参与' : statusText(item.status) }}
+            </span>
           </div>
 
-          <van-loading v-if="loadingHall && !displayedHallItems.length" class="mx-auto my-8 block" />
-          <van-empty v-else-if="!displayedHallItems.length" description="暂无合买计划" />
-          <template v-else>
-            <article
-              v-for="item in displayedHallItems"
-              :key="item.id"
-              class="group-buy-plan-card rounded-xl bg-white px-3 py-2.5 shadow-[0_4px_14px_rgba(15,23,42,0.045)] transition active:scale-[0.99]"
-              @click="openDetail(item)"
-            >
-              <div class="flex min-w-0 items-start justify-between gap-2">
-                <div class="flex min-w-0 items-center gap-2">
-                  <div class="group-buy-initiator-avatar flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-red-50 font-headline text-sm font-black text-red-800 ring-1 ring-red-900/10">
-                    <CachedAvatarImage
-                      v-if="initiatorAvatarUrl(item)"
-                      :alt="`${initiatorDisplay(item)}头像`"
-                      class="h-full w-full object-cover"
-                      :src="initiatorAvatarUrl(item)"
-                    >
-                      <span>{{ initiatorAvatarText(item) }}</span>
-                    </CachedAvatarImage>
-                    <span v-else>{{ initiatorAvatarText(item) }}</span>
-                  </div>
-                  <div class="min-w-0">
-                    <h3 class="truncate font-headline text-sm font-black leading-tight text-stone-950">{{ item.lottery_name || item.title || formatPlanTitle(item) }}</h3>
-                    <p class="mt-0.5 truncate text-[10px] font-medium text-stone-500">第{{ item.issue }}期 · {{ formatPlayName(item) }}</p>
-                  </div>
-                </div>
-                <span
-                  class="shrink-0 rounded-full px-2 py-1 text-[10px] font-black"
-                  :class="canJoinPlan(item) ? 'bg-red-900 text-white' : 'bg-stone-200 text-stone-500'"
-                  @click.stop="canJoinPlan(item) && openDetail(item)"
-                >
-                  {{ canJoinPlan(item) ? '参与' : statusText(item.status) }}
-                </span>
-              </div>
+          <div class="mt-2 grid grid-cols-[1fr_0.8fr_0.8fr] gap-2 text-[10px] leading-tight">
+            <div class="min-w-0">
+              <span class="block text-stone-400">发起人</span>
+              <b class="group-buy-initiator-name mt-0.5 block truncate">{{ initiatorDisplay(item) }}</b>
+            </div>
+            <div>
+              <span class="block text-stone-400">总额</span>
+              <b class="mt-0.5 block font-headline text-xs text-stone-950">{{ formatMoney(item.total_amount) }}</b>
+            </div>
+            <div>
+              <span class="block text-stone-400">单份</span>
+              <b class="mt-0.5 block font-headline text-xs text-stone-950">{{ formatMoney(item.share_amount) }}</b>
+            </div>
+          </div>
 
-              <div class="mt-2 grid grid-cols-[1fr_0.8fr_0.8fr] gap-2 text-[10px] leading-tight">
-                <div class="min-w-0">
-                  <span class="block text-stone-400">发起人</span>
-                  <b class="group-buy-initiator-name mt-0.5 block truncate">{{ initiatorDisplay(item) }}</b>
-                </div>
-                <div>
-                  <span class="block text-stone-400">总额</span>
-                  <b class="mt-0.5 block font-headline text-xs text-stone-950">{{ formatMoney(item.total_amount) }}</b>
-                </div>
-                <div>
-                  <span class="block text-stone-400">单份</span>
-                  <b class="mt-0.5 block font-headline text-xs text-stone-950">{{ formatMoney(item.share_amount) }}</b>
-                </div>
-              </div>
+          <div class="mt-2">
+            <div class="mb-1 flex items-center justify-between text-[10px]">
+              <span class="font-black text-red-900">已满 {{ progressPercent(item) }}%</span>
+              <span class="text-stone-500">{{ progressRemainingText(item) }}</span>
+            </div>
+            <div class="h-1 w-full overflow-hidden rounded-full bg-stone-100">
+              <div class="h-full rounded-full lacquer-gradient" :style="{ width: progressTrackWidth(item) }"></div>
+            </div>
+          </div>
+        </article>
+        <button
+          v-if="hallHasMore"
+          type="button"
+          class="w-full rounded-xl bg-red-50 px-4 py-3 text-xs font-black text-red-900 active:scale-[0.99] disabled:opacity-60"
+          :disabled="loadingHall"
+          @click="loadMoreHall"
+        >
+          {{ loadingHall ? '加载中...' : '加载更多合买计划' }}
+        </button>
+        <p v-else class="py-2 text-center text-[11px] font-semibold text-stone-500">已加载全部合买计划</p>
+      </template>
+    </section>
 
-              <div class="mt-2">
-                <div class="mb-1 flex items-center justify-between text-[10px]">
-                  <span class="font-black text-red-900">已满 {{ progressPercent(item) }}%</span>
-                  <span class="text-stone-500">{{ progressRemainingText(item) }}</span>
-                </div>
-                <div class="h-1 w-full overflow-hidden rounded-full bg-stone-100">
-                  <div class="h-full rounded-full lacquer-gradient" :style="{ width: progressTrackWidth(item) }"></div>
-                </div>
-              </div>
-            </article>
-            <button
-              v-if="hallHasMore"
-              type="button"
-              class="w-full rounded-xl bg-red-50 px-4 py-3 text-xs font-black text-red-900 active:scale-[0.99] disabled:opacity-60"
-              :disabled="loadingHall"
-              @click="loadMoreHall"
-            >
-              {{ loadingHall ? '加载中...' : '加载更多合买计划' }}
-            </button>
-            <p v-else class="py-2 text-center text-[11px] font-semibold text-stone-500">已加载全部合买计划</p>
-          </template>
-        </section>
-      </van-tab>
-
-      <van-tab title="我的" name="my">
-        <section class="space-y-3 p-3">
-          <van-loading v-if="loadingMy && !myGroupBuys.length" class="mx-auto my-8 block" />
-          <van-empty v-else-if="!myGroupBuys.length" description="暂无参与记录" />
-          <template v-else>
-            <button v-for="item in myGroupBuys" :key="item.id" class="w-full rounded-xl bg-white p-4 text-left shadow-sm" @click="openDetail(item)">
-              <div class="flex items-start justify-between gap-3">
-                <div>
-                  <h3 class="text-sm font-bold">{{ formatPlanTitle(item) }}</h3>
-                  <p class="mt-1 text-xs text-stone-500">{{ item.lottery_name }} · {{ statusText(item.status) }}</p>
-                </div>
-                <span class="text-xs font-bold text-red-800">我的出资 {{ item.my_participation?.amount || '0.00' }}元</span>
-              </div>
-              <p class="mt-2 text-xs text-stone-500">我的出资 {{ item.my_participation?.amount || '0.00' }} 元</p>
-            </button>
-            <button
-              v-if="myGroupBuysHasMore"
-              type="button"
-              class="w-full rounded-xl bg-red-50 px-4 py-3 text-xs font-black text-red-900 active:scale-[0.99] disabled:opacity-60"
-              :disabled="loadingMy"
-              @click="loadMoreMyGroupBuys"
-            >
-              {{ loadingMy ? '加载中...' : '加载更多我的合买' }}
-            </button>
-            <p v-else class="py-2 text-center text-[11px] font-semibold text-stone-500">已加载全部参与记录</p>
-          </template>
-        </section>
-      </van-tab>
-    </van-tabs>
+    <section v-else class="space-y-3 p-3">
+      <van-loading v-if="loadingMy && !myGroupBuys.length" class="mx-auto my-8 block" />
+      <van-empty v-else-if="!myGroupBuys.length" description="暂无参与记录" />
+      <template v-else>
+        <button v-for="item in myGroupBuys" :key="item.id" class="w-full rounded-xl bg-white p-4 text-left shadow-sm" @click="openDetail(item)">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-bold">{{ formatPlanTitle(item) }}</h3>
+              <p class="mt-1 text-xs text-stone-500">{{ item.lottery_name }} · {{ statusText(item.status) }}</p>
+            </div>
+            <span class="text-xs font-bold text-red-800">我的出资 {{ item.my_participation?.amount || '0.00' }}元</span>
+          </div>
+          <p class="mt-2 text-xs text-stone-500">我的出资 {{ item.my_participation?.amount || '0.00' }} 元</p>
+        </button>
+        <button
+          v-if="myGroupBuysHasMore"
+          type="button"
+          class="w-full rounded-xl bg-red-50 px-4 py-3 text-xs font-black text-red-900 active:scale-[0.99] disabled:opacity-60"
+          :disabled="loadingMy"
+          @click="loadMoreMyGroupBuys"
+        >
+          {{ loadingMy ? '加载中...' : '加载更多我的合买' }}
+        </button>
+        <p v-else class="py-2 text-center text-[11px] font-semibold text-stone-500">已加载全部参与记录</p>
+      </template>
+    </section>
 
     <van-popup v-model:show="createVisible" position="bottom" round overlay-class="backdrop-blur-sm" :style="{ height: '70dvh', maxHeight: '70dvh' }">
       <section class="group-buy-create-popup group-buy-create-modal flex h-[70dvh] max-h-[70dvh] flex-col overflow-hidden bg-[#f9f9f9]">
@@ -566,6 +561,35 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.hallCategoryChips {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.hallCategoryChips::-webkit-scrollbar {
+  display: none;
+}
+
+.group-buy-category-chip {
+  min-width: 3.1rem;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.group-buy-category-chip--active {
+  border-color: rgba(140, 10, 21, 0.18);
+  background: linear-gradient(135deg, #8c0a15 0%, #b91c1c 100%);
+  color: #fff;
+  box-shadow: 0 6px 14px rgba(140, 10, 21, 0.16);
+}
+
+.group-buy-category-chip--idle {
+  border-color: rgba(120, 113, 108, 0.14);
+  background: rgba(255, 255, 255, 0.86);
+  color: #57534e;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.04);
+}
+
 .group-buy-initiator-name {
   font-size: 13px;
   font-weight: 900;
