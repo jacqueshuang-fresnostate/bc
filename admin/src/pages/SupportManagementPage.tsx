@@ -123,6 +123,7 @@ export function SupportManagementPage({
     useState<EmojiPickerRuntime | null>(null);
   const replyTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const replyImageInputRef = useRef<HTMLInputElement | null>(null);
+  const previousSelectedConversationIdRef = useRef<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<SupportStatusFilter>('all');
   const [replyImageUrl, setReplyImageUrl] = useState('');
   const [replyImageName, setReplyImageName] = useState('');
@@ -168,6 +169,20 @@ export function SupportManagementPage({
       setUpdateForm(formFromConversation(selectedConversation));
     }
   }, [selectedConversation]);
+
+  useEffect(() => {
+    const nextConversationId = selectedConversation?.id ?? null;
+    if (previousSelectedConversationIdRef.current === nextConversationId) {
+      return;
+    }
+
+    previousSelectedConversationIdRef.current = nextConversationId;
+    setReplyContent('');
+    setReplyImageUrl('');
+    setReplyImageName('');
+    setEmojiPickerVisible(false);
+    window.requestAnimationFrame(() => replyTextAreaRef.current?.focus());
+  }, [selectedConversation?.id]);
 
   useEffect(() => {
     if (!emojiPickerVisible || emojiPickerRuntime) {
@@ -260,6 +275,7 @@ export function SupportManagementPage({
     setReplyImageName('');
     setEmojiPickerVisible(false);
     onDashboardRefresh();
+    window.requestAnimationFrame(() => replyTextAreaRef.current?.focus());
   };
 
   const submitReplyByEnter = (event: KeyboardEvent<HTMLTextAreaElement>) => {

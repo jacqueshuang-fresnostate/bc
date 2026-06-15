@@ -43,6 +43,7 @@ const sharingGroupBuyId = ref('')
 const myGroupBuyPlans = ref<GroupBuyPlan[]>([])
 const messages = ref<ChatHallMessage[]>([])
 const failedAvatarIds = ref<Set<string>>(new Set())
+const newMessageCount = ref(0)
 const messageListRef = ref<HTMLElement | null>(null)
 const messageInputRef = ref<HTMLInputElement | null>(null)
 const emojiPickerHostRef = ref<HTMLElement | null>(null)
@@ -84,14 +85,20 @@ function markAvatarFailed(message: ChatHallMessage) {
   failedAvatarIds.value = next
 }
 
-function upsertMessage(message: ChatHallMessage) {
+function upsertMessage(message: ChatHallMessage, options: { forceScroll?: boolean } = {}) {
+  const shouldAutoScroll = options.forceScroll || isMine(message) || isMessageListNearBottom()
   const index = messages.value.findIndex(item => item.id === message.id)
   if (index >= 0) {
     messages.value = messages.value.map(item => (item.id === message.id ? message : item))
+    if (shouldAutoScroll) void scrollToBottom()
     return
   }
   messages.value = [...messages.value, message].slice(-100)
-  void scrollToBottom()
+  if (shouldAutoScroll) {
+    void scrollToBottom()
+  } else {
+    newMessageCount.value += 1
+  }
 }
 
 function messageType(message: ChatHallMessage) {
@@ -192,7 +199,7 @@ async function sendMessage() {
     draft.value = ''
     emojiPickerVisible.value = false
     attachmentVisible.value = false
-    upsertMessage(message)
+    upsertMessage(message, { forceScroll: true })
     void nextTick(() => messageInputRef.value?.focus())
   } catch (error) {
     showToast(errorMessage(error, '发送失败'))
@@ -243,7 +250,7 @@ async function submitRedPacket() {
       claimCount,
       greeting: redPacketGreeting.value,
     })
-    upsertMessage(message)
+    upsertMessage(message, { forceScroll: true })
     redPacketDialogVisible.value = false
     redPacketAmount.value = '1.00'
     redPacketCount.value = '1'
@@ -262,7 +269,7 @@ async function claimRedPacket(message: ChatHallMessage) {
   claimingRedPacketId.value = payload.redPacketId
   try {
     const response = await claimChatHallRedPacket(payload.redPacketId)
-    upsertMessage(response.message)
+    upsertMessage(response.message, { forceScroll: true })
     showToast(`领取红包 ¥${formatMinor(response.claim.amountMinor)}`)
   } catch (error) {
     showToast(errorMessage(error, '领取红包失败'))
@@ -296,7 +303,7 @@ async function shareGroupBuy(plan: GroupBuyPlan) {
   sharingGroupBuyId.value = plan.id
   try {
     const message = await shareChatHallGroupBuyPlan(plan.id)
-    upsertMessage(message)
+    upsertMessage(message, { forceScroll: true })
     groupBuyDialogVisible.value = false
     showToast('合买计划已发送')
   } catch (error) {
@@ -415,6 +422,23 @@ async function scrollToBottom() {
   const list = messageListRef.value
   if (!list) return
   list.scrollTop = list.scrollHeight
+  newMessageCount.value = 0
+}
+
+function isMessageListNearBottom() {
+  const list = messageListRef.value
+  if (!list) return true
+  return list.scrollHeight - list.scrollTop - list.clientHeight < 96
+}
+
+function handleMessageScroll() {
+  if (isMessageListNearBottom()) newMessageCount.value = 0
+}
+
+function sendMessageByEnter(event: KeyboardEvent) {
+  if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return
+  event.preventDefault()
+  void sendMessage()
 }
 
 watch(() => props.wsMessage, (message) => {
@@ -440,7 +464,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <main ref="messageListRef" class="chat-hall__messages">
+    <main ref="messageListRef" class="chat-hall__messages" @scroll="handleMessageScroll">
       <div v-if="loading && !hasMessages" class="chat-hall__state">正在加载聊天记录...</div>
       <div v-else-if="!hasMessages" class="chat-hall__state">
         <strong>还没有消息</strong>
@@ -506,6 +530,10 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </main>
+
+    <button v-if="newMessageCount" class="chat-hall__new-message" type="button" @click="scrollToBottom">
+      {{ newMessageCount > 1 ? `${newMessageCount} 条新消息` : '有新消息' }}
+    </button>
 
     <Teleport to="body">
       <div
@@ -620,7 +648,8 @@ onBeforeUnmount(() => {
           maxlength="500"
           placeholder="输入聊天内容"
           type="text"
-          @keyup.enter="sendMessage"
+          :disabled="sending"
+          @keydown.enter="sendMessageByEnter"
         />
         <button class="chat-hall__send" :disabled="!canSend" type="button" @click="sendMessage">
           <LucideIcon name="send" />
@@ -675,6 +704,22 @@ onBeforeUnmount(() => {
   height: 100vh;
   overflow-y: auto;
   padding: calc(4.25rem + var(--mobile-status-safe-top)) 1rem calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 1.25rem);
+}
+
+.chat-hall__new-message {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 0.55rem);
+  z-index: 46;
+  transform: translateX(-50%);
+  border: 0;
+  border-radius: 9999px;
+  background: rgba(159, 23, 36, 0.94);
+  color: #fff;
+  padding: 0.45rem 0.78rem;
+  font-size: 0.72rem;
+  font-weight: 900;
+  box-shadow: 0 12px 26px rgba(159, 23, 36, 0.24);
 }
 
 .chat-hall__state {
@@ -1050,6 +1095,11 @@ onBeforeUnmount(() => {
 .chat-hall__input:focus {
   border-color: rgba(176, 22, 38, 0.42);
   box-shadow: 0 0 0 0.2rem rgba(176, 22, 38, 0.08);
+}
+
+.chat-hall__input:disabled {
+  color: #8d6f6e;
+  background: #f7eeeb;
 }
 
 .chat-hall__send {

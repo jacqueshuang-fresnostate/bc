@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { showToast } from 'vant'
+import { showImagePreview, showToast } from 'vant'
 import { useRoute, useRouter } from 'vue-router'
 import {
   errorMessage,
@@ -34,6 +34,8 @@ const currentConversation = ref<SupportConversation | null>(null)
 const messageInputRef = ref<HTMLInputElement | null>(null)
 const imageInputRef = ref<HTMLInputElement | null>(null)
 const emojiPickerHostRef = ref<HTMLElement | null>(null)
+const messageListRef = ref<HTMLElement | null>(null)
+const newMessageCount = ref(0)
 let emojiPickerElement: HTMLElement | null = null
 
 const messages = computed(() => currentConversation.value?.messages || [])
@@ -122,6 +124,8 @@ async function markConversationReadIfNeeded(conversation: SupportConversation) {
 }
 
 async function loadSupportData(preferredConversationId = activeConversationId.value || routeConversationId.value) {
+  const shouldKeepPosition = Boolean(currentConversation.value)
+  const shouldAutoScroll = !shouldKeepPosition || isMessageListNearBottom()
   loading.value = true
   try {
     conversations.value = sortedConversations(await fetchSupportConversations())
@@ -139,6 +143,9 @@ async function loadSupportData(preferredConversationId = activeConversationId.va
       currentConversation.value = await markConversationReadIfNeeded(currentConversation.value)
     } else if (selectedConversation) {
       replaceConversationInList(selectedConversation)
+    }
+    if (shouldAutoScroll) {
+      await scrollToBottom()
     }
   } catch (error) {
     showToast(errorMessage(error, '加载客服会话失败'))
@@ -161,6 +168,7 @@ async function sendMessage() {
     draft.value = ''
     emojiPickerVisible.value = false
     replaceConversationInList(updatedConversation)
+    await scrollToBottom()
   } catch (error) {
     showToast(errorMessage(error, '发送失败'))
   } finally {
@@ -209,6 +217,7 @@ async function sendImageMessage(file: File) {
     currentConversation.value = updatedConversation
     emojiPickerVisible.value = false
     replaceConversationInList(updatedConversation)
+    await scrollToBottom()
     showToast('图片已发送')
   } catch (error) {
     showToast(errorMessage(error, '图片发送失败'))
@@ -329,6 +338,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function selectConversation(id: string) {
   try {
     activeConversationId.value = id
+    draft.value = ''
     const selectedConversation = await fetchSupportConversation(id)
     if (!isVisibleSupportConversation(selectedConversation)) {
       replaceConversationInList(selectedConversation)
@@ -338,9 +348,40 @@ async function selectConversation(id: string) {
     currentConversation.value = selectedConversation
     currentConversation.value = await markConversationReadIfNeeded(currentConversation.value)
     emojiPickerVisible.value = false
+    await scrollToBottom()
   } catch (error) {
     showToast(errorMessage(error, '加载客服会话失败'))
   }
+}
+
+function sendMessageByEnter(event: KeyboardEvent) {
+  if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return
+  event.preventDefault()
+  void sendMessage()
+}
+
+function openSupportImage(url?: string | null) {
+  const imageUrl = String(url || '').trim()
+  if (!imageUrl) return
+  showImagePreview({ images: [imageUrl], closeable: true })
+}
+
+function isMessageListNearBottom() {
+  const list = messageListRef.value
+  if (!list) return true
+  return list.scrollHeight - list.scrollTop - list.clientHeight < 88
+}
+
+async function scrollToBottom() {
+  await nextTick()
+  const list = messageListRef.value
+  if (!list) return
+  list.scrollTop = list.scrollHeight
+  newMessageCount.value = 0
+}
+
+function handleMessageScroll() {
+  if (isMessageListNearBottom()) newMessageCount.value = 0
 }
 
 watch(routeConversationId, (conversationId) => {
@@ -361,7 +402,12 @@ watch(() => props.wsMessage, (message) => {
       ? message.conversationId
       : activeConversationId.value
   )
-  void loadSupportData(preferredConversationId)
+  const activeMessage = activeConversationId.value === message.conversationId
+  const shouldAutoScroll = !activeMessage || isMessageListNearBottom()
+  void loadSupportData(preferredConversationId).then(() => {
+    if (!activeMessage || shouldAutoScroll || message.event !== 'support_message_created') return
+    newMessageCount.value += 1
+  })
 })
 
 onMounted(() => {
@@ -387,7 +433,7 @@ onBeforeUnmount(() => {
       <span class="support-chat__presence" :class="adminOnline ? 'is-online' : 'is-offline'" aria-hidden="true"></span>
     </header>
 
-    <main class="support-chat__messages" :class="{ 'is-empty': !hasMessages && !loading }">
+    <main ref="messageListRef" class="support-chat__messages" :class="{ 'is-empty': !hasMessages && !loading }" @scroll="handleMessageScroll">
       <div v-if="conversations.length > 1" class="support-chat__conversation-tabs">
         <button
           v-for="conversation in conversations"
@@ -446,15 +492,19 @@ onBeforeUnmount(() => {
             <time>{{ formatTime(item.createdAt) }}</time>
           </div>
           <div v-if="item.messageType === 'image' && item.imageUrl" class="support-chat__content">
-            <a :href="item.imageUrl" target="_blank" rel="noreferrer">
+            <button class="support-chat__image-button" type="button" aria-label="查看图片" @click="openSupportImage(item.imageUrl)">
               <img class="support-chat__image" :src="item.imageUrl" alt="客服图片消息">
-            </a>
+            </button>
             <p v-if="item.author !== 'user' && item.content" class="support-chat__image-caption">{{ item.content }}</p>
           </div>
           <div v-else class="support-chat__content">{{ item.content }}</div>
         </div>
       </div>
     </main>
+
+    <button v-if="newMessageCount" class="support-chat__new-message" type="button" @click="scrollToBottom">
+      {{ newMessageCount > 1 ? `${newMessageCount} 条新消息` : '有新消息' }}
+    </button>
 
     <Teleport to="body">
       <div
@@ -510,8 +560,8 @@ onBeforeUnmount(() => {
         maxlength="2000"
         :placeholder="uploadingImage ? '正在发送图片...' : (currentConversation ? '输入消息...' : '请先发起客服直充')"
         type="text"
-        :disabled="uploadingImage"
-        @keyup.enter="sendMessage"
+        :disabled="sending || uploadingImage"
+        @keydown.enter="sendMessageByEnter"
       />
       <button class="support-input-bar__send" type="button" :disabled="!canSend" aria-label="发送" @click="sendMessage">
         <LucideIcon name="send" />
@@ -642,9 +692,10 @@ onBeforeUnmount(() => {
 .support-chat__messages {
   width: 100%;
   max-width: 540px;
-  min-height: 100vh;
+  height: 100vh;
+  overflow-y: auto;
   margin: 0 auto;
-  padding: calc(86px + var(--mobile-status-safe-top)) 16px 24px;
+  padding: calc(86px + var(--mobile-status-safe-top)) 16px calc(104px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -858,6 +909,14 @@ onBeforeUnmount(() => {
   word-break: break-word;
 }
 
+.support-chat__image-button {
+  display: block;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+
 .support-chat__image {
   display: block;
   max-width: min(240px, 60vw);
@@ -878,6 +937,22 @@ onBeforeUnmount(() => {
   font-size: 12px;
   opacity: 0.78;
   word-break: break-all;
+}
+
+.support-chat__new-message {
+  position: fixed;
+  left: 50%;
+  bottom: calc(86px + env(safe-area-inset-bottom));
+  z-index: 55;
+  transform: translateX(-50%);
+  border: 0;
+  border-radius: 999px;
+  background: rgba(175, 40, 41, 0.94);
+  color: #fff;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 10px 24px rgba(175, 40, 41, 0.24);
 }
 
 .support-input-bar {
