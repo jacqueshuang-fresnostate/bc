@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { showNotify } from 'vant'
-import type { HomepageBanner, LotteryCard } from '../api/lottery'
+import type { HomepageBanner, HomepageGroup, LotteryCard } from '../api/lottery'
 import HomeDrawCard from '../components/lottery/HomeDrawCard.vue'
 import WinningTicker from '../components/lottery/WinningTicker.vue'
 import { useHomepageDrawUpdates } from '../composables/useHomepageDrawUpdates'
@@ -25,6 +25,7 @@ const { profile } = storeToRefs(userDataStore)
 // 首页数据边界：余额和首页模块数据由 homepage store 缓存，倒计时由 nowMs 驱动。
 const nowMs = ref(Date.now())
 const activeHeroBannerIndex = ref(0)
+const activeGroupTab = ref('')
 const heroBannerImageFailed = ref<Record<string, true>>({})
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let homepageRefreshInFlight = false
@@ -77,6 +78,10 @@ function lotteryName(code?: string) {
     ...visibleGroups.value.flatMap(group => group.lotteries || []),
   ]
   return allLotteries.find(item => item.code === code)?.name || code || '-'
+}
+
+function groupTabKey(group: HomepageGroup, index: number) {
+  return String(group.code || group.name || `group-${index}`)
 }
 
 function openLottery(lottery?: LotteryCard) {
@@ -199,12 +204,21 @@ watch(() => props.wsMessage, (msg) => {
 watch(heroBanners, (banners) => {
   if (activeHeroBannerIndex.value >= banners.length) activeHeroBannerIndex.value = 0
 })
+
+watch(visibleGroups, (groups) => {
+  const keys = groups.map((group, index) => groupTabKey(group, index))
+  if (!keys.length) {
+    activeGroupTab.value = ''
+    return
+  }
+  if (!keys.includes(activeGroupTab.value)) activeGroupTab.value = keys[0]
+}, { immediate: true })
 </script>
 
 <template>
   <div class="home-dashboard relative min-h-screen overflow-x-hidden bg-surface text-on-surface font-body selection:bg-primary/10">
     <div class="home-top-blush" aria-hidden="true"></div>
-    <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between border-b border-red-100/70 bg-white/72 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
+    <header class="home-dashboard-header mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between border-b px-6 backdrop-blur-md">
       <div class="flex items-center gap-3">
         <img
           :alt="`${branding.site_name} 标志`"
@@ -318,26 +332,33 @@ watch(heroBanners, (banners) => {
         </section>
 
         <!-- 分组区受 settings.groupsEnabled 控制，后端会返回全部销售中彩种的分类分组。 -->
-        <section v-for="(group, groupIndex) in visibleGroups" :key="group.code || group.name || groupIndex" class="space-y-2.5">
-          <div class="flex items-end justify-between px-1">
-            <h3
-              class="border-l-4 pl-2.5 font-headline text-base font-extrabold tracking-tight"
-              :class="groupIndex % 2 === 0 ? 'border-secondary' : 'border-tertiary'"
+        <section v-if="visibleGroups.length" class="home-category-section">
+          <van-tabs
+            v-model:active="activeGroupTab"
+            class="home-category-tabs"
+            swipeable
+            shrink
+            :ellipsis="false"
+          >
+            <van-tab
+              v-for="(group, groupIndex) in visibleGroups"
+              :key="groupTabKey(group, groupIndex)"
+              :name="groupTabKey(group, groupIndex)"
+              :title="group.name || '彩种分组'"
             >
-              {{ group.name || '彩种分组' }}
-            </h3>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <HomeDrawCard
-              v-for="lottery in group.lotteries"
-              :key="lottery.code"
-              :lottery="lottery"
-              :variant="groupIndex % 2 === 0 ? 'classic' : 'regional'"
-              :countdown-text="countdownText"
-              :round-digits="roundDigits"
-              @open="openLottery"
-            />
-          </div>
+              <div class="grid grid-cols-2 gap-2 pt-3">
+                <HomeDrawCard
+                  v-for="lottery in group.lotteries"
+                  :key="lottery.code"
+                  :lottery="lottery"
+                  :variant="groupIndex % 2 === 0 ? 'classic' : 'regional'"
+                  :countdown-text="countdownText"
+                  :round-digits="roundDigits"
+                  @open="openLottery"
+                />
+              </div>
+            </van-tab>
+          </van-tabs>
         </section>
       </template>
 
@@ -360,6 +381,55 @@ watch(heroBanners, (banners) => {
 </template>
 
 <style scoped>
+.home-dashboard-header {
+  border-color: rgba(255, 255, 255, 0.72);
+  background:
+    radial-gradient(circle at 92% 5%, rgba(255, 255, 255, 0.78), transparent 30%),
+    linear-gradient(135deg, #c8f5ff 0%, #d7c8ff 48%, #ffc4d7 100%);
+  box-shadow: 0 8px 20px rgba(123, 82, 156, 0.12);
+}
+
+.home-category-tabs :deep(.van-tabs__wrap) {
+  height: 2.45rem;
+  margin-bottom: 0.15rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 92% 5%, rgba(255, 255, 255, 0.78), transparent 30%),
+    linear-gradient(135deg, #c8f5ff 0%, #d7c8ff 48%, #ffc4d7 100%);
+  box-shadow: 0 8px 20px rgba(123, 82, 156, 0.12);
+}
+
+.home-category-tabs :deep(.van-tabs__nav) {
+  display: flex;
+  width: 100%;
+  gap: 0.25rem;
+  justify-content: space-around;
+  padding: 0.22rem;
+  background: transparent;
+}
+
+.home-category-tabs :deep(.van-tab) {
+  min-width: 4.4rem;
+  height: 2rem;
+  border-radius: 9999px;
+  color: rgba(45, 38, 48, 0.72);
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.home-category-tabs :deep(.van-tab--active) {
+  background: rgba(255, 255, 255, 0.84);
+  color: #8c0a15;
+  box-shadow: 0 4px 12px rgba(123, 82, 156, 0.14);
+}
+
+.home-category-tabs :deep(.van-tabs__line) {
+  display: none;
+}
+
 .home-top-blush {
   position: fixed;
   inset: 0 0 auto;

@@ -7,10 +7,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // '/api': { target: 'https://bc.hippo-web3.cc.cd', changeOrigin: true },
-      // '/ws': { target: 'https://bc.hippo-web3.cc.cd', ws: true },
-      '/api': { target: 'http://127.0.0.1:18120', changeOrigin: true },
-      '/ws': { target: 'http://127.0.0.1:18120', ws: true },
+      '/api': { target: 'https://b.hippo-web3.cc.cd', changeOrigin: true },
+      '/ws': { target: 'https://b.hippo-web3.cc.cd', ws: true },
+      // '/api': { target: 'http://127.0.0.1:18120', changeOrigin: true },
+      // '/ws': { target: 'http://127.0.0.1:18120', ws: true },
     },
   },
 })

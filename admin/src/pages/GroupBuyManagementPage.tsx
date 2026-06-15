@@ -254,7 +254,7 @@ export function GroupBuyManagementPage({
   const clearGroupBuyPlanRecords = async () => {
     if (
       !window.confirm(
-        '确定一键清除合买计划列表吗？仅会删除已取消或已结算的历史计划；存在草稿、进行中或已满单未结算计划时系统会拒绝清除，且不会回滚资金流水或订单。',
+        '确定一键清除合买计划列表吗？系统只会删除已取消或已结算的历史计划；草稿、进行中或已满单未结算计划会自动保留，且不会回滚资金流水或订单。',
       )
     ) {
       return;
@@ -265,7 +265,11 @@ export function GroupBuyManagementPage({
       setDetailSheetVisible(false);
       setPlanPageNumber(1);
       onDashboardRefresh();
-      Toast.success(`已清除 ${result.deletedCount} 条合买计划`);
+      Toast.success(
+        result.deletedCount > 0
+          ? `已清除 ${result.deletedCount} 条已结束合买计划，未结算计划已保留`
+          : '没有可清理的已结束合买计划，未结算计划已保留',
+      );
     } catch {
       Toast.error('合买计划列表清除失败，请查看接口错误提示');
     }

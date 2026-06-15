@@ -79,17 +79,19 @@ function blurSelfShares() {
           <div class="group-buy-summary__top">
             <label class="group-buy-self-shares">
               <span>自购</span>
-              <input
-                :value="selfSharesDraft"
-                type="text"
-                inputmode="numeric"
-                pattern="[0-9]*"
-                :disabled="props.submitting"
-                aria-label="自购份数"
-                @focus="focusSelfShares"
-                @input="updateSelfShares"
-                @blur="blurSelfShares"
-              />
+              <span class="group-buy-self-shares__input">
+                <input
+                  :value="selfSharesDraft"
+                  type="text"
+                  inputmode="numeric"
+                  pattern="[0-9]*"
+                  :disabled="props.submitting"
+                  aria-label="自购份数"
+                  @focus="focusSelfShares"
+                  @input="updateSelfShares"
+                  @blur="blurSelfShares"
+                />
+              </span>
               <em>/{{ props.groupBuyShareCount }}份</em>
             </label>
             <span class="group-buy-summary__count">共{{ props.selectedCount }}注</span>
@@ -180,27 +182,60 @@ function blurSelfShares() {
   display: inline-flex;
   min-width: 0;
   align-items: center;
+  gap: 5px;
   border-radius: 14px;
-  padding: 4px 7px;
-  background: #fff4dc;
+  border: 1px solid rgba(175, 40, 41, 0.12);
+  padding: 4px 5px 4px 8px;
+  background: #fff8ed;
   color: #5a403e;
   font-size: 11px;
   font-weight: 900;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
   white-space: nowrap;
 }
 
-.group-buy-self-shares input {
-  width: 36px;
+.group-buy-self-shares__input {
+  display: inline-flex;
+  min-height: 32px;
+  min-width: 58px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(175, 40, 41, 0.32);
+  border-radius: 11px;
+  background: #fff;
+  box-shadow:
+    0 2px 8px rgba(140, 10, 21, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease;
+}
+
+.group-buy-self-shares:focus-within .group-buy-self-shares__input {
+  border-color: #af2829;
+  background: #fffafa;
+  box-shadow:
+    0 0 0 3px rgba(175, 40, 41, 0.12),
+    0 4px 12px rgba(140, 10, 21, 0.14);
+}
+
+.group-buy-self-shares__input input {
+  width: 54px;
   min-width: 0;
   border: 0;
   background: transparent;
   color: #8c0a15;
   font-family: var(--font-headline, inherit);
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 900;
-  line-height: 1;
+  line-height: 1.05;
   outline: none;
   text-align: center;
+}
+
+.group-buy-self-shares__input input:disabled {
+  color: #b29b96;
 }
 
 .group-buy-self-shares em {

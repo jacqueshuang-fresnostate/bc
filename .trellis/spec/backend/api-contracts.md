@@ -5036,7 +5036,7 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 - `/recharge-orders/clear` 允许清除所有充值订单历史，但不得回滚已入账余额或删除充值资金流水。
 - `/withdrawal-orders/clear` 在存在 `Pending` 提现申请时必须返回业务错误，要求管理员先审核或驳回，避免冻结余额失去对应申请。
 - `/orders/clear` 在存在 `PendingDraw` 投注订单时必须返回业务错误，要求管理员先开奖结算或取消订单，避免已扣款订单失去结算机会。
-- `/group-buy/plans/clear` 在存在 `Draft`、`Open` 或 `Filled` 合买计划时必须返回业务错误，要求管理员先取消、流单退款或开奖结算，避免合买扣款、退款或派奖失去业务记录。
+- `/group-buy/plans/clear` 只删除 `Cancelled` 和 `Settled` 合买计划；`Draft`、`Open` 或 `Filled` 等未结算计划必须自动跳过并保留，接口不应因为存在未结算计划而整体失败，避免合买扣款、退款或派奖失去业务记录。
 - 清除投注记录时必须同步清除 `order_settlement_runs` 和 `order_settlements` 对应内存快照/数据库记录，避免结算历史引用不存在的订单。
 - 清理充值、提现、投注记录后必须保留 `next_sequence` 或 `next_settlement_sequence`，后续新单号不能重复。
 

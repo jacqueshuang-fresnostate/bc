@@ -1,5 +1,96 @@
 # TODO
 
+## 2026-06-16 04:01 HKT 手机端首页彩种分类 Tabs
+
+- 完成任务：将手机端首页普通彩种分类改为 Tabs 分类展示。
+- 解决问题：原首页把每个彩种分类纵向全部铺开，分类多时页面过长，用户需要连续滚动才能切换分类。
+- 实施内容：`HomeView.vue` 新增 `activeGroupTab` 和分类 key 兜底逻辑，使用 `van-tabs/van-tab` 渲染后端返回的彩种分类；每个 Tab 内保留两列 `HomeDrawCard` 彩种卡片；新增胶囊式 Tab 样式，并同步更新架构说明和前端组件规范。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:55 HKT 手机端首页 Header 背景统一
+
+- 完成任务：将手机端首页 Header 背景调整为和彩种卡片一致的淡蓝紫粉渐变。
+- 解决问题：首页顶部仍是白色半透明背景，和新彩种卡片渐变风格不统一。
+- 实施内容：`HomeView.vue` 新增 `home-dashboard-header` 样式，使用 `radial-gradient(circle at 92% 5%, rgba(255, 255, 255, 0.78), transparent 30%), linear-gradient(135deg, #c8f5ff 0%, #d7c8ff 48%, #ffc4d7 100%)`，并保留安全区、毛玻璃和轻投影；同步更新架构说明。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:51 HKT 手机端首页彩种卡片背景调淡
+
+- 完成任务：将手机端首页普通彩种卡片背景调淡。
+- 解决问题：统一后的蓝紫粉渐变偏鲜艳，卡片整体视觉压迫感略强。
+- 实施内容：`HomeDrawCard.vue` 将背景渐变调为更浅的 `#c8f5ff / #d7c8ff / #ffc4d7`，并降低卡片阴影强度；同步更新架构说明。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:48 HKT 手机端首页彩种卡片背景统一
+
+- 完成任务：统一手机端首页普通彩种卡片背景风格。
+- 解决问题：经典卡和地方卡使用不同渐变，视觉风格不够统一。
+- 实施内容：`HomeDrawCard.vue` 将 `.group-lottery-card--classic` 和 `.group-lottery-card--regional` 合并使用同一套背景：`radial-gradient(circle at 92% 5%, rgba(255, 255, 255, 0.68), transparent 30%), linear-gradient(135deg, #7ee7ff 0%, #a78bfa 48%, #ff7aa8 100%)`；同步更新架构说明。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:43 HKT 手机端首页彩种卡片鲜艳化
+
+- 完成任务：将手机端首页普通彩种卡片调整得更鲜艳。
+- 解决问题：原普通彩种卡片底色偏淡，首页视觉识别度不足。
+- 实施内容：`HomeDrawCard.vue` 中经典卡改为红橙暖色渐变，地方卡改为蓝紫粉撞色渐变；开奖号码球改为金色高亮，Logo 容器增加亮面底、边框和投影；同步更新架构说明。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:42 HKT 手机端首页彩种 Logo 放大
+
+- 完成任务：将手机端首页普通彩种卡片 `.group-lottery-card__logo-shell` 调整为 `3.2rem`。
+- 解决问题：当前彩种 Logo 容器偏小，首页卡片的彩种识别感不足。
+- 实施内容：`HomeDrawCard.vue` 中基础样式和小屏覆盖样式都设置 `width: 3.2rem`、`height: 3.2rem`；同步更新架构说明中的普通彩种卡片 Logo 尺寸规则。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:37 HKT 手机端首页开奖号码球数字放大
+
+- 完成任务：将手机端首页彩种卡片 `.group-lottery-card__digit` 的数字字号调整为 `0.88rem`。
+- 解决问题：开奖号码球放大后，球内数字仍偏小，视觉不够醒目。
+- 实施内容：`HomeDrawCard.vue` 中常规样式和小屏覆盖样式统一设置 `font-size: 0.88rem`。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:34 HKT 手机端首页开奖号码球放大
+
+- 完成任务：放大手机端首页彩种卡片底部的开奖号码球。
+- 解决问题：原开奖号码球偏小，首页卡片里的开奖结果不够醒目。
+- 实施内容：`HomeDrawCard.vue` 将常规开奖号码球从 `0.96rem` 调整为 `1.14rem`，小屏覆盖从 `0.9rem` 调整为 `1.04rem`，并同步放大球内数字字号。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:30 HKT 手机端首页彩种卡片期号样式调整
+
+- 完成任务：调整手机端首页彩种卡片 `.group-lottery-card__issue` 的颜色和字号。
+- 解决问题：原期号颜色偏浅、字号偏小，在彩种卡片中不够清晰。
+- 实施内容：`HomeDrawCard.vue` 将期号颜色改为 `#0d0d0dd1`，字号改为 `0.75rem`。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:25 HKT 手机端首页彩种卡片标题字号调整
+
+- 完成任务：将手机端首页彩种卡片 `.group-lottery-card__copy h5` 的字体大小调整为 `.96rem`。
+- 解决问题：原标题字号偏小，彩种名称在首页卡片中不够醒目。
+- 实施内容：`HomeDrawCard.vue` 中普通样式和小屏覆盖样式统一设置为 `font-size: 0.96rem`。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:21 HKT 合买计划一键清除跳过未结算
+
+- 完成任务：调整后台合买管理“一键清除合买计划列表”的清理口径，未结算计划不再被清除，也不会导致整次清理失败。
+- 解决问题：原逻辑在存在草稿、进行中或已满单未结算计划时直接拒绝清除，运营无法清理已取消或已结算的历史计划。
+- 实施内容：后端合买仓储只删除 `Cancelled` 和 `Settled` 计划，自动保留 `Draft`、`Open`、`Filled` 等未结算计划；后台确认文案和成功提示改为说明“未结算计划已保留”；同步更新架构说明、前后端规范。
+- 验证结果：后端 `cargo test --manifest-path backend/Cargo.toml group_buy -- --nocapture` 通过，合买相关 43 条测试成功；后台 `npm run build` 通过；`cargo fmt --manifest-path backend/Cargo.toml` 和 `git diff --check` 通过。后台构建仍保留既有的大 chunk 提示。
+
+## 2026-06-16 03:09 HKT 手机端合买自购输入框强化
+
+- 完成任务：强化手机端下注页合买底栏“自购份数”输入框的可见性。
+- 解决问题：原自购份数输入和周围文字融合，用户不容易看出中间数字可以点击编辑。
+- 实施内容：`UnifiedBetBottomBar.vue` 为自购份数新增独立输入框容器、边框、浅底、阴影和聚焦高亮；同步更新架构说明和前端组件规范。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 03:18 HKT 手机端下注页移除合买每份提示卡
+
+- 完成任务：移除手机端下注页合买模式中部“最低每份 / 固定每份”的黄色提示卡。
+- 解决问题：合买自购份数、固定每份和需支付金额已经收敛到底部投注栏和合买摘要中，中部重复提示会增加页面高度并干扰下注操作。
+- 实施内容：`DynamicBetPage.vue` 删除重复提示卡，仅在总金额无法按每份金额整除时保留单独错误提示；同步更新架构说明和前端组件规范。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
 ## 2026-06-16 02:59 HKT 手机端我的记录 Tab 分组兜底修复
 
 - 完成任务：修复手机端“我的记录”切换“我的注单 / 我的合买”时列表看起来没有变化的问题，并确保“合买认购中”只显示在“我的合买”。
@@ -3812,3 +3903,10 @@
 - 解决问题：此前后台只能配置手机端 Logo 和介绍，无法维护 APP 安装包下载地址、最新版本、强制更新和更新说明；手机端启动后也没有统一的更新检查入口。
 - 实施内容：后端系统设置新增 Android/iOS 更新配置种子和迁移；新增 `/api/admin/app-packages/upload` 安装包上传接口与 `/api/user/mobile/app-update` 公开检查接口；OpenAPI 同步记录；后台“手机端设置”新增 APP 更新配置区块，支持上传安装包并回填链接；手机端启动后异步检查更新并按强制/可选策略展示中文更新弹窗。
 - 验证结果：后端 `cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml mobile_app_update -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml version_compare_handles_equal_and_newer_versions -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture` 和全量 `cargo test --manifest-path backend/Cargo.toml` 均通过（319 个测试成功）；后台 `npm run build`、手机端 `pnpm build`、手机端 `pnpm test` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示，手机端测试脚本当前显示 0 个测试用例。
+
+## 2026-06-16 04:19 HKT 手机端首页分类 Tabs 均分布局
+
+- 完成任务：调整手机端首页彩种分类 Tabs 的导航分布。
+- 解决问题：首页分类 Tabs 使用默认导航布局时，多个分类在胶囊容器内的横向分布不够均匀。
+- 实施内容：将 `HomeView.vue` 中 `.home-category-tabs :deep(.van-tabs__nav)` 设置为全宽 `flex` 布局，并使用 `justify-content: space-around` 让分类项横向均分。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。

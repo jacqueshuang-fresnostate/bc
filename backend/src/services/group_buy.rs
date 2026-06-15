@@ -177,7 +177,7 @@ impl GroupBuyRepository {
         Ok(ListPage::from_all(plans, page))
     }
 
-    /// 一键清除已结束合买计划历史；未完成计划会拒绝清除，避免资金和结算失去追溯。
+    /// 一键清除已结束合买计划历史；未结算计划会自动保留，避免资金和结算失去追溯。
     pub async fn clear_records(&self) -> ApiResult<usize> {
         self.mutate_and_persist_if(|store| {
             let deleted_count = store.clear_records()?;
@@ -900,26 +900,16 @@ impl GroupBuyStore {
             .collect()
     }
 
-    /// 清除已结束的合买计划和参与记录；仍在流转中的计划必须先取消或结算。
+    /// 清除已取消或已结算的合买历史；未结算计划直接保留，不阻断本次清理。
     fn clear_records(&mut self) -> ApiResult<usize> {
-        let active_count = self
-            .plans
-            .values()
-            .filter(|plan| {
-                !matches!(
-                    plan.status,
-                    GroupBuyPlanStatus::Cancelled | GroupBuyPlanStatus::Settled
-                )
-            })
-            .count();
-        if active_count > 0 {
-            return Err(ApiError::BadRequest(format!(
-                "存在 {active_count} 条未完成合买计划，请先取消或结算后再清除记录"
-            )));
-        }
-
-        let deleted_count = self.plans.len();
-        self.plans.clear();
+        let before_count = self.plans.len();
+        self.plans.retain(|_, plan| {
+            !matches!(
+                plan.status,
+                GroupBuyPlanStatus::Cancelled | GroupBuyPlanStatus::Settled
+            )
+        });
+        let deleted_count = before_count.saturating_sub(self.plans.len());
         Ok(deleted_count)
     }
 
@@ -1564,14 +1554,47 @@ mod tests {
     }
 
     #[test]
-    fn group_buy_store_rejects_clear_when_active_plans_exist() {
+    fn group_buy_store_skips_unsettled_plans_when_clearing() {
         let mut store = GroupBuyStore::seeded();
-        let error = store
+        let deleted_count = store
             .clear_records()
-            .expect_err("active group buy plan cannot be cleared");
+            .expect("unsettled group buy plan should be skipped");
 
-        assert!(error.to_string().contains("未完成合买计划"));
+        assert_eq!(deleted_count, 0);
         assert_eq!(store.list().len(), 1);
+    }
+
+    #[test]
+    fn group_buy_store_clears_finished_records_and_keeps_unsettled() {
+        let mut store = GroupBuyStore::seeded();
+        let base_plan = store
+            .plans
+            .values()
+            .next()
+            .cloned()
+            .expect("seeded plan exists");
+        let mut settled_plan = base_plan.clone();
+        settled_plan.id = "G-SETTLED".to_string();
+        settled_plan.status = GroupBuyPlanStatus::Settled;
+        let mut cancelled_plan = base_plan;
+        cancelled_plan.id = "G-CANCELLED".to_string();
+        cancelled_plan.status = GroupBuyPlanStatus::Cancelled;
+        store.plans.insert(settled_plan.id.clone(), settled_plan);
+        store
+            .plans
+            .insert(cancelled_plan.id.clone(), cancelled_plan);
+
+        assert_eq!(
+            store
+                .clear_records()
+                .expect("finished group buy plans can be cleared"),
+            2
+        );
+        assert_eq!(store.list().len(), 1);
+        assert!(store.plans.values().all(|plan| !matches!(
+            plan.status,
+            GroupBuyPlanStatus::Cancelled | GroupBuyPlanStatus::Settled
+        )));
     }
 
     #[test]

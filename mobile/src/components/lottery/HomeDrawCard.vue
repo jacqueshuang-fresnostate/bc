@@ -205,24 +205,19 @@ function statusClass() {
   width: 100%;
   min-height: 4.55rem;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.86);
   border-radius: 0.85rem;
   padding: 0.28rem 0.58rem;
   text-align: left;
-  box-shadow: 0 6px 16px rgba(77, 41, 68, 0.07);
+  box-shadow: 0 8px 20px rgba(123, 82, 156, 0.12);
   transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
 }
 
-.group-lottery-card--classic {
-  background:
-    radial-gradient(circle at 100% 8%, rgba(255, 204, 89, 0.35), transparent 30%),
-    linear-gradient(135deg, #f7f2ff 0%, #f8f3ff 44%, #fff5ef 100%);
-}
-
+.group-lottery-card--classic,
 .group-lottery-card--regional {
   background:
-    radial-gradient(circle at 100% 8%, rgba(255, 177, 196, 0.35), transparent 30%),
-    linear-gradient(135deg, #eef8ff 0%, #f4f2ff 48%, #fff7ed 100%);
+    radial-gradient(circle at 92% 5%, rgba(255, 255, 255, 0.78), transparent 30%),
+    linear-gradient(135deg, #c8f5ff 0%, #d7c8ff 48%, #ffc4d7 100%);
 }
 
 .group-lottery-card::after {
@@ -233,7 +228,7 @@ function statusClass() {
   width: 4.75rem;
   height: 4.75rem;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.48);
+  background: rgba(255, 255, 255, 0.36);
   pointer-events: none;
 }
 
@@ -276,7 +271,7 @@ function statusClass() {
   overflow: hidden;
   flex: 1;
   color: #2d2630;
-  font-size: 0.66rem;
+  font-size: 0.96rem;
   font-weight: 900;
   line-height: 1.05;
   text-overflow: ellipsis;
@@ -287,8 +282,8 @@ function statusClass() {
   display: block;
   max-width: 92%;
   overflow: hidden;
-  color: rgba(73, 61, 68, 0.68);
-  font-size: 0.52rem;
+  color: #0d0d0dd1;
+  font-size: 0.75rem;
   font-weight: 800;
   line-height: 1.15;
   text-overflow: ellipsis;
@@ -313,32 +308,37 @@ function statusClass() {
 
 .group-lottery-card__digit {
   display: inline-flex;
-  flex: 0 0 0.96rem;
-  width: 0.96rem;
-  height: 0.96rem;
+  flex: 0 0 1.14rem;
+  width: 1.14rem;
+  height: 1.14rem;
   align-items: center;
   justify-content: center;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.72);
-  color: #8b1d24;
-  font-size: 0.5rem;
+  background: linear-gradient(180deg, #fff9da 0%, #ffd35e 100%);
+  color: #8c0a15;
+  font-size: 0.88rem;
   font-weight: 900;
   line-height: 1;
-  box-shadow: inset 0 0 0 1px rgba(139, 29, 36, 0.08);
+  box-shadow:
+    0 3px 8px rgba(140, 10, 21, 0.14),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.72);
 }
 
 .group-lottery-card__logo-shell {
   grid-area: logo;
   display: flex;
-  width: 2.38rem;
-  height: 2.38rem;
+  width: 3.2rem;
+  height: 3.2rem;
   align-self: end;
   align-items: center;
   justify-content: center;
   overflow: hidden;
   border-radius: 0.75rem;
-  background: rgba(255, 255, 255, 0.68);
-  box-shadow: 0 6px 14px rgba(92, 54, 92, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow:
+    0 8px 18px rgba(92, 54, 92, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.86);
 }
 
 .group-lottery-card__logo,
@@ -376,21 +376,21 @@ function statusClass() {
   }
 
   .group-lottery-card__logo-shell {
-    width: 2rem;
-    height: 2rem;
-    flex-basis: 2rem;
+    width: 3.2rem;
+    height: 3.2rem;
+    flex-basis: 3.2rem;
     border-radius: 0.62rem;
   }
 
   .group-lottery-card__copy h5 {
-    font-size: 0.66rem;
+    font-size: 0.96rem;
   }
 
   .group-lottery-card__digit {
-    flex-basis: 0.9rem;
-    width: 0.9rem;
-    height: 0.9rem;
-    font-size: 0.48rem;
+    flex-basis: 1.04rem;
+    width: 1.04rem;
+    height: 1.04rem;
+    font-size: 0.88rem;
   }
 }
 </style>

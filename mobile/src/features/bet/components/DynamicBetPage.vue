@@ -559,13 +559,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-          <div class="rounded-2xl bg-[#fff4dc] px-4 py-3 text-sm font-bold text-[#735c00]">
-            <div class="flex items-center justify-between">
-              <span>最低每份 ¥{{ config?.group_buy_settings.min_share_amount || '0.01' }}</span>
-              <span>固定每份 ¥{{ groupBuyFixedShareAmount }}</span>
-            </div>
-            <div v-if="groupBuyDerivedShareCount <= 0" class="mt-1 text-xs text-[#8c0a15]">总金额必须能按每份金额整除</div>
-          </div>
+          <div v-if="groupBuyDerivedShareCount <= 0" class="rounded-2xl bg-[#fff4dc] px-4 py-3 text-xs font-bold text-[#8c0a15]">总金额必须能按每份金额整除</div>
         </div>
       </section>
 

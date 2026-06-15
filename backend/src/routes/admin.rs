@@ -1422,7 +1422,7 @@ async fn list_group_buy_plans(
     Ok(Json(ApiEnvelope::success(page.into_finance_page())))
 }
 
-/// 一键清除已结束合买计划历史；存在未完成计划时由仓储拒绝执行。
+/// 一键清除已结束合买计划历史；未结算计划由仓储自动保留。
 async fn clear_group_buy_plans(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
