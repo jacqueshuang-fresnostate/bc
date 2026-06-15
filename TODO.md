@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-16 04:25 HKT 手机端 Header 与底部导航背景统一
+
+- 完成任务：将手机端所有页面顶部 Header 和底部主导航背景统一为首页的淡蓝紫粉渐变。
+- 解决问题：部分页面顶部栏和 `mobile-bottom-nav` 仍使用白色或接近白色背景，和首页新视觉不一致。
+- 实施内容：在 `mobile/src/index.css` 中新增 `--mobile-app-header-background`、`--mobile-app-header-border` 和 `--mobile-app-header-shadow`，让 `mobile-safe-header`、`mobile-safe-compact-header` 默认使用同款背景；在线客服和聊天大厅自定义顶部栏同步复用这组变量；`LayoutView.vue` 中 `mobile-bottom-nav` 内层导航容器同步使用这组变量；首页 Header 局部样式改为读取全局变量，并同步更新架构说明和前端规范。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。
+
 ## 2026-06-16 04:01 HKT 手机端首页彩种分类 Tabs
 
 - 完成任务：将手机端首页普通彩种分类改为 Tabs 分类展示。

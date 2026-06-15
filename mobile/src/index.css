@@ -55,6 +55,11 @@ button:disabled,
   --mobile-brand-page-top: calc(var(--mobile-brand-header-height) + 1rem);
   --mobile-brand-page-top-tight: var(--mobile-brand-header-height);
   --mobile-brand-page-top-loose: calc(var(--mobile-brand-header-height) + 3rem);
+  --mobile-app-header-background:
+    radial-gradient(circle at 92% 5%, rgba(255, 255, 255, 0.78), transparent 30%),
+    linear-gradient(135deg, #c8f5ff 0%, #d7c8ff 48%, #ffc4d7 100%);
+  --mobile-app-header-border: rgba(255, 255, 255, 0.72);
+  --mobile-app-header-shadow: 0 8px 20px rgba(123, 82, 156, 0.12);
 }
 
 .mobile-safe-header {
@@ -65,6 +70,15 @@ button:disabled,
 .mobile-safe-compact-header {
   min-height: var(--mobile-compact-header-height);
   padding-top: var(--mobile-status-safe-top);
+}
+
+.mobile-safe-header,
+.mobile-safe-compact-header {
+  border-bottom: 1px solid var(--mobile-app-header-border);
+  background: var(--mobile-app-header-background);
+  box-shadow: var(--mobile-app-header-shadow);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
 .mobile-safe-main-top {

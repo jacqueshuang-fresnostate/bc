@@ -382,11 +382,9 @@ watch(visibleGroups, (groups) => {
 
 <style scoped>
 .home-dashboard-header {
-  border-color: rgba(255, 255, 255, 0.72);
-  background:
-    radial-gradient(circle at 92% 5%, rgba(255, 255, 255, 0.78), transparent 30%),
-    linear-gradient(135deg, #c8f5ff 0%, #d7c8ff 48%, #ffc4d7 100%);
-  box-shadow: 0 8px 20px rgba(123, 82, 156, 0.12);
+  border-color: var(--mobile-app-header-border);
+  background: var(--mobile-app-header-background);
+  box-shadow: var(--mobile-app-header-shadow);
 }
 
 .home-category-tabs :deep(.van-tabs__wrap) {

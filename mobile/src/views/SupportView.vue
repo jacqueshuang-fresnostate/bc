@@ -597,10 +597,11 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   min-height: calc(64px + var(--mobile-status-safe-top));
   padding: calc(10px + var(--mobile-status-safe-top)) 16px 10px;
-  background: rgba(255, 250, 247, 0.9);
-  border-bottom: 1px solid rgba(175, 40, 41, 0.09);
-  box-shadow: 0 8px 30px rgba(95, 10, 18, 0.08);
+  background: var(--mobile-app-header-background);
+  border-bottom: 1px solid var(--mobile-app-header-border);
+  box-shadow: var(--mobile-app-header-shadow);
   backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
 .support-chat__icon-button,

@@ -680,10 +680,11 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: calc(3.75rem + var(--mobile-status-safe-top));
   padding: var(--mobile-status-safe-top) 1rem 0.7rem;
-  background: rgba(255, 255, 255, 0.88);
-  border-bottom: 1px solid rgba(143, 20, 31, 0.08);
-  box-shadow: 0 10px 30px rgba(143, 20, 31, 0.08);
+  background: var(--mobile-app-header-background);
+  border-bottom: 1px solid var(--mobile-app-header-border);
+  box-shadow: var(--mobile-app-header-shadow);
   backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
 .chat-hall__title-group {

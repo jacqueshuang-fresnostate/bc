@@ -77,7 +77,7 @@ onMounted(() => {
   <div class="min-h-screen bg-surface">
     <router-view :ws-message="lastMessage" />
     <nav v-if="!hideBottomNav" class="mobile-bottom-nav fixed bottom-0 left-0 z-50 w-full px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
-      <div class="liquid-glass-nav mx-auto flex max-w-md items-center justify-around rounded-[2rem] border border-white/50 bg-white/70 px-2 py-2 text-[10px] font-semibold tracking-wide shadow-[0_-10px_35px_rgba(140,10,21,0.12),inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-2xl saturate-[1.8]">
+      <div class="liquid-glass-nav mx-auto flex max-w-md items-center justify-around rounded-[2rem] px-2 py-2 text-[10px] font-semibold tracking-wide backdrop-blur-2xl saturate-[1.8]">
         <button
           v-for="(item, index) in navItems"
           :key="item.label"
@@ -103,6 +103,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.liquid-glass-nav {
+  border: 1px solid var(--mobile-app-header-border);
+  background: var(--mobile-app-header-background);
+  box-shadow: var(--mobile-app-header-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
 .mobile-bottom-nav__badge-anchor {
   display: block;
   width: 1px;
