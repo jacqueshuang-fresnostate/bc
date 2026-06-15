@@ -385,7 +385,10 @@ fn digit_values() -> Vec<String> {
 /// 读取周期秒数；非周期彩种返回 0，前端只作为展示兜底。
 fn draw_interval_seconds(schedule: &DrawSchedule) -> u32 {
     match schedule {
-        DrawSchedule::Periodic { interval_seconds } => *interval_seconds,
+        DrawSchedule::Periodic { interval_seconds }
+        | DrawSchedule::TimeNode {
+            interval_seconds, ..
+        } => *interval_seconds,
         DrawSchedule::Daily { .. } | DrawSchedule::Weekly { .. } => 0,
     }
 }

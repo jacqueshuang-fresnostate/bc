@@ -250,7 +250,10 @@ fn group_lotteries(lotteries: &[&LotteryKind], category: &str) -> Vec<MobileLott
 /// 从彩种排期中提取周期开奖秒数。
 fn draw_interval_seconds(schedule: &DrawSchedule) -> Option<u32> {
     match schedule {
-        DrawSchedule::Periodic { interval_seconds } => Some(*interval_seconds),
+        DrawSchedule::Periodic { interval_seconds }
+        | DrawSchedule::TimeNode {
+            interval_seconds, ..
+        } => Some(*interval_seconds),
         DrawSchedule::Daily { .. } | DrawSchedule::Weekly { .. } => None,
     }
 }
@@ -259,7 +262,9 @@ fn draw_interval_seconds(schedule: &DrawSchedule) -> Option<u32> {
 fn daily_draw_time(schedule: &DrawSchedule) -> Option<String> {
     match schedule {
         DrawSchedule::Daily { time } => Some(time.clone()),
-        DrawSchedule::Periodic { .. } | DrawSchedule::Weekly { .. } => None,
+        DrawSchedule::Periodic { .. }
+        | DrawSchedule::TimeNode { .. }
+        | DrawSchedule::Weekly { .. } => None,
     }
 }
 

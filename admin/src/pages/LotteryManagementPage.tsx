@@ -49,7 +49,7 @@ interface LotteryManagementPageProps {
   onOpenPlayConfig: () => void;
 }
 
-type ScheduleKind = 'periodic' | 'daily' | 'weekly';
+type ScheduleKind = 'periodic' | 'timeNode' | 'daily' | 'weekly';
 type LotterySaleFilter = 'all' | 'selling' | 'stopped';
 const DEFAULT_ISSUE_FORMAT = '{date}{seq4}';
 
@@ -670,16 +670,25 @@ export function LotteryManagementPage({
                 <Select
                   className="form-input"
                   value={form.scheduleKind}
-                  onChange={(value) =>
-                    setFormValue(setForm, 'scheduleKind', value as ScheduleKind)
-                  }
+                  onChange={(value) => {
+                    const scheduleKind = value as ScheduleKind;
+                    setForm((current) => ({
+                      ...current,
+                      scheduleKind,
+                      time:
+                        scheduleKind === 'timeNode' && current.time === '21:00:15'
+                          ? '00:00:00'
+                          : current.time,
+                    }));
+                  }}
                 >
                   <Select.Option value="periodic">周期开奖</Select.Option>
+                  <Select.Option value="timeNode">时间节点周期</Select.Option>
                   <Select.Option value="daily">每日固定</Select.Option>
                   <Select.Option value="weekly">周开奖</Select.Option>
                 </Select>
               </Field>
-              {form.scheduleKind === 'periodic' ? (
+              {form.scheduleKind === 'periodic' || form.scheduleKind === 'timeNode' ? (
                 <Field label="周期秒数">
                   <Input
                     className="form-input"
@@ -702,6 +711,20 @@ export function LotteryManagementPage({
                 </Field>
               )}
             </div>
+
+            {form.scheduleKind === 'timeNode' ? (
+              <Field label="起始时间节点">
+                <Input
+                  className="form-input"
+                  placeholder="00:00:00"
+                  value={form.time}
+                  onChange={(value) => setFormValue(setForm, 'time', value)}
+                />
+                <div className="text-xs text-slate-400">
+                  例如 00:00:00 + 300 秒，会按 00:05、00:10、00:15 开奖。
+                </div>
+              </Field>
+            ) : null}
 
             {form.scheduleKind === 'weekly' ? (
               <Field label="开奖星期">
@@ -1106,6 +1129,15 @@ function scheduleFormFields(schedule: DrawSchedule) {
     };
   }
 
+  if ('timeNode' in schedule) {
+    return {
+      intervalSeconds: String(schedule.timeNode.intervalSeconds),
+      scheduleKind: 'timeNode' as const,
+      time: schedule.timeNode.startTime,
+      weekdays: 'Tuesday,Thursday',
+    };
+  }
+
   if ('daily' in schedule) {
     return {
       intervalSeconds: '60',
@@ -1128,6 +1160,15 @@ function scheduleFromForm(form: LotteryFormState): DrawSchedule {
     return {
       periodic: {
         intervalSeconds: numberField(form.intervalSeconds),
+      },
+    };
+  }
+
+  if (form.scheduleKind === 'timeNode') {
+    return {
+      timeNode: {
+        intervalSeconds: numberField(form.intervalSeconds),
+        startTime: form.time.trim() || '00:00:00',
       },
     };
   }
@@ -1221,6 +1262,9 @@ function drawModeColor(mode: string) {
 function scheduleText(schedule: DrawSchedule) {
   if ('periodic' in schedule) {
     return `${schedule.periodic.intervalSeconds} 秒一期`;
+  }
+  if ('timeNode' in schedule) {
+    return `时间节点 ${schedule.timeNode.startTime} 起，每 ${schedule.timeNode.intervalSeconds} 秒一期`;
   }
   if ('daily' in schedule) {
     return `每日 ${schedule.daily.time}`;

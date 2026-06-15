@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeMap, error::Error, sync::Arc};
 
+use chrono::NaiveTime;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
@@ -1231,6 +1232,27 @@ fn validate_lottery_base(lottery: &LotteryKind) -> ApiResult<()> {
                 "periodic interval must be greater than zero".to_string(),
             ));
         }
+        DrawSchedule::TimeNode {
+            interval_seconds,
+            start_time,
+        } => {
+            if *interval_seconds == 0 {
+                return Err(ApiError::BadRequest(
+                    "time node interval must be greater than zero".to_string(),
+                ));
+            }
+            if 86_400 % *interval_seconds != 0 {
+                return Err(ApiError::BadRequest(
+                    "time node interval must divide one day exactly".to_string(),
+                ));
+            }
+            if start_time.trim().is_empty() {
+                return Err(ApiError::BadRequest(
+                    "time node start time is required".to_string(),
+                ));
+            }
+            parse_schedule_time(start_time, "time node start time")?;
+        }
         DrawSchedule::Daily { time } if time.trim().is_empty() => {
             return Err(ApiError::BadRequest(
                 "daily draw time is required".to_string(),
@@ -1270,6 +1292,12 @@ fn validate_lottery_base(lottery: &LotteryKind) -> ApiResult<()> {
     }
 
     Ok(())
+}
+
+/// 校验彩种开奖时间字段，避免错误格式保存后在调度生成期号时才暴露。
+fn parse_schedule_time(value: &str, label: &str) -> ApiResult<NaiveTime> {
+    NaiveTime::parse_from_str(value.trim(), "%H:%M:%S")
+        .map_err(|_| ApiError::BadRequest(format!("{label} must use HH:mm:ss format")))
 }
 
 /// 判断当前号码类型是否已经接入投注玩法和赔率配置。

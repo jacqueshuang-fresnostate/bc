@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-16 06:13 HKT 合买机器人认购昵称随机化
+
+- 完成任务：优化用户端合买机器人发起和认购时展示的匿名昵称。
+- 解决问题：机器人参与合买时此前会显示类似“星河会员”“幸运会员”这类固定模板，用户容易感知为系统生成昵称。
+- 实施内容：后端用户端合买 DTO 的机器人昵称池改为多组短中文昵称加数字后缀，例如脱敏后展示为“南风12**”这一类更随机的昵称；机器人发起人和机器人补单参与人都复用该规则，并新增测试保证不再包含真实机器人账号、机器人字样或“会员”模板；同步更新架构说明和后端接口契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml user_group_buy_plan_masks_robot_initiator_display -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml user_group_buy_plan_returns_masked_participants -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过；后端全量 323 个测试成功。
+
+## 2026-06-16 05:32 HKT 彩种按自然时间节点周期开奖
+
+- 完成任务：新增彩种开奖时间类型“时间节点周期”，支持从指定起始时间按自然时钟节点生成开奖时间。
+- 解决问题：普通周期会沿用已有期号的秒级偏移，例如历史期号是 `20:18:27` 时下一期继续按 `27` 秒节拍生成；现在 5 分钟节点类彩种可以配置为 `00:00:00 + 300 秒`，让 `00:00` 售卖的期号在 `00:05` 开奖，并持续对齐 `00:10`、`00:15` 等自然节点。
+- 实施内容：后端 `DrawSchedule` 增加 `timeNode`，期号生成器新增自然节点计算和偏移期号重新对齐逻辑；彩种保存校验 `intervalSeconds`、`startTime` 和整日整除规则；后台彩种新增/编辑抽屉支持选择“时间节点周期”；dashboard、彩种列表、控制台和手机端聚合接口同步识别该类型；数据库字段注释、架构说明和 Trellis 契约同步更新。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml time_node_schedule -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml draw_schedule -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml -- --nocapture`、管理后台 `npm run build`、手机端 `pnpm build` 和 `git diff --check` 均通过；管理后台构建仍只有既有 chunk size warning。
+
 ## 2026-06-16 04:25 HKT 手机端 Header 与底部导航背景统一
 
 - 完成任务：将手机端所有页面顶部 Header 和底部主导航背景统一为首页的淡蓝紫粉渐变。

@@ -125,6 +125,42 @@ export interface InvitePolicySummary {
 
 ---
 
+## 场景：按自然时间节点周期开奖
+
+### 1. 范围 / 触发条件
+
+- 触发条件：后台彩种管理选择“开奖时间类型=时间节点周期”。
+- 范围：`LotteryKind.schedule`、`DrawSchedule::TimeNode`、开奖期号生成器、后台彩种新增/编辑表单、手机端首页/下注页周期展示。
+
+### 2. 签名
+
+彩种对象中的 `schedule` 使用以下 JSON：
+
+```json
+{
+  "timeNode": {
+    "intervalSeconds": 300,
+    "startTime": "00:00:00"
+  }
+}
+```
+
+### 3. 契约
+
+- `timeNode.intervalSeconds` 必须大于 0，并且必须能整除一天 `86400` 秒，避免自然日节点漂移。
+- `timeNode.startTime` 必须使用 `HH:mm:ss` 格式，默认建议 `00:00:00`。
+- 生成下一期时，开奖时间取严格大于基线时间的下一个自然节点；例如 `startTime=00:00:00` 且 `intervalSeconds=300` 时，`00:00:00` 售卖的期号开奖时间为 `00:05:00`。
+- 如果存在历史偏移期号，例如 `20:18:27`，后续新期号仍回到最近的自然节点，例如 `20:20:00`，不再沿用偏移秒数。
+- 手机端和后台展示中，`timeNode` 仍视为周期类彩种，可以返回和展示周期秒数，但文案需要标明“时间节点”以区别相对周期。
+
+### 4. 必要测试
+
+- 后端需要覆盖 `00:00:00 + 300 秒` 生成 `00:05:00` 的期号。
+- 后端需要覆盖已有偏移期号后重新对齐自然节点。
+- 后台构建需要确认新增表单能保存 `timeNode`。
+
+---
+
 ## 场景：彩种开售即时补齐期号
 
 ### 1. 范围 / 触发条件
@@ -478,6 +514,7 @@ Telegram 请求：
 `schedule` 是单键枚举对象，只允许以下形状：
 
 - 周期开奖：`{ "periodic": { "intervalSeconds": 60 } }`
+- 时间节点周期开奖：`{ "timeNode": { "intervalSeconds": 300, "startTime": "00:00:00" } }`
 - 每日开奖：`{ "daily": { "time": "21:00:15" } }`
 - 周开奖：`{ "weekly": { "weekdays": ["Tuesday", "Thursday"], "time": "21:00:00" } }`
 
@@ -503,6 +540,9 @@ Telegram 请求：
 | 单玩法位置上限 key 不属于当前玩法 | HTTP 400，返回 `play position select limit key is not allowed for this rule` |
 | 单玩法位置上限小于等于 0 | HTTP 400，返回 `play position select limit must be greater than zero` |
 | 周期开奖秒数为 0 | HTTP 400，返回 `periodic interval must be greater than zero` |
+| 时间节点周期秒数为 0 | HTTP 400，返回 `time node interval must be greater than zero` |
+| 时间节点周期不能整除一天 | HTTP 400，返回 `time node interval must divide one day exactly` |
+| 时间节点起始时间为空或格式错误 | HTTP 400，返回对应 time node 错误 |
 | 每日开奖时间为空 | HTTP 400，返回 `daily draw time is required` |
 | 周开奖星期或时间为空 | HTTP 400，返回对应 weekly 错误 |
 | 合买每份最低金额或参与最低金额小于等于 0 | HTTP 400，返回对应金额错误 |
@@ -1887,16 +1927,17 @@ let entries = finance.credit_settlement(&settlement).await?;
 1. 后端读取彩种 `DrawSchedule`，不由前端计算开奖时间。
 2. 如果同彩种已有期号，默认使用该彩种最新 `scheduledAt` 和传入 `now` 中较晚的时间作为基线。
 3. 周期开奖：`baseline + intervalSeconds`。
-4. 每日固定开奖：选择严格晚于基线的当天或次日配置时间。
-5. 周开奖：选择严格晚于基线的下一个配置星期和时间。
-6. 默认期号编码使用开奖时间格式化为 `YYYYMMDDHHMMSS`。
-7. 如果彩种绑定了外部 API 开奖源，后端必须先读取当前彩种独立绑定来源的最新 `preDrawIssue`，并用该数字期号递增生成未来期号；例如福彩 3D 使用 `api68-fc3d`，体彩排列3使用 `api68-pl3`，体彩排列5使用 `api68-pl5`，不能再让排列 3 复用福彩 3D 的期号锚点。
-8. 如果外部 API 周期彩种返回 `preDrawTime`，期号生成必须使用 `preDrawTime + 周期间隔 * 期号偏移` 对齐外部开奖节奏，不能用服务器当前秒数直接推导开奖时间。
-9. 如果外部 API 周期彩种返回下一期 `drawIssue` 和 `drawTime`，例如 KJAPI 的腾讯分分彩，后端应优先使用这两个字段作为下一期锚点；当 `drawIssue` 已过封盘时间时，应继续递增到后续可销售期号。
-10. 生成计划必须跳过 `saleClosedAt <= now` 的候选期号，避免创建已经封盘却显示为 `open` 的期号；期号递增也要同步跳过这些候选期。
-11. API 来源已配置但无法解析最新数字期号时，生成和预览接口必须返回错误，不能静默回退为时间戳期号；期号可能超过 32 位整数范围，后端必须按 64 位整数处理。
-12. 创建仍复用开奖期号仓储，保持重复期号、彩种匹配、开奖时间和封盘时间校验一致。
-13. 批量预览和批量生成必须在同一次计划中跳过已存在的同彩种同 `issue`，并继续寻找后续可用期号。
+4. 时间节点周期开奖：从 `startTime` 开始，按 `intervalSeconds` 找到严格晚于基线的下一个自然时间节点，例如 `00:00:00 + 300 秒` 生成 `00:05:00`、`00:10:00`。
+5. 每日固定开奖：选择严格晚于基线的当天或次日配置时间。
+6. 周开奖：选择严格晚于基线的下一个配置星期和时间。
+7. 平台开奖默认期号格式为 `{date}{seq4}`，可按彩种 `issueFormat` 配置渲染。
+8. 如果彩种绑定了外部 API 开奖源，后端必须先读取当前彩种独立绑定来源的最新 `preDrawIssue`，并用该数字期号递增生成未来期号；例如福彩 3D 使用 `api68-fc3d`，体彩排列3使用 `api68-pl3`，体彩排列5使用 `api68-pl5`，不能再让排列 3 复用福彩 3D 的期号锚点。
+9. 如果外部 API 周期彩种返回 `preDrawTime`，期号生成必须使用 `preDrawTime + 周期间隔 * 期号偏移` 对齐外部开奖节奏，不能用服务器当前秒数直接推导开奖时间。
+10. 如果外部 API 周期彩种返回下一期 `drawIssue` 和 `drawTime`，例如 KJAPI 的腾讯分分彩，后端应优先使用这两个字段作为下一期锚点；当 `drawIssue` 已过封盘时间时，应继续递增到后续可销售期号。
+11. 生成计划必须跳过 `saleClosedAt <= now` 的候选期号，避免创建已经封盘却显示为 `open` 的期号；期号递增也要同步跳过这些候选期。
+12. API 来源已配置但无法解析最新数字期号时，生成和预览接口必须返回错误，不能静默回退为时间戳期号；期号可能超过 32 位整数范围，后端必须按 64 位整数处理。
+13. 创建仍复用开奖期号仓储，保持重复期号、彩种匹配、开奖时间和封盘时间校验一致。
+14. 批量预览和批量生成必须在同一次计划中跳过已存在的同彩种同 `issue`，并继续寻找后续可用期号。
 
 ### 4. 校验与错误矩阵
 
@@ -1910,6 +1951,7 @@ let entries = finance.credit_settlement(&settlement).await?;
 | `saleCloseLeadSeconds=0` | HTTP 400，返回 `sale close lead seconds must be greater than zero` |
 | `count` 小于 1 或大于 50 | HTTP 400，返回 `draw issue generation count must be between 1 and 50` |
 | 周期开奖秒数为 0 | HTTP 400，返回 `periodic interval must be greater than zero` |
+| 时间节点周期配置无效 | HTTP 400，返回对应 time node 错误 |
 | 每日或周开奖时间格式错误 | HTTP 400，返回 `... must use HH:mm:ss format` |
 | 周开奖星期为空或不支持 | HTTP 400，返回 weekday 错误 |
 | 已配置 API 来源但最新期号为空或不是数字 | HTTP 500，返回 API 来源最新期号错误，不生成错误期号 |
@@ -1918,6 +1960,8 @@ let entries = finance.credit_settlement(&settlement).await?;
 ### 5. Good / Base / Bad Cases
 
 - Good：`ssc60` 配置 `periodic.intervalSeconds=60`，`now=2026-06-02 20:00:00`，生成 `scheduledAt=2026-06-02 20:01:00`。
+- Good：`au5-node` 配置 `timeNode.intervalSeconds=300/startTime=00:00:00`，`now=2026-06-02 00:00:00`，生成 `scheduledAt=2026-06-02 00:05:00`。
+- Good：同样的 `au5-node` 本地已有偏移开奖时间 `2026-06-10 20:18:27`，`now=2026-06-10 20:18:52` 时下一期应回到 `2026-06-10 20:20:00`。
 - Good：`fc3d` 配置每日 `21:00:15`，API68 最新 `preDrawIssue=2026143`，`now=2026-06-02 22:00:00`，生成 `issue=2026144`、`scheduledAt=2026-06-03 21:00:15`。
 - Good：`pl3` 使用 `api68-pl3` 来源时，按体彩排列3接口返回的最新期号生成下一期。
 - Good：`pl5` 使用 `api68-pl5` 来源时，按体彩排列5接口返回的最新期号生成下一期，号码类型为 `fiveDigit`。
@@ -1934,7 +1978,7 @@ let entries = finance.credit_settlement(&settlement).await?;
 
 ### 6. 必要测试
 
-- 后端需要覆盖周期、每日、周开奖三种计划。
+- 后端需要覆盖周期、时间节点周期、每日、周开奖四种计划。
 - 后端需要覆盖已有期号时从最新期号继续生成。
 - 后端需要覆盖 API68 最新 `preDrawIssue` 驱动福彩 3D、体彩排列3和体彩排列5真实期号生成。
 - 后端需要覆盖 API68 周期彩种使用 `preDrawTime` 对齐开奖时间，并跳过已过封盘时间的候选期。
@@ -2438,7 +2482,7 @@ await createAdmin({
 15. `rhythm` 策略使用封盘前 90 秒窗口：距离封盘 90-61 秒目标进度 40%，60-31 秒目标进度 60%，30-16 秒目标进度 80%，最后 15 秒才允许补到 100% 并触发满单成单；用户或后台发起的合买在封盘点到开奖前仍保留兜底补满能力。
 16. `beforeDraw` 策略不按阶段追加认购，而是在距离开奖时间小于等于 `groupBuyFillBeforeDrawSeconds` 时一次性补满剩余金额；如果当前时间已经超过开奖时间则跳过。
 17. 合买机器人每次补单都必须生成新的参与记录 ID，不允许复用同一个机器人参与记录一次性覆盖剩余金额。
-18. 用户端合买计划响应必须隐藏 `G-ROBOT-` 开头的机器人计划真实发起人和机器人标题：`initiatorDisplay` 返回按计划 ID 稳定生成的普通会员展示名，`title` 返回“彩种 第期号期合买”，不得把 `U90001`、`agent_alpha`、机器人名称或“合买机器人”暴露给手机端；后台机器人执行结果和后台合买管理仍可保留真实配置用于运营排查。
+18. 用户端合买计划响应必须隐藏 `G-ROBOT-` 开头的机器人计划真实发起人和机器人标题：`initiatorDisplay` 返回按计划 ID 稳定生成的普通用户昵称式展示名，机器人认购参与人也使用同一类随机昵称，不得使用“某某会员”模板；`title` 返回“彩种 第期号期合买”，不得把 `U90001`、`agent_alpha`、机器人名称或“合买机器人”暴露给手机端；后台机器人执行结果和后台合买管理仍可保留真实配置用于运营排查。
 
 ### 4. 校验与错误矩阵
 
@@ -2473,7 +2517,7 @@ await createAdmin({
 - Good：进入补单窗口后，合买机器人按 40%、60%、80%、100% 的阶段目标追加机器人参与记录，最后 15 秒才补满计划并生成真实投注订单。
 - Good：用户或后台已经发起同彩种当前期未满单合买时，合买机器人同样按临近封盘阶段目标追加机器人参与记录，不一次性补足剩余金额。
 - Good：同一期重复执行 `POST /api/admin/robots/run` 时返回“本期机器人合买计划已处理”等跳过原因，不重复创建计划。
-- Good：用户端查看机器人发起的合买计划时，只看到普通会员式发起人和通用合买标题，不会看到机器人账号、机器人名称或机器人说明。
+- Good：用户端查看机器人发起的合买计划时，只看到普通用户昵称式发起人和通用合买标题，不会看到机器人账号、机器人名称、机器人说明或“某某会员”模板。
 - Good：机器人账户余额被扣到不足时，执行结果 `ledgerEntries` 先出现正向 `manualAdjustment` 授信流水，再出现 `groupBuyDebit` 扣款流水。
 - Base：无数据库环境下使用内存机器人仓储，服务重启后恢复种子机器人配置。
 - Bad：机器人页面直接读取 dashboard 静态 `robots`，保存后列表与首页摘要会漂移。
@@ -3253,7 +3297,7 @@ await createInvitation({
 - Good：后台和手机端合买计划列表都按期号倒序展示，分页前已经完成排序，最新期号优先出现在第一页。
 - Good：后台合买计划列表显示每条计划的创建时间，且详情加载、创建计划和新增参与人后本地摘要仍保留 `createdAt`。
 - Good：后台合买管理默认只展示非机器人发起计划，打开“显示机器人数据”后才纳入机器人发起计划；机器人补单参与的用户计划仍保持可见。
-- Good：普通用户 `regular_user` 发起的用户端合买响应中 `initiatorDisplay` 返回 `r**********r`，机器人计划也返回同样脱敏后的普通会员式展示名。
+- Good：普通用户 `regular_user` 发起的用户端合买响应中 `initiatorDisplay` 返回 `r**********r`，机器人计划返回同样脱敏后的普通用户昵称式展示名，且不包含“会员”。
 - Good：普通用户发起的用户端合买响应返回该用户当前 `initiatorAvatarUrl`，机器人计划返回空头像并由手机端显示脱敏名首字。
 - Base：无数据库环境下使用内存合买仓储，服务重启后恢复种子合买计划；数据库模式下使用 `group_buy_plans`、`group_buy_participants` 和 `ledger_entries` 持久化。
 - Bad：前端自行计算 `shareCount` 并提交给后端，后续会与彩种合买配置漂移。

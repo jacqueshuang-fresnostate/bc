@@ -48,6 +48,7 @@ export interface LotteryCategoryConfig {
 
 export type DrawSchedule =
   | { periodic: { intervalSeconds: number } }
+  | { timeNode: { intervalSeconds: number; startTime: string } }
   | { daily: { time: string } }
   | { weekly: { weekdays: string[]; time: string } };
 

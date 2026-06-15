@@ -426,6 +426,10 @@ fn next_scheduled_at(schedule: &DrawSchedule, baseline: NaiveDateTime) -> ApiRes
                 .checked_add_signed(Duration::seconds(i64::from(*interval_seconds)))
                 .ok_or_else(|| ApiError::BadRequest("scheduled time is out of range".to_string()))
         }
+        DrawSchedule::TimeNode {
+            interval_seconds,
+            start_time,
+        } => next_time_node_at(*interval_seconds, start_time, baseline),
         DrawSchedule::Daily { time } => {
             let draw_time = parse_time(time, "daily draw time")?;
             let today = combine_date_time(baseline.date(), draw_time)?;
@@ -466,6 +470,43 @@ fn next_scheduled_at(schedule: &DrawSchedule, baseline: NaiveDateTime) -> ApiRes
             ))
         }
     }
+}
+
+/// 按自然时间节点计算下一期开奖时间，例如 00:00 起点、300 秒周期会生成 00:05/00:10。
+fn next_time_node_at(
+    interval_seconds: u32,
+    start_time: &str,
+    baseline: NaiveDateTime,
+) -> ApiResult<NaiveDateTime> {
+    if interval_seconds == 0 {
+        return Err(ApiError::BadRequest(
+            "time node interval must be greater than zero".to_string(),
+        ));
+    }
+    if 86_400 % interval_seconds != 0 {
+        return Err(ApiError::BadRequest(
+            "time node interval must divide one day exactly".to_string(),
+        ));
+    }
+
+    let start_time = parse_time(start_time, "time node start time")?;
+    let start_at = combine_date_time(baseline.date(), start_time)?;
+    if baseline < start_at {
+        return Ok(start_at);
+    }
+
+    let interval_seconds = i64::from(interval_seconds);
+    let elapsed_seconds = baseline
+        .signed_duration_since(start_at)
+        .num_seconds()
+        .max(0);
+    let next_step = elapsed_seconds
+        .checked_div(interval_seconds)
+        .and_then(|step| step.checked_add(1))
+        .ok_or_else(|| ApiError::BadRequest("time node interval is invalid".to_string()))?;
+    start_at
+        .checked_add_signed(Duration::seconds(next_step * interval_seconds))
+        .ok_or_else(|| ApiError::BadRequest("scheduled time is out of range".to_string()))
 }
 
 /// 按给定格式解析时间戳。
@@ -891,6 +932,52 @@ mod tests {
         assert_eq!(issue.issue, "202606020001");
         assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
         assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:59");
+    }
+
+    #[tokio::test]
+    async fn time_node_schedule_aligns_to_configured_clock_nodes() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::TimeNode {
+            interval_seconds: 300,
+            start_time: "00:00:00".to_string(),
+        });
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-02 00:00:00"))
+            .await
+            .expect("time node issue can be generated");
+
+        assert_eq!(issue.issue, "202606020001");
+        assert_eq!(issue.scheduled_at, "2026-06-02 00:05:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-02 00:04:59");
+    }
+
+    #[tokio::test]
+    async fn time_node_schedule_realigns_after_offset_existing_issue() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::TimeNode {
+            interval_seconds: 300,
+            start_time: "00:00:00".to_string(),
+        });
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "20260610201827".to_string(),
+                    scheduled_at: "2026-06-10 20:18:27".to_string(),
+                    sale_closed_at: "2026-06-10 20:18:17".to_string(),
+                },
+            )
+            .await
+            .expect("existing offset issue can be created");
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-10 20:18:52"))
+            .await
+            .expect("time node schedule can realign");
+
+        assert_eq!(issue.issue, "202606100001");
+        assert_eq!(issue.scheduled_at, "2026-06-10 20:20:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:59");
     }
 
     #[tokio::test]

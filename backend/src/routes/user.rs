@@ -95,23 +95,10 @@ const MAX_USER_BET_BATCH_SIZE: usize = 50;
 const REALTIME_HEARTBEAT_SECONDS: u64 = 30;
 const ROBOT_GROUP_BUY_PLAN_PREFIX: &str = "G-ROBOT-";
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-const ROBOT_GROUP_BUY_DISPLAY_NAMES: &[&str] = &[
-    "星河会员",
-    "晨光会员",
-    "锦鲤会员",
-    "红运会员",
-    "云端会员",
-    "启航会员",
-    "微光会员",
-    "稳胆会员",
-    "鸿运会员",
-    "青山会员",
-    "金榜会员",
-    "晴川会员",
-    "风铃会员",
-    "长胜会员",
-    "南山会员",
-    "海棠会员",
+const ROBOT_GROUP_BUY_NICKNAME_BASES: &[&str] = &[
+    "南风", "晴岚", "星野", "北辰", "橙光", "江月", "云起", "青柠", "初夏", "山海", "一念", "雾岛",
+    "星眠", "晚舟", "听雨", "拾光", "月白", "海盐", "半夏", "松间", "清欢", "明澈", "若晴", "知夏",
+    "予安", "映川", "星落", "云栖", "澄意", "青禾", "晚晴", "朝露",
 ];
 
 #[derive(Debug, Serialize)]
@@ -1982,10 +1969,10 @@ fn user_group_buy_participant_display(
     }
     if is_group_buy_robot_user_id(&participant.user_id) {
         let base_hash = stable_group_buy_display_hash(&participant.id);
-        let base = ROBOT_GROUP_BUY_DISPLAY_NAMES
-            .get(base_hash as usize % ROBOT_GROUP_BUY_DISPLAY_NAMES.len())
+        let base = ROBOT_GROUP_BUY_NICKNAME_BASES
+            .get(base_hash as usize % ROBOT_GROUP_BUY_NICKNAME_BASES.len())
             .copied()
-            .unwrap_or("幸运会员");
+            .unwrap_or("南风");
         let suffix = base_hash % 9_000 + 1_000;
         return mask_group_buy_initiator_display(&format!("{base}{suffix}"));
     }
@@ -2051,10 +2038,10 @@ fn is_robot_group_buy_plan(plan: &GroupBuyPlan) -> bool {
 /// 为机器人合买计划生成稳定但不暴露机器人的展示名。
 fn robot_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
     let base_hash = stable_group_buy_display_hash(&plan.id);
-    let base = ROBOT_GROUP_BUY_DISPLAY_NAMES
-        .get(base_hash as usize % ROBOT_GROUP_BUY_DISPLAY_NAMES.len())
+    let base = ROBOT_GROUP_BUY_NICKNAME_BASES
+        .get(base_hash as usize % ROBOT_GROUP_BUY_NICKNAME_BASES.len())
         .copied()
-        .unwrap_or("幸运会员");
+        .unwrap_or("南风");
     let suffix_hash = stable_group_buy_display_hash(&format!("{}:{}", plan.id, plan.issue));
     let suffix = suffix_hash % 9_000 + 1_000;
 
@@ -2997,6 +2984,7 @@ mod tests {
         assert!(first_view.initiator_display.contains('*'));
         assert!(!first_view.initiator_display.contains("机器人"));
         assert!(!first_view.initiator_display.contains("agent"));
+        assert!(!first_view.initiator_display.contains("会员"));
         assert_eq!(first_view.title, "测试彩 第20260605200000期合买");
         assert_ne!(first_view.initiator_display, second_view.initiator_display);
         assert_eq!(second_view.title, "测试彩 第20260605200100期合买");
@@ -3104,6 +3092,7 @@ mod tests {
         assert_eq!(view.participants[1].share_count, 2);
         assert!(!view.participants[2].display_name.contains("agent"));
         assert!(!view.participants[2].display_name.contains("机器人"));
+        assert!(!view.participants[2].display_name.contains("会员"));
         assert!(view.participants[2].display_name.contains('*'));
     }
 

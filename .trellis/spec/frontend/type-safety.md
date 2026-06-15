@@ -56,6 +56,7 @@ export type DrawMode = 'platform' | 'api' | 'manual';
 - 金额字段保留最小货币单位字段名，例如 `amountMinor`、`balanceMinor`。
 - 管理后台面向运营输入金额时使用“元”字符串，提交前统一通过 `src/utils/moneyInput.ts` 转换为 `amountMinor` 等最小货币单位字段；不要让运营表单直接输入“分”。
 - 返利比例使用 `defaultRechargeRebateBasisPoints`，不要使用浮点百分比字段。
+- `DrawSchedule` 必须和后端单键枚举保持一致，当前支持 `periodic`、`timeNode`、`daily`、`weekly`；新增排期类型时必须同步更新后台类型、彩种表单、dashboard、彩种控制台和展示文案。
 
 ---
 

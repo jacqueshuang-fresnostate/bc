@@ -349,7 +349,10 @@ fn ticker_items_from_cards(cards: &[MobileLotteryCard]) -> Vec<MobileLotteryTick
 /// 返回周期开奖周期秒数，非周期彩种返回空。
 fn draw_interval_seconds(schedule: &DrawSchedule) -> Option<u32> {
     match schedule {
-        DrawSchedule::Periodic { interval_seconds } => Some(*interval_seconds),
+        DrawSchedule::Periodic { interval_seconds }
+        | DrawSchedule::TimeNode {
+            interval_seconds, ..
+        } => Some(*interval_seconds),
         DrawSchedule::Daily { .. } | DrawSchedule::Weekly { .. } => None,
     }
 }
@@ -358,6 +361,9 @@ fn draw_interval_seconds(schedule: &DrawSchedule) -> Option<u32> {
 fn schedule_text(schedule: &DrawSchedule) -> String {
     match schedule {
         DrawSchedule::Periodic { interval_seconds } => interval_text(*interval_seconds),
+        DrawSchedule::TimeNode {
+            interval_seconds, ..
+        } => format!("按时间节点 {}", interval_text(*interval_seconds)),
         DrawSchedule::Daily { time } => format!("每日 {time}"),
         DrawSchedule::Weekly { weekdays, time } => {
             let weekdays = weekdays

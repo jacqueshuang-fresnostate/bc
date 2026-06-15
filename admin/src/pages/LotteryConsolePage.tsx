@@ -1823,6 +1823,9 @@ function scheduleText(lottery: LotteryKind) {
   if ('periodic' in schedule) {
     return `${schedule.periodic.intervalSeconds} 秒一期`;
   }
+  if ('timeNode' in schedule) {
+    return `时间节点 ${schedule.timeNode.startTime} 起，每 ${schedule.timeNode.intervalSeconds} 秒一期`;
+  }
   if ('daily' in schedule) {
     return `每日 ${schedule.daily.time}`;
   }

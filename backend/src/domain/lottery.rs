@@ -41,11 +41,22 @@ pub enum DrawMode {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
-/// 彩种开奖排期配置，支持周期、每日固定时间和每周固定时间。
+/// 彩种开奖排期配置，支持相对周期、自然时间节点周期、每日固定时间和每周固定时间。
 pub enum DrawSchedule {
-    Periodic { interval_seconds: u32 },
-    Daily { time: String },
-    Weekly { weekdays: Vec<String>, time: String },
+    Periodic {
+        interval_seconds: u32,
+    },
+    TimeNode {
+        interval_seconds: u32,
+        start_time: String,
+    },
+    Daily {
+        time: String,
+    },
+    Weekly {
+        weekdays: Vec<String>,
+        time: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -171,26 +182,32 @@ mod tests {
     #[test]
     /// 处理 draw_schedule_uses_camel_case_variant_fields 的具体内部流程。
     fn draw_schedule_uses_camel_case_variant_fields() {
-        let schedule = DrawSchedule::Periodic {
-            interval_seconds: 60,
+        let schedule = DrawSchedule::TimeNode {
+            interval_seconds: 300,
+            start_time: "00:00:00".to_string(),
         };
 
         let value = serde_json::to_value(schedule).expect("schedule can be serialized");
 
-        assert_eq!(value, json!({ "periodic": { "intervalSeconds": 60 } }));
+        assert_eq!(
+            value,
+            json!({ "timeNode": { "intervalSeconds": 300, "startTime": "00:00:00" } })
+        );
     }
 
     #[test]
     /// 处理 draw_schedule_accepts_camel_case_variant_fields 的具体内部流程。
     fn draw_schedule_accepts_camel_case_variant_fields() {
-        let schedule: DrawSchedule =
-            serde_json::from_value(json!({ "periodic": { "intervalSeconds": 60 } }))
-                .expect("schedule can be deserialized");
+        let schedule: DrawSchedule = serde_json::from_value(
+            json!({ "timeNode": { "intervalSeconds": 300, "startTime": "00:00:00" } }),
+        )
+        .expect("schedule can be deserialized");
 
         assert_eq!(
             schedule,
-            DrawSchedule::Periodic {
-                interval_seconds: 60
+            DrawSchedule::TimeNode {
+                interval_seconds: 300,
+                start_time: "00:00:00".to_string()
             }
         );
     }

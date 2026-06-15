@@ -44,6 +44,7 @@ YYYYMMDDHHMMSS_describe_change.sql
 
 - `lotteries.issue_format` 保存平台开奖期号生成格式，默认 `{date}{seq4}`，即 `yyyyMMdd` 加 4 位每日递增序号。
 - `issue_format` 只控制 `draw_mode=platform` 的本地期号渲染；API 彩种期号仍来自开奖源锚点顺延。
+- `lotteries.schedule` 使用 JSONB 保存开奖时间配置；`timeNode` 表示自然时间节点周期，例如 `{"timeNode":{"intervalSeconds":300,"startTime":"00:00:00"}}` 会按 `00:05、00:10、00:15...` 生成开奖时间。
 - 新增或修改彩种字段时必须同步更新迁移字段注释，避免数据库结构说明落后于后台能力。
 
 ## 场景：跨仓储事务协调
