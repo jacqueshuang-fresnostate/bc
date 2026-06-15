@@ -77,9 +77,9 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端“我的账户”头像设置必须使用用户端 `POST /api/user/avatar/upload` 或 `PUT /api/user/avatar`，不能复用后台 `/api/admin/image-bed/upload`；上传成功后需要同步刷新页面资料和 Pinia 登录态，保证返回个人中心或重新打开应用时继续展示最新 `avatarUrl`。头像点击上传优先使用原生 `input[type="file"]` 与 `label for` 绑定，避免自定义上传插槽在移动端点击不触发；头像视觉必须同时固定宽高并使用 `border-radius: 9999px` 保持正圆。
 - 手机端头像图片展示必须通过公共 `CachedAvatarImage` 和 `avatarImageCache` 缓存，优先读取内存和本地 data URL 缓存；Tauri 打包场景可通过 Rust 命令下载远程头像并转为 data URL，避免个人中心和聊天大厅对同一个图床头像地址反复请求。缓存失败时才能回退原始 URL。
 - 手机端通过 Tauri 打包 APK 时，`mobile/src-tauri/capabilities` 必须显式声明主窗口需要的能力；凡是前端使用 `@tauri-apps/plugin-store`、剪贴板插件或自定义 `invoke` 命令，都要同步维护 capability，并在 Android 构建后检查目标目录生成的 `capabilities.json` 不为空。
-- 手机端邀请中心必须使用当前系统的 `GET /api/user/invitations/summary` 当前用户接口，不再请求旧 `/auth/invitations/summary`；页面消费 `canInvite`、`invitationCode`、`directUsers` 等 `camelCase` 字段，普通用户只展示邀请码标识和无可用邀请权限提示，不允许自行把普通用户邀请码当成有效邀请入口。
+- 手机端邀请中心必须使用当前系统的 `GET /api/user/invitations/summary` 当前用户接口，不再请求旧 `/auth/invitations/summary`；页面消费 `canInvite`、`invitationCode`、`directUsers` 等 `camelCase` 字段，普通用户只展示邀请码标识和无可用邀请权限提示，不允许自行把普通用户邀请码当成有效邀请入口。直属下级列表展示注册时间时优先使用 `registeredAt`，不要把邀请关系 `createdAt` 当成注册时间；充值与提现金额分别读取 `totalDepositMinor` 和 `totalWithdrawalMinor`。
 - 手机端下注页必须使用 `/api/user/bet/page-config/{lottery_id}`、`POST /api/user/bet/orders` 和 `GET /api/user/bet/orders`，不再调用旧 `/api/bet/*`。提交时前端只负责把位置宫格、胆拖、直选组合和大小单双转换成后端 `selection`，订单金额仍由后端按玩法展开注数和单注金额计算。
-- 手机端下注页不能只依赖 `round.status=opening` 才刷新下一期；如果 `round.status=selling` 但 `sale_stop_at` 已经小于等于当前时间，也必须视为封盘中并启动静默轮询，同时禁用普通投注和发起合买，避免调度短暂滞后时页面卡在“开奖中”或继续提交旧期号。轮询拿到下一期 `selling` 后必须恢复倒计时和投注按钮，不得继续保留旧期的“开奖中”遮罩。
+- 手机端下注页不能只依赖 `round.status=opening` 才刷新下一期；如果 `round.status=selling` 但 `sale_stop_at` 已经小于等于当前时间，也必须视为封盘中并启动静默轮询，同时禁用普通投注和发起合买，顶部期号卡片也要归一化展示为“开奖中”，避免调度短暂滞后时页面卡在旧销售态或继续提交旧期号。轮询拿到下一期 `selling` 后必须恢复倒计时和投注按钮，不得继续保留旧期的“开奖中”遮罩。
 - 手机端下注页顶部的最近开奖号码球必须比开奖历史页更紧凑，默认直径控制在 20-24px，号码容器必须 `flex-wrap` 且设置最大宽度；360px 以下不能使用固定不换行的一排大球，极窄屏需要允许“上期开奖”和号码分成上下两行，避免 5 位开奖号码跑出屏幕。
 - 手机端下注页读取玩法 `positionSelectLimits` 时必须按 `positionKey` 精准限制对应位置的选号数量；未配置的位置不限制。不要只用全局 `maxSelectPerPosition` 套到所有位置，例如前 3 直选只配置 `first=7` 时，第二位和第三位仍应保持不限制。位置存在最大选号数时，“全”按钮应从当前可选号码池随机抽取对应数量，不能固定取 `0,1,2,3,4,5,6` 这类前缀；“大/小/单/双”等预设按钮仍按预设集合裁剪。
 - 手机端下注页普通投注或发起合买成功后必须清空本地购彩篮，并用 `router.replace({ name: 'Home' })` 自动返回首页；接口失败时才停留在下注页并刷新余额、期号状态，方便用户继续处理。
@@ -114,7 +114,8 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 后台彩种管理列表必须按销售状态提供 Semi UI `Tabs` 分类，包括“全部、销售中、已停售”；列表数据持续增长时必须复用公共 `PageControls` 分页。销售状态列使用 Semi UI `Switch` 控制，旁边保留中文状态标签，不能退回普通按钮或只用颜色表达状态。
 - 后台彩种新增/编辑表单必须提供“开奖号码控制”开关，并提交 `drawControlEnabled`；彩种控制台只能在该开关开启时展示“控制”按钮，关闭时不得让运营误以为该彩种可以控开。
 - 后台彩种新增/编辑表单在开奖模式选择“API 接口”时必须显示“API开奖延迟秒数”输入项；该值提交为非负整数，只用于调度延迟请求开奖源，不能用来改变前端官方开奖倒计时。
-- 后台彩种新增/编辑表单在开奖模式选择“平台开奖”时必须显示“平台期号格式”输入项；默认 `{date}{seq4}`，展示说明必须提示会生成类似 `202606130001` 的日期加 4 位序号，提交字段为 `issueFormat`，只影响平台开奖期号生成，不能影响 API 开奖源期号同步。
+- 后台彩种新增/编辑表单必须显示“封盘提前（秒）”输入项并提交 `saleCloseLeadSeconds`；最小值为 `1`，说明文案要明确生成新期号时使用计划开奖时间减去该秒数作为封盘时间，不同彩种可以单独配置。
+- 后台彩种新增/编辑表单在开奖模式选择“平台开奖”时必须显示“平台期号格式”输入项；默认 `{date}{seq4}`，展示说明必须提示会生成类似 `202606130001` 的日期加 4 位序号，并列出 `{seq1}`、`{seq2}`、`{seq3}`、`{seq4}` 四种每日递增序号变量；提交字段为 `issueFormat`，只影响平台开奖期号生成，不能影响 API 开奖源期号同步。
 - 后台开奖管理的自动任务结果和调度历史只展示跳过数量汇总，不展开 `skippedIssues`、`skippedLotteries` 的逐条黄色列表；停售彩种或旧期号跳过属于常规调度结果，避免把页面刷成告警墙。真实错误仍使用红色错误提示展示。
 - 后台合买管理列表必须在最右侧提供“操作”列，点击“查看详情”后才加载并通过 Semi UI `SideSheet` 显示对应计划维护区；列表必须展示每条计划的创建时间，方便运营核对计划生成顺序。页面初次加载和创建计划后不能自动展开“参与记录”或“计划详情”。详情抽屉必须先展示“计划详情”，再展示“参与记录”；主页面不保留常驻详情卡片、顶部统计卡片或右侧选择提示，避免挤占列表扫描空间。
 - 后台合买管理的“新增合买计划”属于维护表单，必须通过顶部按钮打开 Semi UI `SideSheet`；合买列表页面不保留常驻新增表单，创建成功后关闭抽屉并刷新列表，不能自动打开刚创建计划的详情。

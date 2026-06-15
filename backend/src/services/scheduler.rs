@@ -18,7 +18,7 @@ use crate::{
             DrawAutomationSkippedIssue, DrawIssue, DrawIssueGenerationPreview, DrawIssueStatus,
             GenerateDrawIssuesRequest,
         },
-        lottery::{DrawMode, LotteryKind},
+        lottery::{DrawMode, LotteryKind, DEFAULT_SALE_CLOSE_LEAD_SECONDS},
         robot::GroupBuyRobotRun,
     },
     error::{ApiError, ApiResult},
@@ -32,10 +32,7 @@ use crate::{
             enum_from_string, enum_to_string, from_json, to_json, BusinessDatabase,
         },
         draw::DrawRepository,
-        draw_generation::{
-            generate_draw_issue_batch, preview_draw_issue_generation,
-            DEFAULT_SALE_CLOSE_LEAD_SECONDS,
-        },
+        draw_generation::{generate_draw_issue_batch, preview_draw_issue_generation},
         finance::FinanceRepository,
         group_buy::GroupBuyRepository,
         group_buy_robot::run_group_buy_robots,
@@ -1189,7 +1186,7 @@ async fn ensure_non_api_future_draw_issues(
                 lottery_id: lottery.id.clone(),
                 now: now.to_string(),
                 count,
-                sale_close_lead_seconds: Some(config.sale_close_lead_seconds),
+                sale_close_lead_seconds: Some(lottery.sale_close_lead_seconds),
             },
         )
         .await;
@@ -1215,7 +1212,7 @@ async fn ensure_non_api_future_draw_issues(
 
 async fn ensure_api_future_draw_issues(
     draws: &DrawRepository,
-    config: &DrawSchedulerConfig,
+    _config: &DrawSchedulerConfig,
     now: &str,
     pending_generations: Vec<PendingApiIssueGeneration>,
 ) -> ApiResult<(Vec<DrawIssue>, Vec<DrawSchedulerSkippedLottery>)> {
@@ -1223,7 +1220,6 @@ async fn ensure_api_future_draw_issues(
     for pending in pending_generations {
         let draws = draws.clone();
         let now = now.to_string();
-        let sale_close_lead_seconds = config.sale_close_lead_seconds;
         handles.push(tokio::spawn(async move {
             let lottery = pending.lottery;
             let result = preview_draw_issue_generation(
@@ -1233,7 +1229,7 @@ async fn ensure_api_future_draw_issues(
                     lottery_id: lottery.id.clone(),
                     now,
                     count: pending.count,
-                    sale_close_lead_seconds: Some(sale_close_lead_seconds),
+                    sale_close_lead_seconds: Some(lottery.sale_close_lead_seconds),
                 },
             )
             .await;

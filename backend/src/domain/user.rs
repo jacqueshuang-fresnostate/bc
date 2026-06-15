@@ -38,6 +38,8 @@ pub struct UserSummary {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub invite_code: String,
+    #[serde(default)]
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -192,6 +194,8 @@ pub struct UserInvitationDirectUser {
     pub invite_status: InviteStatus,
     pub rebate_enabled: bool,
     pub total_deposit_minor: i64,
+    pub total_withdrawal_minor: i64,
+    pub registered_at: String,
     pub created_at: String,
 }
 

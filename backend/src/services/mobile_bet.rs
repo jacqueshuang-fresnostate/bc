@@ -576,6 +576,7 @@ mod tests {
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
             issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            sale_close_lead_seconds: crate::domain::lottery::DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 60,
             },

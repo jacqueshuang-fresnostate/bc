@@ -124,6 +124,8 @@ const roundSelling = computed(() => config.value?.round.status === 'selling' && 
 const roundAcceptingBet = computed(() => roundSelling.value && !roundSaleClosed.value)
 // 后端短暂未把过期 open 期关盘时，前端也要进入轮询，避免页面停在“开奖中”。
 const roundNeedsOpeningRefresh = computed(() => roundOpening.value || (roundSelling.value && roundSaleClosed.value))
+// 展示态和投注态分开：封盘时间已到后，即使后端还短暂返回 selling，页面也展示为开奖中。
+const roundDisplayStatus = computed(() => roundNeedsOpeningRefresh.value ? 'opening' : (config.value?.round.status || ''))
 const canSubmitCurrentOrder = computed(() => roundAcceptingBet.value && (engine.draftBetCount.value > 0 || engine.cartTotalCount.value > 0))
 const submitButtonText = computed(() => {
   if (groupBuyMode.value) return '发起合买'
@@ -462,7 +464,7 @@ onBeforeUnmount(() => {
     <MobileTopBar :title="config?.lottery.name || lotteryCode" :balance="balance" @back="router.back()" />
 
     <main class="bet-page-main mx-auto max-w-md space-y-3 px-4 pt-4" :class="{ 'bet-page-main--group-buy': groupBuyMode }">
-      <BetRoundInfoCard :issue="config?.round.issue || ''" :status="config?.round.status || ''" :countdown-text="countdownText" :latest-issue="latestIssue" :latest-numbers="latestNumbers" />
+      <BetRoundInfoCard :issue="config?.round.issue || ''" :status="roundDisplayStatus" :countdown-text="countdownText" :latest-issue="latestIssue" :latest-numbers="latestNumbers" />
 
       <button
         class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#f1dedb] bg-[#fffdfc] px-4 py-3 text-left shadow-sm shadow-red-900/5 transition active:scale-[0.99] active:bg-[#fff7f5]"

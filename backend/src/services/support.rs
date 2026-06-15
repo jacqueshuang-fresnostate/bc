@@ -961,6 +961,7 @@ mod tests {
                     balance_minor: 0,
                     agent_id: None,
                     invite_code: "USER1".to_string(),
+                    created_at: "2026-06-05 10:00:00".to_string(),
                 }],
             )
             .await

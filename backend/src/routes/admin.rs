@@ -3521,7 +3521,6 @@ async fn sync_lottery_draw_source(
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<DrawSourceSyncResult>>> {
     let lottery = state.lotteries.get(&id).await?;
-    let config = state.scheduler.config()?;
     let now = Local::now()
         .naive_local()
         .format(TIMESTAMP_FORMAT)
@@ -3532,7 +3531,7 @@ async fn sync_lottery_draw_source(
         .sync_api_draw_source(
             &lottery,
             &now,
-            config.sale_close_lead_seconds,
+            lottery.sale_close_lead_seconds,
             &protected_issues,
         )
         .await?;
@@ -3638,7 +3637,7 @@ async fn align_draw_issue_plan_after_sale_on(
             lottery_id: lottery.id.clone(),
             now,
             count,
-            sale_close_lead_seconds: Some(config.sale_close_lead_seconds),
+            sale_close_lead_seconds: Some(lottery.sale_close_lead_seconds),
         },
     )
     .await
@@ -4348,6 +4347,7 @@ mod tests {
             kind: UserKind::Regular,
             status: UserStatus::Active,
             username: username.to_string(),
+            created_at: "2026-06-05 10:00:00".to_string(),
         }
     }
 

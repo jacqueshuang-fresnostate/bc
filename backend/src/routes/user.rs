@@ -770,8 +770,13 @@ async fn get_user_invitation_summary(
             &invite_records,
             can_invite,
         );
+        let withdrawal_totals = direct_user_withdrawal_totals(&state).await?;
         let mut direct_users = Vec::with_capacity(candidates.len());
         for candidate in candidates {
+            let total_withdrawal_minor = withdrawal_totals
+                .get(&candidate.user.id)
+                .copied()
+                .unwrap_or_default();
             direct_users.push(UserInvitationDirectUser {
                 id: candidate.user.id.clone(),
                 username: candidate.user.username.clone(),
@@ -779,6 +784,8 @@ async fn get_user_invitation_summary(
                 invite_status: candidate.invite_status,
                 rebate_enabled: candidate.rebate_enabled,
                 total_deposit_minor: direct_user_recharge_minor(&state, &candidate.user.id).await?,
+                total_withdrawal_minor,
+                registered_at: candidate.user.created_at.clone(),
                 created_at: candidate.created_at,
             });
         }
@@ -898,6 +905,27 @@ fn collect_direct_invitation_candidates(
 async fn direct_user_recharge_minor(state: &AppState, user_id: &str) -> ApiResult<i64> {
     let entries = state.finance.user_ledger_entries(user_id).await?;
     sum_recharge_credits_minor(&entries)
+}
+
+/// 汇总全部已通过提现订单，供邀请中心展示直属下级提现金额。
+async fn direct_user_withdrawal_totals(state: &AppState) -> ApiResult<BTreeMap<String, i64>> {
+    let orders = state.withdrawals.approved_orders().await?;
+    sum_approved_withdrawal_minor_by_user(&orders)
+}
+
+/// 按用户汇总已通过提现金额，忽略异常的非正数金额并保护溢出。
+fn sum_approved_withdrawal_minor_by_user(
+    orders: &[WithdrawalOrderSummary],
+) -> ApiResult<BTreeMap<String, i64>> {
+    let mut totals = BTreeMap::new();
+    for order in orders.iter().filter(|order| order.amount_minor > 0) {
+        let current = totals.entry(order.user_id.clone()).or_insert(0_i64);
+        let next = current
+            .checked_add(order.amount_minor)
+            .ok_or_else(|| ApiError::Internal("直属用户提现汇总金额溢出".to_string()))?;
+        *current = next;
+    }
+    Ok(totals)
 }
 
 /// 汇总充值入账流水，忽略非充值流水和异常的负数充值记录。
@@ -2783,6 +2811,7 @@ mod tests {
         ));
         assert!(!record_candidate.rebate_enabled);
         assert_eq!(record_candidate.created_at, "2026-06-05 19:00:00");
+        assert_eq!(record_candidate.user.created_at, "2026-06-05 18:00:00");
         let linked_candidate = candidates
             .iter()
             .find(|candidate| candidate.user.id == linked_user.id)
@@ -2793,6 +2822,7 @@ mod tests {
         ));
         assert!(linked_candidate.rebate_enabled);
         assert!(linked_candidate.created_at.is_empty());
+        assert_eq!(linked_candidate.user.created_at, "2026-06-05 18:00:00");
     }
 
     #[test]
@@ -2823,6 +2853,23 @@ mod tests {
         let amount = sum_recharge_rebate_credits_minor(&entries).expect("返利汇总不应失败");
 
         assert_eq!(amount, 350);
+    }
+
+    #[test]
+    /// 验证邀请中心直属提现汇总按用户累计已通过的正向提现金额。
+    fn user_invitation_withdrawal_sum_counts_positive_approved_orders() {
+        let orders = vec![
+            test_withdrawal_order_for_user("W-001", "U90012", 10_000),
+            test_withdrawal_order_for_user("W-002", "U90012", 5_000),
+            test_withdrawal_order_for_user("W-003", "U90013", 12_000),
+            test_withdrawal_order_for_user("W-004", "U90014", -1_000),
+        ];
+
+        let totals = sum_approved_withdrawal_minor_by_user(&orders).expect("提现汇总不应失败");
+
+        assert_eq!(totals.get("U90012"), Some(&15_000));
+        assert_eq!(totals.get("U90013"), Some(&12_000));
+        assert!(!totals.contains_key("U90014"));
     }
 
     #[test]
@@ -3385,6 +3432,7 @@ mod tests {
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
             issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            sale_close_lead_seconds: crate::domain::lottery::DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 60,
             },
@@ -3529,6 +3577,7 @@ mod tests {
             balance_minor: 0,
             agent_id,
             invite_code: "ABCDEFGH".to_string(),
+            created_at: "2026-06-05 18:00:00".to_string(),
         }
     }
 
@@ -3544,6 +3593,27 @@ mod tests {
 
     fn test_ledger_entry(id: &str, kind: LedgerEntryKind, amount_minor: i64) -> LedgerEntry {
         test_ledger_entry_for_user(id, "U90012", kind, amount_minor, None)
+    }
+
+    fn test_withdrawal_order_for_user(
+        id: &str,
+        user_id: &str,
+        amount_minor: i64,
+    ) -> WithdrawalOrderSummary {
+        WithdrawalOrderSummary {
+            id: id.to_string(),
+            user_id: user_id.to_string(),
+            username: format!("{user_id}_name"),
+            method_id: "WM-TEST".to_string(),
+            method_type: crate::domain::user::WithdrawalMethodType::BankCard,
+            account_holder: "测试用户".to_string(),
+            account_number: "6222000000000000".to_string(),
+            bank_name: Some("测试银行".to_string()),
+            amount_minor,
+            status: crate::domain::withdrawal::WithdrawalOrderStatus::Approved,
+            created_at: "2026-06-05 19:00:00".to_string(),
+            reviewed_at: Some("2026-06-05 19:05:00".to_string()),
+        }
     }
 
     fn test_setting(key: &str, value: &str) -> SystemSetting {

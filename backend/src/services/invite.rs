@@ -445,6 +445,7 @@ mod tests {
                 balance_minor: 0,
                 agent_id: None,
                 invite_code: String::new(),
+                created_at: "2026-06-05 10:00:00".to_string(),
             })
             .await
             .expect("test invitee can be created");
@@ -626,6 +627,7 @@ mod tests {
                 balance_minor: 0,
                 agent_id: None,
                 invite_code: String::new(),
+                created_at: "2026-06-05 10:00:00".to_string(),
             })
             .await
             .expect("test invitee can be created");

@@ -263,7 +263,7 @@ async function submitApplication() {
             <div class="flex items-start justify-between gap-3">
               <div>
                 <strong class="block text-sm text-on-surface">{{ item.username }}</strong>
-                <span class="text-[11px] text-on-surface-variant">{{ formatDate(item.createdAt) }}</span>
+                <span class="text-[11px] text-on-surface-variant">注册 {{ formatDate(item.registeredAt || item.createdAt) }}</span>
               </div>
               <span class="shrink-0 rounded-full bg-white px-3 py-1 text-[11px] font-bold text-primary">{{ statusText(item.status) }}</span>
             </div>
@@ -271,6 +271,7 @@ async function submitApplication() {
               <span class="rounded-full bg-white px-2.5 py-1 font-bold text-red-900">邀请{{ inviteStatusText(item.inviteStatus) }}</span>
               <span class="rounded-full bg-white px-2.5 py-1">{{ item.rebateEnabled ? '返利开启' : '返利关闭' }}</span>
               <span class="rounded-full bg-white px-2.5 py-1">充值 ¥{{ formatMoney(item.totalDepositMinor) }}</span>
+              <span class="rounded-full bg-white px-2.5 py-1">提现 ¥{{ formatMoney(item.totalWithdrawalMinor) }}</span>
             </div>
           </div>
         </div>

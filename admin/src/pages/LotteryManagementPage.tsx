@@ -61,6 +61,7 @@ interface LotteryFormState {
   groupBuyEnabled: boolean;
   id: string;
   issueFormat: string;
+  saleCloseLeadSeconds: string;
   logoUrl: string;
   initiatorMinPercent: string;
   intervalSeconds: string;
@@ -612,6 +613,20 @@ export function LotteryManagementPage({
                   <Select.Option value="manual">指定号码</Select.Option>
                 </Select>
               </Field>
+              <Field label="封盘提前（秒）">
+                <Input
+                  className="form-input"
+                  min="1"
+                  type="number"
+                  value={form.saleCloseLeadSeconds}
+                  onChange={(value) =>
+                    setFormValue(setForm, 'saleCloseLeadSeconds', value)
+                  }
+                />
+                <p className="text-xs text-slate-400">
+                  生成新期号时按计划开奖时间提前该秒数封盘，不同彩种可以单独配置。
+                </p>
+              </Field>
               {form.drawMode === 'api' ? (
                 <Field label="API开奖延迟秒数">
                   <Input
@@ -636,7 +651,7 @@ export function LotteryManagementPage({
                     }
                   />
                   <p className="text-xs text-slate-400">
-                    支持 {'{yyyy}'}、{'{yy}'}、{'{MM}'}、{'{dd}'}、{'{HH}'}、{'{mm}'}、{'{ss}'}、{'{date}'}、{'{time}'}、{'{timestamp}'}、{'{seq4}'}；留空默认生成如 202606130001 的日期加 4 位序号。
+                    支持 {'{yyyy}'}、{'{yy}'}、{'{MM}'}、{'{dd}'}、{'{HH}'}、{'{mm}'}、{'{ss}'}、{'{date}'}、{'{time}'}、{'{timestamp}'}、{'{seq1}'}、{'{seq2}'}、{'{seq3}'}、{'{seq4}'}；留空默认生成如 202606130001 的日期加 4 位序号。
                   </p>
                 </Field>
               ) : null}
@@ -1019,6 +1034,7 @@ function emptyForm(): LotteryFormState {
     initiatorMinPercent: '10',
     intervalSeconds: '60',
     issueFormat: DEFAULT_ISSUE_FORMAT,
+    saleCloseLeadSeconds: '1',
     minShareAmountYuan: '1.00',
     name: '',
     logoUrl: '',
@@ -1047,6 +1063,7 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
     initiatorMinPercent: String(lottery.groupBuy.initiatorMinPercent),
     intervalSeconds: schedule.intervalSeconds,
     issueFormat: lottery.issueFormat || DEFAULT_ISSUE_FORMAT,
+    saleCloseLeadSeconds: String(lottery.saleCloseLeadSeconds ?? 1),
     minShareAmountYuan: minorToYuanInput(lottery.groupBuy.minShareAmountMinor),
     name: lottery.name,
     numberType: lottery.numberType,
@@ -1086,6 +1103,7 @@ function lotteryFromForm(
       form.drawMode === 'platform'
         ? form.issueFormat.trim() || DEFAULT_ISSUE_FORMAT
         : DEFAULT_ISSUE_FORMAT,
+    saleCloseLeadSeconds: positiveIntegerField(form.saleCloseLeadSeconds, 1),
     name: form.name.trim(),
     logoUrl: form.logoUrl.trim(),
     numberType: form.numberType,
@@ -1199,6 +1217,11 @@ function numberField(value: string) {
 
 function nonNegativeIntegerField(value: string) {
   return Math.floor(Math.max(0, numberField(value)));
+}
+
+function positiveIntegerField(value: string, fallback: number) {
+  const parsed = Math.floor(numberField(value));
+  return parsed > 0 ? parsed : fallback;
 }
 
 function readSettingValue(settings: SystemSetting[], key: string) {

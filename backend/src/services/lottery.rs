@@ -12,7 +12,7 @@ use crate::{
         lottery::{
             DrawMode, DrawSchedule, GroupBuyConfig, LotteryCategoryConfig, LotteryKind,
             LotteryNumberType, LotteryPlayConfig, LotteryPlayPositionSelectLimit, PlayCategory,
-            DEFAULT_ISSUE_FORMAT_PATTERN,
+            DEFAULT_ISSUE_FORMAT_PATTERN, DEFAULT_SALE_CLOSE_LEAD_SECONDS,
         },
         play::PlayRuleCode,
     },
@@ -514,7 +514,7 @@ impl PostgresLotteryStore {
 
     async fn list(&self) -> ApiResult<Vec<LotteryKind>> {
         let rows = sqlx::query(
-            "SELECT id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, schedule, sale_enabled, group_buy, play_categories, play_configs
+            "SELECT id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, sale_close_lead_seconds, schedule, sale_enabled, group_buy, play_categories, play_configs
              FROM lotteries
              ORDER BY id ASC",
         )
@@ -527,7 +527,7 @@ impl PostgresLotteryStore {
 
     async fn get(&self, id: &str) -> ApiResult<LotteryKind> {
         let row = sqlx::query(
-            "SELECT id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, schedule, sale_enabled, group_buy, play_categories, play_configs
+            "SELECT id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, sale_close_lead_seconds, schedule, sale_enabled, group_buy, play_categories, play_configs
              FROM lotteries
              WHERE id = $1",
         )
@@ -547,11 +547,11 @@ impl PostgresLotteryStore {
 
         let created = sqlx::query(
             "INSERT INTO lotteries (
-                id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, schedule, sale_enabled, group_buy, play_categories, play_configs
+                id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, sale_close_lead_seconds, schedule, sale_enabled, group_buy, play_categories, play_configs
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT (id) DO NOTHING
-             RETURNING id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, sale_close_lead_seconds, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(&lottery.id)
         .bind(&lottery.name)
@@ -562,6 +562,7 @@ impl PostgresLotteryStore {
         .bind(lottery.api_draw_delay_seconds as i32)
         .bind(lottery.draw_control_enabled)
         .bind(&lottery.issue_format)
+        .bind(lottery.sale_close_lead_seconds as i32)
         .bind(json_value(&lottery.schedule)?)
         .bind(lottery.sale_enabled)
         .bind(json_value(&lottery.group_buy)?)
@@ -582,9 +583,9 @@ impl PostgresLotteryStore {
 
         sqlx::query(
             "INSERT INTO lotteries (
-                id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, schedule, sale_enabled, group_buy, play_categories, play_configs
+                id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, sale_close_lead_seconds, schedule, sale_enabled, group_buy, play_categories, play_configs
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT (id) DO NOTHING",
         )
         .bind(&lottery.id)
@@ -596,6 +597,7 @@ impl PostgresLotteryStore {
         .bind(lottery.api_draw_delay_seconds as i32)
         .bind(lottery.draw_control_enabled)
         .bind(&lottery.issue_format)
+        .bind(lottery.sale_close_lead_seconds as i32)
         .bind(json_value(&lottery.schedule)?)
         .bind(lottery.sale_enabled)
         .bind(json_value(&lottery.group_buy)?)
@@ -628,14 +630,15 @@ impl PostgresLotteryStore {
                  api_draw_delay_seconds = $7,
                  draw_control_enabled = $8,
                  issue_format = $9,
-                 schedule = $10,
-                 sale_enabled = $11,
-                 group_buy = $12,
-                 play_categories = $13,
-                 play_configs = $14,
+                 sale_close_lead_seconds = $10,
+                 schedule = $11,
+                 sale_enabled = $12,
+                 group_buy = $13,
+                 play_categories = $14,
+                 play_configs = $15,
                  updated_at = now()
              WHERE id = $1
-             RETURNING id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, sale_close_lead_seconds, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .bind(&lottery.name)
@@ -646,6 +649,7 @@ impl PostgresLotteryStore {
         .bind(lottery.api_draw_delay_seconds as i32)
         .bind(lottery.draw_control_enabled)
         .bind(&lottery.issue_format)
+        .bind(lottery.sale_close_lead_seconds as i32)
         .bind(json_value(&lottery.schedule)?)
         .bind(lottery.sale_enabled)
         .bind(json_value(&lottery.group_buy)?)
@@ -665,7 +669,7 @@ impl PostgresLotteryStore {
         let deleted = sqlx::query(
             "DELETE FROM lotteries
              WHERE id = $1
-             RETURNING id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, sale_close_lead_seconds, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -684,7 +688,7 @@ impl PostgresLotteryStore {
              SET sale_enabled = $2,
                  updated_at = now()
              WHERE id = $1
-             RETURNING id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, schedule, sale_enabled, group_buy, play_categories, play_configs",
+             RETURNING id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, issue_format, sale_close_lead_seconds, schedule, sale_enabled, group_buy, play_categories, play_configs",
         )
         .bind(id)
         .bind(sale_enabled)
@@ -712,6 +716,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
             issue_format: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Daily {
                 time: "21:00:15".to_string(),
             },
@@ -748,6 +753,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
             issue_format: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Daily {
                 time: "21:00:15".to_string(),
             },
@@ -784,6 +790,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
             issue_format: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Daily {
                 time: "21:00:15".to_string(),
             },
@@ -818,6 +825,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
             issue_format: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 300,
             },
@@ -857,6 +865,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
             issue_format: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 60,
             },
@@ -896,6 +905,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
             issue_format: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Periodic {
                 interval_seconds: 60,
             },
@@ -935,6 +945,7 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
             issue_format: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Weekly {
                 weekdays: vec!["Tuesday".to_string(), "Thursday".to_string()],
                 time: "21:00:00".to_string(),
@@ -1101,6 +1112,7 @@ fn api_lottery(
         api_draw_delay_seconds: 0,
         draw_control_enabled: true,
         issue_format: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+        sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
         schedule: DrawSchedule::Periodic { interval_seconds },
         sale_enabled: false,
         group_buy: group_buy_config(),
@@ -1179,6 +1191,11 @@ fn normalize_lottery(mut lottery: LotteryKind) -> ApiResult<LotteryKind> {
         lottery.api_draw_delay_seconds = 0;
     }
     lottery.issue_format = normalize_issue_format_pattern(&lottery.issue_format)?;
+    if lottery.sale_close_lead_seconds == 0 {
+        return Err(ApiError::BadRequest(
+            "sale close lead seconds must be greater than zero".to_string(),
+        ));
+    }
 
     if !number_type_supports_play_rules(&lottery.number_type) {
         lottery.play_categories = Vec::new();
@@ -1498,6 +1515,11 @@ fn lottery_from_row(row: sqlx::postgres::PgRow) -> ApiResult<LotteryKind> {
         issue_format: row
             .try_get::<String, _>("issue_format")
             .map_err(database_error)?,
+        sale_close_lead_seconds: u32::try_from(
+            row.try_get::<i32, _>("sale_close_lead_seconds")
+                .map_err(database_error)?,
+        )
+        .map_err(|_| ApiError::Internal("彩种封盘提前秒数数据无效".to_string()))?,
         schedule,
         sale_enabled: row.try_get("sale_enabled").map_err(database_error)?,
         group_buy,

@@ -1,5 +1,33 @@
 # TODO
 
+## 2026-06-16 07:57 HKT 手机端下注页封盘后展示开奖中
+
+- 完成任务：修正手机端下注页封盘时间到达后到下一期开盘前的展示状态。
+- 解决问题：此前倒计时已经会显示“开奖中”，但顶部期号卡片仍直接使用后端短暂返回的 `selling` 状态，容易让用户误以为当前期还在销售。
+- 实施内容：动态下注页新增展示态归一化，`round.status=selling` 且 `sale_stop_at <= now` 时统一传给期号卡片 `opening`，并保留原有禁用投注、禁用合买和静默轮询下一期逻辑；同步更新架构说明和前端组件规范。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。
+
+## 2026-06-16 07:52 HKT 彩种封盘提前秒数动态配置
+
+- 完成任务：为每个彩种新增可动态配置的封盘提前秒数。
+- 解决问题：此前自动补期和开奖源同步主要依赖调度器全局 `saleCloseLeadSeconds`，不同彩种无法单独设置封盘提前时间。
+- 实施内容：后端 `LotteryKind` 新增 `saleCloseLeadSeconds`，数据库 `lotteries.sale_close_lead_seconds` 持久化并增加中文字段注释；生成期号默认使用彩种封盘提前秒数，手动生成请求显式传值时仍可临时覆盖；常驻调度、API 彩种补期、开奖源同步和开售后补期改为读取彩种配置；后台彩种新增/编辑 SideSheet 新增“封盘提前（秒）”输入项。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml lottery -- --nocapture`、管理后台 `npm run build` 和 `git diff --check` 均通过；管理后台构建仍只有既有 chunk size warning。
+
+## 2026-06-16 07:35 HKT 平台期号格式支持短序号变量
+
+- 完成任务：扩展平台开奖 `issueFormat`，支持 `{seq1}`、`{seq2}`、`{seq3}` 和原有 `{seq4}`。
+- 解决问题：此前平台期号格式只能使用 `{seq4}` 生成 4 位每日递增序号，无法配置 1 位、2 位或 3 位序号规则。
+- 实施内容：后端期号模板渲染改为通用序号宽度处理，短序号按开奖日期每日递增并校验上限；已存在期号恢复逻辑按当前模板提取序号，避免重启后重复生成；后台彩种表单说明、架构说明和 Trellis 规范同步补充新变量。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml platform_schedule -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture`、管理后台 `npm run build` 和 `git diff --check` 均通过；管理后台构建仍只有既有 chunk size warning。
+
+## 2026-06-16 07:28 HKT 手机端代理中心展示下级注册与提现
+
+- 完成任务：为手机端代理中心的直属下级列表补充下级注册时间和已通过提现金额展示。
+- 解决问题：代理此前只能看到直属下级状态、充值和返利开关，缺少判断下级活跃度所需的注册时间与提现金额。
+- 实施内容：后端用户模型持久化读取 `createdAt` 注册时间，邀请中心直属下级响应新增 `registeredAt` 和 `totalWithdrawalMinor`；提现金额按已通过提现订单正向金额按用户汇总；手机端代理中心优先展示 `registeredAt`，并增加“提现 ¥xx”标签；同步更新架构说明和 Trellis 接口/前端规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_invitation -- --nocapture`、手机端 `pnpm build` 和 `git diff --check` 均通过。
+
 ## 2026-06-16 06:13 HKT 合买机器人认购昵称随机化
 
 - 完成任务：优化用户端合买机器人发起和认购时展示的匿名昵称。

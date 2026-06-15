@@ -681,7 +681,7 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
     let pool = database.pool();
     let mut users = BTreeMap::new();
     for row in sqlx::query(
-        "SELECT id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code
+        "SELECT id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code, created_at
          FROM users
          ORDER BY id ASC",
     )
@@ -724,6 +724,9 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
                     .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
                 invite_code: row
                     .try_get("invite_code")
+                    .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                created_at: row
+                    .try_get("created_at")
                     .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
             },
         );
@@ -1069,8 +1072,8 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
 
     for user in store.users.values() {
         sqlx::query(
-            "INSERT INTO users (id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO users (id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(&user.id)
         .bind(&user.username)
@@ -1082,6 +1085,7 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
         .bind(user.balance_minor)
         .bind(&user.agent_id)
         .bind(&user.invite_code)
+        .bind(&user.created_at)
         .execute(&mut *tx)
         .await
         .map_err(|_| ApiError::Internal("用户数据保存失败".to_string()))?;
@@ -1334,6 +1338,7 @@ impl AccessStore {
         user.balance_minor = existing.balance_minor;
         user.invite_code = existing.invite_code;
         user.avatar_url = existing.avatar_url;
+        user.created_at = existing.created_at;
 
         self.users.insert(id.to_string(), user.clone());
         Ok(user)
@@ -1468,6 +1473,7 @@ impl AccessStore {
             balance_minor: 0,
             agent_id,
             invite_code,
+            created_at: format_local_time(),
         };
 
         self.user_password_hashes
@@ -2153,6 +2159,10 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
         .map(|agent_id| agent_id.trim().to_string())
         .filter(|agent_id| !agent_id.is_empty());
     user.invite_code = user.invite_code.trim().to_string();
+    user.created_at = user.created_at.trim().to_string();
+    if user.created_at.is_empty() {
+        user.created_at = format_local_time();
+    }
 
     if user.balance_minor < 0 {
         return Err(ApiError::BadRequest(
@@ -2495,6 +2505,7 @@ fn seed_users() -> Vec<UserSummary> {
             balance_minor: 12_000,
             agent_id: Some("U90001".to_string()),
             invite_code: DEMO_USER_INVITE_CODE.to_string(),
+            created_at: "2026-06-01 10:00:00".to_string(),
         },
         UserSummary {
             id: "U90001".to_string(),
@@ -2507,6 +2518,7 @@ fn seed_users() -> Vec<UserSummary> {
             balance_minor: 520_000,
             agent_id: None,
             invite_code: DEMO_AGENT_INVITE_CODE.to_string(),
+            created_at: "2026-06-01 09:00:00".to_string(),
         },
         UserSummary {
             id: "U10004".to_string(),
@@ -2519,6 +2531,7 @@ fn seed_users() -> Vec<UserSummary> {
             balance_minor: 0,
             agent_id: Some("U90001".to_string()),
             invite_code: RISK_USER_INVITE_CODE.to_string(),
+            created_at: "2026-06-01 11:00:00".to_string(),
         },
     ]
 }
@@ -2849,6 +2862,7 @@ mod tests {
                 balance_minor: 1000,
                 agent_id: None,
                 invite_code: String::new(),
+                created_at: "2026-06-05 10:00:00".to_string(),
             })
             .await
             .expect("user can be created");
@@ -2949,6 +2963,7 @@ mod tests {
                 balance_minor: 0,
                 agent_id: None,
                 invite_code: String::new(),
+                created_at: "2026-06-05 10:00:00".to_string(),
             })
             .await
             .expect("first user can be created");
@@ -2964,6 +2979,7 @@ mod tests {
                 balance_minor: 0,
                 agent_id: None,
                 invite_code: String::new(),
+                created_at: "2026-06-05 10:01:00".to_string(),
             })
             .await
             .expect("second user can be created");
@@ -2992,6 +3008,7 @@ mod tests {
                     balance_minor: 999_999,
                     agent_id: original.agent_id.clone(),
                     invite_code: "ZZZZ9999".to_string(),
+                    created_at: "2026-06-05 12:00:00".to_string(),
                 },
             )
             .await
@@ -3059,6 +3076,7 @@ mod tests {
                 balance_minor: 0,
                 agent_id: None,
                 invite_code: DEMO_AGENT_INVITE_CODE.to_string(),
+                created_at: "2026-06-05 10:00:00".to_string(),
             })
             .await
             .expect_err("duplicate invite code must be rejected");

@@ -15,7 +15,6 @@ use crate::{
     services::{draw::DrawRepository, draw_api::ApiDrawSourceLatestIssue},
 };
 
-pub const DEFAULT_SALE_CLOSE_LEAD_SECONDS: u32 = 1;
 const MAX_GENERATION_COUNT: u32 = 50;
 const MAX_UNIQUE_ATTEMPTS_PER_ISSUE: u32 = 100;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -143,7 +142,7 @@ async fn plan_draw_issue_generation(
     let baseline = generation_baseline(lottery, &existing_issues, api_anchor.as_ref(), now)?;
     let sale_close_lead_seconds = payload
         .sale_close_lead_seconds
-        .unwrap_or(DEFAULT_SALE_CLOSE_LEAD_SECONDS);
+        .unwrap_or(lottery.sale_close_lead_seconds);
 
     if sale_close_lead_seconds == 0 {
         return Err(ApiError::BadRequest(
@@ -594,6 +593,7 @@ fn validate_issue_format_pattern(pattern: &str) -> ApiResult<()> {
         )
     })
     .ok_or_else(|| ApiError::Internal("期号格式示例时间无效".to_string()))?;
+    issue_sequence_width(pattern)?;
     let rendered = render_issue_format(sample, pattern, Some(1))?;
     if rendered.is_empty() {
         return Err(ApiError::BadRequest(
@@ -641,20 +641,21 @@ fn format_issue(
     pattern: &str,
     sequence_state: &mut IssueSequenceState,
 ) -> ApiResult<String> {
-    let seq4 = if pattern.contains("{seq4}") {
-        Some(sequence_state.next_seq4(value.date())?)
+    let sequence_width = issue_sequence_width(pattern)?;
+    let sequence = if let Some(width) = sequence_width {
+        Some(sequence_state.next_sequence(value.date(), width)?)
     } else {
         None
     };
 
-    render_issue_format(value, pattern, seq4)
+    render_issue_format(value, pattern, sequence)
 }
 
 /// 渲染期号模板变量，模板外的普通字母数字会原样保留。
 fn render_issue_format(
     value: NaiveDateTime,
     pattern: &str,
-    seq4: Option<u32>,
+    sequence: Option<u32>,
 ) -> ApiResult<String> {
     let mut output = String::new();
     let mut cursor = 0;
@@ -668,7 +669,7 @@ fn render_issue_format(
                 ));
             };
             let token = &remaining[..=close_offset];
-            output.push_str(&issue_token_value(value, token, seq4)?);
+            output.push_str(&issue_token_value(value, token, sequence)?);
             cursor += close_offset + 1;
             continue;
         }
@@ -689,7 +690,11 @@ fn render_issue_format(
 }
 
 /// 返回单个期号模板变量的实际值。
-fn issue_token_value(value: NaiveDateTime, token: &str, seq4: Option<u32>) -> ApiResult<String> {
+fn issue_token_value(
+    value: NaiveDateTime,
+    token: &str,
+    sequence: Option<u32>,
+) -> ApiResult<String> {
     let formatted = match token {
         "{yyyy}" => format!("{:04}", value.year()),
         "{yy}" => format!("{:02}", value.year().rem_euclid(100)),
@@ -701,12 +706,19 @@ fn issue_token_value(value: NaiveDateTime, token: &str, seq4: Option<u32>) -> Ap
         "{date}" => value.format("%Y%m%d").to_string(),
         "{time}" => value.format("%H%M%S").to_string(),
         "{timestamp}" => value.format("%Y%m%d%H%M%S").to_string(),
-        "{seq4}" => format!(
-            "{:04}",
-            seq4.ok_or_else(|| {
-                ApiError::Internal("期号序号变量缺少递增状态".to_string())
-            })?
-        ),
+        "{seq1}" | "{seq2}" | "{seq3}" | "{seq4}" => {
+            let width = sequence_token_width(token)
+                .ok_or_else(|| ApiError::Internal("期号序号变量宽度解析失败".to_string()))?;
+            let sequence = sequence
+                .ok_or_else(|| ApiError::Internal("期号序号变量缺少递增状态".to_string()))?;
+            if sequence > max_sequence_for_width(width) {
+                return Err(ApiError::Conflict(format!(
+                    "当天平台期号序号已超过 {}",
+                    max_sequence_for_width(width)
+                )));
+            }
+            format!("{sequence:0width$}")
+        }
         _ => {
             return Err(ApiError::BadRequest(format!(
                 "期号生成格式包含不支持的变量 {token}"
@@ -717,7 +729,50 @@ fn issue_token_value(value: NaiveDateTime, token: &str, seq4: Option<u32>) -> Ap
     Ok(formatted)
 }
 
-/// 平台开奖每日序号状态，用于把 `{seq4}` 渲染成当天递增的 4 位数字。
+/// 返回模板使用的序号变量宽度，同一模板不能混用不同宽度的序号变量。
+fn issue_sequence_width(pattern: &str) -> ApiResult<Option<usize>> {
+    let mut found = None;
+    for token in ["{seq1}", "{seq2}", "{seq3}", "{seq4}"] {
+        if !pattern.contains(token) {
+            continue;
+        }
+        let width = sequence_token_width(token)
+            .ok_or_else(|| ApiError::Internal("期号序号变量宽度解析失败".to_string()))?;
+        if let Some(existing) = found {
+            if existing != width {
+                return Err(ApiError::BadRequest(
+                    "期号生成格式不能混用多个序号变量".to_string(),
+                ));
+            }
+        }
+        found = Some(width);
+    }
+    Ok(found)
+}
+
+/// 解析 `{seqN}` 变量的位数，供校验、渲染和恢复序号复用。
+fn sequence_token_width(token: &str) -> Option<usize> {
+    match token {
+        "{seq1}" => Some(1),
+        "{seq2}" => Some(2),
+        "{seq3}" => Some(3),
+        "{seq4}" => Some(4),
+        _ => None,
+    }
+}
+
+/// 返回指定序号位数在当天允许的最大序号。
+fn max_sequence_for_width(width: usize) -> u32 {
+    match width {
+        1 => 9,
+        2 => 99,
+        3 => 999,
+        4 => 9_999,
+        _ => 0,
+    }
+}
+
+/// 平台开奖每日序号状态，用于把 `{seqN}` 渲染成当天递增的固定位数数字。
 #[derive(Debug, Clone, Default)]
 struct IssueSequenceState {
     next_by_date: BTreeMap<NaiveDate, u32>,
@@ -725,31 +780,37 @@ struct IssueSequenceState {
 
 impl IssueSequenceState {
     /// 根据已存在期号恢复当天下一个序号，避免调度重启后重复生成。
-    fn from_existing_issues(pattern: &str, issues: &[DrawIssue], lottery_id: &str) -> Self {
+    fn from_existing_issues(
+        pattern: &str,
+        issues: &[DrawIssue],
+        lottery_id: &str,
+    ) -> ApiResult<Self> {
         let mut state = Self::default();
-        if !pattern.contains("{seq4}") {
-            return state;
+        if issue_sequence_width(pattern)?.is_none() {
+            return Ok(state);
         }
 
         for issue in issues.iter().filter(|issue| issue.lottery_id == lottery_id) {
-            let Some((date, seq)) = parse_date_sequence_issue(&issue.issue) else {
+            let scheduled_at = parse_timestamp(&issue.scheduled_at, "existing scheduled time")?;
+            let Some(seq) = parse_pattern_sequence(pattern, scheduled_at, &issue.issue) else {
                 continue;
             };
             let next_seq = seq.saturating_add(1);
-            let entry = state.next_by_date.entry(date).or_insert(1);
+            let entry = state.next_by_date.entry(scheduled_at.date()).or_insert(1);
             *entry = (*entry).max(next_seq);
         }
 
-        state
+        Ok(state)
     }
 
-    /// 获取指定日期的下一个 4 位序号并推进状态。
-    fn next_seq4(&mut self, date: NaiveDate) -> ApiResult<u32> {
+    /// 获取指定日期的下一个固定位数序号并推进状态。
+    fn next_sequence(&mut self, date: NaiveDate, width: usize) -> ApiResult<u32> {
         let next_seq = self.next_by_date.entry(date).or_insert(1);
-        if *next_seq > 9_999 {
-            return Err(ApiError::Conflict(
-                "当天平台期号序号已超过 9999".to_string(),
-            ));
+        let max_sequence = max_sequence_for_width(width);
+        if *next_seq > max_sequence {
+            return Err(ApiError::Conflict(format!(
+                "当天平台期号序号已超过 {max_sequence}"
+            )));
         }
 
         let current = *next_seq;
@@ -760,20 +821,74 @@ impl IssueSequenceState {
     }
 }
 
-/// 解析默认 `yyyyMMddNNNN` 期号，用于恢复 `{seq4}` 的每日递增位置。
-fn parse_date_sequence_issue(value: &str) -> Option<(NaiveDate, u32)> {
-    let value = value.trim();
-    if value.len() != 12 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
+/// 按当前期号模板从已存在期号中提取每日序号。
+fn parse_pattern_sequence(pattern: &str, value: NaiveDateTime, issue: &str) -> Option<u32> {
+    let issue = issue.trim();
+    let mut issue_cursor = 0;
+    let mut pattern_cursor = 0;
+    let mut parsed_sequence = None;
+
+    while pattern_cursor < pattern.len() {
+        let remaining = &pattern[pattern_cursor..];
+        if remaining.starts_with('{') {
+            let close_offset = remaining.find('}')?;
+            let token = &remaining[..=close_offset];
+            if let Some(width) = sequence_token_width(token) {
+                let sequence_text = issue.get(issue_cursor..issue_cursor + width)?;
+                if !sequence_text.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return None;
+                }
+                let sequence = sequence_text.parse::<u32>().ok()?;
+                if sequence == 0 || sequence > max_sequence_for_width(width) {
+                    return None;
+                }
+                if parsed_sequence.is_some_and(|existing| existing != sequence) {
+                    return None;
+                }
+                parsed_sequence = Some(sequence);
+                issue_cursor += width;
+            } else {
+                let token_value = issue_static_token_value(value, token)?;
+                if !issue[issue_cursor..].starts_with(&token_value) {
+                    return None;
+                }
+                issue_cursor += token_value.len();
+            }
+            pattern_cursor += close_offset + 1;
+            continue;
+        }
+
+        let ch = remaining.chars().next()?;
+        let issue_remaining = issue.get(issue_cursor..)?;
+        if !issue_remaining.starts_with(ch) {
+            return None;
+        }
+        pattern_cursor += ch.len_utf8();
+        issue_cursor += ch.len_utf8();
     }
 
-    let date = NaiveDate::parse_from_str(&value[..8], "%Y%m%d").ok()?;
-    let seq = value[8..].parse::<u32>().ok()?;
-    if seq == 0 || seq > 9_999 {
-        return None;
+    if issue_cursor == issue.len() {
+        parsed_sequence
+    } else {
+        None
     }
+}
 
-    Some((date, seq))
+/// 返回无需序号状态即可渲染的期号变量值。
+fn issue_static_token_value(value: NaiveDateTime, token: &str) -> Option<String> {
+    match token {
+        "{yyyy}" => Some(format!("{:04}", value.year())),
+        "{yy}" => Some(format!("{:02}", value.year().rem_euclid(100))),
+        "{MM}" => Some(format!("{:02}", value.month())),
+        "{dd}" => Some(format!("{:02}", value.day())),
+        "{HH}" => Some(format!("{:02}", value.hour())),
+        "{mm}" => Some(format!("{:02}", value.minute())),
+        "{ss}" => Some(format!("{:02}", value.second())),
+        "{date}" => Some(value.format("%Y%m%d").to_string()),
+        "{time}" => Some(value.format("%H%M%S").to_string()),
+        "{timestamp}" => Some(value.format("%Y%m%d%H%M%S").to_string()),
+        _ => None,
+    }
 }
 
 /// 期号标签生成器，负责按不同排期推进下一期号。
@@ -806,7 +921,7 @@ impl IssueLabeler {
         };
 
         let sequence_state =
-            IssueSequenceState::from_existing_issues(&pattern, existing_issues, &lottery.id);
+            IssueSequenceState::from_existing_issues(&pattern, existing_issues, &lottery.id)?;
 
         Ok(Self::Pattern {
             pattern,
@@ -935,6 +1050,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generation_uses_lottery_sale_close_lead_seconds_by_default() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+        lottery.sale_close_lead_seconds = 15;
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-02 20:00:00"))
+            .await
+            .expect("issue can be generated with lottery sale close lead seconds");
+
+        assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:45");
+    }
+
+    #[tokio::test]
+    async fn request_sale_close_lead_seconds_overrides_lottery_default() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+        lottery.sale_close_lead_seconds = 15;
+        let mut payload = request("2026-06-02 20:00:00");
+        payload.sale_close_lead_seconds = Some(5);
+
+        let issue = generate_next_draw_issue(&draws, &lottery, payload)
+            .await
+            .expect("request sale close lead seconds can override lottery config");
+
+        assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:55");
+    }
+
+    #[tokio::test]
     async fn time_node_schedule_aligns_to_configured_clock_nodes() {
         let draws = DrawRepository::memory();
         let lottery = lottery(DrawSchedule::TimeNode {
@@ -995,6 +1143,57 @@ mod tests {
 
         assert_eq!(issue.issue, "2606022001");
         assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
+    }
+
+    #[tokio::test]
+    async fn platform_schedule_supports_short_sequence_tokens() {
+        for (token, expected) in [
+            ("{seq1}", "202606021"),
+            ("{seq2}", "2026060201"),
+            ("{seq3}", "20260602001"),
+        ] {
+            let draws = DrawRepository::memory();
+            let mut lottery = lottery(DrawSchedule::Periodic {
+                interval_seconds: 60,
+            });
+            lottery.draw_mode = DrawMode::Platform;
+            lottery.issue_format = format!("{{date}}{token}");
+
+            let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-02 20:00:00"))
+                .await
+                .expect("short sequence issue can be generated");
+
+            assert_eq!(issue.issue, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn platform_schedule_recovers_short_sequence_from_existing_issue() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+        lottery.draw_mode = DrawMode::Platform;
+        lottery.issue_format = "{date}{seq2}".to_string();
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "2026060209".to_string(),
+                    scheduled_at: "2026-06-02 20:01:00".to_string(),
+                    sale_closed_at: "2026-06-02 20:00:59".to_string(),
+                },
+            )
+            .await
+            .expect("existing seq2 issue can be created");
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-02 20:01:05"))
+            .await
+            .expect("next issue can continue seq2 sequence");
+
+        assert_eq!(issue.issue, "2026060210");
+        assert_eq!(issue.scheduled_at, "2026-06-02 20:02:00");
     }
 
     #[tokio::test]
@@ -1456,6 +1655,7 @@ mod tests {
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
             issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
+            sale_close_lead_seconds: crate::domain::lottery::DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule,
             sale_enabled: true,
             group_buy: GroupBuyConfig {

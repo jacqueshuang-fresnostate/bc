@@ -28,6 +28,7 @@ export type UserSummary = {
   balanceMinor: number
   agentId?: string | null
   inviteCode: string
+  createdAt?: string
 }
 
 export type InviteStatus = 'pending' | 'active' | 'disabled'
@@ -41,6 +42,8 @@ export type UserInvitationDirectUser = {
   inviteStatus: InviteStatus
   rebateEnabled: boolean
   totalDepositMinor: number
+  totalWithdrawalMinor: number
+  registeredAt: string
   createdAt: string
 }
 
