@@ -1,9 +1,19 @@
-import type { RobotConfigSummary, RobotKind, RobotStatus } from './dashboard';
+import type {
+  GroupBuyRobotFillStrategy,
+  RobotConfigSummary,
+  RobotKind,
+  RobotStatus,
+} from './dashboard';
 import type { LedgerEntry } from './finance';
 import type { GroupBuyPlan } from './groupBuy';
 import type { OrderDetail } from './orders';
 
-export type { RobotConfigSummary, RobotKind, RobotStatus };
+export type {
+  GroupBuyRobotFillStrategy,
+  RobotConfigSummary,
+  RobotKind,
+  RobotStatus,
+};
 
 export type RobotConfigPayload = Omit<RobotConfigSummary, 'deletable'>;
 

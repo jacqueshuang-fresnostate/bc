@@ -143,6 +143,7 @@ export interface FinanceOverview {
 
 export type RobotKind = 'groupBuy' | 'purchase';
 export type RobotStatus = 'enabled' | 'paused' | 'disabled';
+export type GroupBuyRobotFillStrategy = 'rhythm' | 'beforeDraw';
 
 export interface RobotConfigSummary {
   id: string;
@@ -151,6 +152,8 @@ export interface RobotConfigSummary {
   lotteryIds: string[];
   status: RobotStatus;
   description: string;
+  groupBuyFillStrategy: GroupBuyRobotFillStrategy;
+  groupBuyFillBeforeDrawSeconds: number;
   deletable: boolean;
 }
 

@@ -369,6 +369,20 @@ export function fetchGroupBuyPlan(id: string, signal?: AbortSignal) {
   );
 }
 
+export function fetchGroupBuyPlansByIssue(
+  signal: AbortSignal | undefined,
+  query: { issue: string; lotteryId: string },
+) {
+  const params = new URLSearchParams({
+    issue: query.issue,
+    lotteryId: query.lotteryId,
+  });
+  return requestJson<GroupBuyPlan[]>(
+    `/api/admin/group-buy/plans/by-issue?${params.toString()}`,
+    { signal },
+  );
+}
+
 export function createGroupBuyPlan(payload: CreateGroupBuyPlanRequest) {
   return requestJson<GroupBuyPlan>('/api/admin/group-buy/plans', {
     body: payload,

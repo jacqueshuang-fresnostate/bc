@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { detailHeroAmount, detailHeroNote, formatDateTime, isGroupBuyOrder, moneyText, orderAmountLabel, orderAmountText, orderBetCount, orderDisplayAmount, orderMatchItems, orderMultiple, orderSourceText, orderStatusIcon, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
+import { detailHeroAmount, detailHeroNote, formatDateTime, isGroupBuyOrder, moneyText, orderAmountLabel, orderAmountText, orderDisplayAmount, orderMatchItems, orderMultiple, orderSourceText, orderStakeMetricLabel, orderStakeMetricText, orderStatusIcon, orderTone, orderUnitAmount, orderUnitAmountLabel, statusText } from '../../utils/lotteryFormat'
 
 const props = defineProps<{
   selectedOrder: any
@@ -77,12 +77,12 @@ function participantShareText(participant: any) {
               <strong>{{ selectedOrder.odds ? `1 : ${selectedOrder.odds}` : '-' }}</strong>
             </div>
             <div>
-              <span>单注金额</span>
+              <span>{{ orderUnitAmountLabel(selectedOrder) }}</span>
               <strong>{{ moneyText(orderUnitAmount(selectedOrder)) }}</strong>
             </div>
             <div>
-              <span>注数</span>
-              <strong>{{ orderBetCount(selectedOrder) }} 注</strong>
+              <span>{{ orderStakeMetricLabel(selectedOrder) }}</span>
+              <strong>{{ orderStakeMetricText(selectedOrder) }}</strong>
             </div>
             <div>
               <span>倍数</span>

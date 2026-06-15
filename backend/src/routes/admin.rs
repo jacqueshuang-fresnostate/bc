@@ -137,6 +137,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/group-buy/plans/clear", delete(clear_group_buy_plans))
         .route(
+            "/group-buy/plans/by-issue",
+            get(list_control_group_buy_plans_by_issue),
+        )
+        .route(
             "/group-buy/plans/{id}",
             get(get_group_buy_plan).put(update_group_buy_plan),
         )
@@ -745,6 +749,14 @@ struct FinancePageQuery {
     page_size: Option<usize>,
     include_robot_data: Option<bool>,
     user_id: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台控奖抽屉按彩种和期号查询合买认购记录的参数。
+struct ControlGroupBuyIssueQuery {
+    lottery_id: String,
+    issue: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1418,6 +1430,19 @@ async fn clear_group_buy_plans(
     Ok(Json(ApiEnvelope::success(ClearRecordsResult {
         deleted_count,
     })))
+}
+
+/// 返回控奖抽屉当前彩种期号下的合买计划和认购记录，包含未满单、未成单计划。
+async fn list_control_group_buy_plans_by_issue(
+    State(state): State<AppState>,
+    Query(query): Query<ControlGroupBuyIssueQuery>,
+) -> ApiResult<Json<ApiEnvelope<Vec<GroupBuyPlan>>>> {
+    let plans = state
+        .group_buys
+        .list_control_details_for_issue(&query.lottery_id, &query.issue)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(plans)))
 }
 
 /// 返回指定合买计划详情。

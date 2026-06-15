@@ -145,7 +145,6 @@ function statusClass() {
       <div class="group-lottery-card__copy">
         <div class="group-lottery-card__title-row">
           <h5>{{ lottery.name }}</h5>
-          <span :class="['lottery-state-pill group-lottery-card__state rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
         </div>
         <span class="group-lottery-card__issue">{{ issueText }}</span>
       </div>
@@ -284,13 +283,6 @@ function statusClass() {
   white-space: nowrap;
 }
 
-.group-lottery-card__state {
-  flex: 0 0 auto;
-  max-width: 3.1rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .group-lottery-card__issue {
   display: block;
   max-width: 92%;
@@ -338,8 +330,8 @@ function statusClass() {
 .group-lottery-card__logo-shell {
   grid-area: logo;
   display: flex;
-  width: 2.05rem;
-  height: 2.05rem;
+  width: 2.38rem;
+  height: 2.38rem;
   align-self: end;
   align-items: center;
   justify-content: center;
@@ -384,9 +376,9 @@ function statusClass() {
   }
 
   .group-lottery-card__logo-shell {
-    width: 1.7rem;
-    height: 1.7rem;
-    flex-basis: 1.7rem;
+    width: 2rem;
+    height: 2rem;
+    flex-basis: 2rem;
     border-radius: 0.62rem;
   }
 

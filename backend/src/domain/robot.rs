@@ -21,6 +21,14 @@ pub enum RobotStatus {
     Disabled,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 合买机器人补满策略，控制机器人按阶段补单或在开奖前一次性补满。
+pub enum GroupBuyRobotFillStrategy {
+    Rhythm,
+    BeforeDraw,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 /// 后台机器人配置摘要，包含绑定彩种和运行状态。
@@ -31,8 +39,22 @@ pub struct RobotConfigSummary {
     pub lottery_ids: Vec<String>,
     pub status: RobotStatus,
     pub description: String,
+    #[serde(default = "default_group_buy_fill_strategy")]
+    pub group_buy_fill_strategy: GroupBuyRobotFillStrategy,
+    #[serde(default = "default_group_buy_fill_before_draw_seconds")]
+    pub group_buy_fill_before_draw_seconds: u32,
     #[serde(default)]
     pub deletable: bool,
+}
+
+/// 返回合买机器人默认补满策略，兼容历史配置和旧接口请求。
+pub fn default_group_buy_fill_strategy() -> GroupBuyRobotFillStrategy {
+    GroupBuyRobotFillStrategy::Rhythm
+}
+
+/// 返回合买机器人默认开奖前补满秒数，只有策略为开奖前补满时生效。
+pub fn default_group_buy_fill_before_draw_seconds() -> u32 {
+    15
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

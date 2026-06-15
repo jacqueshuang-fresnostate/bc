@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatDateTime, moneyText, orderAmountLabel, orderBetContentText, orderBetCount, orderDisplayAmount, orderDrawNumbers, orderMultiple, orderResultLabel, orderResultText, orderSourceText, orderStatusIcon, orderTagText, orderTone, orderUnitAmount, statusText } from '../../utils/lotteryFormat'
+import { formatDateTime, isPendingGroupBuyPlan, moneyText, orderAmountLabel, orderBetContentText, orderDisplayAmount, orderDrawNumbers, orderMultiple, orderResultLabel, orderResultText, orderSourceText, orderStakeMetricLabel, orderStakeMetricText, orderStatusIcon, orderTagText, orderTone, orderUnitAmount, orderUnitAmountLabel, statusText } from '../../utils/lotteryFormat'
 
 const props = defineProps<{ order: any }>()
 const emit = defineEmits<{ open: [any] }>()
 const orderNumbersText = computed(() => orderBetContentText(props.order))
 const orderCreatedAtText = computed(() => formatDateTime(props.order?.created_at || props.order?.createdAt))
 const drawNumbers = computed(() => orderDrawNumbers(props.order))
-const drawEmptyText = computed(() => props.order?.status === 'pending' ? '待开奖' : '暂无开奖数据')
+const drawEmptyText = computed(() => {
+  if (isPendingGroupBuyPlan(props.order)) return '未成单'
+  return props.order?.status === 'pending' ? '待开奖' : '暂无开奖数据'
+})
 </script>
 
 <template>
@@ -59,12 +62,12 @@ const drawEmptyText = computed(() => props.order?.status === 'pending' ? '待开
 
     <div class="bet-record-card__grid">
       <div>
-        <p>单注金额</p>
+        <p>{{ orderUnitAmountLabel(order) }}</p>
         <strong>{{ moneyText(orderUnitAmount(order)) }}</strong>
       </div>
       <div>
-        <p>注数</p>
-        <strong>{{ orderBetCount(order) }} 注</strong>
+        <p>{{ orderStakeMetricLabel(order) }}</p>
+        <strong>{{ orderStakeMetricText(order) }}</strong>
       </div>
       <div>
         <p>倍数</p>

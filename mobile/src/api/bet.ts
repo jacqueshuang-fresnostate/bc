@@ -35,7 +35,10 @@ export type UserBetOrderDetail = {
   unitAmountMinor: number
   amountMinor: number
   groupBuyPlanId?: string | null
+  groupBuyPlanStatus?: string | null
+  groupBuyPendingPlan?: boolean
   participationAmountMinor?: number | null
+  participationShareCount?: number | null
   participationPayoutMinor?: number | null
   oddsBasisPoints: number
   expandedBets: string[]
@@ -173,15 +176,21 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     created_at?: string
     draw_number?: string | null
     draw_result?: string | null
+    group_buy_pending_plan?: boolean
     group_buy_plan_id?: string | null
+    group_buy_plan_status?: string | null
+    participation_share_count?: number | null
     result?: string | null
     settled_at?: string | null
   }
   const numbers = selectionNumbers(order)
   const isGroupBuy = order.orderSource === 'groupBuy'
+  const groupBuyPlanStatus = order.groupBuyPlanStatus || rawOrder.group_buy_plan_status || null
+  const groupBuyPendingPlan = Boolean(order.groupBuyPendingPlan || rawOrder.group_buy_pending_plan)
   const drawNumber = order.drawNumber || rawOrder.draw_number || rawOrder.draw_result || rawOrder.result || ''
   const participationAmountMinor = normalizeOptionalMinor(order.participationAmountMinor)
   const participationPayoutMinor = normalizeOptionalMinor(order.participationPayoutMinor)
+  const participationShareCount = Number(order.participationShareCount ?? rawOrder.participation_share_count ?? 0)
   const participationAmount = participationAmountMinor !== null
     ? formatMinorAmount(participationAmountMinor)
     : undefined
@@ -191,12 +200,22 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
   const displayPayoutMinor = isGroupBuy && participationPayoutMinor !== null
     ? participationPayoutMinor
     : order.payoutMinor
+  const normalizedStatus = groupBuyPendingPlan
+    ? groupBuyPlanStatus === 'cancelled' ? 'cancelled' : 'groupBuyPending'
+    : statusMap[order.status] || order.status
+  const odds = Number(order.oddsBasisPoints || 0) > 0
+    ? formatMinorAmount(order.oddsBasisPoints / 100)
+    : ''
   return {
     ...order,
     order_source: order.orderSource,
     source_name: order.orderSource,
     is_group_buy: isGroupBuy,
     group_buy_plan_id: order.groupBuyPlanId || rawOrder.group_buy_plan_id || null,
+    group_buy_plan_status: groupBuyPlanStatus,
+    groupBuyPlanStatus,
+    group_buy_pending_plan: groupBuyPendingPlan,
+    groupBuyPendingPlan,
     lottery_code: order.lotteryId,
     lottery_name: order.lotteryName,
     play_code: order.ruleCode,
@@ -210,17 +229,19 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     draw_numbers: splitDrawNumber(drawNumber),
     matched_bets: order.matchedBets || [],
     expanded_bets: order.expandedBets || [],
-    status: statusMap[order.status] || order.status,
+    status: normalizedStatus,
     bet_count: order.stakeCount,
     unit_amount: formatMinorAmount(order.unitAmountMinor),
     multiple: 1,
     amount: formatMinorAmount(order.amountMinor),
     participation_amount_minor: participationAmountMinor,
     participation_amount: participationAmount,
+    participation_share_count: Number.isFinite(participationShareCount) ? participationShareCount : 0,
+    participationShareCount: Number.isFinite(participationShareCount) ? participationShareCount : 0,
     participation_payout_minor: participationPayoutMinor,
     participation_payout: participationPayout,
     display_amount: participationAmount || formatMinorAmount(order.amountMinor),
-    odds: formatMinorAmount(order.oddsBasisPoints / 100),
+    odds,
     payout: formatMinorAmount(displayPayoutMinor),
     created_at: order.createdAt || rawOrder.created_at || '',
     settled_at: order.settledAt || rawOrder.settled_at,

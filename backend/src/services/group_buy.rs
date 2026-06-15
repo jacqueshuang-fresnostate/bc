@@ -123,6 +123,30 @@ impl GroupBuyRepository {
             .map(|store| store.list_details_for_user(user_id))
     }
 
+    /// 返回指定彩种和期号下仍在流转中的合买计划详情，供控奖页面查看未满单认购记录。
+    pub async fn list_control_details_for_issue(
+        &self,
+        lottery_id: &str,
+        issue: &str,
+    ) -> ApiResult<Vec<GroupBuyPlan>> {
+        let lottery_id = lottery_id.trim();
+        let issue = issue.trim();
+        if lottery_id.is_empty() {
+            return Err(ApiError::BadRequest("彩种 ID 不能为空".to_string()));
+        }
+        if issue.is_empty() {
+            return Err(ApiError::BadRequest("期号不能为空".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_control_group_buy_details_for_issue(persistence, lottery_id, issue).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))
+            .map(|store| store.list_control_details_for_issue(lottery_id, issue))
+    }
+
     /// 分页返回用户端合买大厅活跃计划，并只加载当前页计划的参与人。
     pub async fn list_active_details_page(
         &self,
@@ -572,6 +596,61 @@ async fn query_group_buy_details_for_user(
         .collect())
 }
 
+/// 数据库模式下读取控奖页面所需的当前期合买计划，并批量加载参与记录。
+async fn query_control_group_buy_details_for_issue(
+    database: &BusinessDatabase,
+    lottery_id: &str,
+    issue: &str,
+) -> ApiResult<Vec<GroupBuyPlan>> {
+    let rows = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, initiator_user_id, initiator_username,
+                order_id, issue, rule_code, title, numbers,
+                total_amount_minor, filled_amount_minor, min_share_amount_minor,
+                participant_min_amount_minor, share_count, status, note, created_at, updated_at
+         FROM group_buy_plans
+         WHERE lottery_id = $1
+           AND issue = $2
+           AND status IN ('draft', 'open', 'filled')
+         ORDER BY created_at DESC, id DESC",
+    )
+    .bind(lottery_id)
+    .bind(issue)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("控奖合买计划数据读取失败".to_string()))?;
+    let mut plans = rows
+        .into_iter()
+        .map(group_buy_plan_from_row)
+        .map(|result| result.map(|plan| (plan.id.clone(), plan)))
+        .collect::<ApiResult<BTreeMap<_, _>>>()?;
+    if plans.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let plan_ids = plans.keys().cloned().collect::<Vec<_>>();
+    let participant_rows = sqlx::query(
+        "SELECT id, plan_id, user_id, username, amount_minor, share_count, note, created_at
+         FROM group_buy_participants
+         WHERE plan_id = ANY($1)
+         ORDER BY plan_id ASC, created_at DESC, id DESC",
+    )
+    .bind(&plan_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("控奖合买认购记录读取失败".to_string()))?;
+    for row in participant_rows {
+        let (plan_id, participant) = group_buy_participant_from_row(row)?;
+        if let Some(plan) = plans.get_mut(&plan_id) {
+            plan.participants.push(participant);
+        }
+    }
+
+    Ok(sorted_group_buy_plans(plans.values())
+        .into_iter()
+        .cloned()
+        .collect())
+}
+
 /// 数据库模式下分页读取用户端合买大厅活跃计划，并加载当前页参与人。
 async fn query_active_group_buy_details_page(
     database: &BusinessDatabase,
@@ -798,6 +877,24 @@ impl GroupBuyStore {
                 plan.participants
                     .iter()
                     .any(|participant| participant.user_id == user_id)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// 返回控奖页面当前期仍在流转中的合买计划，包含发起人和参与人认购记录。
+    fn list_control_details_for_issue(&self, lottery_id: &str, issue: &str) -> Vec<GroupBuyPlan> {
+        sorted_group_buy_plans(self.plans.values())
+            .into_iter()
+            .filter(|plan| {
+                plan.lottery_id == lottery_id
+                    && plan.issue == issue
+                    && matches!(
+                        plan.status,
+                        GroupBuyPlanStatus::Draft
+                            | GroupBuyPlanStatus::Open
+                            | GroupBuyPlanStatus::Filled
+                    )
             })
             .cloned()
             .collect()

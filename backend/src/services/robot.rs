@@ -11,7 +11,10 @@ use sqlx::Row;
 use crate::{
     domain::{
         lottery::LotteryKind,
-        robot::{RobotConfigSummary, RobotKind, RobotStatus},
+        robot::{
+            default_group_buy_fill_before_draw_seconds, default_group_buy_fill_strategy,
+            GroupBuyRobotFillStrategy, RobotConfigSummary, RobotKind, RobotStatus,
+        },
     },
     error::{ApiError, ApiResult},
 };
@@ -182,7 +185,13 @@ async fn load_robot_store(database: &BusinessDatabase) -> ApiResult<RobotStore> 
 
     let mut robots = BTreeMap::new();
     for row in sqlx::query(
-        "SELECT id, name, kind, status, description
+        "SELECT id,
+                name,
+                kind,
+                status,
+                description,
+                group_buy_fill_strategy,
+                group_buy_fill_before_draw_seconds
          FROM robot_configs
          ORDER BY id ASC",
     )
@@ -212,6 +221,15 @@ async fn load_robot_store(database: &BusinessDatabase) -> ApiResult<RobotStore> 
                 description: row
                     .try_get("description")
                     .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?,
+                group_buy_fill_strategy: enum_from_string(
+                    row.try_get("group_buy_fill_strategy")
+                        .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?,
+                )?,
+                group_buy_fill_before_draw_seconds: row
+                    .try_get::<i32, _>("group_buy_fill_before_draw_seconds")
+                    .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?
+                    .try_into()
+                    .map_err(|_| ApiError::Internal("机器人补满秒数数据无效".to_string()))?,
                 deletable: is_robot_deletable(&id),
             },
         );
@@ -243,14 +261,27 @@ async fn save_robot_store(database: &BusinessDatabase, store: &RobotStore) -> Ap
 
     for robot in store.robots.values() {
         sqlx::query(
-            "INSERT INTO robot_configs (id, name, kind, status, description)
-             VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO robot_configs (
+                 id,
+                 name,
+                 kind,
+                 status,
+                 description,
+                 group_buy_fill_strategy,
+                 group_buy_fill_before_draw_seconds
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&robot.id)
         .bind(&robot.name)
         .bind(enum_to_string(&robot.kind)?)
         .bind(enum_to_string(&robot.status)?)
         .bind(&robot.description)
+        .bind(enum_to_string(&robot.group_buy_fill_strategy)?)
+        .bind(
+            i32::try_from(robot.group_buy_fill_before_draw_seconds)
+                .map_err(|_| ApiError::BadRequest("合买机器人开奖前补满秒数过大".to_string()))?,
+        )
         .execute(&mut *tx)
         .await
         .map_err(|_| ApiError::Internal("机器人配置数据保存失败".to_string()))?;
@@ -405,9 +436,34 @@ fn normalize_robot(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    normalize_group_buy_fill_config(&mut robot)?;
     robot.deletable = is_robot_deletable(&robot.id);
 
     Ok(robot)
+}
+
+/// 规范合买机器人补满策略，避免无效秒数导致调度无法判断触发窗口。
+fn normalize_group_buy_fill_config(robot: &mut RobotConfigSummary) -> ApiResult<()> {
+    if robot.kind != RobotKind::GroupBuy {
+        robot.group_buy_fill_strategy = default_group_buy_fill_strategy();
+        robot.group_buy_fill_before_draw_seconds = default_group_buy_fill_before_draw_seconds();
+        return Ok(());
+    }
+
+    if robot.group_buy_fill_before_draw_seconds == 0 {
+        return Err(ApiError::BadRequest(
+            "合买机器人开奖前补满秒数必须大于 0".to_string(),
+        ));
+    }
+    if robot.group_buy_fill_before_draw_seconds > 86_400 {
+        return Err(ApiError::BadRequest(
+            "合买机器人开奖前补满秒数不能超过 86400".to_string(),
+        ));
+    }
+
+    match robot.group_buy_fill_strategy {
+        GroupBuyRobotFillStrategy::Rhythm | GroupBuyRobotFillStrategy::BeforeDraw => Ok(()),
+    }
 }
 
 /// 根据机器人 ID 判断是否允许后台删除。
@@ -434,6 +490,8 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
             lottery_ids: vec!["fc3d".to_string(), "ssc60".to_string()],
             status: RobotStatus::Enabled,
             description: "开盘期间发起合买并辅助满单".to_string(),
+            group_buy_fill_strategy: default_group_buy_fill_strategy(),
+            group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(),
             deletable: false,
         },
         RobotConfigSummary {
@@ -443,6 +501,8 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
             lottery_ids: vec!["ssc60".to_string()],
             status: RobotStatus::Paused,
             description: "按彩种开盘时间模拟普通用户购彩".to_string(),
+            group_buy_fill_strategy: default_group_buy_fill_strategy(),
+            group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(),
             deletable: false,
         },
         RobotConfigSummary {
@@ -452,6 +512,8 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
             lottery_ids: vec!["manual-test".to_string()],
             status: RobotStatus::Disabled,
             description: "指定号码测试彩暂停机器人执行".to_string(),
+            group_buy_fill_strategy: default_group_buy_fill_strategy(),
+            group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(),
             deletable: true,
         },
     ]
@@ -475,6 +537,9 @@ mod tests {
                     lottery_ids: vec!["fc3d".to_string(), "fc3d".to_string()],
                     status: RobotStatus::Paused,
                     description: "测试机器人".to_string(),
+                    group_buy_fill_strategy: default_group_buy_fill_strategy(),
+                    group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(
+                    ),
                     deletable: true,
                 },
                 &lotteries,
@@ -506,6 +571,9 @@ mod tests {
                     lottery_ids: Vec::new(),
                     status: RobotStatus::Paused,
                     description: "测试机器人".to_string(),
+                    group_buy_fill_strategy: default_group_buy_fill_strategy(),
+                    group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(
+                    ),
                     deletable: true,
                 },
                 &lotteries,
@@ -529,6 +597,9 @@ mod tests {
                     lottery_ids: vec!["missing".to_string()],
                     status: RobotStatus::Paused,
                     description: "测试机器人".to_string(),
+                    group_buy_fill_strategy: default_group_buy_fill_strategy(),
+                    group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(
+                    ),
                     deletable: true,
                 },
                 &lotteries,
@@ -552,6 +623,9 @@ mod tests {
                     lottery_ids: vec!["fc3d".to_string()],
                     status: RobotStatus::Paused,
                     description: "测试删除".to_string(),
+                    group_buy_fill_strategy: default_group_buy_fill_strategy(),
+                    group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(
+                    ),
                     deletable: true,
                 },
                 &lotteries,

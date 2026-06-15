@@ -641,6 +641,8 @@ mod tests {
                 lottery_ids: vec!["fc3d".to_string()],
                 status: RobotStatus::Enabled,
                 description: "测试机器人".to_string(),
+                group_buy_fill_strategy: crate::domain::robot::GroupBuyRobotFillStrategy::Rhythm,
+                group_buy_fill_before_draw_seconds: 15,
                 deletable: true,
             }],
         )

@@ -31,17 +31,18 @@ use crate::{
     domain::finance::{FinancialAccountSummary, LedgerEntry, LedgerEntryKind},
     domain::group_buy::{
         AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyCreateOptions,
-        GroupBuyCreateSettings, GroupBuyParticipationSummary, GroupBuyPlan, GroupBuySelectOption,
-        UserCreateGroupBuyPlanRequest, UserGroupBuyActionResponse, UserGroupBuyParticipantSummary,
-        UserGroupBuyPlan, UserGroupBuyPlanPage, UserJoinGroupBuyPlanRequest,
+        GroupBuyCreateSettings, GroupBuyParticipationSummary, GroupBuyPlan, GroupBuyPlanStatus,
+        GroupBuySelectOption, UserCreateGroupBuyPlanRequest, UserGroupBuyActionResponse,
+        UserGroupBuyParticipantSummary, UserGroupBuyPlan, UserGroupBuyPlanPage,
+        UserJoinGroupBuyPlanRequest,
     },
     domain::invite::{InviteRecord, InviteStatus},
-    domain::lottery::LotteryKind,
+    domain::lottery::{LotteryKind, LotteryNumberType},
     domain::mobile::{
         MobileBetPageConfig, MobileCreateBetOrderBatchRequest, MobileCreateBetOrderBatchResponse,
         MobileSiteConfig,
     },
-    domain::order::{CreateOrderRequest, OrderDetail, OrderSource},
+    domain::order::{CreateOrderRequest, OrderDetail, OrderSource, OrderStatus},
     domain::permission::SystemSetting,
     domain::rebate::InvitePolicySummary,
     domain::recharge::{
@@ -67,7 +68,10 @@ use crate::{
     },
     services::{
         business_database::enum_to_string,
-        group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
+        group_buy_flow::{
+            build_group_buy_order_request, create_order_for_filled_group_buy,
+            parse_group_buy_rule_code, parse_group_buy_selection,
+        },
         group_buy_robot::is_group_buy_robot_user_id,
         image_bed::{
             image_bed_value_as_url, upload_configured_image_bed_file, ImageBedUploadOptions,
@@ -855,16 +859,29 @@ struct UserBetOrderDetailResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     group_buy_plan_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    group_buy_plan_status: Option<GroupBuyPlanStatus>,
+    #[serde(skip_serializing_if = "is_false")]
+    group_buy_pending_plan: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     participation_amount_minor: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    participation_share_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     participation_payout_minor: Option<i64>,
+}
+
+/// 判断布尔值是否为 false，供 serde 跳过默认 false 字段。
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone)]
 /// 当前用户在一张合买真实订单里的个人份额，供注单列表展示使用。
 struct UserGroupBuyOrderShare {
     plan_id: String,
+    plan_status: GroupBuyPlanStatus,
     amount_minor: i64,
+    share_count: u32,
     payout_minor: Option<i64>,
 }
 
@@ -887,23 +904,31 @@ async fn list_user_bet_orders(
         .list_user_visible_page(
             &session.user.id,
             &group_buy_order_ids,
-            PageRequest::new(query.page, query.page_size),
+            PageRequest::default(),
         )
         .await?
         .items;
+    let lotteries = state.lotteries.list().await?;
     let ledger_entries = state.finance.user_ledger_entries(&session.user.id).await?;
-    let orders =
-        user_visible_bet_orders(&session.user.id, orders, &group_buy_plans, &ledger_entries)?;
+    let orders = user_visible_bet_orders(
+        &session.user.id,
+        orders,
+        &group_buy_plans,
+        &ledger_entries,
+        &lotteries,
+    )?;
+    let orders = query.paginate(orders);
 
     Ok(Json(ApiEnvelope::success(orders)))
 }
 
-/// 合并本人独立下注订单，以及本人参与且已经成单的合买投注订单。
+/// 合并本人独立下注订单、本人参与且已经成单的合买投注订单，以及尚未生成真实订单的合买认购。
 fn user_visible_bet_orders(
     user_id: &str,
     orders: Vec<OrderDetail>,
     group_buy_plans: &[GroupBuyPlan],
     ledger_entries: &[LedgerEntry],
+    lotteries: &[LotteryKind],
 ) -> ApiResult<Vec<UserBetOrderDetailResponse>> {
     let mut visible_orders = Vec::new();
     for order in orders {
@@ -914,19 +939,121 @@ fn user_visible_bet_orders(
         };
         if order.user_id == user_id || group_buy_share.is_some() {
             let group_buy_plan_id = group_buy_share.as_ref().map(|share| share.plan_id.clone());
+            let group_buy_plan_status = group_buy_share
+                .as_ref()
+                .map(|share| share.plan_status.clone());
             let participation_amount_minor =
                 group_buy_share.as_ref().map(|share| share.amount_minor);
+            let participation_share_count = group_buy_share.as_ref().map(|share| share.share_count);
             let participation_payout_minor = group_buy_share.and_then(|share| share.payout_minor);
             visible_orders.push(UserBetOrderDetailResponse {
                 order,
                 group_buy_plan_id,
+                group_buy_plan_status,
+                group_buy_pending_plan: false,
                 participation_amount_minor,
+                participation_share_count,
                 participation_payout_minor,
             });
         }
     }
 
+    for plan in group_buy_plans
+        .iter()
+        .filter(|plan| plan.order_id.is_none())
+    {
+        if let Some(order) = unformed_group_buy_order_response(user_id, plan, lotteries)? {
+            visible_orders.push(order);
+        }
+    }
+
+    sort_user_bet_order_responses_by_created_at_desc(&mut visible_orders);
+
     Ok(visible_orders)
+}
+
+/// 将尚未满单成单的合买认购映射为用户端注单时间线里的特殊记录。
+fn unformed_group_buy_order_response(
+    user_id: &str,
+    plan: &GroupBuyPlan,
+    lotteries: &[LotteryKind],
+) -> ApiResult<Option<UserBetOrderDetailResponse>> {
+    if !plan
+        .participants
+        .iter()
+        .any(|participant| participant.user_id == user_id)
+    {
+        return Ok(None);
+    }
+
+    let rule_code = parse_group_buy_rule_code(&plan.rule_code)?;
+    let selection = parse_group_buy_selection(&rule_code, &plan.numbers)?;
+    let participation_amount_minor = group_buy_user_participation_amount_minor(plan, user_id)?;
+    let participation_share_count = group_buy_user_participation_share_count(plan, user_id)?;
+    let created_at = group_buy_user_latest_participation_at(plan, user_id)
+        .unwrap_or_else(|| plan.created_at.clone());
+    let status = if plan.status == GroupBuyPlanStatus::Cancelled {
+        OrderStatus::Cancelled
+    } else {
+        OrderStatus::PendingDraw
+    };
+
+    Ok(Some(UserBetOrderDetailResponse {
+        order: OrderDetail {
+            id: format!("GB-{}", plan.id),
+            order_source: OrderSource::GroupBuy,
+            user_id: user_id.to_string(),
+            lottery_id: plan.lottery_id.clone(),
+            lottery_name: plan.lottery_name.clone(),
+            issue: plan.issue.clone(),
+            rule_code,
+            number_type: group_buy_plan_number_type(plan, lotteries),
+            selection,
+            stake_count: 0,
+            unit_amount_minor: plan.min_share_amount_minor,
+            amount_minor: plan.total_amount_minor,
+            odds_basis_points: 0,
+            expanded_bets: vec![plan.numbers.clone()],
+            draw_number: None,
+            matched_bets: Vec::new(),
+            payout_minor: 0,
+            status,
+            settled_at: None,
+            created_at,
+        },
+        group_buy_plan_id: Some(plan.id.clone()),
+        group_buy_plan_status: Some(plan.status.clone()),
+        group_buy_pending_plan: plan.status != GroupBuyPlanStatus::Cancelled,
+        participation_amount_minor: Some(participation_amount_minor),
+        participation_share_count: Some(participation_share_count),
+        participation_payout_minor: None,
+    }))
+}
+
+/// 按创建时间倒序稳定排列用户端注单，保证未成单合买和真实订单处于同一时间线。
+fn sort_user_bet_order_responses_by_created_at_desc(items: &mut [UserBetOrderDetailResponse]) {
+    items.sort_by(|left, right| {
+        right
+            .order
+            .created_at
+            .cmp(&left.order.created_at)
+            .then_with(|| right.order.id.cmp(&left.order.id))
+    });
+}
+
+/// 获取合买计划对应彩种号码类型；彩种配置缺失时按玩法编码做保守推断。
+fn group_buy_plan_number_type(plan: &GroupBuyPlan, lotteries: &[LotteryKind]) -> LotteryNumberType {
+    lotteries
+        .iter()
+        .find(|lottery| lottery.id == plan.lottery_id)
+        .map(|lottery| lottery.number_type.clone())
+        .unwrap_or_else(|| {
+            if plan.rule_code.starts_with("five") {
+                LotteryNumberType::FiveDigit
+            } else {
+                LotteryNumberType::ThreeDigit
+            }
+        })
 }
 
 /// 计算当前用户在合买订单中的展示份额，优先使用真实资金流水里的派奖记录。
@@ -951,6 +1078,7 @@ fn user_group_buy_order_share(
     }
 
     let amount_minor = group_buy_user_participation_amount_minor(plan, user_id)?;
+    let share_count = group_buy_user_participation_share_count(plan, user_id)?;
     let payout_minor = group_buy_user_participation_payout_minor(
         plan,
         user_id,
@@ -960,7 +1088,9 @@ fn user_group_buy_order_share(
     )?;
     Ok(Some(UserGroupBuyOrderShare {
         plan_id: plan.id.clone(),
+        plan_status: plan.status.clone(),
         amount_minor,
+        share_count,
         payout_minor,
     }))
 }
@@ -974,6 +1104,26 @@ fn group_buy_user_participation_amount_minor(plan: &GroupBuyPlan, user_id: &str)
             sum.checked_add(participant.amount_minor)
                 .ok_or_else(|| ApiError::Internal("合买参与金额汇总溢出".to_string()))
         })
+}
+
+/// 汇总用户在同一合买计划里的多次认购份数。
+fn group_buy_user_participation_share_count(plan: &GroupBuyPlan, user_id: &str) -> ApiResult<u32> {
+    plan.participants
+        .iter()
+        .filter(|participant| participant.user_id == user_id)
+        .try_fold(0_u32, |sum, participant| {
+            sum.checked_add(participant.share_count)
+                .ok_or_else(|| ApiError::Internal("合买参与份数汇总溢出".to_string()))
+        })
+}
+
+/// 返回用户在某个合买计划里最后一次认购时间，用于我的注单时间线排序。
+fn group_buy_user_latest_participation_at(plan: &GroupBuyPlan, user_id: &str) -> Option<String> {
+    plan.participants
+        .iter()
+        .filter(|participant| participant.user_id == user_id)
+        .map(|participant| participant.created_at.clone())
+        .max()
 }
 
 /// 计算用户个人派奖金额，避免手机端把整张合买订单的奖金展示给每个参与人。
@@ -2820,6 +2970,7 @@ mod tests {
             ],
             &plans,
             &[],
+            &[test_group_buy_lottery()],
         )
         .expect("用户注单列表可以合并合买参与金额");
         let visible_ids = visible
@@ -2848,6 +2999,55 @@ mod tests {
     }
 
     #[test]
+    /// 验证用户端注单列表会包含本人已经认购但尚未满单生成真实订单的合买计划。
+    fn user_visible_bet_orders_include_unformed_group_buy_participation() {
+        let direct_order = test_order("O000000000007", "U20002", OrderSource::Direct);
+        let mut pending_plan = test_group_buy_plan(
+            "G-USER-PENDING-001",
+            "20260605200100",
+            "regular_user",
+            "未满单合买",
+        );
+        pending_plan.filled_amount_minor = 3_000;
+        pending_plan.participants = vec![
+            test_group_buy_participant("G-USER-PENDING-001-P001", "U10001"),
+            test_group_buy_participant_with_amount("G-USER-PENDING-001-P002", "U20002", 2_000),
+        ];
+        pending_plan.participants[1].created_at = "2026-06-05 20:02:00".to_string();
+
+        let visible = user_visible_bet_orders(
+            "U20002",
+            vec![direct_order],
+            &[pending_plan],
+            &[],
+            &[test_group_buy_lottery()],
+        )
+        .expect("用户注单列表可以合并未成单合买认购");
+
+        assert_eq!(visible.len(), 2);
+        assert_eq!(visible[0].order.id, "GB-G-USER-PENDING-001");
+        assert_eq!(
+            visible[0].group_buy_plan_id.as_deref(),
+            Some("G-USER-PENDING-001")
+        );
+        assert_eq!(
+            visible[0].group_buy_plan_status,
+            Some(GroupBuyPlanStatus::Open)
+        );
+        assert!(visible[0].group_buy_pending_plan);
+        assert_eq!(visible[0].participation_amount_minor, Some(2_000));
+        assert_eq!(visible[0].participation_share_count, Some(2));
+        assert_eq!(visible[0].order.order_source, OrderSource::GroupBuy);
+        assert_eq!(visible[0].order.status, OrderStatus::PendingDraw);
+        assert_eq!(visible[0].order.number_type, LotteryNumberType::FiveDigit);
+        assert_eq!(
+            visible[0].order.selection.positions,
+            vec![vec![1], vec![2], vec![3]]
+        );
+        assert_eq!(visible[1].order.id, "O000000000007");
+    }
+
+    #[test]
     /// 验证合买中奖注单会按当前用户认购比例展示个人派奖金额。
     fn user_visible_bet_orders_calculates_group_buy_participation_payout_by_share() {
         let group_order =
@@ -2863,8 +3063,14 @@ mod tests {
         plan.total_amount_minor = 68_600;
         plan.filled_amount_minor = 68_600;
 
-        let visible = user_visible_bet_orders("U20002", vec![group_order], &[plan], &[])
-            .expect("用户注单列表可以计算合买个人派奖金额");
+        let visible = user_visible_bet_orders(
+            "U20002",
+            vec![group_order],
+            &[plan],
+            &[],
+            &[test_group_buy_lottery()],
+        )
+        .expect("用户注单列表可以计算合买个人派奖金额");
 
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].participation_amount_minor, Some(30_000));
@@ -2895,9 +3101,14 @@ mod tests {
             Some("S000001:O000000000006:G-USER-ORDER-004-P002"),
         )];
 
-        let visible =
-            user_visible_bet_orders("U20002", vec![group_order], &[plan], &ledger_entries)
-                .expect("用户注单列表可以读取合买个人派奖流水");
+        let visible = user_visible_bet_orders(
+            "U20002",
+            vec![group_order],
+            &[plan],
+            &ledger_entries,
+            &[test_group_buy_lottery()],
+        )
+        .expect("用户注单列表可以读取合买个人派奖流水");
 
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].participation_payout_minor, Some(832));

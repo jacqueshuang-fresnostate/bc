@@ -24,6 +24,7 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
 import { OrderBetInfo } from '../components/OrderBetInfo';
+import { useControlGroupBuyPlans } from '../hooks/useControlGroupBuyPlans';
 import { useLotteryConsole } from '../hooks/useLotteryConsole';
 import { usePlayRules } from '../hooks/usePlayRules';
 import type { DrawMode, LotteryKind } from '../types/dashboard';
@@ -33,6 +34,7 @@ import type {
   DrawIssueStatus,
   LotteryDrawControl,
 } from '../types/draws';
+import type { GroupBuyPlan, GroupBuyPlanStatus } from '../types/groupBuy';
 import type { OrderDetail, OrderStatus } from '../types/orders';
 import type { PlayRuleSummary } from '../types/playRules';
 import type { DrawSchedulerStatus } from '../types/scheduler';
@@ -156,6 +158,29 @@ export function LotteryConsolePage({
     [searchMatchedItems, statusFilter, now],
   );
   const selectedControlLotteryId = selectedControlItem?.lottery.id ?? null;
+  const controlGroupBuyIssue = useMemo(
+    () =>
+      selectedControlItem
+        ? groupBuyIssueForControl(selectedControlItem, controlForm)
+        : '',
+    [
+      selectedControlItem,
+      controlForm.targetIssue,
+      controlForm.targetOrderId,
+      controlForm.targetScope,
+    ],
+  );
+  const {
+    error: controlGroupBuyError,
+    loading: controlGroupBuyLoading,
+    plans: controlGroupBuyPlans,
+    refresh: refreshControlGroupBuys,
+  } = useControlGroupBuyPlans(selectedControlLotteryId, controlGroupBuyIssue);
+
+  const refreshControlData = () => {
+    refresh();
+    refreshControlGroupBuys();
+  };
 
   useEffect(() => {
     if (!selectedControlLotteryId) {
@@ -215,6 +240,7 @@ export function LotteryConsolePage({
       Toast.warning('该彩种未开启开奖号码控制');
       return;
     }
+    refreshControlData();
     setSelectedControlItem(item);
     setControlForm(
       normalizeControlFormForIssueStatus(
@@ -371,12 +397,18 @@ export function LotteryConsolePage({
       <DrawControlSideSheet
         error={controlError}
         form={controlForm}
+        groupBuyError={controlGroupBuyError}
+        groupBuyIssue={controlGroupBuyIssue}
+        groupBuyLoading={controlGroupBuyLoading}
+        groupBuyPlans={controlGroupBuyPlans}
         item={selectedControlItem}
         playRules={playRules}
+        refreshing={loading || controlGroupBuyLoading}
         saving={controlSaving}
         visible={Boolean(selectedControlItem)}
         onChange={setControlForm}
         onClose={closeControlSheet}
+        onRefreshOrders={refreshControlData}
         onSubmit={() => void submitDrawControl()}
       />
     </div>
@@ -648,21 +680,33 @@ function CompactInfoRow({
 function DrawControlSideSheet({
   error,
   form,
+  groupBuyError,
+  groupBuyIssue,
+  groupBuyLoading,
+  groupBuyPlans,
   item,
   onChange,
   onClose,
+  onRefreshOrders,
   onSubmit,
   playRules,
+  refreshing,
   saving,
   visible,
 }: {
   error: string | null;
   form: LotteryDrawControlFormState;
+  groupBuyError: string | null;
+  groupBuyIssue: string;
+  groupBuyLoading: boolean;
+  groupBuyPlans: GroupBuyPlan[];
   item: LotteryConsoleItem | null;
   onChange: (form: LotteryDrawControlFormState) => void;
   onClose: () => void;
+  onRefreshOrders: () => void;
   onSubmit: () => void;
   playRules: PlayRuleSummary[];
+  refreshing: boolean;
   saving: boolean;
   visible: boolean;
 }) {
@@ -671,6 +715,7 @@ function DrawControlSideSheet({
   const controlIssues = item ? controlCandidateIssues(item) : [];
   const controlOrders = item ? controlCandidateOrders(item) : [];
   const visibleOrders = item ? visibleConsoleOrders(item, form) : [];
+  const groupBuyRows = groupBuyParticipantRows(groupBuyPlans);
   const targetIssueInactive = controlFormTargetsInactiveIssue(item, form);
   const targetSelectDisabled = !form.enabled && !targetIssueInactive;
   const saveDisabled =
@@ -714,15 +759,16 @@ function DrawControlSideSheet({
                 className="mt-2 w-full"
                 disabled={targetSelectDisabled}
                 value={form.targetScope}
-                onChange={(value) =>
+                onChange={(value) => {
                   onChange(
                     controlFormWithScope(
                       item,
                       form,
                       String(value) as DrawControlTargetScope,
                     ),
-                  )
-                }
+                  );
+                  onRefreshOrders();
+                }}
               >
                 <Select.Option value="lottery">整个彩种后续开奖</Select.Option>
                 <Select.Option value="issue">指定期号</Select.Option>
@@ -740,9 +786,10 @@ function DrawControlSideSheet({
                 disabled={targetSelectDisabled}
                 placeholder="请选择要控制的期号"
                 value={form.targetIssue || undefined}
-                onChange={(value) =>
-                  onChange(controlFormWithIssue(item, form, String(value ?? '')))
-                }
+                onChange={(value) => {
+                  onChange(controlFormWithIssue(item, form, String(value ?? '')));
+                  onRefreshOrders();
+                }}
               >
                 {controlIssues.map((issue) => (
                   <Select.Option key={issue.id} value={issue.issue}>
@@ -766,6 +813,7 @@ function DrawControlSideSheet({
                     targetIssue: order?.issue ?? '',
                     targetOrderId: order?.id ?? '',
                   });
+                  onRefreshOrders();
                 }}
               >
                 {controlOrders.map((order) => (
@@ -858,7 +906,18 @@ function DrawControlSideSheet({
                   默认显示当前控制范围相关订单，订单控制只匹配该订单所在期号。
                 </p>
               </div>
-              <Tag color="cyan">{visibleOrders.length} 单</Tag>
+              <div className="flex items-center gap-2">
+                <Tag color="cyan">{visibleOrders.length} 单</Tag>
+                <Button
+                  htmlType="button"
+                  icon={<RefreshCcw size={14} />}
+                  loading={refreshing}
+                  size="small"
+                  onClick={onRefreshOrders}
+                >
+                  刷新订单/认购
+                </Button>
+              </div>
             </div>
             {visibleOrders.length > 0 ? (
               <div className="mt-3 max-h-[320px] overflow-auto">
@@ -939,6 +998,133 @@ function DrawControlSideSheet({
             ) : (
               <div className="mt-3 rounded border border-dashed border-line p-4 text-sm text-slate-500">
                 当前范围暂无用户下注订单。
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-md border border-line p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-ink">合买认购记录</h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  显示当前期号的合买计划和认购明细，未成单、未满单也会展示。
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {groupBuyIssue ? (
+                  <Tag color="grey">期号 {groupBuyIssue}</Tag>
+                ) : null}
+                <Tag color="orange">{groupBuyRows.length} 条认购</Tag>
+              </div>
+            </div>
+            {groupBuyError ? (
+              <Banner
+                className="mt-3"
+                type="warning"
+                title="合买认购记录读取失败"
+                description={groupBuyError}
+              />
+            ) : null}
+            {groupBuyLoading ? (
+              <div className="mt-3 rounded border border-dashed border-line p-4 text-sm text-slate-500">
+                正在加载合买认购记录...
+              </div>
+            ) : groupBuyRows.length > 0 ? (
+              <div className="mt-3 max-h-[300px] overflow-auto">
+                <table className="w-full min-w-[1320px] text-left text-xs">
+                  <thead className="border-b border-line text-slate-500">
+                    <tr>
+                      <th className="py-2 pr-3 font-medium">合买计划</th>
+                      <th className="py-2 pr-3 font-medium">状态</th>
+                      <th className="py-2 pr-3 font-medium">参与用户</th>
+                      <th className="py-2 pr-3 font-medium">认购时间</th>
+                      <th className="py-2 pr-3 font-medium">期号</th>
+                      <th className="py-2 pr-3 font-medium">玩法</th>
+                      <th className="py-2 pr-3 font-medium">投注内容</th>
+                      <th className="py-2 pr-3 font-medium">认购金额</th>
+                      <th className="py-2 pr-3 font-medium">份数</th>
+                      <th className="py-2 pr-3 font-medium">占比</th>
+                      <th className="py-2 pr-3 font-medium">进度</th>
+                      <th className="py-2 pr-3 font-medium">真实订单</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupBuyRows.map(({ participant, plan }) => (
+                      <tr
+                        key={`${plan.id}:${participant.id}`}
+                        className="border-b border-slate-100"
+                      >
+                        <td className="py-2 pr-3">
+                          <div className="font-mono font-semibold text-ink">
+                            {plan.id}
+                          </div>
+                          <div className="mt-1 max-w-[180px] truncate text-[11px] text-slate-400">
+                            {plan.title || '-'}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3">
+                          <Tag color={groupBuyStatusColor(plan.status)}>
+                            {groupBuyStatusText(plan.status)}
+                          </Tag>
+                        </td>
+                        <td className="py-2 pr-3">
+                          <div className="font-medium text-slate-700">
+                            {participant.username || '未知用户'}
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-400">
+                            {participant.userId}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap text-slate-600">
+                          {formatDateTime(participant.createdAt, participant.createdAt || '-')}
+                        </td>
+                        <td className="py-2 pr-3 text-slate-600">{plan.issue}</td>
+                        <td className="py-2 pr-3 text-slate-600">
+                          {formatGroupBuyPlayRuleLabel(plan.ruleCode, playRules)}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <div className="max-w-[180px] truncate font-mono text-slate-600">
+                            {plan.numbers || '-'}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3 font-semibold text-ink">
+                          {formatMoney(participant.amountMinor)}
+                        </td>
+                        <td className="py-2 pr-3 text-slate-600">
+                          {participant.shareCount} 份
+                        </td>
+                        <td className="py-2 pr-3 text-slate-600">
+                          {participantPercent(participant.amountMinor, plan)}%
+                        </td>
+                        <td className="py-2 pr-3">
+                          <div className="min-w-[120px]">
+                            <div className="mb-1 flex items-center justify-between text-[11px] text-slate-500">
+                              <span>{formatMoney(plan.filledAmountMinor)}</span>
+                              <span>{groupBuyProgressPercent(plan)}%</span>
+                            </div>
+                            <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                              <div
+                                className="h-full rounded-full bg-orange-500"
+                                style={{ width: `${groupBuyProgressPercent(plan)}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3">
+                          {plan.orderId ? (
+                            <Tag color="green">{plan.orderId}</Tag>
+                          ) : (
+                            <Tag color="grey">未成单</Tag>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="mt-3 rounded border border-dashed border-line p-4 text-sm text-slate-500">
+                当前期号暂无合买认购记录。
               </div>
             )}
           </section>
@@ -1344,6 +1530,72 @@ function visibleConsoleOrders(
     return item.currentIssueOrders;
   }
   return item.orders.slice(0, 12);
+}
+
+function groupBuyIssueForControl(
+  item: LotteryConsoleItem,
+  form: LotteryDrawControlFormState,
+) {
+  if (form.targetScope === 'order' && form.targetOrderId.trim()) {
+    const order = item.orders.find((order) => order.id === form.targetOrderId.trim());
+    return order?.issue ?? form.targetIssue.trim();
+  }
+  if (form.targetScope === 'issue' && form.targetIssue.trim()) {
+    return form.targetIssue.trim();
+  }
+  return sellingIssueForControl(item);
+}
+
+function groupBuyParticipantRows(plans: GroupBuyPlan[]) {
+  return plans.flatMap((plan) =>
+    plan.participants.map((participant) => ({
+      participant,
+      plan,
+    })),
+  );
+}
+
+function participantPercent(amountMinor: number, plan: GroupBuyPlan) {
+  if (plan.totalAmountMinor <= 0) {
+    return 0;
+  }
+
+  return Math.round((amountMinor / plan.totalAmountMinor) * 10000) / 100;
+}
+
+function groupBuyProgressPercent(plan: GroupBuyPlan) {
+  if (plan.totalAmountMinor <= 0) {
+    return 0;
+  }
+  const percent = Math.round((plan.filledAmountMinor / plan.totalAmountMinor) * 100);
+  return Math.max(0, Math.min(100, percent));
+}
+
+function groupBuyStatusText(status: GroupBuyPlanStatus) {
+  const labels: Record<GroupBuyPlanStatus, string> = {
+    cancelled: '已取消',
+    draft: '草稿',
+    filled: '已满单',
+    open: '认购中',
+    settled: '已结算',
+  };
+  return labels[status];
+}
+
+function groupBuyStatusColor(status: GroupBuyPlanStatus) {
+  const colors = {
+    cancelled: 'grey',
+    draft: 'blue',
+    filled: 'green',
+    open: 'cyan',
+    settled: 'teal',
+  } as const satisfies Record<GroupBuyPlanStatus, string>;
+
+  return colors[status];
+}
+
+function formatGroupBuyPlayRuleLabel(code: string, playRules: PlayRuleSummary[]) {
+  return playRules.find((rule) => rule.code === code)?.label ?? code;
 }
 
 function countdownText(

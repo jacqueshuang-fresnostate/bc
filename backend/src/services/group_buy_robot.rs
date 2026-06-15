@@ -16,7 +16,8 @@ use crate::{
         order::CreateOrderRequest,
         play::PlayRuleCode,
         robot::{
-            GroupBuyRobotRun, GroupBuyRobotSkippedItem, RobotConfigSummary, RobotKind, RobotStatus,
+            GroupBuyRobotFillStrategy, GroupBuyRobotRun, GroupBuyRobotSkippedItem,
+            RobotConfigSummary, RobotKind, RobotStatus,
         },
         user::UserSummary,
     },
@@ -53,6 +54,7 @@ const ROBOT_FILL_STAGE_COUNT: i64 = 5;
 enum RobotFillPolicy {
     Rhythm,
     GuaranteedUserPlan,
+    BeforeDraw { fill_before_draw_seconds: i64 },
 }
 
 /// 判断用户 ID 是否为系统合买机器人账户。
@@ -174,21 +176,20 @@ async fn execute_lottery_robot(
     robot_user: &UserSummary,
     now_at: NaiveDateTime,
 ) -> ApiResult<()> {
-    if is_issue_sale_closed(issue, now_at)? {
-        push_skipped(
-            run,
-            robot,
-            &lottery.id,
-            Some(issue.issue.clone()),
-            "已到封盘时间，机器人不再发起自己的合买计划",
-        );
-        return Ok(());
-    }
-
     let plan_id = robot_plan_id(robot, lottery, issue);
     let mut plan = match group_buys.get(&plan_id).await {
         Ok(existing) => existing,
         Err(ApiError::NotFound(_)) => {
+            if is_issue_sale_closed(issue, now_at)? {
+                push_skipped(
+                    run,
+                    robot,
+                    &lottery.id,
+                    Some(issue.issue.clone()),
+                    "已到封盘时间，机器人不再发起自己的合买计划",
+                );
+                return Ok(());
+            }
             let draft = build_robot_plan_request(robot, lottery, issue, orders, robot_user).await?;
             if let Some(entry) =
                 ensure_robot_balance(finance, draft.total_amount_minor, "发起合买计划").await?
@@ -246,7 +247,7 @@ async fn execute_lottery_robot(
                 group_buys,
                 users,
                 now_at,
-                RobotFillPolicy::Rhythm,
+                robot_plan_fill_policy(robot),
             )
             .await?;
         }
@@ -315,7 +316,7 @@ async fn fill_existing_group_buy_plans(
             group_buys,
             users,
             now_at,
-            RobotFillPolicy::GuaranteedUserPlan,
+            user_plan_fill_policy(robot),
         )
         .await
         {
@@ -897,13 +898,38 @@ fn robot_fill_decision(
 
     let sale_closed_at = parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?;
     let scheduled_at = parse_robot_timestamp(&issue.scheduled_at, "开奖时间")?;
+    if let RobotFillPolicy::BeforeDraw {
+        fill_before_draw_seconds,
+    } = policy
+    {
+        let seconds_until_draw = (scheduled_at - now_at).num_seconds();
+        if seconds_until_draw < 0 {
+            return Ok(RobotFillDecision::Skip(
+                "已到开奖时间，机器人不再补单".to_string(),
+            ));
+        }
+        if seconds_until_draw > fill_before_draw_seconds {
+            return Ok(RobotFillDecision::Skip(format!(
+                "未到开奖前补满窗口，距离开奖还有 {seconds_until_draw} 秒"
+            )));
+        }
+        return Ok(RobotFillDecision::Add(RobotFillAmount {
+            amount_minor: remaining_amount_minor,
+            note: format!("合买机器人开奖前 {fill_before_draw_seconds} 秒补满"),
+        }));
+    }
+
     let seconds_until_sale_close = (sale_closed_at - now_at).num_seconds();
     if seconds_until_sale_close <= 0 {
-        if policy == RobotFillPolicy::GuaranteedUserPlan && now_at <= scheduled_at {
-            return Ok(RobotFillDecision::Add(RobotFillAmount {
-                amount_minor: remaining_amount_minor,
-                note: "合买机器人封盘兜底补满用户合买".to_string(),
-            }));
+        match policy {
+            RobotFillPolicy::GuaranteedUserPlan if now_at <= scheduled_at => {
+                return Ok(RobotFillDecision::Add(RobotFillAmount {
+                    amount_minor: remaining_amount_minor,
+                    note: "合买机器人封盘兜底补满用户合买".to_string(),
+                }));
+            }
+            RobotFillPolicy::Rhythm | RobotFillPolicy::GuaranteedUserPlan => {}
+            RobotFillPolicy::BeforeDraw { .. } => unreachable!("开奖前补满策略已提前处理"),
         }
         return Ok(RobotFillDecision::Skip(
             "已到封盘时间，机器人不再补单".to_string(),
@@ -966,6 +992,26 @@ fn robot_fill_decision(
         amount_minor,
         note: format!("合买机器人{stage_label}节奏补单"),
     }))
+}
+
+/// 计算机器人自己发起计划的补满策略。
+fn robot_plan_fill_policy(robot: &RobotConfigSummary) -> RobotFillPolicy {
+    match robot.group_buy_fill_strategy {
+        GroupBuyRobotFillStrategy::Rhythm => RobotFillPolicy::Rhythm,
+        GroupBuyRobotFillStrategy::BeforeDraw => RobotFillPolicy::BeforeDraw {
+            fill_before_draw_seconds: i64::from(robot.group_buy_fill_before_draw_seconds),
+        },
+    }
+}
+
+/// 计算用户或后台发起计划的补满策略，默认保留封盘兜底能力。
+fn user_plan_fill_policy(robot: &RobotConfigSummary) -> RobotFillPolicy {
+    match robot.group_buy_fill_strategy {
+        GroupBuyRobotFillStrategy::Rhythm => RobotFillPolicy::GuaranteedUserPlan,
+        GroupBuyRobotFillStrategy::BeforeDraw => RobotFillPolicy::BeforeDraw {
+            fill_before_draw_seconds: i64::from(robot.group_buy_fill_before_draw_seconds),
+        },
+    }
 }
 
 /// 判断当前执行时间是否已经到达期号封盘点。
@@ -1497,6 +1543,183 @@ mod tests {
         assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 5_000, 5, true).await;
     }
 
+    #[tokio::test]
+    async fn robot_run_fills_own_plan_by_before_draw_strategy() {
+        let access = AccessRepository::memory_seeded();
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        lotteries
+            .set_sale_enabled("ssc60", true)
+            .await
+            .expect("lottery sale can be enabled");
+        let mut lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.group_buy.enabled = true;
+        lotteries
+            .update("ssc60", lottery.clone())
+            .await
+            .expect("lottery can enable group buy");
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "20260605201000".to_string(),
+                    scheduled_at: "2026-06-05 20:10:00".to_string(),
+                    sale_closed_at: "2026-06-05 20:09:30".to_string(),
+                },
+            )
+            .await
+            .expect("issue can be created");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        configure_seed_group_buy_robot_strategy(
+            &robots,
+            &lotteries,
+            GroupBuyRobotFillStrategy::BeforeDraw,
+            45,
+        )
+        .await;
+
+        let before_threshold_run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 20:08:50".to_string(),
+        )
+        .await
+        .expect("robot can create plan before threshold");
+
+        assert_eq!(before_threshold_run.created_plans.len(), 1);
+        assert!(before_threshold_run
+            .skipped_items
+            .iter()
+            .any(|item| item.reason.contains("未到开奖前补满窗口")));
+        let plan_id = before_threshold_run.created_plans[0].id.clone();
+        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 1_000, 1, false).await;
+
+        let fill_run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 20:09:20".to_string(),
+        )
+        .await
+        .expect("robot can fill plan in before draw window");
+
+        assert_eq!(fill_run.filled_plans.len(), 1);
+        assert_eq!(fill_run.created_orders.len(), 1);
+        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 5_000, 2, true).await;
+    }
+
+    #[tokio::test]
+    async fn robot_run_fills_user_plan_by_before_draw_strategy() {
+        let access = AccessRepository::memory_seeded();
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        lotteries
+            .set_sale_enabled("ssc60", true)
+            .await
+            .expect("lottery sale can be enabled");
+        let mut lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.group_buy.enabled = true;
+        lotteries
+            .update("ssc60", lottery.clone())
+            .await
+            .expect("lottery can enable group buy");
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "20260605201100".to_string(),
+                    scheduled_at: "2026-06-05 20:11:00".to_string(),
+                    sale_closed_at: "2026-06-05 20:10:30".to_string(),
+                },
+            )
+            .await
+            .expect("issue can be created");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let users = access.snapshot().await.expect("access can load").users;
+        let user_plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-USER-BEFORE-DRAW".to_string(),
+                    lottery_id: "ssc60".to_string(),
+                    issue: "20260605201100".to_string(),
+                    rule_code: "fiveFrontDirect".to_string(),
+                    title: "用户开奖前补满测试合买".to_string(),
+                    numbers: "1|2|3".to_string(),
+                    initiator_user_id: "U10001".to_string(),
+                    total_amount_minor: 5_000,
+                    initiator_amount_minor: 1_000,
+                    note: "测试开奖前补满".to_string(),
+                },
+                std::slice::from_ref(&lottery),
+                &users,
+            )
+            .await
+            .expect("user plan can be created");
+        finance
+            .debit_group_buy("U10001", 1_000, "G-USER-BEFORE-DRAW-P001", &user_plan.id)
+            .await
+            .expect("user initiator can be debited");
+        let robots = RobotRepository::memory_seeded();
+        configure_seed_group_buy_robot_strategy(
+            &robots,
+            &lotteries,
+            GroupBuyRobotFillStrategy::BeforeDraw,
+            45,
+        )
+        .await;
+
+        run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 20:09:30".to_string(),
+        )
+        .await
+        .expect("robot can run before before-draw window");
+        assert_robot_plan_progress(&group_buys, "G-USER-BEFORE-DRAW", 5_000, 1_000, 1, false).await;
+
+        let fill_run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 20:10:20".to_string(),
+        )
+        .await
+        .expect("robot can fill user plan in before-draw window");
+
+        let filled_user_plan = fill_run
+            .filled_plans
+            .iter()
+            .find(|plan| plan.id == "G-USER-BEFORE-DRAW")
+            .expect("user plan should be filled by before-draw strategy");
+        assert!(filled_user_plan.order_id.is_some());
+        assert_robot_plan_progress(&group_buys, "G-USER-BEFORE-DRAW", 5_000, 5_000, 2, true).await;
+    }
+
     async fn assert_robot_plan_progress(
         group_buys: &GroupBuyRepository,
         plan_id: &str,
@@ -1560,8 +1783,29 @@ mod tests {
             lottery_ids: vec!["robot-test".to_string()],
             status: RobotStatus::Enabled,
             description: "测试机器人".to_string(),
+            group_buy_fill_strategy: GroupBuyRobotFillStrategy::Rhythm,
+            group_buy_fill_before_draw_seconds: 15,
             deletable: true,
         }
+    }
+
+    async fn configure_seed_group_buy_robot_strategy(
+        robots: &RobotRepository,
+        lotteries: &LotteryRepository,
+        strategy: GroupBuyRobotFillStrategy,
+        before_draw_seconds: u32,
+    ) {
+        let mut robot = robots
+            .get("R-GROUP-001")
+            .await
+            .expect("seed group-buy robot exists");
+        robot.group_buy_fill_strategy = strategy;
+        robot.group_buy_fill_before_draw_seconds = before_draw_seconds;
+        let lottery_snapshot = lotteries.list().await.expect("lotteries can load");
+        robots
+            .update("R-GROUP-001", robot, &lottery_snapshot)
+            .await
+            .expect("seed group-buy robot can update strategy");
     }
 
     fn robot_test_issue(issue: &str) -> DrawIssue {

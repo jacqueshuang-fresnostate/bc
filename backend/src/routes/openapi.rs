@@ -470,6 +470,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/admin/group-buy/plans/by-issue",
+        "合买管理",
+        "按期号查询控奖合买认购",
+        "按 lotteryId 和 issue 返回指定彩种期号下仍在流转中的合买计划详情，包含未满单、未成单计划的认购记录。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
         "/admin/group-buy/plans/{id}",
         "合买管理",
         "合买计划详情",
@@ -662,7 +671,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/robots",
         "机器人配置",
         "机器人列表",
-        "返回合买机器人和购彩机器人配置。",
+        "返回合买机器人和购彩机器人配置，合买机器人包含补满策略与开奖前补满秒数。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -671,7 +680,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/robots",
         "机器人配置",
         "新增机器人",
-        "创建机器人配置。",
+        "创建机器人配置，合买机器人可选择阶段性补单或开奖前补满策略。",
         AuthMode::Admin,
         RequestBodyKind::Json,
     ),
@@ -698,7 +707,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/robots/{id}",
         "机器人配置",
         "更新机器人",
-        "更新机器人名称、类型、状态和彩种范围。",
+        "更新机器人名称、类型、状态、彩种范围和合买补满策略。",
         AuthMode::Admin,
         RequestBodyKind::Json,
     ),
@@ -1292,7 +1301,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/user/bet/orders",
         "用户端投注",
         "用户注单列表",
-        "返回当前用户自己的独立投注订单，以及当前用户参与且已满单成单的合买投注订单。",
+        "返回当前用户自己的独立投注订单、已满单成单的合买投注订单，以及本人已认购但尚未生成真实订单的合买记录。",
         AuthMode::User,
         RequestBodyKind::None,
     ),
@@ -1713,6 +1722,13 @@ fn query_parameters(route: &RouteDoc) -> Vec<Value> {
             ));
         }
         return parameters;
+    }
+
+    if route.method == "get" && route.path == "/admin/group-buy/plans/by-issue" {
+        return vec![
+            query_parameter("lotteryId", "控奖彩种编号。", "string"),
+            query_parameter("issue", "控奖期号。", "string"),
+        ];
     }
 
     Vec::new()

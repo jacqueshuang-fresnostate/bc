@@ -1,5 +1,26 @@
 # TODO
 
+## 2026-06-15 23:45 HKT 手机端我的注单显示未成单合买认购
+
+- 完成任务：让手机端“我的注单”列表显示当前用户已认购但尚未满单成单的合买记录。
+- 解决问题：原用户端注单接口只合并了独立下注订单和已经生成真实投注订单的合买单；未满单、未成单的合买计划没有 `orderId`，因此不会出现在“我的注单”，用户看不到自己的认购记录。
+- 实施内容：后端 `GET /api/user/bet/orders` 在合并真实订单后，把当前用户参与且尚未生成真实订单的合买计划映射为特殊合买认购记录，并返回计划状态、未成单标记、参与金额和认购份数；手机端订单 API 归一化新增字段，订单卡片和详情页显示“合买认购中”“未成单”“单份金额”和“认购份数”；详情仍可通过合买计划 ID 加载参与人列表；同步更新 OpenAPI 中文说明和 Trellis 后端 API 契约。
+- 验证结果：后端 `cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml` 通过；后端定向测试 `cargo test --manifest-path backend/Cargo.toml user_visible_bet_orders -- --nocapture` 和 `cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture` 通过；后端全量 `cargo test --manifest-path backend/Cargo.toml` 通过（313 个测试成功）；后台 `npm run build` 和手机端 `npm run build` 通过；`git diff --check` 通过。
+
+## 2026-06-15 23:36 HKT 控奖抽屉显示未成单合买认购记录
+
+- 完成任务：让彩种控制台“控制开奖号码”抽屉在用户下单信息之外，同时展示当前期号的合买认购记录。
+- 解决问题：原控奖抽屉只展示已经形成真实投注订单的数据，未成单、未满单的合买计划只有认购记录，没有投注订单，因此控单时看不到这部分用户资金参与情况。
+- 实施内容：后端新增 `GET /api/admin/group-buy/plans/by-issue`，按 `lotteryId + issue` 返回仍在流转中的合买计划完整详情和参与人；管理端新增控奖合买认购 hook；控奖抽屉新增“合买认购记录”表格，显示计划、状态、用户、认购时间、玩法、投注内容、金额、份数、占比、进度和真实订单状态；刷新按钮同步刷新订单和认购记录。
+- 验证结果：后端 `cargo fmt --check`、`cargo check --manifest-path backend/Cargo.toml` 通过；后台 `npm run build` 通过；后台构建仍保留既有的大 chunk 提示。
+
+## 2026-06-15 23:10 HKT 后台控奖抽屉订单刷新修复
+
+- 完成任务：修复彩种控制台“控制开奖号码”抽屉选择销售中期号后可能看不到最新订单的问题。
+- 解决问题：控奖抽屉订单来自控制台当前 `orders` 快照，原来主要依赖 10 秒轮询；用户刚下注或运营刚打开抽屉、切换控制范围和期号时，列表可能还停留在上一轮数据，看起来像缓存未更新。
+- 实施内容：打开“控制开奖号码”抽屉时立即触发控制台刷新；切换控制范围、控制期号或指定订单时同步刷新订单数据；用户下单信息区域新增“刷新订单”按钮并显示刷新 loading，方便运营手动拉取最新订单。
+- 验证结果：后台 `npm run build` 通过；构建仍保留既有的大 chunk 提示。
+
 ## 2026-06-15 21:58 HKT 后台控制开奖号码抽屉排版优化
 
 - 完成任务：按手绘草图调整后台彩种控制台“控制开奖号码”抽屉排版。
@@ -3727,4 +3748,18 @@
 - 完成任务：在手机端 `/orders` 注单记录卡片中展示开奖号码。
 - 解决问题：用户此前只能进入注单详情查看开奖号码，列表页无法直接核对每张注单的开奖结果。
 - 实施内容：`BetOrderCard.vue` 复用 `orderDrawNumbers`，在投注号码下方新增“开奖号码”区域；有开奖号码时显示紧凑圆形号码球，待开奖显示“待开奖”，缺失数据显示“暂无开奖数据”；`api/bet.ts` 兼容 `drawNumber`、`draw_number`、`draw_result` 和 `result` 字段并统一归一化。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。
+
+## 2026-06-15 23:56 HKT 合买机器人开奖前补满策略
+
+- 完成任务：为合买机器人新增“开奖前补满”策略，可在后台配置距离开奖多少秒时一次性补满。
+- 解决问题：原来只有阶段性满单策略，无法满足“平时不分阶段跟单，只在开奖前指定时间补满”的运营需求。
+- 实施内容：后端机器人配置新增 `groupBuyFillStrategy` 和 `groupBuyFillBeforeDrawSeconds`；数据库新增对应持久化字段和中文注释；合买机器人执行逻辑新增 `beforeDraw` 策略，进入开奖前配置窗口后直接补满；后台机器人配置列表和 `SideSheet` 支持查看、编辑补满策略与秒数；同步更新接口契约和架构说明。
+- 验证结果：后端 `cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml robot_repository -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml`、后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
+
+## 2026-06-16 00:00 HKT 手机端普通彩种卡片状态标签与图片调整
+
+- 完成任务：去掉手机端首页普通彩种卡片中的状态 pill，并放大彩种图片。
+- 解决问题：普通卡片标题行里的 `lottery-state-pill group-lottery-card__state` 占用横向空间，影响彩种名称扫描；图片偏小，彩种识别度不够。
+- 实施内容：移除普通卡片标题行状态标签和对应 `.group-lottery-card__state` 样式；普通卡片 Logo 容器从 `2.05rem` 放大到 `2.38rem`，小屏从 `1.7rem` 放大到 `2rem`；主推卡和高频极速二级卡不变。
 - 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。

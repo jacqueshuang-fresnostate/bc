@@ -22,6 +22,7 @@ import { MetricCard } from '../components/MetricCard';
 import { useRobots } from '../hooks/useRobots';
 import type { LotteryKind } from '../types/dashboard';
 import type {
+  GroupBuyRobotFillStrategy,
   GroupBuyRobotRun,
   RobotConfigSummary,
   RobotConfigPayload,
@@ -37,6 +38,8 @@ interface RobotManagementPageProps {
 
 interface RobotFormState {
   description: string;
+  groupBuyFillBeforeDrawSeconds: string;
+  groupBuyFillStrategy: GroupBuyRobotFillStrategy;
   id: string;
   kind: RobotKind;
   lotteryIds: string[];
@@ -105,7 +108,12 @@ export function RobotManagementPage({
   };
 
   const submit = async () => {
-    const saved = await save(robotPayload(form), editingId ?? undefined);
+    const payload = robotPayload(form);
+    if (!payload) {
+      Toast.warning('开奖前补满秒数需要大于 0 且不超过 86400');
+      return;
+    }
+    const saved = await save(payload, editingId ?? undefined);
     setEditingId(saved.id);
     setFilterKind(saved.kind);
     setForm(robotFormFromSummary(saved));
@@ -243,6 +251,7 @@ export function RobotManagementPage({
                       <th className="py-2 pr-4 font-medium">机器人</th>
                       <th className="py-2 pr-4 font-medium">彩种</th>
                       <th className="py-2 pr-4 font-medium">状态</th>
+                      <th className="py-2 pr-4 font-medium">补满策略</th>
                       <th className="py-2 pr-4 font-medium">说明</th>
                       <th className="py-2 pr-4 font-medium">操作</th>
                     </tr>
@@ -278,6 +287,11 @@ export function RobotManagementPage({
                           <Tag color={robotStatusColor(robot.status)}>
                             {robotStatusText(robot.status)}
                           </Tag>
+                        </td>
+                        <td className="py-3 pr-4 text-slate-600">
+                          {robot.kind === 'groupBuy'
+                            ? groupBuyFillStrategyText(robot)
+                            : '-'}
                         </td>
                         <td className="py-3 pr-4 text-slate-600">
                           {robot.description}
@@ -406,6 +420,43 @@ export function RobotManagementPage({
               </Select>
             </Field>
           </div>
+          {form.kind === 'groupBuy' ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              <Field label="补满策略">
+                <Select
+                  className="form-input"
+                  value={form.groupBuyFillStrategy}
+                  onChange={(value) =>
+                    setFormValue(
+                      setForm,
+                      'groupBuyFillStrategy',
+                      value as GroupBuyRobotFillStrategy,
+                    )
+                  }
+                >
+                  <Select.Option value="rhythm">阶段性补单</Select.Option>
+                  <Select.Option value="beforeDraw">开奖前补满</Select.Option>
+                </Select>
+              </Field>
+              <Field label="开奖前补满秒数">
+                <Input
+                  className="form-input"
+                  disabled={form.groupBuyFillStrategy !== 'beforeDraw'}
+                  min={1}
+                  max={86400}
+                  type="number"
+                  value={form.groupBuyFillBeforeDrawSeconds}
+                  onChange={(value) =>
+                    setFormValue(
+                      setForm,
+                      'groupBuyFillBeforeDrawSeconds',
+                      value,
+                    )
+                  }
+                />
+              </Field>
+            </div>
+          ) : null}
           <div className="space-y-2">
             <div className="text-sm font-medium text-slate-600">适用彩种</div>
             <div className="grid grid-cols-2 gap-2">
@@ -556,6 +607,8 @@ function kindForModule(moduleKey: string): RobotKind {
 function emptyRobotForm(kind: RobotKind): RobotFormState {
   return {
     description: kind === 'groupBuy' ? '开盘期间发起合买并辅助满单' : '模拟用户购彩',
+    groupBuyFillBeforeDrawSeconds: '15',
+    groupBuyFillStrategy: 'rhythm',
     id: kind === 'groupBuy' ? 'R-GROUP-NEW' : 'R-BUY-NEW',
     kind,
     lotteryIds: [],
@@ -567,6 +620,10 @@ function emptyRobotForm(kind: RobotKind): RobotFormState {
 function robotFormFromSummary(robot: RobotConfigSummary): RobotFormState {
   return {
     description: robot.description,
+    groupBuyFillBeforeDrawSeconds: String(
+      robot.groupBuyFillBeforeDrawSeconds ?? 15,
+    ),
+    groupBuyFillStrategy: robot.groupBuyFillStrategy ?? 'rhythm',
     id: robot.id,
     kind: robot.kind,
     lotteryIds: robot.lotteryIds,
@@ -575,9 +632,29 @@ function robotFormFromSummary(robot: RobotConfigSummary): RobotFormState {
   };
 }
 
-function robotPayload(form: RobotFormState): RobotConfigPayload {
+function robotPayload(form: RobotFormState): RobotConfigPayload | null {
+  const beforeDrawSeconds = Number.parseInt(
+    form.groupBuyFillBeforeDrawSeconds,
+    10,
+  );
+  if (
+    form.kind === 'groupBuy' &&
+    form.groupBuyFillStrategy === 'beforeDraw' &&
+    (!Number.isFinite(beforeDrawSeconds) ||
+      beforeDrawSeconds <= 0 ||
+      beforeDrawSeconds > 86400)
+  ) {
+    return null;
+  }
+
   return {
     description: form.description.trim(),
+    groupBuyFillBeforeDrawSeconds:
+      Number.isFinite(beforeDrawSeconds) && beforeDrawSeconds > 0
+        ? beforeDrawSeconds
+        : 15,
+    groupBuyFillStrategy:
+      form.kind === 'groupBuy' ? form.groupBuyFillStrategy : 'rhythm',
     id: form.id.trim(),
     kind: form.kind,
     lotteryIds: form.lotteryIds,
@@ -622,6 +699,13 @@ function lotteryName(id: string, lotteries: LotteryKind[]) {
 
 function robotKindText(kind: RobotKind) {
   return kind === 'groupBuy' ? '合买机器人' : '购彩机器人';
+}
+
+function groupBuyFillStrategyText(robot: RobotConfigSummary) {
+  if (robot.groupBuyFillStrategy === 'beforeDraw') {
+    return `开奖前 ${robot.groupBuyFillBeforeDrawSeconds} 秒补满`;
+  }
+  return '阶段性补单';
 }
 
 function robotStatusText(status: RobotStatus) {

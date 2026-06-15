@@ -1,6 +1,7 @@
 const statusTextMap: Record<string, string> = {
   pending: '待开奖',
   pendingDraw: '待开奖',
+  groupBuyPending: '合买认购中',
   drawn: '已开奖',
   won: '已中奖',
   lost: '未中奖',
@@ -83,6 +84,11 @@ export function splitNumbers(value: unknown) {
 export function orderBetCount(order: any) {
   const count = Number(order?.bet_count ?? 1)
   return Number.isSafeInteger(count) && count > 0 ? count : 1
+}
+
+export function orderParticipationShareCount(order: any) {
+  const count = Number(order?.participationShareCount ?? order?.participation_share_count ?? 0)
+  return Number.isSafeInteger(count) && count > 0 ? count : 0
 }
 
 export function orderMultiple(order: any) {
@@ -436,6 +442,14 @@ function bigSmallOddEvenMatchItem(value: string, order: any, drawNumbers: string
 export function orderMatchItems(order: any, drawNumbers: string[] = []) {
   const status = String(order?.status || '').trim()
   const draw = drawNumbers.length ? drawNumbers : orderDrawNumbers(order)
+  if (isPendingGroupBuyPlan(order)) {
+    return [{
+      label: '合买认购中',
+      value: '满单后生成注单',
+      detail: '当前方案还没有形成真实投注订单',
+      tone: 'pending' as const,
+    }]
+  }
   if (status === 'pending' || status === 'pendingDraw') {
     return [{
       label: '待开奖',
@@ -596,7 +610,19 @@ export function isGroupBuyOrder(order: any) {
   )
 }
 
+export function isPendingGroupBuyPlan(order: any) {
+  return Boolean(
+    isGroupBuyOrder(order)
+      && (
+        order?.groupBuyPendingPlan
+        || order?.group_buy_pending_plan
+        || order?.status === 'groupBuyPending'
+      ),
+  )
+}
+
 export function orderSourceText(order: any) {
+  if (isPendingGroupBuyPlan(order)) return '合买认购'
   return isGroupBuyOrder(order) ? '合买下单' : '独立下单'
 }
 
@@ -625,6 +651,19 @@ export function orderAmountLabel(order: any) {
   return hasGroupBuyParticipationAmount(order) ? '参与金额' : '下注金额'
 }
 
+export function orderUnitAmountLabel(order: any) {
+  return isPendingGroupBuyPlan(order) ? '单份金额' : '单注金额'
+}
+
+export function orderStakeMetricLabel(order: any) {
+  return isPendingGroupBuyPlan(order) ? '认购份数' : '注数'
+}
+
+export function orderStakeMetricText(order: any) {
+  if (isPendingGroupBuyPlan(order)) return `${orderParticipationShareCount(order)} 份`
+  return `${orderBetCount(order)} 注`
+}
+
 export function orderAmountText(order: any) {
   const payout = Number(order.payout || 0)
   if (order.status === 'won' && payout > 0) return signedMoneyText(order.payout)
@@ -632,6 +671,7 @@ export function orderAmountText(order: any) {
 }
 
 export function orderResultLabel(order: any) {
+  if (isPendingGroupBuyPlan(order)) return '合买状态'
   if (order.status === 'pending') return '预计结果'
   if (order.status === 'cancelled') return '处理状态'
   return '中奖金额'
@@ -639,6 +679,7 @@ export function orderResultLabel(order: any) {
 
 export function orderResultText(order: any) {
   const payout = Number(order.payout || 0)
+  if (isPendingGroupBuyPlan(order)) return '未成单'
   if (order.status === 'won' && payout > 0) return signedMoneyText(order.payout)
   if (order.status === 'pending') return '待开奖'
   if (order.status === 'cancelled') return '已取消'
@@ -646,6 +687,7 @@ export function orderResultText(order: any) {
 }
 
 export function detailHeroAmount(order: any) {
+  if (isPendingGroupBuyPlan(order)) return '未成单'
   if (order.status === 'won' && Number(order.payout || 0) > 0) return signedMoneyText(order.payout)
   if (order.status === 'pending') return '待开奖'
   if (order.status === 'cancelled') return '已取消'
@@ -653,6 +695,7 @@ export function detailHeroAmount(order: any) {
 }
 
 export function detailHeroNote(order: any) {
+  if (isPendingGroupBuyPlan(order)) return '合买未满单，满单后会生成投注订单'
   if (order.status === 'won' && Number(order.payout || 0) > 0) return '奖金已自动派发至您的余额'
   if (order.status === 'pending') return '开奖后将自动结算本注单'
   if (order.status === 'cancelled') return '本注单已取消，不参与结算'

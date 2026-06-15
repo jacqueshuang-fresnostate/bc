@@ -1020,7 +1020,7 @@ await createOrder({
 ### 2. 签名
 
 - `GET /api/user/bet/page-config/{lottery_id}`：读取当前销售彩种的下注页配置。
-- `GET /api/user/bet/orders`：读取当前登录用户自己的投注订单，以及当前用户参与且已满单成单的合买投注订单。
+- `GET /api/user/bet/orders`：读取当前登录用户自己的投注订单、当前用户参与且已满单成单的合买投注订单，以及当前用户已认购但尚未生成真实订单的合买记录。
 - `POST /api/user/bet/orders`：批量创建当前登录用户的投注订单。
 
 ### 3. 契约
@@ -1093,14 +1093,22 @@ await createOrder({
 - `direct`：用户独立下单。
 - `groupBuy`：合买满单后生成的真实投注订单。
 
-当 `orderSource=groupBuy` 且当前登录用户参与了对应合买计划时，用户注单列表必须额外返回 `groupBuyPlanId`、`participationAmountMinor`，其中 `groupBuyPlanId` 用于手机端注单详情懒加载合买计划参与人列表，`participationAmountMinor` 表示当前用户在该合买订单中的实际认购金额；如果同一用户对同一合买计划有多条参与记录，需要按参与记录累加。中奖后还必须返回 `participationPayoutMinor`，表示当前用户按参与比例实际分到的派奖金额；该值优先来自真实 `payoutCredit` 资金流水，历史缺失流水时可按合买参与比例和最后一名承接余数规则计算展示兜底。普通独立订单不返回这些合买参与字段，手机端不能把合买真实订单的 `amountMinor` 或整单 `payoutMinor` 当成当前用户实际参与金额或个人中奖金额展示。
+当 `orderSource=groupBuy` 且当前登录用户参与了对应合买计划时，用户注单列表必须额外返回 `groupBuyPlanId`、`groupBuyPlanStatus`、`participationAmountMinor` 和 `participationShareCount`，其中 `groupBuyPlanId` 用于手机端注单详情懒加载合买计划参与人列表，`groupBuyPlanStatus` 用于展示合买计划状态，`participationAmountMinor` 表示当前用户在该合买订单或合买计划中的实际认购金额，`participationShareCount` 表示当前用户累计认购份数；如果同一用户对同一合买计划有多条参与记录，需要按参与记录累加。已成单合买中奖后还必须返回 `participationPayoutMinor`，表示当前用户按参与比例实际分到的派奖金额；该值优先来自真实 `payoutCredit` 资金流水，历史缺失流水时可按合买参与比例和最后一名承接余数规则计算展示兜底。普通独立订单不返回这些合买参与字段，手机端不能把合买真实订单的 `amountMinor` 或整单 `payoutMinor` 当成当前用户实际参与金额或个人中奖金额展示。
 
 用户注单列表的归属口径必须同时覆盖两类数据：
 
 - `order.userId` 等于当前登录用户的独立投注订单。
 - 当前登录用户出现在合买计划 `participants` 中，且该计划已经通过 `orderId` 关联真实投注订单时，对应 `orderSource=groupBuy` 的订单。
 
-未满单、未生成真实投注订单的合买计划不进入注单列表，应继续通过“我的合买”接口展示。
+当前登录用户出现在合买计划 `participants` 中，但该计划尚未通过 `orderId` 关联真实投注订单时，用户注单列表也必须返回一条特殊合买认购记录：
+
+- `orderSource=groupBuy`。
+- `groupBuyPendingPlan=true`。
+- `status` 在手机端展示为“合买认购中”，结果展示为“未成单”。
+- `createdAt` 使用当前用户最后一次认购时间参与注单时间线排序。
+- 金额展示必须使用 `participationAmountMinor`，数量展示必须使用 `participationShareCount`。
+
+“我的合买”接口仍然负责展示计划进度和大厅/我的合买视图；“我的注单”负责展示用户资金已经参与的下注或认购时间线，两者不是互斥关系。
 
 手机端注单记录必须按该字段展示“独立下单”或“合买下单”，不能只用订单号、资金流水或旧系统 `source_name` 猜测。
 
@@ -1127,7 +1135,7 @@ await createOrder({
 | 用户参与合买且计划已成单 | 返回 `groupBuyPlanId`，手机端注单详情可据此拉取参与人列表 |
 | 用户参与合买且计划已成单 | 返回 `participationAmountMinor` 作为当前用户参与金额 |
 | 用户参与合买且中奖已派奖 | 返回 `participationPayoutMinor` 作为当前用户个人派奖金额 |
-| 用户参与合买但计划未满单 | 不返回注单，继续由“我的合买”展示计划进度 |
+| 用户参与合买但计划未满单 | 返回 `groupBuyPendingPlan=true` 的合买认购记录，手机端显示“合买认购中/未成单” |
 
 ### 5. Good / Base / Bad Cases
 
@@ -1137,6 +1145,7 @@ await createOrder({
 - Good：玩法配置返回 `positionSelectLimits=[{positionKey:"first",maxSelectCount:7}]` 时，手机端只限制第一位最多 7 个数字，未配置的其它位置保持不限制。
 - Good：用户独立下注后注单记录展示 `orderSource=direct` 和“独立下单”；用户作为参与人认购的合买满单成单后，即使真实订单 `userId` 是发起人，注单记录也展示 `orderSource=groupBuy` 和“合买下单”。
 - Good：用户只认购 30 元合买份额，即使真实合买订单总额是 200 元，手机端注单记录也展示“参与金额 30 元”。
+- Good：用户认购的合买还未满单时，“我的注单”也能看到一条“合买认购中”的记录，并展示认购份数和参与金额。
 - Good：合买真实订单总派奖 19 元时，认购 300 元和 20 元的参与人看到的中奖金额必须按各自份额分配，不能都显示 19 元。
 - Good：用户切换彩种或期号变化后，购彩篮不能继续提交旧彩种或旧期号单据。
 - Base：没有 open 期号时，下注页返回 `round.status=opening`，手机端轮询下一期，不允许提交。
@@ -1150,6 +1159,7 @@ await createOrder({
 - 后端测试 `cargo test --manifest-path backend/Cargo.toml mobile_bet -- --nocapture`，覆盖当前期、最近开奖、已启用玩法和直选组合配置。
 - 后端测试需要覆盖普通订单来源为 `direct`，合买满单生成订单来源为 `groupBuy`。
 - 后端测试需要覆盖用户参与别人发起的合买计划后，满单生成的真实投注订单会出现在该用户注单列表。
+- 后端测试需要覆盖用户参与未满单合买计划后，该计划会以 `groupBuyPendingPlan=true` 出现在用户注单列表。
 - 后端测试需要覆盖合买注单返回当前用户 `participationAmountMinor`，多条参与记录需要累加。
 - 后端测试需要覆盖合买注单返回当前用户 `participationPayoutMinor`，并确认有资金流水时优先按实际入账金额展示。
 - OpenAPI 测试必须包含 `/user/bet/page-config/{lottery_id}` 和 `/user/bet/orders`。
@@ -2390,6 +2400,8 @@ await createAdmin({
   "lotteryIds": ["ssc60"],
   "status": "paused",
   "description": "按彩种开盘时间模拟普通用户购彩",
+  "groupBuyFillStrategy": "rhythm",
+  "groupBuyFillBeforeDrawSeconds": 15,
   "deletable": true
 }
 ```
@@ -2402,21 +2414,24 @@ await createAdmin({
 4. `DashboardSummary.robots` 必须从 `RobotRepository` 读取，不允许 dashboard 使用独立静态机器人函数。
 5. 机器人响应返回 `deletable` 字段，表示后台是否允许删除该配置；前端不能自行硬编码受保护 ID。
 6. `DELETE /api/admin/robots/{id}` 只能删除普通机器人配置；核心内置机器人返回冲突错误，运营需要通过 `PATCH /api/admin/robots/{id}/status` 改为 `paused` 或 `disabled` 停止执行。
-7. `POST /api/admin/robots/run` 只执行已启用的 `groupBuy` 机器人，不执行 `purchase` 机器人。
-8. 合买机器人执行结果字段：
+7. `groupBuyFillStrategy` 只允许 `rhythm` 或 `beforeDraw`，旧请求未传时默认 `rhythm`。
+8. `groupBuyFillBeforeDrawSeconds` 表示开奖前多少秒触发补满，范围为 1 到 86400；只有 `groupBuyFillStrategy=beforeDraw` 时参与执行判断。
+9. `POST /api/admin/robots/run` 只执行已启用的 `groupBuy` 机器人，不执行 `purchase` 机器人。
+10. 合买机器人执行结果字段：
    - `now`：本轮执行时间，格式为 `YYYY-MM-DD HH:mm:ss`。
    - `createdPlans`：本轮新创建的合买计划。
    - `filledPlans`：本轮补满并关联订单的合买计划。
    - `createdOrders`：本轮由满单合买生成的真实投注订单。
    - `ledgerEntries`：本轮机器人自动授信、合买认购产生的资金流水。
    - `skippedItems`：本轮跳过项，每项包含 `robotId`、`robotName`、`lotteryId`、`issue` 和 `reason`。
-9. 合买机器人计划 ID 必须按“机器人 ID + 彩种 ID + 期号”确定性生成，同一期重复执行不能重复创建计划。
-10. 合买机器人必须使用当前合买链路：校验彩种开售、合买开启、open 期号、封盘时间、启用玩法和注数报价，再创建计划，并在临近封盘补单窗口内按阶段补单；满单后成单并写入 `groupBuyDebit`。
-11. 合买机器人使用系统账户 `U90001` 出资；发起计划或补单前余额不足时，后端必须先通过 `ManualAdjustment` 自动授信补余额并记录“机器人账户自动授信补余额”，随后再执行真实扣款，不允许出现未扣款计划。
-12. 合买机器人必须扫描同彩种当前期非机器人发起的 `draft/open` 未满单计划，并按临近封盘阶段目标追加机器人参与记录；`G-ROBOT-` 开头的机器人计划不得被其他机器人交叉补单。
-13. 合买机器人补单节奏固定使用封盘前 90 秒窗口：距离封盘 90-61 秒目标进度 40%，60-31 秒目标进度 60%，30-16 秒目标进度 80%，最后 15 秒才允许补到 100% 并触发满单成单。
-14. 合买机器人每次补单都必须生成新的参与记录 ID，不允许复用同一个机器人参与记录一次性覆盖剩余金额。
-15. 用户端合买计划响应必须隐藏 `G-ROBOT-` 开头的机器人计划真实发起人和机器人标题：`initiatorDisplay` 返回按计划 ID 稳定生成的普通会员展示名，`title` 返回“彩种 第期号期合买”，不得把 `U90001`、`agent_alpha`、机器人名称或“合买机器人”暴露给手机端；后台机器人执行结果和后台合买管理仍可保留真实配置用于运营排查。
+11. 合买机器人计划 ID 必须按“机器人 ID + 彩种 ID + 期号”确定性生成，同一期重复执行不能重复创建计划。
+12. 合买机器人必须使用当前合买链路：校验彩种开售、合买开启、open 期号、封盘时间、启用玩法和注数报价，再创建计划，并按配置策略补单；满单后成单并写入 `groupBuyDebit`。
+13. 合买机器人使用系统账户 `U90001` 出资；发起计划或补单前余额不足时，后端必须先通过 `ManualAdjustment` 自动授信补余额并记录“机器人账户自动授信补余额”，随后再执行真实扣款，不允许出现未扣款计划。
+14. 合买机器人必须扫描同彩种当前期非机器人发起的 `draft/open` 未满单计划；`G-ROBOT-` 开头的机器人计划不得被其他机器人交叉补单。
+15. `rhythm` 策略使用封盘前 90 秒窗口：距离封盘 90-61 秒目标进度 40%，60-31 秒目标进度 60%，30-16 秒目标进度 80%，最后 15 秒才允许补到 100% 并触发满单成单；用户或后台发起的合买在封盘点到开奖前仍保留兜底补满能力。
+16. `beforeDraw` 策略不按阶段追加认购，而是在距离开奖时间小于等于 `groupBuyFillBeforeDrawSeconds` 时一次性补满剩余金额；如果当前时间已经超过开奖时间则跳过。
+17. 合买机器人每次补单都必须生成新的参与记录 ID，不允许复用同一个机器人参与记录一次性覆盖剩余金额。
+18. 用户端合买计划响应必须隐藏 `G-ROBOT-` 开头的机器人计划真实发起人和机器人标题：`initiatorDisplay` 返回按计划 ID 稳定生成的普通会员展示名，`title` 返回“彩种 第期号期合买”，不得把 `U90001`、`agent_alpha`、机器人名称或“合买机器人”暴露给手机端；后台机器人执行结果和后台合买管理仍可保留真实配置用于运营排查。
 
 ### 4. 校验与错误矩阵
 
@@ -2427,6 +2442,7 @@ await createAdmin({
 | 机器人说明为空 | HTTP 400，返回 `robot description is required` |
 | `lotteryIds` 为空 | HTTP 400，返回 `at least one robot lottery is required` |
 | `lotteryIds` 包含不存在彩种 | HTTP 404，返回 `lottery ... not found for robot` |
+| `groupBuyFillBeforeDrawSeconds` 为 0 或超过 86400 | HTTP 400，返回合买机器人开奖前补满秒数错误 |
 | 创建重复机器人 ID | HTTP 409，返回重复机器人错误 |
 | 更新路径 ID 与机器人 ID 不一致 | HTTP 400，返回 `path id must match robot id` |
 | 查询、更新不存在机器人 | HTTP 404，返回机器人不存在 |
