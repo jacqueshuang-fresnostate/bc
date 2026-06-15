@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchDrawIssues,
   fetchDrawSchedulerStatus,
@@ -27,10 +27,29 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const lastRefreshAtRef = useRef(0);
 
   const refresh = useCallback(() => {
+    lastRefreshAtRef.current = Date.now();
     setRefreshToken((current) => current + 1);
   }, []);
+
+  const refreshWhenVisible = useCallback(() => {
+    if (document.visibilityState === 'hidden') {
+      return;
+    }
+    refresh();
+  }, [refresh]);
+
+  const refreshWhenVisibleThrottled = useCallback(() => {
+    if (document.visibilityState === 'hidden') {
+      return;
+    }
+    if (Date.now() - lastRefreshAtRef.current < 2500) {
+      return;
+    }
+    refresh();
+  }, [refresh]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -73,19 +92,19 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
       return undefined;
     }
 
-    const intervalId = window.setInterval(refresh, pollIntervalMs);
+    const intervalId = window.setInterval(refreshWhenVisible, pollIntervalMs);
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [pollIntervalMs, refresh]);
+  }, [pollIntervalMs, refreshWhenVisible]);
 
   useEffect(() => {
     const onWindowFocus = () => {
-      refresh();
+      refreshWhenVisibleThrottled();
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        refresh();
+        refreshWhenVisibleThrottled();
       }
     };
 
@@ -96,7 +115,7 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
       window.removeEventListener('focus', onWindowFocus);
       window.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [refresh]);
+  }, [refreshWhenVisibleThrottled]);
 
   const saveDrawControl = useCallback(
     async (lotteryId: string, payload: SaveLotteryDrawControlRequest) => {

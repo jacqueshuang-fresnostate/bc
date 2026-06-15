@@ -169,6 +169,7 @@ onMounted(async () => {
   // 本地秒级计时只刷新展示倒计时，开奖结果仍以后端接口和 websocket 推送为准。
   countdownTimer = setInterval(() => {
     nowMs.value += 1000
+    if (document.visibilityState === 'hidden') return
     void refreshHomepageAfterDrawTime()
   }, 1000)
   await Promise.all([

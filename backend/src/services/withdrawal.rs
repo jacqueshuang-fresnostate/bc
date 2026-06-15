@@ -7,7 +7,7 @@ use std::{
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use sqlx::{PgConnection, Row};
+use sqlx::{postgres::PgRow, PgConnection, Row};
 
 use crate::{
     domain::{
@@ -18,6 +18,7 @@ use crate::{
     services::{
         business_database::BusinessDatabase,
         finance::{save_finance_store_in_transaction, FinanceRepository},
+        pagination::{ListPage, PageRequest},
     },
 };
 
@@ -59,12 +60,67 @@ impl WithdrawalRepository {
             .list_for_user(&user_id))
     }
 
+    /// 分页返回指定用户提现申请，供手机端避免全量拉取历史申请。
+    pub async fn list_for_user_page(
+        &self,
+        user_id: &str,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<WithdrawalOrderSummary>> {
+        let user_id = required_trimmed(user_id, "user id")?;
+        if let Some(persistence) = &self.persistence {
+            return query_withdrawal_order_page(persistence, Some(&user_id), page).await;
+        }
+
+        let mut orders = self.list_for_user(&user_id).await?;
+        orders.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(ListPage::from_all(orders, page))
+    }
+
     /// 返回全部提现申请列表，供后台财务管理审核。
     pub async fn list(&self) -> ApiResult<Vec<WithdrawalOrderSummary>> {
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))
             .map(|store| store.list())
+    }
+
+    /// 分页返回全部提现申请；数据库模式下直接按时间倒序分页。
+    pub async fn list_page(
+        &self,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<WithdrawalOrderSummary>> {
+        if let Some(persistence) = &self.persistence {
+            return query_withdrawal_order_page(persistence, None, page).await;
+        }
+
+        let mut orders = self.list().await?;
+        orders.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(ListPage::from_all(orders, page))
+    }
+
+    /// 返回已通过提现申请，供代理返利统计避免读取待审、驳回和取消记录。
+    pub async fn approved_orders(&self) -> ApiResult<Vec<WithdrawalOrderSummary>> {
+        if let Some(persistence) = &self.persistence {
+            return query_withdrawal_orders_by_status(persistence, WithdrawalOrderStatus::Approved)
+                .await;
+        }
+
+        Ok(self
+            .list()
+            .await?
+            .into_iter()
+            .filter(|order| order.status == WithdrawalOrderStatus::Approved)
+            .collect())
     }
 
     /// 一键清除提现历史；存在待审核申请时拒绝清理，避免冻结余额失去对应申请。
@@ -381,50 +437,8 @@ async fn load_withdrawal_store(database: &BusinessDatabase) -> ApiResult<Withdra
     .await
     .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?
     {
-        let id: String = row
-            .try_get("id")
-            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?;
-        orders.insert(
-            id.clone(),
-            WithdrawalOrderSummary {
-                id,
-                user_id: row
-                    .try_get("user_id")
-                    .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-                username: row
-                    .try_get("username")
-                    .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-                method_id: row
-                    .try_get("method_id")
-                    .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-                method_type: enum_from_string(
-                    row.try_get("method_type")
-                        .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-                )?,
-                account_holder: row
-                    .try_get("account_holder")
-                    .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-                account_number: row
-                    .try_get("account_number")
-                    .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-                bank_name: row
-                    .try_get("bank_name")
-                    .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-                amount_minor: row
-                    .try_get("amount_minor")
-                    .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-                status: enum_from_string(
-                    row.try_get("status")
-                        .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-                )?,
-                created_at: row
-                    .try_get("created_at")
-                    .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-                reviewed_at: row
-                    .try_get("reviewed_at")
-                    .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
-            },
-        );
+        let order = withdrawal_order_from_row(row)?;
+        orders.insert(order.id.clone(), order);
     }
 
     let next_sequence = sqlx::query_scalar::<_, i64>(
@@ -439,6 +453,111 @@ async fn load_withdrawal_store(database: &BusinessDatabase) -> ApiResult<Withdra
         orders,
         next_sequence: u64::try_from(next_sequence).unwrap_or_default(),
     })
+}
+
+/// 从数据库行恢复提现申请结构，供启动加载和分页查询复用。
+fn withdrawal_order_from_row(row: PgRow) -> ApiResult<WithdrawalOrderSummary> {
+    Ok(WithdrawalOrderSummary {
+        id: row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        user_id: row
+            .try_get("user_id")
+            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        username: row
+            .try_get("username")
+            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        method_id: row
+            .try_get("method_id")
+            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        method_type: enum_from_string(
+            row.try_get("method_type")
+                .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        )?,
+        account_holder: row
+            .try_get("account_holder")
+            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        account_number: row
+            .try_get("account_number")
+            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        bank_name: row
+            .try_get("bank_name")
+            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        amount_minor: row
+            .try_get("amount_minor")
+            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        status: enum_from_string(
+            row.try_get("status")
+                .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        )?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+        reviewed_at: row
+            .try_get("reviewed_at")
+            .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
+    })
+}
+
+/// 数据库模式下分页读取提现申请，支持后台审核列表和用户端本人列表。
+async fn query_withdrawal_order_page(
+    database: &BusinessDatabase,
+    user_id: Option<&str>,
+    page: PageRequest,
+) -> ApiResult<ListPage<WithdrawalOrderSummary>> {
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM withdrawal_orders
+         WHERE ($1::text IS NULL OR user_id = $1)",
+    )
+    .bind(user_id)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("提现申请分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("提现申请分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT id, user_id, username, method_id, method_type, account_holder,
+                account_number, bank_name, amount_minor, status, created_at, reviewed_at
+         FROM withdrawal_orders
+         WHERE ($1::text IS NULL OR user_id = $1)
+         ORDER BY created_at DESC, id DESC
+         LIMIT $2 OFFSET $3",
+    )
+    .bind(user_id)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("提现申请分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(withdrawal_order_from_row)
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
+/// 数据库模式下按状态读取提现申请，供聚合统计只读取必要业务状态。
+async fn query_withdrawal_orders_by_status(
+    database: &BusinessDatabase,
+    status: WithdrawalOrderStatus,
+) -> ApiResult<Vec<WithdrawalOrderSummary>> {
+    let status = enum_to_string(&status)?;
+    let rows = sqlx::query(
+        "SELECT id, user_id, username, method_id, method_type, account_holder,
+                account_number, bank_name, amount_minor, status, created_at, reviewed_at
+         FROM withdrawal_orders
+         WHERE status = $1
+         ORDER BY created_at DESC, id DESC",
+    )
+    .bind(status)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("提现申请状态数据读取失败".to_string()))?;
+
+    rows.into_iter().map(withdrawal_order_from_row).collect()
 }
 
 /// 在外层事务中保存提现申请运行时快照，供跨仓储事务复用。

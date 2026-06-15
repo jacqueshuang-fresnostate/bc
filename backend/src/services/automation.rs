@@ -72,7 +72,7 @@ pub async fn close_due_draw_issues(
     let mut run = empty_draw_automation_run(&now);
 
     let lottery_configs = lottery_automation_configs(lotteries).await?;
-    for issue in draws.list().await? {
+    for issue in draws.list_scheduler_active().await? {
         if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_configs) {
             run.skipped_issues.push(skipped_issue(&issue, &reason));
             continue;
@@ -99,7 +99,7 @@ pub async fn refund_closed_unfilled_group_buys(
     let mut run = empty_draw_automation_run(&now);
     let lottery_configs = lottery_automation_configs(lotteries).await?;
 
-    for issue in draws.list().await? {
+    for issue in draws.list_scheduler_active().await? {
         if skip_issue_if_lottery_disabled(&issue, &lottery_configs).is_some() {
             continue;
         }
@@ -133,7 +133,7 @@ pub async fn draw_due_issues(
     let mut run = empty_draw_automation_run(&now);
     let lottery_configs = lottery_automation_configs(lotteries).await?;
     let mut draw_candidates = Vec::new();
-    for issue in draws.list().await? {
+    for issue in draws.list_scheduler_active().await? {
         if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_configs) {
             push_skipped_issue_once(&mut run, &issue, &reason);
             continue;

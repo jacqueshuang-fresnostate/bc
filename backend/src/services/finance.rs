@@ -7,7 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use sqlx::{PgConnection, Row};
+use sqlx::{postgres::PgRow, PgConnection, Row};
 
 use crate::{
     domain::{
@@ -22,7 +22,10 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
+use super::{
+    business_database::{enum_from_string, enum_to_string, BusinessDatabase},
+    pagination::{ListPage, PageRequest},
+};
 
 #[derive(Clone)]
 /// 资金账户和资金流水仓储，负责该模块数据读取、业务变更和持久化协调。
@@ -74,6 +77,83 @@ impl FinanceRepository {
             .map(|store| store.ledger_entries())
     }
 
+    /// 分页返回资金账户；数据库模式下将用户过滤和分页下推到 SQL。
+    pub async fn account_page(
+        &self,
+        user_id: Option<&str>,
+        excluded_user_id: Option<&str>,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<FinancialAccountSummary>> {
+        let user_id = normalized_optional_filter(user_id);
+        let excluded_user_id = normalized_optional_filter(excluded_user_id);
+        if let Some(persistence) = &self.persistence {
+            return query_financial_account_page(
+                persistence,
+                user_id.as_deref(),
+                excluded_user_id.as_deref(),
+                page,
+            )
+            .await;
+        }
+
+        let accounts = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .accounts()
+            .into_iter()
+            .filter(|account| {
+                user_id
+                    .as_deref()
+                    .map_or(true, |target| account.user_id == target)
+                    && excluded_user_id
+                        .as_deref()
+                        .map_or(true, |excluded| account.user_id != excluded)
+            })
+            .collect::<Vec<_>>();
+        let mut accounts = accounts;
+        sort_accounts_by_latest_user_desc(&mut accounts);
+        Ok(ListPage::from_all(accounts, page))
+    }
+
+    /// 分页返回资金流水；数据库模式下将用户过滤、机器人过滤和分页下推到 SQL。
+    pub async fn ledger_entry_page(
+        &self,
+        user_id: Option<&str>,
+        excluded_user_id: Option<&str>,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<LedgerEntry>> {
+        let user_id = normalized_optional_filter(user_id);
+        let excluded_user_id = normalized_optional_filter(excluded_user_id);
+        if let Some(persistence) = &self.persistence {
+            return query_ledger_entry_page(
+                persistence,
+                user_id.as_deref(),
+                excluded_user_id.as_deref(),
+                page,
+            )
+            .await;
+        }
+
+        let mut entries = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .ledger_entries()
+            .into_iter()
+            .filter(|entry| {
+                user_id
+                    .as_deref()
+                    .map_or(true, |target| entry.user_id == target)
+                    && excluded_user_id
+                        .as_deref()
+                        .map_or(true, |excluded| entry.user_id != excluded)
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| right.id.cmp(&left.id));
+        Ok(ListPage::from_all(entries, page))
+    }
+
     /// 返回指定用户的财务流水列表。
     pub async fn user_ledger_entries(&self, user_id: &str) -> ApiResult<Vec<LedgerEntry>> {
         let user_id = user_id.trim();
@@ -86,6 +166,69 @@ impl FinanceRepository {
             .read()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .ledger_entries_for_user(user_id))
+    }
+
+    /// 分页返回指定用户资金流水，供用户端列表避免全量拉取。
+    pub async fn user_ledger_entry_page(
+        &self,
+        user_id: &str,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<LedgerEntry>> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
+
+        self.ledger_entry_page(Some(user_id), None, page).await
+    }
+
+    /// 返回指定流水类型集合的数据，供返利统计等聚合场景避免读取全部流水。
+    pub async fn ledger_entries_by_kinds(
+        &self,
+        kinds: &[LedgerEntryKind],
+    ) -> ApiResult<Vec<LedgerEntry>> {
+        Ok(self
+            .ledger_entry_kind_page(None, kinds, PageRequest::default())
+            .await?
+            .items)
+    }
+
+    /// 分页返回指定流水类型集合的数据，供代理返利明细按流水源分页。
+    pub async fn ledger_entry_kind_page(
+        &self,
+        user_id: Option<&str>,
+        kinds: &[LedgerEntryKind],
+        page: PageRequest,
+    ) -> ApiResult<ListPage<LedgerEntry>> {
+        if kinds.is_empty() {
+            return Ok(ListPage::from_all(Vec::new(), page));
+        }
+        let user_id = normalized_optional_filter(user_id);
+        if let Some(persistence) = &self.persistence {
+            return query_ledger_entry_kind_page(persistence, user_id.as_deref(), kinds, page)
+                .await;
+        }
+
+        let mut entries = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .ledger_entries()
+            .into_iter()
+            .filter(|entry| {
+                user_id
+                    .as_deref()
+                    .map_or(true, |target| entry.user_id == target)
+                    && kinds.iter().any(|kind| *kind == entry.kind)
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(ListPage::from_all(entries, page))
     }
 
     /// 校验用户余额是否可支付指定金额。
@@ -256,6 +399,28 @@ impl FinanceRepository {
     }
 }
 
+/// 归一化可选筛选值，空字符串不参与过滤。
+fn normalized_optional_filter(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+/// 从用户编号中提取数字序号，用于“最新用户优先”排序。
+fn user_id_sequence_for_sort(user_id: &str) -> Option<u64> {
+    user_id.trim().strip_prefix('U')?.parse().ok()
+}
+
+/// 资金账户按用户编号倒序，保证内存模式与数据库分页顺序一致。
+fn sort_accounts_by_latest_user_desc(accounts: &mut [FinancialAccountSummary]) {
+    accounts.sort_by(|left, right| {
+        user_id_sequence_for_sort(&right.user_id)
+            .cmp(&user_id_sequence_for_sort(&left.user_id))
+            .then_with(|| right.user_id.cmp(&left.user_id))
+    });
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 /// 资金账户和资金流水运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 pub(crate) struct FinanceStore {
@@ -304,33 +469,7 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
     .await
     .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?
     {
-        ledger_entries.push(LedgerEntry {
-            id: row
-                .try_get("id")
-                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
-            user_id: row
-                .try_get("user_id")
-                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
-            kind: enum_from_string(
-                row.try_get("kind")
-                    .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
-            )?,
-            amount_minor: row
-                .try_get("amount_minor")
-                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
-            balance_after_minor: row
-                .try_get("balance_after_minor")
-                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
-            reference_id: row
-                .try_get("reference_id")
-                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
-            description: row
-                .try_get("description")
-                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
-            created_at: row
-                .try_get("created_at")
-                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
-        });
+        ledger_entries.push(ledger_entry_from_row(row)?);
     }
 
     let runtime_next_sequence = sqlx::query_scalar::<_, i64>(
@@ -387,6 +526,190 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
     }
 
     Ok(store)
+}
+
+/// 从数据库行恢复资金流水结构，供全量加载和分页查询共用。
+fn ledger_entry_from_row(row: PgRow) -> ApiResult<LedgerEntry> {
+    Ok(LedgerEntry {
+        id: row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+        user_id: row
+            .try_get("user_id")
+            .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+        kind: enum_from_string(
+            row.try_get("kind")
+                .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+        )?,
+        amount_minor: row
+            .try_get("amount_minor")
+            .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+        balance_after_minor: row
+            .try_get("balance_after_minor")
+            .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+        reference_id: row
+            .try_get("reference_id")
+            .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+        description: row
+            .try_get("description")
+            .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?,
+    })
+}
+
+/// 数据库模式下分页读取资金账户，避免后台资金账户先查全量再裁剪。
+async fn query_financial_account_page(
+    database: &BusinessDatabase,
+    user_id: Option<&str>,
+    excluded_user_id: Option<&str>,
+    page: PageRequest,
+) -> ApiResult<ListPage<FinancialAccountSummary>> {
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM financial_accounts
+         WHERE ($1::text IS NULL OR user_id = $1)
+           AND ($2::text IS NULL OR user_id <> $2)",
+    )
+    .bind(user_id)
+    .bind(excluded_user_id)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("资金账户分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("资金账户分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT user_id, available_balance_minor, frozen_balance_minor
+         FROM financial_accounts
+         WHERE ($1::text IS NULL OR user_id = $1)
+           AND ($2::text IS NULL OR user_id <> $2)
+         ORDER BY
+           CASE WHEN user_id ~ '^U[0-9]+$' THEN substring(user_id from 2)::bigint ELSE 0 END DESC,
+           user_id DESC
+         LIMIT $3 OFFSET $4",
+    )
+    .bind(user_id)
+    .bind(excluded_user_id)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("资金账户分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            let user_id: String = row
+                .try_get("user_id")
+                .map_err(|_| ApiError::Internal("资金账户数据读取失败".to_string()))?;
+            Ok(FinancialAccountSummary {
+                user_id,
+                available_balance_minor: row
+                    .try_get("available_balance_minor")
+                    .map_err(|_| ApiError::Internal("资金账户数据读取失败".to_string()))?,
+                frozen_balance_minor: row
+                    .try_get("frozen_balance_minor")
+                    .map_err(|_| ApiError::Internal("资金账户数据读取失败".to_string()))?,
+            })
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
+/// 数据库模式下分页读取资金流水，避免财务流水列表先查全量再裁剪。
+async fn query_ledger_entry_page(
+    database: &BusinessDatabase,
+    user_id: Option<&str>,
+    excluded_user_id: Option<&str>,
+    page: PageRequest,
+) -> ApiResult<ListPage<LedgerEntry>> {
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM ledger_entries
+         WHERE ($1::text IS NULL OR user_id = $1)
+           AND ($2::text IS NULL OR user_id <> $2)",
+    )
+    .bind(user_id)
+    .bind(excluded_user_id)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("资金流水分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("资金流水分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT id, user_id, kind, amount_minor, balance_after_minor, reference_id, description, created_at
+         FROM ledger_entries
+         WHERE ($1::text IS NULL OR user_id = $1)
+           AND ($2::text IS NULL OR user_id <> $2)
+         ORDER BY created_at DESC, id DESC
+         LIMIT $3 OFFSET $4",
+    )
+    .bind(user_id)
+    .bind(excluded_user_id)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("资金流水分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(ledger_entry_from_row)
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
+/// 数据库模式下按流水类型分页读取资金流水，避免返利明细扫描无关业务流水。
+async fn query_ledger_entry_kind_page(
+    database: &BusinessDatabase,
+    user_id: Option<&str>,
+    kinds: &[LedgerEntryKind],
+    page: PageRequest,
+) -> ApiResult<ListPage<LedgerEntry>> {
+    let kind_names = ledger_entry_kind_names(kinds)?;
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM ledger_entries
+         WHERE ($1::text IS NULL OR user_id = $1)
+           AND kind = ANY($2)",
+    )
+    .bind(user_id)
+    .bind(&kind_names)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("资金流水类型分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("资金流水类型分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT id, user_id, kind, amount_minor, balance_after_minor, reference_id, description, created_at
+         FROM ledger_entries
+         WHERE ($1::text IS NULL OR user_id = $1)
+           AND kind = ANY($2)
+         ORDER BY created_at DESC, id DESC
+         LIMIT $3 OFFSET $4",
+    )
+    .bind(user_id)
+    .bind(&kind_names)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("资金流水类型分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(ledger_entry_from_row)
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
+/// 把流水类型转换为数据库枚举字符串。
+fn ledger_entry_kind_names(kinds: &[LedgerEntryKind]) -> ApiResult<Vec<String>> {
+    kinds.iter().map(enum_to_string).collect()
 }
 
 /// 把资金账户和资金流水运行时快照保存到数据库。

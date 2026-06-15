@@ -31,10 +31,9 @@ use crate::{
     domain::finance::{FinancialAccountSummary, LedgerEntry, LedgerEntryKind},
     domain::group_buy::{
         AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyCreateOptions,
-        GroupBuyCreateSettings, GroupBuyParticipationSummary, GroupBuyPlan, GroupBuyPlanStatus,
-        GroupBuySelectOption, UserCreateGroupBuyPlanRequest, UserGroupBuyActionResponse,
-        UserGroupBuyParticipantSummary, UserGroupBuyPlan, UserGroupBuyPlanPage,
-        UserJoinGroupBuyPlanRequest,
+        GroupBuyCreateSettings, GroupBuyParticipationSummary, GroupBuyPlan, GroupBuySelectOption,
+        UserCreateGroupBuyPlanRequest, UserGroupBuyActionResponse, UserGroupBuyParticipantSummary,
+        UserGroupBuyPlan, UserGroupBuyPlanPage, UserJoinGroupBuyPlanRequest,
     },
     domain::invite::{InviteRecord, InviteStatus},
     domain::lottery::LotteryKind,
@@ -75,6 +74,7 @@ use crate::{
         },
         mobile_bet::build_mobile_bet_page_config,
         order::validate_draw_issue_accepts_order,
+        pagination::PageRequest,
         play_rules::play_rule_summaries,
         realtime::{
             audience_matches, balance_changed_event, chat_hall_message_created_event,
@@ -627,11 +627,15 @@ async fn list_ledger_entries(
     Extension(session): Extension<UserAuthSession>,
     Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<LedgerEntry>>>> {
-    let mut entries = state.finance.user_ledger_entries(&session.user.id).await?;
-    sort_ledger_entries_by_time_desc(&mut entries);
-    let entries = query.paginate(entries);
+    let page = state
+        .finance
+        .user_ledger_entry_page(
+            &session.user.id,
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?;
 
-    Ok(Json(ApiEnvelope::success(entries)))
+    Ok(Json(ApiEnvelope::success(page.items)))
 }
 
 /// 汇总当前用户的邀请中心信息，供手机端展示邀请码、直属用户和充值统计。
@@ -832,7 +836,11 @@ async fn get_user_bet_page_config(
     if !lottery.sale_enabled {
         return Err(ApiError::BadRequest("彩种已停售".to_string()));
     }
-    let issues = state.draws.list_by_lottery_id(&lottery.id).await?;
+    let issues = state
+        .draws
+        .list_page(Some(&lottery.id), PageRequest::new(Some(1), Some(120)))
+        .await?
+        .items;
     let config = build_mobile_bet_page_config(&lottery, issues);
 
     Ok(Json(ApiEnvelope::success(config)))
@@ -866,15 +874,26 @@ async fn list_user_bet_orders(
     Extension(session): Extension<UserAuthSession>,
     Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<UserBetOrderDetailResponse>>>> {
-    let mut orders = state.orders.list().await?;
-    let group_buy_plans = state.group_buys.list_details().await?;
+    let group_buy_plans = state
+        .group_buys
+        .list_details_for_user(&session.user.id)
+        .await?;
+    let group_buy_order_ids = group_buy_plans
+        .iter()
+        .filter_map(|plan| plan.order_id.clone())
+        .collect::<Vec<_>>();
+    let orders = state
+        .orders
+        .list_user_visible_page(
+            &session.user.id,
+            &group_buy_order_ids,
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?
+        .items;
     let ledger_entries = state.finance.user_ledger_entries(&session.user.id).await?;
-    orders.sort_by(|left, right| {
-        compare_created_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
-    });
     let orders =
         user_visible_bet_orders(&session.user.id, orders, &group_buy_plans, &ledger_entries)?;
-    let orders = query.paginate(orders);
 
     Ok(Json(ApiEnvelope::success(orders)))
 }
@@ -1157,17 +1176,6 @@ struct UserGroupBuyListQuery {
     page_size: Option<usize>,
 }
 
-impl UserGroupBuyListQuery {
-    /// 复用用户分页规则，未传分页参数则返回全量。
-    fn paginate_plans(&self, items: Vec<UserGroupBuyPlan>) -> Vec<UserGroupBuyPlan> {
-        UserPageQuery {
-            page: self.page,
-            page_size: self.page_size,
-        }
-        .paginate(items)
-    }
-}
-
 /// 返回手机端合买大厅计划列表。
 async fn list_user_group_buy_plans(
     State(state): State<AppState>,
@@ -1210,14 +1218,9 @@ async fn list_my_group_buy_plans(
     let access = state.access.snapshot().await?;
     let mut items = state
         .group_buys
-        .list_details()
+        .list_details_for_user(&session.user.id)
         .await?
         .into_iter()
-        .filter(|plan| {
-            plan.participants
-                .iter()
-                .any(|participant| participant.user_id == session.user.id)
-        })
         .map(|plan| {
             user_group_buy_plan(
                 &plan,
@@ -1562,38 +1565,27 @@ async fn user_group_buy_plans(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let lottery_ids = if let Some(lottery_id) = lottery_id {
+        vec![lottery_id.to_string()]
+    } else if let Some(group_code) = group_code {
+        lotteries
+            .iter()
+            .filter(|lottery| lottery.category == group_code)
+            .map(|lottery| lottery.id.clone())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
 
-    let mut items = state
+    let items = state
         .group_buys
-        .list_details()
+        .list_active_details_page(&lottery_ids, PageRequest::new(query.page, query.page_size))
         .await?
+        .items
         .into_iter()
-        .filter(|plan| {
-            if let Some(lottery_id) = lottery_id {
-                if plan.lottery_id != lottery_id {
-                    return false;
-                }
-            }
-            if let Some(group_code) = group_code {
-                let Some(lottery) = lotteries
-                    .iter()
-                    .find(|lottery| lottery.id == plan.lottery_id)
-                else {
-                    return false;
-                };
-                if lottery.category != group_code {
-                    return false;
-                }
-            }
-            matches!(
-                plan.status,
-                GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open | GroupBuyPlanStatus::Filled
-            )
-        })
         .map(|plan| user_group_buy_plan(&plan, lotteries, Some(user_id), &access.users, false))
         .collect::<ApiResult<Vec<_>>>()?;
-    sort_group_buy_plans_by_time_desc(&mut items);
-    Ok(query.paginate_plans(items))
+    Ok(items)
 }
 
 /// 把单个合买计划转换为手机端展示详情。
@@ -1943,11 +1935,15 @@ async fn list_recharge_orders(
     Extension(session): Extension<UserAuthSession>,
     Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<RechargeOrderSummary>>>> {
-    let mut orders = state.recharges.list_for_user(&session.user.id).await?;
-    sort_recharge_orders_by_time_desc(&mut orders);
-    let orders = query.paginate(orders);
+    let page = state
+        .recharges
+        .list_for_user_page(
+            &session.user.id,
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?;
 
-    Ok(Json(ApiEnvelope::success(orders)))
+    Ok(Json(ApiEnvelope::success(page.items)))
 }
 
 /// 用户创建充值订单。
@@ -2298,11 +2294,15 @@ async fn list_withdrawal_orders(
     Extension(session): Extension<UserAuthSession>,
     Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<WithdrawalOrderSummary>>>> {
-    let mut orders = state.withdrawals.list_for_user(&session.user.id).await?;
-    sort_withdrawal_orders_by_time_desc(&mut orders);
-    let orders = query.paginate(orders);
+    let page = state
+        .withdrawals
+        .list_for_user_page(
+            &session.user.id,
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?;
 
-    Ok(Json(ApiEnvelope::success(orders)))
+    Ok(Json(ApiEnvelope::success(page.items)))
 }
 
 /// 解析用户列表展示中的时间字符串，兼容 unix 秒字段。
@@ -2331,27 +2331,6 @@ fn compare_created_time_desc(
         .cmp(&parse_user_timestamp_seconds(left_created_at))
         .then_with(|| right_created_at.cmp(left_created_at))
         .then_with(|| right_id.cmp(left_id))
-}
-
-/// 资金流水列表按创建时间倒序展示。
-fn sort_ledger_entries_by_time_desc(entries: &mut [LedgerEntry]) {
-    entries.sort_by(|left, right| {
-        compare_created_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
-    });
-}
-
-/// 充值订单列表按创建时间倒序展示。
-fn sort_recharge_orders_by_time_desc(orders: &mut [RechargeOrderSummary]) {
-    orders.sort_by(|left, right| {
-        compare_created_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
-    });
-}
-
-/// 提现订单列表按创建时间倒序展示。
-fn sort_withdrawal_orders_by_time_desc(orders: &mut [WithdrawalOrderSummary]) {
-    orders.sort_by(|left, right| {
-        compare_created_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
-    });
 }
 
 /// 合买计划列表按创建时间倒序展示。
@@ -2452,7 +2431,7 @@ fn publish_user_withdrawal_changed(state: &AppState, order: &WithdrawalOrderSumm
 mod tests {
     use super::*;
     use crate::domain::{
-        group_buy::GroupBuyParticipant,
+        group_buy::{GroupBuyParticipant, GroupBuyPlanStatus},
         lottery::{DrawMode, DrawSchedule, GroupBuyConfig, LotteryNumberType, PlayCategory},
         order::{OrderSource, OrderStatus},
         play::{PlayRuleCode, PlaySelection},

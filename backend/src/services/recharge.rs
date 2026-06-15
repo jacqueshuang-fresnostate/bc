@@ -7,7 +7,7 @@ use std::{
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use sqlx::{PgConnection, Row};
+use sqlx::{postgres::PgRow, PgConnection, Row};
 use urlencoding::encode;
 
 use crate::{
@@ -24,6 +24,7 @@ use crate::{
     services::{
         business_database::BusinessDatabase,
         finance::{save_finance_store_in_transaction, FinanceRepository},
+        pagination::{ListPage, PageRequest},
     },
 };
 
@@ -93,6 +94,36 @@ impl RechargeRepository {
             .map(|store| store.list())
     }
 
+    /// 分页返回全部充值订单；数据库模式下直接按时间倒序分页。
+    pub async fn list_page(&self, page: PageRequest) -> ApiResult<ListPage<RechargeOrderSummary>> {
+        if let Some(persistence) = &self.persistence {
+            return query_recharge_order_page(persistence, None, page).await;
+        }
+
+        let mut orders = self.list().await?;
+        orders.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(ListPage::from_all(orders, page))
+    }
+
+    /// 返回已支付充值订单，供代理返利统计避免读取待支付和已取消订单。
+    pub async fn paid_orders(&self) -> ApiResult<Vec<RechargeOrderSummary>> {
+        if let Some(persistence) = &self.persistence {
+            return query_recharge_orders_by_status(persistence, RechargeOrderStatus::Paid).await;
+        }
+
+        Ok(self
+            .list()
+            .await?
+            .into_iter()
+            .filter(|order| order.status == RechargeOrderStatus::Paid)
+            .collect())
+    }
+
     /// 一键清除充值订单历史；仅删除记录，不回滚已入账余额和资金流水。
     pub async fn clear_records(&self) -> ApiResult<usize> {
         let (deleted_count, snapshot) = {
@@ -115,6 +146,27 @@ impl RechargeRepository {
             .read()
             .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?
             .list_for_user(&user_id))
+    }
+
+    /// 分页返回指定用户充值订单，供手机端避免全量拉取历史充值。
+    pub async fn list_for_user_page(
+        &self,
+        user_id: &str,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<RechargeOrderSummary>> {
+        let user_id = required_trimmed(user_id, "user id")?;
+        if let Some(persistence) = &self.persistence {
+            return query_recharge_order_page(persistence, Some(&user_id), page).await;
+        }
+
+        let mut orders = self.list_for_user(&user_id).await?;
+        orders.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(ListPage::from_all(orders, page))
     }
 
     /// 创建充值订单；彩虹易支付返回跳转 URL，客服直充返回客服会话 ID。
@@ -566,50 +618,8 @@ async fn load_recharge_store(database: &BusinessDatabase) -> ApiResult<RechargeS
     .await
     .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?
     {
-        let id: String = row
-            .try_get("id")
-            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?;
-        orders.insert(
-            id.clone(),
-            RechargeOrderSummary {
-                id,
-                user_id: row
-                    .try_get("user_id")
-                    .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-                username: row
-                    .try_get("username")
-                    .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-                channel: enum_from_string(
-                    row.try_get("channel")
-                        .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-                )?,
-                amount_minor: row
-                    .try_get("amount_minor")
-                    .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-                status: enum_from_string(
-                    row.try_get("status")
-                        .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-                )?,
-                pay_type: row
-                    .try_get("pay_type")
-                    .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-                provider_trade_no: row
-                    .try_get("provider_trade_no")
-                    .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-                payment_url: row
-                    .try_get("payment_url")
-                    .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-                support_conversation_id: row
-                    .try_get("support_conversation_id")
-                    .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-                created_at: row
-                    .try_get("created_at")
-                    .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-                paid_at: row
-                    .try_get("paid_at")
-                    .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
-            },
-        );
+        let order = recharge_order_from_row(row)?;
+        orders.insert(order.id.clone(), order);
     }
 
     let next_sequence = sqlx::query_scalar::<_, i64>(
@@ -624,6 +634,111 @@ async fn load_recharge_store(database: &BusinessDatabase) -> ApiResult<RechargeS
         orders,
         next_sequence: u64::try_from(next_sequence).unwrap_or_default(),
     })
+}
+
+/// 从数据库行恢复充值订单结构，供启动加载和分页查询复用。
+fn recharge_order_from_row(row: PgRow) -> ApiResult<RechargeOrderSummary> {
+    Ok(RechargeOrderSummary {
+        id: row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        user_id: row
+            .try_get("user_id")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        username: row
+            .try_get("username")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        channel: enum_from_string(
+            row.try_get("channel")
+                .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        )?,
+        amount_minor: row
+            .try_get("amount_minor")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        status: enum_from_string(
+            row.try_get("status")
+                .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        )?,
+        pay_type: row
+            .try_get("pay_type")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        provider_trade_no: row
+            .try_get("provider_trade_no")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        payment_url: row
+            .try_get("payment_url")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        support_conversation_id: row
+            .try_get("support_conversation_id")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        paid_at: row
+            .try_get("paid_at")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+    })
+}
+
+/// 数据库模式下分页读取充值订单，支持后台列表和用户端本人列表。
+async fn query_recharge_order_page(
+    database: &BusinessDatabase,
+    user_id: Option<&str>,
+    page: PageRequest,
+) -> ApiResult<ListPage<RechargeOrderSummary>> {
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM recharge_orders
+         WHERE ($1::text IS NULL OR user_id = $1)",
+    )
+    .bind(user_id)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("充值订单分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("充值订单分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT id, user_id, username, channel, amount_minor, status, pay_type,
+                provider_trade_no, payment_url, support_conversation_id, created_at, paid_at
+         FROM recharge_orders
+         WHERE ($1::text IS NULL OR user_id = $1)
+         ORDER BY created_at DESC, id DESC
+         LIMIT $2 OFFSET $3",
+    )
+    .bind(user_id)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("充值订单分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(recharge_order_from_row)
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
+/// 数据库模式下按状态读取充值订单，供聚合统计只读取必要业务状态。
+async fn query_recharge_orders_by_status(
+    database: &BusinessDatabase,
+    status: RechargeOrderStatus,
+) -> ApiResult<Vec<RechargeOrderSummary>> {
+    let status = enum_to_string(&status)?;
+    let rows = sqlx::query(
+        "SELECT id, user_id, username, channel, amount_minor, status, pay_type,
+                provider_trade_no, payment_url, support_conversation_id, created_at, paid_at
+         FROM recharge_orders
+         WHERE status = $1
+         ORDER BY created_at DESC, id DESC",
+    )
+    .bind(status)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("充值订单状态数据读取失败".to_string()))?;
+
+    rows.into_iter().map(recharge_order_from_row).collect()
 }
 
 /// 把充值订单运行时快照保存到数据库。

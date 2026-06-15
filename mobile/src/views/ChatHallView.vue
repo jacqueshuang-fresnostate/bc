@@ -181,7 +181,7 @@ function groupBuyProgressStyle(message: ChatHallMessage) {
 async function loadMessages() {
   loading.value = true
   try {
-    messages.value = await fetchChatHallMessages()
+    messages.value = (await fetchChatHallMessages()).slice(-100)
     await scrollToBottom()
   } catch (error) {
     showToast(errorMessage(error, '加载聊天大厅失败'))

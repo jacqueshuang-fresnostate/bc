@@ -7,7 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use sqlx::{PgConnection, Row};
+use sqlx::{postgres::PgRow, PgConnection, Row};
 
 use crate::{
     domain::{
@@ -24,6 +24,7 @@ use crate::{
     services::{
         finance::{save_finance_store_in_transaction, FinanceRepository},
         group_buy::{save_group_buy_store_in_transaction, GroupBuyRepository},
+        pagination::{ListPage, PageRequest},
         play_rules::{
             evaluate_play_rule, expanded_bets_for_rule, number_type_for_rule, play_position_label,
             play_position_select_limit_targets,
@@ -99,6 +100,71 @@ impl OrderRepository {
             .read()
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))
             .map(|store| store.list())
+    }
+
+    /// 分页返回投注订单；数据库模式下把用户过滤、机器人过滤和分页下推到 SQL。
+    pub async fn list_page(
+        &self,
+        user_id: Option<&str>,
+        excluded_user_id: Option<&str>,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<OrderDetail>> {
+        let user_id = normalized_optional_filter(user_id);
+        let excluded_user_id = normalized_optional_filter(excluded_user_id);
+        if let Some(persistence) = &self.persistence {
+            return query_order_page(
+                persistence,
+                user_id.as_deref(),
+                excluded_user_id.as_deref(),
+                page,
+            )
+            .await;
+        }
+
+        let orders = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .list()
+            .into_iter()
+            .filter(|order| {
+                user_id
+                    .as_deref()
+                    .map_or(true, |target| order.user_id == target)
+                    && excluded_user_id
+                        .as_deref()
+                        .map_or(true, |excluded| order.user_id != excluded)
+            })
+            .collect::<Vec<_>>();
+        Ok(ListPage::from_all(orders, page))
+    }
+
+    /// 分页返回用户可见订单候选：本人独立订单加本人参与合买对应的真实订单。
+    pub async fn list_user_visible_page(
+        &self,
+        user_id: &str,
+        group_buy_order_ids: &[String],
+        page: PageRequest,
+    ) -> ApiResult<ListPage<OrderDetail>> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_user_visible_order_page(persistence, user_id, group_buy_order_ids, page)
+                .await;
+        }
+
+        let group_buy_order_ids = group_buy_order_ids.iter().collect::<BTreeSet<_>>();
+        let orders = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .list()
+            .into_iter()
+            .filter(|order| order.user_id == user_id || group_buy_order_ids.contains(&order.id))
+            .collect::<Vec<_>>();
+        Ok(ListPage::from_all(orders, page))
     }
 
     /// 按 ID 查询单条记录。
@@ -420,81 +486,8 @@ async fn load_order_store(database: &BusinessDatabase) -> ApiResult<OrderStore> 
     .await
     .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?
     {
-        let id: String = row
-            .try_get("id")
-            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?;
-        let stake_count: i32 = row
-            .try_get("stake_count")
-            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?;
-        orders.insert(
-            id.clone(),
-            OrderDetail {
-                id,
-                order_source: enum_from_string(
-                    row.try_get("order_source")
-                        .map_err(|_| ApiError::Internal("订单来源数据读取失败".to_string()))?,
-                )?,
-                user_id: row
-                    .try_get("user_id")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                lottery_id: row
-                    .try_get("lottery_id")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                lottery_name: row
-                    .try_get("lottery_name")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                issue: row
-                    .try_get("issue")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                rule_code: enum_from_string(
-                    row.try_get("rule_code")
-                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                )?,
-                number_type: enum_from_string(
-                    row.try_get("number_type")
-                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                )?,
-                selection: from_json(
-                    row.try_get("selection")
-                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                )?,
-                stake_count: u32::try_from(stake_count)
-                    .map_err(|_| ApiError::Internal("订单注数数据无效".to_string()))?,
-                unit_amount_minor: row
-                    .try_get("unit_amount_minor")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                amount_minor: row
-                    .try_get("amount_minor")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                odds_basis_points: row
-                    .try_get("odds_basis_points")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                expanded_bets: from_json(
-                    row.try_get("expanded_bets")
-                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                )?,
-                draw_number: row
-                    .try_get("draw_number")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                matched_bets: from_json(
-                    row.try_get("matched_bets")
-                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                )?,
-                payout_minor: row
-                    .try_get("payout_minor")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                status: enum_from_string(
-                    row.try_get("status")
-                        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                )?,
-                settled_at: row
-                    .try_get("settled_at")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-                created_at: row
-                    .try_get("created_at")
-                    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
-            },
-        );
+        let order = order_detail_from_row(row)?;
+        orders.insert(order.id.clone(), order);
     }
 
     let mut settlement_orders = BTreeMap::<String, Vec<OrderSettlement>>::new();
@@ -635,6 +628,180 @@ async fn load_order_store(database: &BusinessDatabase) -> ApiResult<OrderStore> 
         orders,
         settlement_runs,
     })
+}
+
+/// 归一化可选筛选值，空字符串不参与过滤。
+fn normalized_optional_filter(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+/// 从数据库行恢复订单详情，供启动加载和分页查询复用。
+fn order_detail_from_row(row: PgRow) -> ApiResult<OrderDetail> {
+    let stake_count: i32 = row
+        .try_get("stake_count")
+        .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?;
+    Ok(OrderDetail {
+        id: row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        order_source: enum_from_string(
+            row.try_get("order_source")
+                .map_err(|_| ApiError::Internal("订单来源数据读取失败".to_string()))?,
+        )?,
+        user_id: row
+            .try_get("user_id")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        lottery_id: row
+            .try_get("lottery_id")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        lottery_name: row
+            .try_get("lottery_name")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        issue: row
+            .try_get("issue")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        rule_code: enum_from_string(
+            row.try_get("rule_code")
+                .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        )?,
+        number_type: enum_from_string(
+            row.try_get("number_type")
+                .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        )?,
+        selection: from_json(
+            row.try_get("selection")
+                .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        )?,
+        stake_count: u32::try_from(stake_count)
+            .map_err(|_| ApiError::Internal("订单注数数据无效".to_string()))?,
+        unit_amount_minor: row
+            .try_get("unit_amount_minor")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        amount_minor: row
+            .try_get("amount_minor")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        odds_basis_points: row
+            .try_get("odds_basis_points")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        expanded_bets: from_json(
+            row.try_get("expanded_bets")
+                .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        )?,
+        draw_number: row
+            .try_get("draw_number")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        matched_bets: from_json(
+            row.try_get("matched_bets")
+                .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        )?,
+        payout_minor: row
+            .try_get("payout_minor")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        status: enum_from_string(
+            row.try_get("status")
+                .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        )?,
+        settled_at: row
+            .try_get("settled_at")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?,
+    })
+}
+
+/// 数据库模式下分页读取订单，避免后台订单列表先查全量再裁剪。
+async fn query_order_page(
+    database: &BusinessDatabase,
+    user_id: Option<&str>,
+    excluded_user_id: Option<&str>,
+    page: PageRequest,
+) -> ApiResult<ListPage<OrderDetail>> {
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM orders
+         WHERE ($1::text IS NULL OR user_id = $1)
+           AND ($2::text IS NULL OR user_id <> $2)",
+    )
+    .bind(user_id)
+    .bind(excluded_user_id)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("订单分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("订单分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+                stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
+                draw_number, matched_bets, payout_minor, status, settled_at, created_at
+         FROM orders
+         WHERE ($1::text IS NULL OR user_id = $1)
+           AND ($2::text IS NULL OR user_id <> $2)
+         ORDER BY created_at DESC, id DESC
+         LIMIT $3 OFFSET $4",
+    )
+    .bind(user_id)
+    .bind(excluded_user_id)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("订单分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(order_detail_from_row)
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
+/// 数据库模式下分页读取用户可见订单候选，避免用户端注单列表扫描全部订单。
+async fn query_user_visible_order_page(
+    database: &BusinessDatabase,
+    user_id: &str,
+    group_buy_order_ids: &[String],
+    page: PageRequest,
+) -> ApiResult<ListPage<OrderDetail>> {
+    let group_buy_order_ids = group_buy_order_ids.to_vec();
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM orders
+         WHERE user_id = $1 OR id = ANY($2)",
+    )
+    .bind(user_id)
+    .bind(&group_buy_order_ids)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户注单分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("用户注单分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+                stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
+                draw_number, matched_bets, payout_minor, status, settled_at, created_at
+         FROM orders
+         WHERE user_id = $1 OR id = ANY($2)
+         ORDER BY created_at DESC, id DESC
+         LIMIT $3 OFFSET $4",
+    )
+    .bind(user_id)
+    .bind(&group_buy_order_ids)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户注单分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(order_detail_from_row)
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
 }
 
 async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> ApiResult<()> {

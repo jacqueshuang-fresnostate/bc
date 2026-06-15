@@ -1157,7 +1157,7 @@ async fn ensure_non_api_future_draw_issues(
     Vec<DrawSchedulerSkippedLottery>,
     Vec<PendingApiIssueGeneration>,
 )> {
-    let existing_issues = draws.list().await?;
+    let existing_issues = draws.list_scheduler_active().await?;
     let mut generated_issues = Vec::new();
     let mut skipped_lotteries = Vec::new();
     let mut pending_api_generations = Vec::new();

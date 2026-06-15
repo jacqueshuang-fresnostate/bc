@@ -7,7 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{postgres::PgRow, Row};
 
 use crate::{
     domain::{
@@ -25,6 +25,7 @@ use super::{
     business_database::{enum_from_string, enum_to_string, BusinessDatabase},
     draw_api::{ApiDrawSourceLatestIssue, ApiDrawSourceRepository},
     draw_generation::plan_api_draw_source_target,
+    pagination::{ListPage, PageRequest},
 };
 
 #[derive(Clone)]
@@ -83,6 +84,54 @@ impl DrawRepository {
             .read()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
             .map(|store| store.list_by_lottery_id(lottery_id))
+    }
+
+    /// 按条件分页读取开奖期号；数据库模式下把彩种过滤和分页下推到 SQL。
+    pub async fn list_page(
+        &self,
+        lottery_id: Option<&str>,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<DrawIssue>> {
+        let lottery_id = lottery_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        if let Some(persistence) = &self.persistence {
+            return query_draw_issues_page(persistence, lottery_id.as_deref(), page).await;
+        }
+
+        let issues = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|store| match lottery_id.as_deref() {
+                Some(lottery_id) => store.list_by_lottery_id(lottery_id),
+                None => store.list(),
+            })?;
+        Ok(ListPage::from_all(issues, page))
+    }
+
+    /// 返回调度器本轮需要关注的活跃期号，只包含销售中和封盘待开奖期。
+    pub async fn list_scheduler_active(&self) -> ApiResult<Vec<DrawIssue>> {
+        if let Some(persistence) = &self.persistence {
+            return query_scheduler_active_draw_issues(persistence).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .list()
+                    .into_iter()
+                    .filter(|issue| {
+                        matches!(
+                            issue.status,
+                            DrawIssueStatus::Open | DrawIssueStatus::Closed
+                        )
+                    })
+                    .collect()
+            })
     }
 
     /// 按 ID 查询单条记录。
@@ -478,51 +527,9 @@ async fn load_draw_store(database: &BusinessDatabase) -> ApiResult<(DrawStore, D
     .await
     .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?
     {
-        let id: String = row
-            .try_get("id")
-            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?;
-        issues.insert(
-            id.clone(),
-            DrawIssue {
-                id,
-                lottery_id: row
-                    .try_get("lottery_id")
-                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-                lottery_name: row
-                    .try_get("lottery_name")
-                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-                issue: row
-                    .try_get("issue")
-                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-                number_type: enum_from_string(
-                    row.try_get("number_type")
-                        .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-                )?,
-                draw_mode: enum_from_string(
-                    row.try_get("draw_mode")
-                        .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-                )?,
-                scheduled_at: row
-                    .try_get("scheduled_at")
-                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-                sale_closed_at: row
-                    .try_get("sale_closed_at")
-                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-                status: enum_from_string(
-                    row.try_get("status")
-                        .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-                )?,
-                draw_number: row
-                    .try_get("draw_number")
-                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-                drawn_at: row
-                    .try_get("drawn_at")
-                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-                created_at: row
-                    .try_get("created_at")
-                    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
-            },
-        );
+        let issue = draw_issue_from_row(row)?;
+        let id = issue.id.clone();
+        issues.insert(id, issue);
     }
 
     let mut controls = BTreeMap::new();
@@ -571,6 +578,109 @@ async fn load_draw_store(database: &BusinessDatabase) -> ApiResult<(DrawStore, D
         },
         DrawControlStore { controls },
     ))
+}
+
+/// 从数据库行恢复开奖期号结构，供全量加载和分页查询复用。
+fn draw_issue_from_row(row: PgRow) -> ApiResult<DrawIssue> {
+    Ok(DrawIssue {
+        id: row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        lottery_id: row
+            .try_get("lottery_id")
+            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        lottery_name: row
+            .try_get("lottery_name")
+            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        issue: row
+            .try_get("issue")
+            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        number_type: enum_from_string(
+            row.try_get("number_type")
+                .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        )?,
+        draw_mode: enum_from_string(
+            row.try_get("draw_mode")
+                .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        )?,
+        scheduled_at: row
+            .try_get("scheduled_at")
+            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        sale_closed_at: row
+            .try_get("sale_closed_at")
+            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        status: enum_from_string(
+            row.try_get("status")
+                .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        )?,
+        draw_number: row
+            .try_get("draw_number")
+            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        drawn_at: row
+            .try_get("drawn_at")
+            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+    })
+}
+
+/// 数据库模式下按彩种过滤并分页读取开奖期号，避免后台列表先拉全量再裁剪。
+async fn query_draw_issues_page(
+    database: &BusinessDatabase,
+    lottery_id: Option<&str>,
+    page: PageRequest,
+) -> ApiResult<ListPage<DrawIssue>> {
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM draw_issues
+         WHERE ($1::text IS NULL OR lottery_id = $1)",
+    )
+    .bind(lottery_id)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖期号分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("开奖期号分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         WHERE ($1::text IS NULL OR lottery_id = $1)
+         ORDER BY id DESC
+         LIMIT $2 OFFSET $3",
+    )
+    .bind(lottery_id)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖期号分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(draw_issue_from_row)
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
+/// 数据库模式下读取调度器活跃期号，避免每轮扫描所有历史开奖期。
+async fn query_scheduler_active_draw_issues(
+    database: &BusinessDatabase,
+) -> ApiResult<Vec<DrawIssue>> {
+    let rows = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         WHERE status IN ('open', 'closed')
+         ORDER BY id DESC",
+    )
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("调度活跃期号数据读取失败".to_string()))?;
+
+    rows.into_iter().map(draw_issue_from_row).collect()
 }
 
 /// 高频期号状态变更使用单行 upsert，避免调度时反复重写整张期号表。

@@ -20,6 +20,7 @@ pub mod lottery;
 pub mod mobile_bet;
 pub mod mobile_home;
 pub mod order;
+pub mod pagination;
 pub mod play_rules;
 pub mod realtime;
 pub mod rebate;

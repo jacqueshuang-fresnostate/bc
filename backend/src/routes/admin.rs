@@ -84,9 +84,12 @@ use crate::{
             generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
         },
         group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
-        group_buy_robot::{is_group_buy_robot_user_id, run_group_buy_robots},
+        group_buy_robot::{
+            is_group_buy_robot_user_id, run_group_buy_robots, ROBOT_GROUP_BUY_USER_ID,
+        },
         image_bed::{upload_configured_image_bed_file, ImageBedUploadOptions},
         order::validate_draw_issue_accepts_order,
+        pagination::PageRequest,
         play_rules::{evaluate_play_rule, play_rule_summaries},
         realtime::{
             admin_audience_matches, balance_changed_event, draw_result_event, heartbeat_event,
@@ -708,45 +711,20 @@ async fn list_draw_issues(
     State(state): State<AppState>,
     Query(query): Query<DrawIssueListQuery>,
 ) -> ApiResult<Json<ApiEnvelope<DrawIssuePage>>> {
-    let issues = if let Some(lottery_id) = query.lottery_id {
-        let lottery_id = lottery_id.trim().to_string();
-        if lottery_id.is_empty() {
-            state.draws.list().await?
-        } else {
-            state.draws.list_by_lottery_id(&lottery_id).await?
-        }
-    } else {
-        state.draws.list().await?
-    };
-
-    let total_count = issues.len();
-    let (page, page_size, start, end) = if query.page.is_none() && query.page_size.is_none() {
-        (1usize, total_count.max(1), 0usize, total_count)
-    } else {
-        let page_size = query.page_size.unwrap_or(20).max(1);
-        let max_page = if total_count == 0 {
-            1
-        } else {
-            total_count.div_ceil(page_size)
-        };
-        let page = query.page.unwrap_or(1).max(1).min(max_page);
-        let start = (page - 1).saturating_mul(page_size);
-        let end = (start + page_size).min(total_count);
-        (page, page_size, start, end)
-    };
-    let total_pages = if total_count == 0 {
-        0
-    } else {
-        total_count.div_ceil(page_size)
-    };
-    let items = issues[start..end].to_vec();
+    let page = state
+        .draws
+        .list_page(
+            query.lottery_id.as_deref(),
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?;
 
     Ok(Json(ApiEnvelope::success(DrawIssuePage {
-        items,
-        page,
-        page_size,
-        total_count,
-        total_pages,
+        items: page.items,
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
     })))
 }
 
@@ -988,11 +966,13 @@ fn compare_admin_time_desc(
 }
 
 /// 解析用户编号中的序号，供后台列表按最新用户稳定排序。
+#[cfg(test)]
 fn user_id_sequence_for_sort(user_id: &str) -> Option<u64> {
     user_id.trim().strip_prefix('U')?.parse().ok()
 }
 
 /// 资金账户按用户编号倒序展示，让最新创建的用户优先进入第一页。
+#[cfg(test)]
 fn sort_financial_accounts_by_latest_user_desc(accounts: &mut [AdminFinancialAccountSummary]) {
     accounts.sort_by(|left, right| {
         user_id_sequence_for_sort(&right.user_id)
@@ -1002,6 +982,7 @@ fn sort_financial_accounts_by_latest_user_desc(accounts: &mut [AdminFinancialAcc
 }
 
 /// 资金流水列表按创建时间倒序展示，避免依赖仓储内部插入顺序。
+#[cfg(test)]
 fn sort_ledger_entries_by_time_desc(entries: &mut [LedgerEntry]) {
     entries.sort_by(|left, right| {
         compare_admin_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
@@ -1016,6 +997,7 @@ fn sort_recharge_orders_by_time_desc(orders: &mut [RechargeOrderSummary]) {
 }
 
 /// 提现申请列表按创建时间倒序展示，最新申请优先进入第一页。
+#[cfg(test)]
 fn sort_withdrawal_orders_by_time_desc(orders: &mut [WithdrawalOrderSummary]) {
     orders.sort_by(|left, right| {
         compare_admin_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
@@ -1411,21 +1393,20 @@ async fn list_group_buy_plans(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<GroupBuyPlanSummary>>>> {
-    let include_robot_data = query.include_robot_data();
-    let plans = state
+    let excluded_initiator_user_id = if query.include_robot_data() {
+        None
+    } else {
+        Some(ROBOT_GROUP_BUY_USER_ID)
+    };
+    let page = state
         .group_buys
-        .list()
-        .await?
-        .into_iter()
-        .filter(|plan| {
-            should_include_robot_initiated_group_buy_plan(
-                include_robot_data,
-                &plan.initiator_user_id,
-            )
-        })
-        .collect();
+        .list_page(
+            excluded_initiator_user_id,
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?;
 
-    Ok(Json(ApiEnvelope::success(page_items(plans, query))))
+    Ok(Json(ApiEnvelope::success(page.into_finance_page())))
 }
 
 /// 一键清除已结束合买计划历史；存在未完成计划时由仓储拒绝执行。
@@ -2227,10 +2208,14 @@ async fn list_agent_rebate_records(
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AgentRebateRecord>>>> {
     ensure_agent_user(&state, &agent_user_id).await?;
-    let mut records = agent_rebate_records(&state, Some(&agent_user_id)).await?;
-    sort_agent_rebate_records_by_time_desc(&mut records);
+    let records = agent_rebate_record_page(
+        &state,
+        Some(&agent_user_id),
+        PageRequest::new(query.page, query.page_size),
+    )
+    .await?;
 
-    Ok(Json(ApiEnvelope::success(page_items(records, query))))
+    Ok(Json(ApiEnvelope::success(records)))
 }
 
 /// 后台处理代理返利提现，扣减代理可用余额并生成返利提现流水。
@@ -2488,11 +2473,13 @@ fn finance_overview_from_items(
 }
 
 /// 判断后台用户维度记录是否应返回给页面；机器人数据只有在开关打开时展示。
+#[cfg(test)]
 fn should_include_user_scoped_record(include_robot_data: bool, user_id: &str) -> bool {
     include_robot_data || !is_group_buy_robot_user_id(user_id)
 }
 
 /// 判断列表行是否命中指定用户筛选；未传用户 ID 时不过滤。
+#[cfg(test)]
 fn should_match_user_filter(query: &FinancePageQuery, user_id: &str) -> bool {
     query
         .user_id_filter()
@@ -2500,6 +2487,7 @@ fn should_match_user_filter(query: &FinancePageQuery, user_id: &str) -> bool {
 }
 
 /// 判断后台合买计划列表是否展示机器人发起的计划；机器人只作为参与人补单时不影响展示。
+#[cfg(test)]
 fn should_include_robot_initiated_group_buy_plan(
     include_robot_data: bool,
     initiator_user_id: &str,
@@ -2593,22 +2581,26 @@ async fn list_financial_accounts(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminFinancialAccountSummary>>>> {
-    let accounts = state
+    let excluded_user_id = if query.include_robot_data() {
+        None
+    } else {
+        Some(ROBOT_GROUP_BUY_USER_ID)
+    };
+    let page = state
         .finance
-        .accounts()
-        .await?
-        .into_iter()
-        .filter(|account| {
-            should_include_user_scoped_record(query.include_robot_data(), &account.user_id)
-                && should_match_user_filter(&query, &account.user_id)
-        })
-        .collect::<Vec<_>>();
+        .account_page(
+            query.user_id_filter(),
+            excluded_user_id,
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?;
     let users = state.access.users().await?;
     let usernames: BTreeMap<String, String> = users
         .into_iter()
         .map(|user| (user.id, user.username))
         .collect();
-    let mut accounts = accounts
+    let accounts = page
+        .items
         .into_iter()
         .map(|account| AdminFinancialAccountSummary {
             username: usernames.get(&account.user_id).cloned(),
@@ -2617,9 +2609,14 @@ async fn list_financial_accounts(
             frozen_balance_minor: account.frozen_balance_minor,
         })
         .collect::<Vec<_>>();
-    sort_financial_accounts_by_latest_user_desc(&mut accounts);
 
-    Ok(Json(ApiEnvelope::success(page_items(accounts, query))))
+    Ok(Json(ApiEnvelope::success(FinancePage {
+        items: accounts,
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
+    })))
 }
 
 /// 返回资金流水分页列表。
@@ -2628,23 +2625,32 @@ async fn list_ledger_entries(
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminLedgerEntry>>>> {
     let usernames = admin_usernames(&state).await?;
-    let mut entries = state
+    let excluded_user_id = if query.include_robot_data() {
+        None
+    } else {
+        Some(ROBOT_GROUP_BUY_USER_ID)
+    };
+    let page = state
         .finance
-        .ledger_entries()
-        .await?
-        .into_iter()
-        .filter(|entry| {
-            should_include_user_scoped_record(query.include_robot_data(), &entry.user_id)
-                && should_match_user_filter(&query, &entry.user_id)
-        })
-        .collect::<Vec<_>>();
-    sort_ledger_entries_by_time_desc(&mut entries);
-    let entries = entries
+        .ledger_entry_page(
+            query.user_id_filter(),
+            excluded_user_id,
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?;
+    let entries = page
+        .items
         .into_iter()
         .map(|entry| admin_ledger_entry_with_usernames(entry, &usernames))
         .collect::<Vec<_>>();
 
-    Ok(Json(ApiEnvelope::success(page_items(entries, query))))
+    Ok(Json(ApiEnvelope::success(FinancePage {
+        items: entries,
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
+    })))
 }
 
 /// 返回充值订单分页列表。
@@ -2652,10 +2658,12 @@ async fn list_recharge_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<RechargeOrderSummary>>>> {
-    let mut orders = state.recharges.list().await?;
-    sort_recharge_orders_by_time_desc(&mut orders);
+    let page = state
+        .recharges
+        .list_page(PageRequest::new(query.page, query.page_size))
+        .await?;
 
-    Ok(Json(ApiEnvelope::success(page_items(orders, query))))
+    Ok(Json(ApiEnvelope::success(page.into_finance_page())))
 }
 
 /// 导出全部充值订单为 CSV 文件，供后台财务留档或离线核对。
@@ -2692,10 +2700,12 @@ async fn list_withdrawal_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<WithdrawalOrderSummary>>>> {
-    let mut orders = state.withdrawals.list().await?;
-    sort_withdrawal_orders_by_time_desc(&mut orders);
+    let page = state
+        .withdrawals
+        .list_page(PageRequest::new(query.page, query.page_size))
+        .await?;
 
-    Ok(Json(ApiEnvelope::success(page_items(orders, query))))
+    Ok(Json(ApiEnvelope::success(page.into_finance_page())))
 }
 
 /// 一键清除提现申请历史；存在待审核申请时由仓储拒绝执行。
@@ -2790,21 +2800,33 @@ async fn list_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminOrderDetail>>>> {
-    // 订单管理按分页读取；彩种控制台不传分页参数时仍通过同一信封拿到完整订单页。
     let usernames = admin_usernames(&state).await?;
-    let orders = state
+    let excluded_user_id = if query.include_robot_data() {
+        None
+    } else {
+        Some(ROBOT_GROUP_BUY_USER_ID)
+    };
+    let page = state
         .orders
-        .list()
-        .await?
+        .list_page(
+            query.user_id_filter(),
+            excluded_user_id,
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?;
+    let orders = page
+        .items
         .into_iter()
-        .filter(|order| {
-            should_include_user_scoped_record(query.include_robot_data(), &order.user_id)
-                && should_match_user_filter(&query, &order.user_id)
-        })
         .map(|order| admin_order_detail_with_usernames(order, &usernames))
         .collect::<Vec<_>>();
 
-    Ok(Json(ApiEnvelope::success(page_items(orders, query))))
+    Ok(Json(ApiEnvelope::success(FinancePage {
+        items: orders,
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
+    })))
 }
 
 /// 一键清除投注订单和计奖派奖历史；存在待开奖订单时由仓储拒绝执行。
@@ -2952,10 +2974,16 @@ async fn ensure_agent_user(state: &AppState, agent_user_id: &str) -> ApiResult<U
 async fn agent_rebate_summaries(state: &AppState) -> ApiResult<Vec<AgentRebateSummary>> {
     let users = state.access.users().await?;
     let accounts = state.finance.accounts().await?;
-    let entries = state.finance.ledger_entries().await?;
+    let entries = state
+        .finance
+        .ledger_entries_by_kinds(&[
+            LedgerEntryKind::RechargeRebateCredit,
+            LedgerEntryKind::AgentRebateWithdrawal,
+        ])
+        .await?;
     let invite_records = state.invites.list().await?;
-    let recharges = state.recharges.list().await?;
-    let withdrawals = state.withdrawals.list().await?;
+    let recharges = state.recharges.paid_orders().await?;
+    let withdrawals = state.withdrawals.approved_orders().await?;
     let account_by_user_id = accounts
         .into_iter()
         .map(|account| (account.user_id.clone(), account))
@@ -2988,10 +3016,21 @@ async fn agent_rebate_summary_for_agent(
     let agent = ensure_agent_user(state, agent_user_id).await?;
     let users = state.access.users().await?;
     let accounts = state.finance.accounts().await?;
-    let entries = state.finance.ledger_entries().await?;
+    let entries = state
+        .finance
+        .ledger_entry_kind_page(
+            Some(agent_user_id),
+            &[
+                LedgerEntryKind::RechargeRebateCredit,
+                LedgerEntryKind::AgentRebateWithdrawal,
+            ],
+            PageRequest::default(),
+        )
+        .await?
+        .items;
     let invite_records = state.invites.list().await?;
-    let recharges = state.recharges.list().await?;
-    let withdrawals = state.withdrawals.list().await?;
+    let recharges = state.recharges.paid_orders().await?;
+    let withdrawals = state.withdrawals.approved_orders().await?;
     let account_by_user_id = accounts
         .into_iter()
         .map(|account| (account.user_id.clone(), account))
@@ -3084,22 +3123,38 @@ fn agent_rebate_summary_from_data(
     })
 }
 
-/// 返回指定代理或全部代理的返利记录，记录来源以充值返利流水为准。
-async fn agent_rebate_records(
+/// 分页返回指定代理或全部代理的返利记录，记录来源以充值返利流水为准。
+async fn agent_rebate_record_page(
     state: &AppState,
     agent_user_id: Option<&str>,
-) -> ApiResult<Vec<AgentRebateRecord>> {
+    page: PageRequest,
+) -> ApiResult<FinancePage<AgentRebateRecord>> {
     let users = state.access.users().await?;
-    let entries = state.finance.ledger_entries().await?;
-    let recharges = state.recharges.list().await?;
-    let withdrawals = state.withdrawals.list().await?;
-    Ok(agent_rebate_records_from_data(
+    let entries = state
+        .finance
+        .ledger_entry_kind_page(
+            agent_user_id,
+            &[LedgerEntryKind::RechargeRebateCredit],
+            page,
+        )
+        .await?;
+    let recharges = state.recharges.paid_orders().await?;
+    let withdrawals = state.withdrawals.approved_orders().await?;
+    let items = agent_rebate_records_from_data(
         agent_user_id,
         &users,
-        &entries,
+        &entries.items,
         &recharges,
         &withdrawals,
-    ))
+    );
+
+    Ok(FinancePage {
+        items,
+        page: entries.page,
+        page_size: entries.page_size,
+        total_count: entries.total_count,
+        total_pages: entries.total_pages,
+    })
 }
 
 /// 基于资金流水和充值订单构造返利明细，充值订单被清理时仍保留流水本身。
@@ -3286,6 +3341,7 @@ fn sort_agent_rebate_summaries(summaries: &mut [AgentRebateSummary]) {
 }
 
 /// 代理返利明细按返利流水创建时间倒序展示。
+#[cfg(test)]
 fn sort_agent_rebate_records_by_time_desc(records: &mut [AgentRebateRecord]) {
     records.sort_by(|left, right| {
         compare_admin_time_desc(

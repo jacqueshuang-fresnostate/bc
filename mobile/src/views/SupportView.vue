@@ -39,6 +39,7 @@ const newMessageCount = ref(0)
 let emojiPickerElement: HTMLElement | null = null
 
 const messages = computed(() => currentConversation.value?.messages || [])
+const visibleMessages = computed(() => messages.value.slice(-160))
 const adminOnline = computed(() => Boolean(currentConversation.value?.assignedAdminName))
 const canSend = computed(() => Boolean(currentConversation.value) && draft.value.trim().length > 0 && !sending.value && !uploadingImage.value)
 const canUploadImage = computed(() => Boolean(currentConversation.value) && !sending.value && !uploadingImage.value)
@@ -47,6 +48,7 @@ const supportStatusText = computed(() => {
   return adminOnline.value ? '客服已接入' : '客服会在这里继续回复'
 })
 const hasMessages = computed(() => messages.value.length > 0)
+const hiddenMessageCount = computed(() => Math.max(0, messages.value.length - visibleMessages.value.length))
 const routeConversationId = computed(() => (
   typeof route.query.conversationId === 'string' ? route.query.conversationId : ''
 ))
@@ -467,8 +469,12 @@ onBeforeUnmount(() => {
         <p>{{ currentConversation ? '发送消息后，客服会在这里继续回复。' : '请先在充值页发起客服直充。' }}</p>
       </div>
 
+      <div v-if="hiddenMessageCount" class="support-chat__history-hint">
+        已折叠较早的 {{ hiddenMessageCount }} 条消息
+      </div>
+
       <div
-        v-for="item in messages"
+        v-for="item in visibleMessages"
         :key="item.id"
         :class="[
           'support-chat__row',
@@ -714,6 +720,16 @@ onBeforeUnmount(() => {
   box-shadow: 0 4px 14px rgba(95, 10, 18, 0.06);
   font-size: 12px;
   font-weight: 700;
+}
+
+.support-chat__history-hint {
+  align-self: center;
+  border-radius: 999px;
+  padding: 0.32rem 0.7rem;
+  color: #8b6a66;
+  background: rgba(255, 250, 247, 0.72);
+  font-size: 0.7rem;
+  font-weight: 800;
 }
 
 .support-chat__conversation-tabs {
