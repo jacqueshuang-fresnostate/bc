@@ -44,6 +44,7 @@ const quickAmountOptions: Array<{ label: string; value: number | 'all' }> = [
 const {
   loadingHall,
   activeFilter,
+  hallHasMore,
   hallCategoryChips,
   displayedHallItems,
   loadHallGroups,
@@ -56,6 +57,7 @@ const {
   loadingMy,
   balance,
   myGroupBuys,
+  myGroupBuysHasMore,
   createLotteryOptions,
   createIssueOptions,
   createPlayOptions,
@@ -96,6 +98,16 @@ const {
 async function createGroupBuy() {
   const createdPlan = await submitCreateGroupBuy()
   selectedGroupBuy.value = createdPlan || selectedGroupBuy.value
+}
+
+function loadMoreHall() {
+  if (loadingHall.value || !hallHasMore.value) return
+  loadHall({ append: true })
+}
+
+function loadMoreMyGroupBuys() {
+  if (loadingMy.value || !myGroupBuysHasMore.value) return
+  loadMyGroupBuys({ append: true })
 }
 
 function participantName(participant: GroupBuyParticipant) {
@@ -198,7 +210,7 @@ onMounted(async () => {
             </button>
           </div>
 
-          <van-loading v-if="loadingHall" class="mx-auto my-8 block" />
+          <van-loading v-if="loadingHall && !displayedHallItems.length" class="mx-auto my-8 block" />
           <van-empty v-else-if="!displayedHallItems.length" description="暂无合买计划" />
           <template v-else>
             <article
@@ -259,24 +271,46 @@ onMounted(async () => {
                 </div>
               </div>
             </article>
+            <button
+              v-if="hallHasMore"
+              type="button"
+              class="w-full rounded-xl bg-red-50 px-4 py-3 text-xs font-black text-red-900 active:scale-[0.99] disabled:opacity-60"
+              :disabled="loadingHall"
+              @click="loadMoreHall"
+            >
+              {{ loadingHall ? '加载中...' : '加载更多合买计划' }}
+            </button>
+            <p v-else class="py-2 text-center text-[11px] font-semibold text-stone-500">已加载全部合买计划</p>
           </template>
         </section>
       </van-tab>
 
       <van-tab title="我的" name="my">
         <section class="space-y-3 p-3">
-          <van-loading v-if="loadingMy" class="mx-auto my-8 block" />
+          <van-loading v-if="loadingMy && !myGroupBuys.length" class="mx-auto my-8 block" />
           <van-empty v-else-if="!myGroupBuys.length" description="暂无参与记录" />
-          <button v-for="item in myGroupBuys" v-else :key="item.id" class="w-full rounded-xl bg-white p-4 text-left shadow-sm" @click="openDetail(item)">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <h3 class="text-sm font-bold">{{ formatPlanTitle(item) }}</h3>
-                <p class="mt-1 text-xs text-stone-500">{{ item.lottery_name }} · {{ statusText(item.status) }}</p>
+          <template v-else>
+            <button v-for="item in myGroupBuys" :key="item.id" class="w-full rounded-xl bg-white p-4 text-left shadow-sm" @click="openDetail(item)">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <h3 class="text-sm font-bold">{{ formatPlanTitle(item) }}</h3>
+                  <p class="mt-1 text-xs text-stone-500">{{ item.lottery_name }} · {{ statusText(item.status) }}</p>
+                </div>
+                <span class="text-xs font-bold text-red-800">我的出资 {{ item.my_participation?.amount || '0.00' }}元</span>
               </div>
-              <span class="text-xs font-bold text-red-800">我的出资 {{ item.my_participation?.amount || '0.00' }}元</span>
-            </div>
-            <p class="mt-2 text-xs text-stone-500">我的出资 {{ item.my_participation?.amount || '0.00' }} 元</p>
-          </button>
+              <p class="mt-2 text-xs text-stone-500">我的出资 {{ item.my_participation?.amount || '0.00' }} 元</p>
+            </button>
+            <button
+              v-if="myGroupBuysHasMore"
+              type="button"
+              class="w-full rounded-xl bg-red-50 px-4 py-3 text-xs font-black text-red-900 active:scale-[0.99] disabled:opacity-60"
+              :disabled="loadingMy"
+              @click="loadMoreMyGroupBuys"
+            >
+              {{ loadingMy ? '加载中...' : '加载更多我的合买' }}
+            </button>
+            <p v-else class="py-2 text-center text-[11px] font-semibold text-stone-500">已加载全部参与记录</p>
+          </template>
         </section>
       </van-tab>
     </van-tabs>

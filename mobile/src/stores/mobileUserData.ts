@@ -20,10 +20,12 @@ const PROFILE_CACHE_MS = 15_000
 const RECHARGE_CONFIG_CACHE_MS = 5 * 60_000
 const USER_LIST_CACHE_MS = 30_000
 const WITHDRAWAL_METHOD_CACHE_MS = 60_000
+const USER_RECORD_PAGE_SIZE = 20
 
 type LoadOptions = {
   force?: boolean
   silent?: boolean
+  append?: boolean
 }
 
 type LoadResult<T> = {
@@ -58,6 +60,12 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
   const withdrawalOrdersFetchedAt = ref(0)
   const ledgerEntriesFetchedAt = ref(0)
   const userScopeId = ref('')
+  const rechargeOrdersPage = ref(0)
+  const withdrawalOrdersPage = ref(0)
+  const ledgerEntriesPage = ref(0)
+  const rechargeOrdersHasMore = ref(true)
+  const withdrawalOrdersHasMore = ref(true)
+  const ledgerEntriesHasMore = ref(true)
 
   let profileRequest: Promise<LoadResult<MobileUserProfile | null>> | null = null
   let rechargeConfigRequest: Promise<LoadResult<RechargeConfig | null>> | null = null
@@ -81,7 +89,22 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     withdrawalMethodsFetchedAt.value = 0
     withdrawalOrdersFetchedAt.value = 0
     ledgerEntriesFetchedAt.value = 0
+    rechargeOrdersPage.value = 0
+    withdrawalOrdersPage.value = 0
+    ledgerEntriesPage.value = 0
+    rechargeOrdersHasMore.value = true
+    withdrawalOrdersHasMore.value = true
+    ledgerEntriesHasMore.value = true
     userScopeId.value = ''
+  }
+
+  function mergeRecordsById<T extends { id: string }>(current: T[], incoming: T[]) {
+    const seen = new Set<string>()
+    return [...current, ...incoming].filter(item => {
+      if (!item.id || seen.has(item.id)) return false
+      seen.add(item.id)
+      return true
+    })
   }
 
   function syncUserScope() {
@@ -139,15 +162,23 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
 
   async function loadRechargeOrders(options: LoadOptions = {}): Promise<LoadResult<RechargeOrder[]>> {
     syncUserScope()
-    if (!options.force && hasFreshCache(rechargeOrdersFetchedAt.value, USER_LIST_CACHE_MS)) {
+    const append = Boolean(options.append)
+    if (append && !rechargeOrdersHasMore.value) {
+      return { data: rechargeOrders.value, refreshed: false }
+    }
+    if (!append && !options.force && hasFreshCache(rechargeOrdersFetchedAt.value, USER_LIST_CACHE_MS)) {
       return { data: rechargeOrders.value, refreshed: false }
     }
     if (rechargeOrdersRequest) return rechargeOrdersRequest
 
-    if (!options.silent && !rechargeOrdersFetchedAt.value) loadingRechargeOrders.value = true
+    const nextPage = append ? rechargeOrdersPage.value + 1 : 1
+    if (!options.silent && (!rechargeOrdersFetchedAt.value || append)) loadingRechargeOrders.value = true
     rechargeOrdersRequest = (async () => {
       try {
-        rechargeOrders.value = await fetchRechargeOrders()
+        const items = await fetchRechargeOrders({ page: nextPage, pageSize: USER_RECORD_PAGE_SIZE })
+        rechargeOrders.value = append ? mergeRecordsById(rechargeOrders.value, items) : items
+        rechargeOrdersPage.value = items.length > 0 ? nextPage : (append ? rechargeOrdersPage.value : 0)
+        rechargeOrdersHasMore.value = items.length >= USER_RECORD_PAGE_SIZE
         rechargeOrdersFetchedAt.value = Date.now()
         return { data: rechargeOrders.value, refreshed: true }
       } finally {
@@ -181,15 +212,23 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
 
   async function loadWithdrawalOrders(options: LoadOptions = {}): Promise<LoadResult<WithdrawalOrder[]>> {
     syncUserScope()
-    if (!options.force && hasFreshCache(withdrawalOrdersFetchedAt.value, USER_LIST_CACHE_MS)) {
+    const append = Boolean(options.append)
+    if (append && !withdrawalOrdersHasMore.value) {
+      return { data: withdrawalOrders.value, refreshed: false }
+    }
+    if (!append && !options.force && hasFreshCache(withdrawalOrdersFetchedAt.value, USER_LIST_CACHE_MS)) {
       return { data: withdrawalOrders.value, refreshed: false }
     }
     if (withdrawalOrdersRequest) return withdrawalOrdersRequest
 
-    if (!options.silent && !withdrawalOrdersFetchedAt.value) loadingWithdrawalOrders.value = true
+    const nextPage = append ? withdrawalOrdersPage.value + 1 : 1
+    if (!options.silent && (!withdrawalOrdersFetchedAt.value || append)) loadingWithdrawalOrders.value = true
     withdrawalOrdersRequest = (async () => {
       try {
-        withdrawalOrders.value = await fetchWithdrawalOrders()
+        const items = await fetchWithdrawalOrders({ page: nextPage, pageSize: USER_RECORD_PAGE_SIZE })
+        withdrawalOrders.value = append ? mergeRecordsById(withdrawalOrders.value, items) : items
+        withdrawalOrdersPage.value = items.length > 0 ? nextPage : (append ? withdrawalOrdersPage.value : 0)
+        withdrawalOrdersHasMore.value = items.length >= USER_RECORD_PAGE_SIZE
         withdrawalOrdersFetchedAt.value = Date.now()
         return { data: withdrawalOrders.value, refreshed: true }
       } finally {
@@ -202,15 +241,23 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
 
   async function loadLedgerEntries(options: LoadOptions = {}): Promise<LoadResult<LedgerEntry[]>> {
     syncUserScope()
-    if (!options.force && hasFreshCache(ledgerEntriesFetchedAt.value, USER_LIST_CACHE_MS)) {
+    const append = Boolean(options.append)
+    if (append && !ledgerEntriesHasMore.value) {
+      return { data: ledgerEntries.value, refreshed: false }
+    }
+    if (!append && !options.force && hasFreshCache(ledgerEntriesFetchedAt.value, USER_LIST_CACHE_MS)) {
       return { data: ledgerEntries.value, refreshed: false }
     }
     if (ledgerEntriesRequest) return ledgerEntriesRequest
 
-    if (!options.silent && !ledgerEntriesFetchedAt.value) loadingLedgerEntries.value = true
+    const nextPage = append ? ledgerEntriesPage.value + 1 : 1
+    if (!options.silent && (!ledgerEntriesFetchedAt.value || append)) loadingLedgerEntries.value = true
     ledgerEntriesRequest = (async () => {
       try {
-        ledgerEntries.value = await fetchUserLedgerEntries()
+        const items = await fetchUserLedgerEntries({ page: nextPage, pageSize: USER_RECORD_PAGE_SIZE })
+        ledgerEntries.value = append ? mergeRecordsById(ledgerEntries.value, items) : items
+        ledgerEntriesPage.value = items.length > 0 ? nextPage : (append ? ledgerEntriesPage.value : 0)
+        ledgerEntriesHasMore.value = items.length >= USER_RECORD_PAGE_SIZE
         ledgerEntriesFetchedAt.value = Date.now()
         return { data: ledgerEntries.value, refreshed: true }
       } finally {
@@ -254,6 +301,12 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     withdrawalMethodsFetchedAt,
     withdrawalOrdersFetchedAt,
     ledgerEntriesFetchedAt,
+    rechargeOrdersPage,
+    withdrawalOrdersPage,
+    ledgerEntriesPage,
+    rechargeOrdersHasMore,
+    withdrawalOrdersHasMore,
+    ledgerEntriesHasMore,
     loadProfile,
     loadRechargeConfig,
     loadRechargeOrders,

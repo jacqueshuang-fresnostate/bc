@@ -7,6 +7,8 @@ import { createGroupBuyPlan, fetchGroupBuyCreateOptions, fetchMyGroupBuys } from
 import { buildCreateGroupBuyPayload, calculateCreatePaymentAmount, calculateFixedShareCount, calculateRequiredSelfShares, createDefaultGroupBuyForm, normalizeItems, normalizeOptionPayload } from '../presentation'
 import type { GroupBuySettings, SelectOption } from '../types'
 
+const MY_GROUP_BUY_PAGE_SIZE = 12
+
 /** 创建发起合买弹窗的模板方法状态流。 */
 export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loadHall: () => Promise<void>; activeTab: { value: string }; initialVisible?: boolean }) {
   const userDataStore = useMobileUserDataStore()
@@ -15,6 +17,8 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
   const submittingCreate = ref(false)
   const loadingMy = ref(false)
   const myGroupBuys = ref<any[]>([])
+  const myGroupBuysPage = ref(0)
+  const myGroupBuysHasMore = ref(true)
   const createLotteryOptions = ref<SelectOption[]>([])
   const createIssueOptions = ref<SelectOption[]>([])
   const createPlayOptions = ref<SelectOption[]>([])
@@ -128,17 +132,38 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
   }
 
   /** 加载我的合买列表。 */
-  async function loadMyGroupBuys() {
+  async function loadMyGroupBuys(options: { append?: boolean } = {}) {
+    const append = Boolean(options.append)
+    if (append && !myGroupBuysHasMore.value) return
     loadingMy.value = true
     try {
-      const res = await fetchMyGroupBuys()
-      myGroupBuys.value = normalizeItems(res.data)
+      const nextPage = append ? myGroupBuysPage.value + 1 : 1
+      const res = await fetchMyGroupBuys({ page: nextPage, pageSize: MY_GROUP_BUY_PAGE_SIZE })
+      const items = normalizeItems(res.data)
+      myGroupBuys.value = append ? mergePlans(myGroupBuys.value, items) : items
+      myGroupBuysPage.value = items.length > 0 ? nextPage : (append ? myGroupBuysPage.value : 0)
+      myGroupBuysHasMore.value = items.length >= MY_GROUP_BUY_PAGE_SIZE
     } catch (e: any) {
-      myGroupBuys.value = []
+      if (!append) {
+        myGroupBuys.value = []
+        myGroupBuysPage.value = 0
+        myGroupBuysHasMore.value = true
+      }
       showToast(errorMessage(e, '加载我的合买失败'))
     } finally {
       loadingMy.value = false
     }
+  }
+
+  /** 按计划编号追加去重，避免翻页和实时刷新造成重复记录。 */
+  function mergePlans(current: any[], incoming: any[]) {
+    const seen = new Set<string>()
+    return [...current, ...incoming].filter(item => {
+      const id = String(item?.id || '')
+      if (!id || seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
   }
 
   return {
@@ -147,6 +172,8 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
     loadingMy,
     balance,
     myGroupBuys,
+    myGroupBuysPage,
+    myGroupBuysHasMore,
     createLotteryOptions,
     createIssueOptions,
     createPlayOptions,

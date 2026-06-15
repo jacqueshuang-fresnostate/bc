@@ -1,5 +1,5 @@
 import http from './http'
-import { unwrapApiData } from './user'
+import { unwrapApiData, type UserListQuery } from './user'
 
 export type PlaySelection = {
   positions?: number[][]
@@ -93,9 +93,18 @@ export async function createUserBetOrders(orders: CreateUserBetOrderPayload[]) {
   )
 }
 
-export async function fetchUserBetOrders() {
-  const orders = unwrapApiData<UserBetOrderDetail[]>(await http.get('/user/bet/orders'))
+export async function fetchUserBetOrders(query: UserListQuery = {}) {
+  const orders = unwrapApiData<UserBetOrderDetail[]>(await http.get('/user/bet/orders', {
+    params: normalizeUserListQuery(query),
+  }))
   return orders.map(normalizeUserBetOrder)
+}
+
+function normalizeUserListQuery(query: UserListQuery) {
+  return {
+    ...(query.page ? { page: query.page } : {}),
+    ...(query.pageSize ? { pageSize: query.pageSize } : {}),
+  }
 }
 
 function formatMinorAmount(value: number) {

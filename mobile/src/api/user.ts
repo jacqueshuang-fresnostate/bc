@@ -8,6 +8,11 @@ export type ApiEnvelope<T> = {
   message: string
 }
 
+export type UserListQuery = {
+  page?: number
+  pageSize?: number
+}
+
 export type UserKind = 'regular' | 'agent'
 export type UserStatus = 'active' | 'suspended' | 'locked'
 
@@ -558,8 +563,8 @@ export async function deleteWithdrawalMethod(id: string) {
   await http.delete(`/user/withdrawal-methods/${id}`)
 }
 
-export async function fetchWithdrawalOrders() {
-  return unwrapApiData<WithdrawalOrder[]>(await http.get('/user/withdrawals'))
+export async function fetchWithdrawalOrders(query: UserListQuery = {}) {
+  return unwrapApiData<WithdrawalOrder[]>(await http.get('/user/withdrawals', { params: normalizeUserListQuery(query) }))
 }
 
 export async function createWithdrawalOrder(payload: CreateWithdrawalOrderPayload) {
@@ -570,12 +575,19 @@ export async function fetchRechargeConfig() {
   return unwrapApiData<RechargeConfig>(await http.get('/user/recharge/config'))
 }
 
-export async function fetchRechargeOrders() {
-  return unwrapApiData<RechargeOrder[]>(await http.get('/user/recharge/orders'))
+export async function fetchRechargeOrders(query: UserListQuery = {}) {
+  return unwrapApiData<RechargeOrder[]>(await http.get('/user/recharge/orders', { params: normalizeUserListQuery(query) }))
 }
 
-export async function fetchUserLedgerEntries() {
-  return unwrapApiData<LedgerEntry[]>(await http.get('/user/ledger-entries'))
+export async function fetchUserLedgerEntries(query: UserListQuery = {}) {
+  return unwrapApiData<LedgerEntry[]>(await http.get('/user/ledger-entries', { params: normalizeUserListQuery(query) }))
+}
+
+function normalizeUserListQuery(query: UserListQuery) {
+  return {
+    ...(query.page ? { page: query.page } : {}),
+    ...(query.pageSize ? { pageSize: query.pageSize } : {}),
+  }
 }
 
 export async function fetchInvitationSummary() {

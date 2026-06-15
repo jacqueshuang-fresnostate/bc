@@ -22,6 +22,7 @@ const {
   profile,
   withdrawalMethods: methods,
   withdrawalOrders: orders,
+  withdrawalOrdersHasMore,
   loadingProfile,
   loadingWithdrawalMethods,
   loadingWithdrawalOrders,
@@ -33,7 +34,7 @@ const submitting = ref(false)
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
 const enabledMethods = computed(() => methods.value)
 const selectedMethod = computed(() => enabledMethods.value.find(item => item.id === selectedMethodId.value) || enabledMethods.value[0] || null)
-const latestOrders = computed(() => orders.value.slice(0, 6))
+const latestOrders = computed(() => orders.value)
 const loading = computed(() => Boolean(
   (loadingProfile.value && !profile.value)
     || (loadingWithdrawalMethods.value && !methods.value.length)
@@ -122,17 +123,24 @@ function syncSelectedMethod() {
   selectedMethodId.value = methods.value.find(item => item.isDefault)?.id || enabledMethods.value[0]?.id || null
 }
 
-async function loadWithdrawData(options: { force?: boolean; silent?: boolean } = {}) {
+async function loadWithdrawData(options: { force?: boolean; silent?: boolean; append?: boolean } = {}) {
   try {
-    await Promise.all([
-      userDataStore.loadProfile(options),
-      userDataStore.loadWithdrawalMethods(options),
-      userDataStore.loadWithdrawalOrders(options),
-    ])
+    await Promise.all(options.append
+      ? [userDataStore.loadWithdrawalOrders(options)]
+      : [
+          userDataStore.loadProfile(options),
+          userDataStore.loadWithdrawalMethods(options),
+          userDataStore.loadWithdrawalOrders(options),
+        ])
     syncSelectedMethod()
   } catch (e: unknown) {
     showToast(errorMessage(e, '加载失败'))
   }
+}
+
+async function loadMoreWithdrawalOrders() {
+  if (loadingWithdrawalOrders.value || !withdrawalOrdersHasMore.value) return
+  await loadWithdrawData({ append: true })
 }
 
 async function submitWithdraw() {
@@ -274,6 +282,16 @@ onMounted(() => loadWithdrawData())
               审核时间：{{ formatOrderTime(item.reviewedAt) }}
             </p>
           </article>
+          <button
+            v-if="withdrawalOrdersHasMore"
+            type="button"
+            class="rounded-xl bg-red-50 px-4 py-3 text-xs font-bold text-primary active:scale-[0.99] disabled:opacity-60"
+            :disabled="loadingWithdrawalOrders"
+            @click="loadMoreWithdrawalOrders"
+          >
+            {{ loadingWithdrawalOrders ? '加载中...' : '加载更多提现记录' }}
+          </button>
+          <p v-else class="py-1 text-center text-[11px] text-on-surface-variant font-label">已加载全部提现记录</p>
         </div>
       </section>
     </main>

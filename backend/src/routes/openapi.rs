@@ -1685,6 +1685,36 @@ fn query_parameters(route: &RouteDoc) -> Vec<Value> {
         ];
     }
 
+    if route.method == "get"
+        && matches!(
+            route.path,
+            "/user/ledger-entries"
+                | "/user/bet/orders"
+                | "/user/group-buy/plans"
+                | "/user/group-buy/my"
+                | "/user/recharge/orders"
+                | "/user/withdrawals"
+        )
+    {
+        let mut parameters = vec![
+            query_parameter("page", "页码，从 1 开始；不传时兼容返回全量。", "integer"),
+            query_parameter("pageSize", "每页数量；不传时兼容返回全量。", "integer"),
+        ];
+        if route.path == "/user/group-buy/plans" {
+            parameters.push(query_parameter(
+                "lotteryId",
+                "按彩种编号筛选合买计划。",
+                "string",
+            ));
+            parameters.push(query_parameter(
+                "groupCode",
+                "按彩种分类编号筛选合买计划。",
+                "string",
+            ));
+        }
+        return parameters;
+    }
+
     Vec::new()
 }
 

@@ -24,6 +24,7 @@ const {
   profile,
   rechargeConfig: config,
   rechargeOrders: orders,
+  rechargeOrdersHasMore,
   loadingProfile,
   loadingRechargeConfig: loadingConfig,
   loadingRechargeOrders: loadingOrders,
@@ -42,7 +43,7 @@ const isRainbowEpay = computed(() => selectedChannel.value === 'rainbowEpay')
 const isCustomerService = computed(() => selectedChannel.value === 'customerService')
 const currentPayTypes = computed(() => payTypesForChannel(selectedChannelConfig.value))
 const currentAmountMinor = computed(() => amountMinorFromYuan(amount.value))
-const recentOrders = computed(() => orders.value.slice(0, 5))
+const recentOrders = computed(() => orders.value)
 const loadingInitial = computed(() => loadingConfig.value && !config.value)
 const balanceText = computed(() => profile.value?.balance || '0.00')
 const selectedAmountText = computed(() => {
@@ -93,7 +94,7 @@ async function loadRechargeConfig(options: { force?: boolean; silent?: boolean }
   }
 }
 
-async function loadRechargeOrders(options: { force?: boolean; silent?: boolean } = {}) {
+async function loadRechargeOrders(options: { force?: boolean; silent?: boolean; append?: boolean } = {}) {
   try {
     await userDataStore.loadRechargeOrders(options)
   } catch (error) {
@@ -263,6 +264,11 @@ async function refreshPageData() {
     loadRechargeOrders({ force: true }),
     loadUserProfile({ force: true }),
   ])
+}
+
+async function loadMoreRechargeOrders() {
+  if (loadingOrders.value || !rechargeOrdersHasMore.value) return
+  await loadRechargeOrders({ append: true })
 }
 
 async function submitRecharge() {
@@ -488,6 +494,16 @@ async function submitRecharge() {
                 <p class="mt-2 truncate text-[10px] font-semibold text-on-surface-variant">{{ order.id }}</p>
               </div>
             </article>
+            <button
+              v-if="rechargeOrdersHasMore"
+              type="button"
+              class="rounded-2xl bg-red-50 px-4 py-3 text-xs font-black text-primary active:scale-[0.99] disabled:opacity-60"
+              :disabled="loadingOrders"
+              @click="loadMoreRechargeOrders"
+            >
+              {{ loadingOrders ? '加载中...' : '加载更多充值记录' }}
+            </button>
+            <p v-else class="py-1 text-center text-[11px] font-semibold text-on-surface-variant">已加载全部充值记录</p>
           </div>
         </section>
       </template>

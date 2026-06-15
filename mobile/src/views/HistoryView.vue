@@ -49,6 +49,7 @@ const {
   selectedOrderNumber,
   loadingOrders,
   loadingGroupBuyParticipants,
+  hasMoreOrders,
   loadOrders,
   openOrderDetail,
   closeOrderDetail,
@@ -70,6 +71,11 @@ function loadCurrentPage() {
   }
   loadLotteryGroups()
   loadDrawHistory()
+}
+
+function loadMoreOrders() {
+  if (loadingOrders.value || !hasMoreOrders.value) return
+  loadOrders({ append: true })
 }
 
 watch(activeGroupCode, () => {
@@ -173,6 +179,16 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
             :order="order"
             @open="openOrderDetail(order)"
           />
+          <button
+            v-if="hasMoreOrders"
+            type="button"
+            class="rounded-2xl bg-red-50 px-4 py-3 text-xs font-black text-primary active:scale-[0.99] disabled:opacity-60"
+            :disabled="loadingOrders"
+            @click="loadMoreOrders"
+          >
+            {{ loadingOrders ? '加载中...' : '加载更多注单' }}
+          </button>
+          <p v-else class="py-1 text-center text-[11px] font-semibold text-stone-500">已加载全部注单</p>
         </div>
       </section>
     </main>

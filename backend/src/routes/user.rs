@@ -870,7 +870,7 @@ async fn list_user_bet_orders(
     let group_buy_plans = state.group_buys.list_details().await?;
     let ledger_entries = state.finance.user_ledger_entries(&session.user.id).await?;
     orders.sort_by(|left, right| {
-        compare_created_time_desc(&right.created_at, &right.id, &left.created_at, &left.id)
+        compare_created_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
     });
     let orders =
         user_visible_bet_orders(&session.user.id, orders, &group_buy_plans, &ledger_entries)?;

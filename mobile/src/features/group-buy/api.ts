@@ -3,7 +3,7 @@ import { fetchLotteryGroups as fetchMobileLotteryGroups } from '../../api/lotter
 import { unwrapApiData } from '../../api/user'
 import type { CreateGroupBuyPayload, GroupBuyPlan } from './types'
 
-export async function fetchGroupBuyHall(params: Record<string, string>) {
+export async function fetchGroupBuyHall(params: Record<string, string | number>) {
   const data = unwrapApiData<any>(await http.get('/user/group-buy/plans', {
     params: normalizeGroupBuyQuery(params),
   }))
@@ -40,8 +40,10 @@ export async function createGroupBuyPlan(payload: CreateGroupBuyPayload) {
   return { data: normalizeGroupBuyPlan(data?.plan) }
 }
 
-export async function fetchMyGroupBuys() {
-  const data = unwrapApiData<any>(await http.get('/user/group-buy/my'))
+export async function fetchMyGroupBuys(params: { page?: number; pageSize?: number } = {}) {
+  const data = unwrapApiData<any>(await http.get('/user/group-buy/my', {
+    params: normalizeGroupBuyQuery(params),
+  }))
   return { data: { items: normalizeGroupBuyPlanItems(data?.items) } }
 }
 
@@ -72,10 +74,12 @@ export async function fetchGroupBuyCreateOptions(requestedLotteryCode: string) {
   }
 }
 
-function normalizeGroupBuyQuery(params: Record<string, string>) {
+function normalizeGroupBuyQuery(params: Record<string, string | number | undefined>) {
   return {
     ...(params.lottery_code ? { lotteryId: params.lottery_code } : {}),
     ...(params.group_code ? { groupCode: params.group_code } : {}),
+    ...(params.page ? { page: params.page } : {}),
+    ...(params.pageSize ? { pageSize: params.pageSize } : {}),
   }
 }
 

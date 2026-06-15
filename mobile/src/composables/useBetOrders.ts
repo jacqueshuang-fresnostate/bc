@@ -4,24 +4,48 @@ import { fetchUserBetOrders } from '../api/bet'
 import { fetchGroupBuyDetail } from '../features/group-buy/api'
 import { orderDrawNumbers, orderNumber } from '../utils/lotteryFormat'
 
+const ORDER_PAGE_SIZE = 20
+
 export function useBetOrders(router: Router) {
   const orders = ref<any[]>([])
   const selectedOrder = ref<any | null>(null)
   const selectedGroupBuyParticipants = ref<any[]>([])
   const loadingOrders = ref(false)
   const loadingGroupBuyParticipants = ref(false)
+  const ordersPage = ref(0)
+  const hasMoreOrders = ref(true)
   const selectedDrawNumbers = computed(() => selectedOrder.value ? orderDrawNumbers(selectedOrder.value) : [])
   const selectedOrderNumber = computed(() => selectedOrder.value ? orderNumber(selectedOrder.value) : '')
 
-  async function loadOrders() {
+  async function loadOrders(options: { append?: boolean; silent?: boolean } = {}) {
+    const append = Boolean(options.append)
+    if (append && !hasMoreOrders.value) return
     loadingOrders.value = true
     try {
-      orders.value = await fetchUserBetOrders()
+      const nextPage = append ? ordersPage.value + 1 : 1
+      const nextOrders = await fetchUserBetOrders({ page: nextPage, pageSize: ORDER_PAGE_SIZE })
+      orders.value = append ? mergeOrders(orders.value, nextOrders) : nextOrders
+      ordersPage.value = nextOrders.length > 0 ? nextPage : (append ? ordersPage.value : 0)
+      hasMoreOrders.value = nextOrders.length >= ORDER_PAGE_SIZE
     } catch {
-      orders.value = []
+      if (!append) {
+        orders.value = []
+        ordersPage.value = 0
+        hasMoreOrders.value = true
+      }
     } finally {
       loadingOrders.value = false
     }
+  }
+
+  function mergeOrders(current: any[], incoming: any[]) {
+    const seen = new Set<string>()
+    return [...current, ...incoming].filter(order => {
+      const id = String(order?.id || '')
+      if (!id || seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
   }
 
   async function openOrderDetail(order: any) {
@@ -72,6 +96,8 @@ export function useBetOrders(router: Router) {
     selectedOrderNumber,
     loadingOrders,
     loadingGroupBuyParticipants,
+    ordersPage,
+    hasMoreOrders,
     loadOrders,
     openOrderDetail,
     closeOrderDetail,

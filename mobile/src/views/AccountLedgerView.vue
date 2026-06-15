@@ -16,6 +16,7 @@ const userDataStore = useMobileUserDataStore()
 const {
   profile,
   ledgerEntries: entries,
+  ledgerEntriesHasMore,
   loadingProfile,
   loadingLedgerEntries,
 } = storeToRefs(userDataStore)
@@ -77,7 +78,7 @@ function balanceAfterText(value: number) {
   return `余额 ¥${formatMinorAmount(value)}`
 }
 
-async function loadLedger(options: { force?: boolean; silent?: boolean } = {}) {
+async function loadLedger(options: { force?: boolean; silent?: boolean; append?: boolean } = {}) {
   try {
     await Promise.all([
       userDataStore.loadProfile(options),
@@ -93,6 +94,11 @@ async function loadLedger(options: { force?: boolean; silent?: boolean } = {}) {
 async function refreshLedger() {
   refreshing.value = true
   await loadLedger({ force: true, silent: true })
+}
+
+async function loadMoreLedger() {
+  if (loadingLedgerEntries.value || !ledgerEntriesHasMore.value) return
+  await loadLedger({ append: true })
 }
 
 onMounted(() => loadLedger())
@@ -174,6 +180,16 @@ onMounted(() => loadLedger())
               </div>
             </div>
           </article>
+          <button
+            v-if="ledgerEntriesHasMore"
+            type="button"
+            class="mx-3 my-3 rounded-xl bg-red-50 px-4 py-3 text-xs font-bold text-primary active:scale-[0.99] disabled:opacity-60"
+            :disabled="loadingLedgerEntries"
+            @click="loadMoreLedger"
+          >
+            {{ loadingLedgerEntries ? '加载中...' : '加载更多流水' }}
+          </button>
+          <p v-else class="py-3 text-center text-[11px] text-on-surface-variant">已加载全部流水</p>
         </div>
       </section>
     </main>
