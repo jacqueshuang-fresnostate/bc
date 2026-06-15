@@ -1319,7 +1319,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/user/bet/orders",
         "用户端投注",
         "用户注单列表",
-        "返回当前用户自己的独立投注订单、已满单成单的合买投注订单，以及本人已认购但尚未生成真实订单的合买记录。",
+        "返回当前用户自己的独立投注订单、已满单成单的合买投注订单，以及本人已认购但尚未生成真实订单的合买记录；支持 page/pageSize 分页，view=orders 只返回真实已下单注单，view=groupBuy 只返回未成单合买认购。",
         AuthMode::User,
         RequestBodyKind::None,
     ),

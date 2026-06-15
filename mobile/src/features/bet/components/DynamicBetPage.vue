@@ -12,8 +12,7 @@ import { useBetBatchSubmit } from '../composables/useBetBatchSubmit'
 import { useBetPageConfig } from '../dynamic/useBetPageConfig'
 import { limitPositionValues, randomLimitPositionValues, randomSubsetValues } from '../dynamic/positionLimits'
 import { useDynamicBetEngine } from '../dynamic/useDynamicBetEngine'
-import type { BetCartItem, DynamicBetPlay } from '../dynamic/types'
-import BetCartSheet from './BetCartSheet.vue'
+import type { DynamicBetPlay } from '../dynamic/types'
 import BetRoundInfoCard from './BetRoundInfoCard.vue'
 import DynamicInputRenderer from './DynamicInputRenderer.vue'
 import DynamicPlayTabs from './DynamicPlayTabs.vue'
@@ -34,7 +33,6 @@ const { submitBatch } = useBetBatchSubmit()
 // 动态投注页状态边界：路由决定彩种，配置决定玩法，引擎只接管草稿和篮子。
 const selectedPlayCode = ref('')
 const currentTime = ref(Date.now())
-const showCartSheet = ref(false)
 const showPlayPopup = ref(false)
 const groupBuyMode = ref(false)
 const groupBuyShareCount = ref(10)
@@ -126,19 +124,9 @@ const roundSelling = computed(() => config.value?.round.status === 'selling' && 
 const roundAcceptingBet = computed(() => roundSelling.value && !roundSaleClosed.value)
 // 后端短暂未把过期 open 期关盘时，前端也要进入轮询，避免页面停在“开奖中”。
 const roundNeedsOpeningRefresh = computed(() => roundOpening.value || (roundSelling.value && roundSaleClosed.value))
-const canAddCurrentDraft = computed(() => roundAcceptingBet.value && engine.draftBetCount.value > 0)
 const canSubmitCurrentOrder = computed(() => roundAcceptingBet.value && (engine.draftBetCount.value > 0 || engine.cartTotalCount.value > 0))
-const addButtonText = computed(() => {
-  if (selectedPlay.value?.option_groups.length) return '加入购彩篮'
-  if (selectedPlay.value?.input_mode === 'fixed-option') return '加入购彩篮'
-  if (selectedPlay.value?.input_mode === 'position-grid') return '加入购彩篮'
-  return '加入购彩篮'
-})
 const submitButtonText = computed(() => {
   if (groupBuyMode.value) return '发起合买'
-  if (engine.cartTotalCount.value > 0) return '提交购彩篮'
-  if (selectedPlay.value?.option_groups.length) return '立即投注选项'
-  if (selectedPlay.value?.input_mode === 'fixed-option') return '立即投注选项'
   return '立即投注'
 })
 const submittingOrder = computed(() => submittingBet.value || submittingGroupBuy.value)
@@ -377,7 +365,7 @@ async function submitCart() {
     return
   }
   if (engine.draftBetCount.value > 0) {
-    // 用户直接点提交时静默把当前有效草稿补入篮子，避免出现“加入购彩篮”和“下注成功”两个提示。
+    // 用户直接点提交时静默把当前有效草稿转成待提交单据，避免出现多余提示。
     const added = engine.addDraftToCart({ silent: true })
     if (!added) return
   }
@@ -396,21 +384,6 @@ async function submitCart() {
   } finally {
     submittingBet.value = false
   }
-}
-
-function addDraftToCart() {
-  if (submittingOrder.value) return
-  engine.addDraftToCart()
-}
-
-function openCartSheet() {
-  if (submittingOrder.value) return
-  showCartSheet.value = true
-}
-
-function confirmCart(items: BetCartItem[]) {
-  // 弹层只编辑副本；确认时才覆盖引擎篮子，取消关闭不会影响原始单据。
-  engine.replaceCart(items)
 }
 
 watch(lotteryCode, async () => {
@@ -581,21 +554,11 @@ onBeforeUnmount(() => {
                 <strong class="mt-1 block font-headline text-lg font-extrabold">{{ groupBuyDerivedShareCount || 0 }}份</strong>
               </div>
               <div class="rounded-2xl bg-white/12 p-3">
-                <span class="block text-[11px] font-bold text-white/65">预计支付</span>
-                <strong class="mt-1 block font-headline text-lg font-extrabold">¥{{ groupBuyPaymentAmount }}</strong>
+                <span class="block text-[11px] font-bold text-white/65">固定每份</span>
+                <strong class="mt-1 block font-headline text-lg font-extrabold">¥{{ groupBuyFixedShareAmount }}</strong>
               </div>
             </div>
           </div>
-          <label class="flex items-center justify-between gap-4 rounded-2xl border border-[#f1dedb] bg-[#fffdfc] px-4 py-3">
-            <span>
-              <span class="block text-sm font-extrabold text-[#1a1c1c]">自购份数</span>
-              <span class="mt-0.5 block text-xs font-bold text-[#8e706d]">{{ groupBuySelfSharesHint }}</span>
-            </span>
-            <span class="flex shrink-0 items-center rounded-2xl bg-[#f8f1ef] px-3 py-2">
-              <input v-model.number="groupBuySelfShares" class="w-16 bg-transparent text-right font-headline text-2xl font-extrabold text-[#1a1c1c] outline-none" type="number" inputmode="numeric" min="0" :max="groupBuySafeShareCount" @input="touchGroupBuySelfShares" @blur="clampGroupBuySelfShares" />
-              <span class="ml-1 text-sm font-extrabold text-[#5a403e]">份</span>
-            </span>
-          </label>
           <div class="rounded-2xl bg-[#fff4dc] px-4 py-3 text-sm font-bold text-[#735c00]">
             <div class="flex items-center justify-between">
               <span>最低每份 ¥{{ config?.group_buy_settings.min_share_amount || '0.01' }}</span>
@@ -611,20 +574,18 @@ onBeforeUnmount(() => {
 
     <UnifiedBetBottomBar
       :selected-count="engine.cartTotalCount.value + engine.draftBetCount.value"
-      :cart-count="engine.cartTotalCount.value"
       :total-amount="engine.cartTotalAmount.value + engine.draftAmount.value"
-      :can-add="canAddCurrentDraft && !submittingOrder"
       :can-submit="canSubmitCurrentOrder && !submittingOrder"
       :submitting="submittingOrder"
-      :add-text="addButtonText"
       :submit-text="submitButtonDisplayText"
       :group-buy-mode="groupBuyMode"
-      :group-buy-self-shares="groupBuySafeSelfShares"
+      v-model:group-buy-self-shares="groupBuySelfShares"
       :group-buy-share-count="groupBuySafeShareCount"
+      :group-buy-self-shares-hint="groupBuySelfSharesHint"
       :group-buy-payment-amount="groupBuyPaymentAmount"
-      @add="addDraftToCart"
+      @group-buy-self-shares-input="touchGroupBuySelfShares"
+      @group-buy-self-shares-blur="clampGroupBuySelfShares"
       @submit="submitCart"
-      @edit="openCartSheet"
     />
 
     <div v-if="submittingOrder" class="bet-submit-loading" role="status" aria-live="assertive">
@@ -646,8 +607,6 @@ onBeforeUnmount(() => {
         <DynamicPlayTabs :plays="config?.plays || []" :selected-code="selectedPlayCode" @select="selectPlay" />
       </section>
     </van-popup>
-
-    <BetCartSheet v-model:show="showCartSheet" :items="engine.cart.value" @confirm="confirmCart" />
   </MobilePageShell>
 </template>
 
@@ -657,7 +616,7 @@ onBeforeUnmount(() => {
 }
 
 .bet-page-main--group-buy {
-  padding-bottom: calc(13rem + env(safe-area-inset-bottom));
+  padding-bottom: calc(10.75rem + env(safe-area-inset-bottom));
 }
 
 .play-select-popup {

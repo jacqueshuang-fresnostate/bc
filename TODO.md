@@ -1,5 +1,47 @@
 # TODO
 
+## 2026-06-16 02:59 HKT 手机端我的记录 Tab 分组兜底修复
+
+- 完成任务：修复手机端“我的记录”切换“我的注单 / 我的合买”时列表看起来没有变化的问题，并确保“合买认购中”只显示在“我的合买”。
+- 解决问题：如果接口返回混合数据、旧缓存数据或字段形态是 `order_source/group_buy_pending_plan`，手机端只依赖后端 `view` 参数时可能无法正确区分未成单合买认购，导致两个 Tab 展示相同数据。
+- 实施内容：`mobile/src/api/bet.ts` 归一化订单时兼容 `orderSource/order_source/source_name`，并把 `GB-` 开头的特殊记录识别为合买认购；`useBetOrders` 在每个 Tab 收到数据后按 `view` 做本地兜底过滤，`orders` 排除未成单合买，`groupBuy` 只保留未成单合买；切换 Tab 时强制刷新当前 Tab 第 1 页，避免旧缓存继续显示。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 02:57 HKT 手机端合买底栏自购份数输入迁移
+
+- 完成任务：把手机端下注页合买模式的“自购份数”输入迁移到 `bet-bottom-bar`，并让合买底栏样式回到和普通下单更接近的左右两栏结构。
+- 解决问题：上一版合买底栏做成独立结算卡片，和普通下注底栏差异过大，而且自购份数仍主要在页面中部编辑，不符合底部直接填写自购份数的操作预期。
+- 实施内容：`UnifiedBetBottomBar.vue` 在合买模式下使用普通底栏同一套两栏骨架，左侧提供自购份数输入、总份数、共计注数、方案总额和需付金额，右侧保留红色“投注”主按钮；`DynamicBetPage.vue` 删除页面中部自购份数输入，把 `groupBuySelfShares` 通过 `v-model` 接到底栏，并在输入和失焦时沿用原自动推荐与夹取逻辑；同步修正架构说明和前端规范。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 02:51 HKT 手机端下注页底部投注栏简化
+
+- 完成任务：移除手机端下注页底部“编辑单据”和“加入购物篮/加入购彩篮”入口，并按参考图重排合买模式的 `bet-bottom-bar`。
+- 解决问题：原底栏同时提供编辑单据、加入购彩篮和提交按钮，普通下注路径显得复杂；合买模式底栏也没有形成清晰的自购份数、共计金额和投注按钮结构。
+- 实施内容：`UnifiedBetBottomBar.vue` 改为单主按钮组件；普通投注只展示已选注数、总金额和“立即投注”；合买模式改为上下两行结算条，上方展示自购份数、确认勾选和共计注数，下方展示方案总额、实际需付金额和“投注”按钮；`DynamicBetPage.vue` 移除购物篮编辑弹层入口和显式加入事件，提交时继续静默把当前草稿转换为待提交单据；同步更新架构说明和前端规范。
+- 验证结果：手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 02:36 HKT 手机端我的记录区分注单和合买
+
+- 完成任务：将手机端 `/orders` 页面调整为“我的记录”，通过“我的注单”和“我的合买”两个 Tab 区分真实已下单注单和未成单合买认购。
+- 解决问题：此前未满单、未成单的合买认购会和真实下注记录混在同一个列表口径中，用户无法快速区分哪些已经形成投注订单、哪些仍属于合买认购记录。
+- 实施内容：后端 `GET /api/user/bet/orders` 新增 `view=orders|groupBuy` 过滤参数；`orders` 返回真实已下单记录，`groupBuy` 返回未成单合买认购；手机端注单 composable 按 Tab 维护独立缓存、页码、加载状态和“加载更多”；页面新增紧凑分段 Tab 和对应空状态文案；OpenAPI 和架构说明同步补充中文契约。
+- 验证结果：后端 `cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml` 通过；定向测试 `cargo test --manifest-path backend/Cargo.toml user_bet_order_view_filter_splits_orders_and_group_buy_participations -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml user_visible_bet_orders_include_unformed_group_buy_participation -- --nocapture` 和 `cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture` 通过；手机端 `pnpm build` 通过；`git diff --check` 通过。
+
+## 2026-06-16 02:29 HKT 后台 APP 更新配置入口独立化
+
+- 完成任务：把后台 APP 安装包上传和更新检查配置从“手机端设置”中拆出为独立“APP更新”标签。
+- 解决问题：原配置实际存在，但放在“系统设置 / 手机端设置”下方，入口不够明显，运营容易以为后台没有 APK/IPA 上传与更新检查配置页面。
+- 实施内容：系统设置默认打开“APP更新”标签；`mobile_app_*` 配置单独归组到“APP更新”；新增独立 `AppUpdateSettingsPanel` 展示 Android APK、iOS IPA 上传、更新检查开关、版本号、构建号、强制更新和更新说明；手机端展示设置只保留平台名称、Logo、介绍和首页高频配置。
+- 验证结果：后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
+
+## 2026-06-16 02:25 HKT 控奖合买认购投注内容显示优化
+
+- 完成任务：优化彩种控制台“控制开奖号码”抽屉中“合买认购记录”的投注内容展示。
+- 解决问题：合买认购记录此前只展示 `plan.numbers` 原始文本并做截断，运营需要自己判断 `1|2|3`、胆码拖码或大小单双含义，控单扫描效率低。
+- 实施内容：管理端新增合买投注文本解析展示工具，按玩法把投注内容转换为中文结构化行；直选展示“第 1 位/第 2 位/第 3 位”，胆拖展示“胆码/拖码”，大小单双展示“十位/个位”的中文属性；解析异常时回退展示“原始内容”并保留悬停原文。
+- 验证结果：后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
+
 ## 2026-06-15 23:45 HKT 手机端我的注单显示未成单合买认购
 
 - 完成任务：让手机端“我的注单”列表显示当前用户已认购但尚未满单成单的合买记录。

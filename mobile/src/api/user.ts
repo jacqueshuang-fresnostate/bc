@@ -11,6 +11,7 @@ export type ApiEnvelope<T> = {
 export type UserListQuery = {
   page?: number
   pageSize?: number
+  view?: string
 }
 
 export type UserKind = 'regular' | 'agent'
@@ -610,6 +611,7 @@ function normalizeUserListQuery(query: UserListQuery) {
   return {
     ...(query.page ? { page: query.page } : {}),
     ...(query.pageSize ? { pageSize: query.pageSize } : {}),
+    ...(query.view ? { view: query.view } : {}),
   }
 }
 

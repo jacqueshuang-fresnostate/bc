@@ -107,6 +107,7 @@ function normalizeUserListQuery(query: UserListQuery) {
   return {
     ...(query.page ? { page: query.page } : {}),
     ...(query.pageSize ? { pageSize: query.pageSize } : {}),
+    ...(query.view ? { view: query.view } : {}),
   }
 }
 
@@ -179,14 +180,18 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     group_buy_pending_plan?: boolean
     group_buy_plan_id?: string | null
     group_buy_plan_status?: string | null
+    order_source?: string
     participation_share_count?: number | null
     result?: string | null
     settled_at?: string | null
+    source_name?: string
   }
   const numbers = selectionNumbers(order)
-  const isGroupBuy = order.orderSource === 'groupBuy'
+  const orderSource = String(order.orderSource || rawOrder.order_source || rawOrder.source_name || 'direct')
+  const isSyntheticGroupBuyRecord = String(order.id || '').startsWith('GB-')
+  const isGroupBuy = orderSource === 'groupBuy' || orderSource === 'group_buy' || isSyntheticGroupBuyRecord
   const groupBuyPlanStatus = order.groupBuyPlanStatus || rawOrder.group_buy_plan_status || null
-  const groupBuyPendingPlan = Boolean(order.groupBuyPendingPlan || rawOrder.group_buy_pending_plan)
+  const groupBuyPendingPlan = Boolean(order.groupBuyPendingPlan || rawOrder.group_buy_pending_plan || isSyntheticGroupBuyRecord)
   const drawNumber = order.drawNumber || rawOrder.draw_number || rawOrder.draw_result || rawOrder.result || ''
   const participationAmountMinor = normalizeOptionalMinor(order.participationAmountMinor)
   const participationPayoutMinor = normalizeOptionalMinor(order.participationPayoutMinor)
@@ -208,8 +213,9 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     : ''
   return {
     ...order,
-    order_source: order.orderSource,
-    source_name: order.orderSource,
+    orderSource: isGroupBuy ? 'groupBuy' : 'direct',
+    order_source: isGroupBuy ? 'groupBuy' : 'direct',
+    source_name: isGroupBuy ? 'groupBuy' : 'direct',
     is_group_buy: isGroupBuy,
     group_buy_plan_id: order.groupBuyPlanId || rawOrder.group_buy_plan_id || null,
     group_buy_plan_status: groupBuyPlanStatus,

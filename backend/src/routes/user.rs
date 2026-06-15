@@ -127,6 +127,7 @@ struct SupportImageUploadResponse {
 struct UserPageQuery {
     page: Option<usize>,
     page_size: Option<usize>,
+    view: Option<UserBetOrderView>,
 }
 
 impl UserPageQuery {
@@ -149,6 +150,14 @@ impl UserPageQuery {
 
         items.into_iter().skip(start).take(end - start).collect()
     }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 用户端注单列表视图，用于把真实注单和未成单合买认购分开分页。
+enum UserBetOrderView {
+    Orders,
+    GroupBuy,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1033,6 +1042,7 @@ async fn list_user_bet_orders(
         &ledger_entries,
         &lotteries,
     )?;
+    let orders = filter_user_bet_orders_by_view(orders, query.view);
     let orders = query.paginate(orders);
 
     Ok(Json(ApiEnvelope::success(orders)))
@@ -1155,6 +1165,31 @@ fn sort_user_bet_order_responses_by_created_at_desc(items: &mut [UserBetOrderDet
             .cmp(&left.order.created_at)
             .then_with(|| right.order.id.cmp(&left.order.id))
     });
+}
+
+/// 根据手机端 Tab 过滤注单：真实已下单订单和未成单合买认购分别分页。
+fn filter_user_bet_orders_by_view(
+    items: Vec<UserBetOrderDetailResponse>,
+    view: Option<UserBetOrderView>,
+) -> Vec<UserBetOrderDetailResponse> {
+    match view {
+        Some(UserBetOrderView::Orders) => items
+            .into_iter()
+            .filter(|item| !is_unformed_group_buy_order(item))
+            .collect(),
+        Some(UserBetOrderView::GroupBuy) => items
+            .into_iter()
+            .filter(is_unformed_group_buy_order)
+            .collect(),
+        None => items,
+    }
+}
+
+/// 判断是否是尚未形成真实投注订单的合买认购记录，取消的未成单计划也归入“我的合买”。
+fn is_unformed_group_buy_order(item: &UserBetOrderDetailResponse) -> bool {
+    item.order.order_source == OrderSource::GroupBuy
+        && item.group_buy_plan_id.is_some()
+        && (item.group_buy_pending_plan || item.order.id.starts_with("GB-"))
 }
 
 /// 获取合买计划对应彩种号码类型；彩种配置缺失时按玩法编码做保守推断。
@@ -3246,6 +3281,41 @@ mod tests {
             vec![vec![1], vec![2], vec![3]]
         );
         assert_eq!(visible[1].order.id, "O000000000007");
+    }
+
+    #[test]
+    /// 验证用户端注单视图可以把真实已下单订单和未成单合买认购分开分页。
+    fn user_bet_order_view_filter_splits_orders_and_group_buy_participations() {
+        let direct_order = test_order("O000000000007", "U20002", OrderSource::Direct);
+        let mut pending_plan = test_group_buy_plan(
+            "G-USER-PENDING-001",
+            "20260605200100",
+            "regular_user",
+            "未满单合买",
+        );
+        pending_plan.participants = vec![
+            test_group_buy_participant("G-USER-PENDING-001-P001", "U10001"),
+            test_group_buy_participant_with_amount("G-USER-PENDING-001-P002", "U20002", 2_000),
+        ];
+
+        let visible = user_visible_bet_orders(
+            "U20002",
+            vec![direct_order],
+            &[pending_plan],
+            &[],
+            &[test_group_buy_lottery()],
+        )
+        .expect("用户注单列表可以合并未成单合买认购");
+
+        let order_view =
+            filter_user_bet_orders_by_view(visible.clone(), Some(UserBetOrderView::Orders));
+        let group_buy_view =
+            filter_user_bet_orders_by_view(visible, Some(UserBetOrderView::GroupBuy));
+
+        assert_eq!(order_view.len(), 1);
+        assert_eq!(order_view[0].order.id, "O000000000007");
+        assert_eq!(group_buy_view.len(), 1);
+        assert_eq!(group_buy_view[0].order.id, "GB-G-USER-PENDING-001");
     }
 
     #[test]

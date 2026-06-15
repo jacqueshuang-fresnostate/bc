@@ -43,7 +43,10 @@ import {
   drawNumberInputMeta,
   lotteryNumberTypeText as numberTypeText,
 } from '../utils/lotteries';
-import { formatBetInfoSummary } from '../utils/orderBetInfo';
+import {
+  formatBetInfoSummary,
+  formatGroupBuyNumbersSelection,
+} from '../utils/orderBetInfo';
 import { formatPlayRuleLabel } from '../utils/playRules';
 
 interface LotteryConsolePageProps {
@@ -1083,9 +1086,10 @@ function DrawControlSideSheet({
                           {formatGroupBuyPlayRuleLabel(plan.ruleCode, playRules)}
                         </td>
                         <td className="py-2 pr-3">
-                          <div className="max-w-[180px] truncate font-mono text-slate-600">
-                            {plan.numbers || '-'}
-                          </div>
+                          <GroupBuyNumbersInfo
+                            numbers={plan.numbers}
+                            ruleCode={plan.ruleCode}
+                          />
                         </td>
                         <td className="py-2 pr-3 font-semibold text-ink">
                           {formatMoney(participant.amountMinor)}
@@ -1150,6 +1154,34 @@ function DrawControlSideSheet({
         </div>
       )}
     </SideSheet>
+  );
+}
+
+function GroupBuyNumbersInfo({
+  numbers,
+  ruleCode,
+}: {
+  numbers: string;
+  ruleCode: string;
+}) {
+  const lines = formatGroupBuyNumbersSelection(ruleCode, numbers);
+  return (
+    <div
+      className="min-w-[220px] max-w-[320px] space-y-1"
+      title={numbers || undefined}
+    >
+      {lines.map((line) => (
+        <div
+          key={`${line.label}-${line.value}`}
+          className="grid grid-cols-[64px_minmax(0,1fr)] gap-2 text-xs leading-5"
+        >
+          <span className="whitespace-nowrap text-slate-400">{line.label}</span>
+          <span className="min-w-0 break-words font-medium text-slate-700">
+            {line.value}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 

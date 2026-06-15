@@ -5,37 +5,81 @@ import { fetchGroupBuyDetail } from '../features/group-buy/api'
 import { orderDrawNumbers, orderNumber } from '../utils/lotteryFormat'
 
 const ORDER_PAGE_SIZE = 20
+export type BetOrderView = 'groupBuy' | 'orders'
 
 export function useBetOrders(router: Router) {
-  const orders = ref<any[]>([])
+  const activeOrderView = ref<BetOrderView>('orders')
+  const ordersByView = ref<Record<BetOrderView, any[]>>({
+    groupBuy: [],
+    orders: [],
+  })
   const selectedOrder = ref<any | null>(null)
   const selectedGroupBuyParticipants = ref<any[]>([])
-  const loadingOrders = ref(false)
   const loadingGroupBuyParticipants = ref(false)
-  const ordersPage = ref(0)
-  const hasMoreOrders = ref(true)
+  const loadingOrdersByView = ref<Record<BetOrderView, boolean>>({
+    groupBuy: false,
+    orders: false,
+  })
+  const ordersPageByView = ref<Record<BetOrderView, number>>({
+    groupBuy: 0,
+    orders: 0,
+  })
+  const hasMoreOrdersByView = ref<Record<BetOrderView, boolean>>({
+    groupBuy: true,
+    orders: true,
+  })
+  const orders = computed(() => ordersByView.value[activeOrderView.value])
+  const ordersPage = computed(() => ordersPageByView.value[activeOrderView.value])
+  const hasMoreOrders = computed(() => hasMoreOrdersByView.value[activeOrderView.value])
+  const loadingOrders = computed(() => loadingOrdersByView.value[activeOrderView.value])
   const selectedDrawNumbers = computed(() => selectedOrder.value ? orderDrawNumbers(selectedOrder.value) : [])
   const selectedOrderNumber = computed(() => selectedOrder.value ? orderNumber(selectedOrder.value) : '')
 
-  async function loadOrders(options: { append?: boolean; silent?: boolean } = {}) {
+  async function loadOrders(options: { append?: boolean; silent?: boolean; view?: BetOrderView } = {}) {
+    const view = options.view || activeOrderView.value
     const append = Boolean(options.append)
-    if (append && !hasMoreOrders.value) return
-    loadingOrders.value = true
+    if (append && !hasMoreOrdersByView.value[view]) return
+    if (loadingOrdersByView.value[view]) return
+    if (!options.silent) {
+      loadingOrdersByView.value = { ...loadingOrdersByView.value, [view]: true }
+    }
     try {
-      const nextPage = append ? ordersPage.value + 1 : 1
-      const nextOrders = await fetchUserBetOrders({ page: nextPage, pageSize: ORDER_PAGE_SIZE })
-      orders.value = append ? mergeOrders(orders.value, nextOrders) : nextOrders
-      ordersPage.value = nextOrders.length > 0 ? nextPage : (append ? ordersPage.value : 0)
-      hasMoreOrders.value = nextOrders.length >= ORDER_PAGE_SIZE
+      const nextPage = append ? ordersPageByView.value[view] + 1 : 1
+      const nextOrders = await fetchUserBetOrders({
+        page: nextPage,
+        pageSize: ORDER_PAGE_SIZE,
+        view,
+      })
+      const scopedOrders = filterOrdersByView(nextOrders, view)
+      ordersByView.value = {
+        ...ordersByView.value,
+        [view]: append ? mergeOrders(ordersByView.value[view], scopedOrders) : scopedOrders,
+      }
+      ordersPageByView.value = {
+        ...ordersPageByView.value,
+        [view]: nextOrders.length > 0 ? nextPage : (append ? ordersPageByView.value[view] : 0),
+      }
+      hasMoreOrdersByView.value = {
+        ...hasMoreOrdersByView.value,
+        [view]: nextOrders.length >= ORDER_PAGE_SIZE,
+      }
     } catch {
       if (!append) {
-        orders.value = []
-        ordersPage.value = 0
-        hasMoreOrders.value = true
+        ordersByView.value = { ...ordersByView.value, [view]: [] }
+        ordersPageByView.value = { ...ordersPageByView.value, [view]: 0 }
+        hasMoreOrdersByView.value = { ...hasMoreOrdersByView.value, [view]: true }
       }
     } finally {
-      loadingOrders.value = false
+      if (!options.silent) {
+        loadingOrdersByView.value = { ...loadingOrdersByView.value, [view]: false }
+      }
     }
+  }
+
+  function setOrderView(view: BetOrderView) {
+    if (activeOrderView.value === view) return
+    activeOrderView.value = view
+    void loadOrders({ view })
   }
 
   function mergeOrders(current: any[], incoming: any[]) {
@@ -46,6 +90,23 @@ export function useBetOrders(router: Router) {
       seen.add(id)
       return true
     })
+  }
+
+  function filterOrdersByView(items: any[], view: BetOrderView) {
+    return items.filter(order => view === 'groupBuy' ? isUnformedGroupBuyOrder(order) : !isUnformedGroupBuyOrder(order))
+  }
+
+  function isUnformedGroupBuyOrder(order: any) {
+    const source = order?.orderSource || order?.order_source || order?.source_name || ''
+    return Boolean(
+      source === 'groupBuy'
+        && (
+          order?.groupBuyPendingPlan
+          || order?.group_buy_pending_plan
+          || order?.status === 'groupBuyPending'
+          || String(order?.id || '').startsWith('GB-')
+        ),
+    )
   }
 
   async function openOrderDetail(order: any) {
@@ -89,6 +150,7 @@ export function useBetOrders(router: Router) {
   }
 
   return {
+    activeOrderView,
     orders,
     selectedOrder,
     selectedGroupBuyParticipants,
@@ -99,6 +161,7 @@ export function useBetOrders(router: Router) {
     ordersPage,
     hasMoreOrders,
     loadOrders,
+    setOrderView,
     openOrderDetail,
     closeOrderDetail,
     copyOrderNumber,

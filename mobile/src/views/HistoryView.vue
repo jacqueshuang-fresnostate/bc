@@ -12,6 +12,7 @@ import { useBetOrders } from '../composables/useBetOrders'
 import { useLotteryHistory } from '../composables/useLotteryHistory'
 import { useBrandingStore } from '../stores/branding'
 import { useMobileUserDataStore } from '../stores/mobileUserData'
+import type { BetOrderView } from '../composables/useBetOrders'
 
 const props = defineProps<{ wsMessage?: Record<string, any> | null }>()
 const route = useRoute()
@@ -42,6 +43,7 @@ const {
 } = useLotteryHistory()
 
 const {
+  activeOrderView,
   orders,
   selectedOrder,
   selectedGroupBuyParticipants,
@@ -51,11 +53,31 @@ const {
   loadingGroupBuyParticipants,
   hasMoreOrders,
   loadOrders,
+  setOrderView,
   openOrderDetail,
   closeOrderDetail,
   copyOrderNumber,
   rebetSelectedOrder,
 } = useBetOrders(router)
+const orderTabs: Array<{ key: BetOrderView; label: string; empty: string; more: string; done: string }> = [
+  {
+    key: 'orders',
+    label: '我的注单',
+    empty: '暂无已下单注单',
+    more: '加载更多注单',
+    done: '已加载全部注单',
+  },
+  {
+    key: 'groupBuy',
+    label: '我的合买',
+    empty: '暂无未成单合买',
+    more: '加载更多合买',
+    done: '已加载全部合买',
+  },
+]
+const activeOrderTab = computed(
+  () => orderTabs.find(tab => tab.key === activeOrderView.value) || orderTabs[0],
+)
 
 async function loadBalance() {
   try {
@@ -76,6 +98,10 @@ function loadCurrentPage() {
 function loadMoreOrders() {
   if (loadingOrders.value || !hasMoreOrders.value) return
   loadOrders({ append: true })
+}
+
+function switchOrderTab(view: BetOrderView) {
+  setOrderView(view)
 }
 
 watch(activeGroupCode, () => {
@@ -131,7 +157,7 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
       <button class="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-50 text-red-900" type="button" @click="router.back()">
         <LucideIcon name="arrow_back" class="h-5 w-5" />
       </button>
-      <strong class="font-headline text-base text-red-900">我的注单</strong>
+      <strong class="font-headline text-base text-red-900">我的记录</strong>
       <button class="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-50 text-red-900 disabled:opacity-60" type="button" :disabled="loadingOrders" @click="loadCurrentPage">
         <LucideIcon name="refresh" class="h-4.5 w-4.5" />
       </button>
@@ -168,10 +194,24 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
       </section>
 
       <section v-else class="orders-panel">
+        <div class="orders-tabs" role="tablist" aria-label="注单记录分类">
+          <button
+            v-for="tab in orderTabs"
+            :key="tab.key"
+            type="button"
+            role="tab"
+            :aria-selected="activeOrderView === tab.key"
+            class="orders-tabs__button"
+            :class="{ 'orders-tabs__button--active': activeOrderView === tab.key }"
+            @click="switchOrderTab(tab.key)"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
         <div v-if="loadingOrders" class="state-block">
           <van-loading>加载中...</van-loading>
         </div>
-        <van-empty v-else-if="!orders.length" description="暂无注单" />
+        <van-empty v-else-if="!orders.length" :description="activeOrderTab.empty" />
         <div v-else class="orders-list orders-list--records">
           <BetOrderCard
             v-for="order in orders"
@@ -186,9 +226,9 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
             :disabled="loadingOrders"
             @click="loadMoreOrders"
           >
-            {{ loadingOrders ? '加载中...' : '加载更多注单' }}
+            {{ loadingOrders ? '加载中...' : activeOrderTab.more }}
           </button>
-          <p v-else class="py-1 text-center text-[11px] font-semibold text-stone-500">已加载全部注单</p>
+          <p v-else class="py-1 text-center text-[11px] font-semibold text-stone-500">{{ activeOrderTab.done }}</p>
         </div>
       </section>
     </main>
@@ -274,6 +314,39 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
 
 .orders-list--records {
   gap: 18px;
+}
+
+.orders-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 14px;
+  border-radius: 14px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: inset 0 0 0 1px rgba(140, 10, 21, 0.06);
+  backdrop-filter: blur(14px);
+}
+
+.orders-tabs__button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #7e625f;
+  font-size: 13px;
+  font-weight: 900;
+  transition: background 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.orders-tabs__button:active {
+  transform: scale(0.98);
+}
+
+.orders-tabs__button--active {
+  background: linear-gradient(135deg, #8c0a15, #b42327);
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(140, 10, 21, 0.16);
 }
 
 .selected-lottery-history-popup {
