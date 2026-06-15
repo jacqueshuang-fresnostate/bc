@@ -1,5 +1,21 @@
 # TODO
 
+## 2026-06-15 06:02 HKT 用户端记录接口分页与时间排序优化
+
+- 完成任务：为用户端资金流水、注单、合买、充值和提现列表增加可选分页参数，并按时间倒序返回。
+- 解决问题：用户端多处列表一直返回全量数据并保持原始顺序，历史订单越多页面越慢，切换到“我的记录”时也缺乏稳定的倒序展示。
+- 实施内容：
+  - 在 `backend/src/routes/user.rs` 新增 `UserPageQuery`，支持 `page`、`page_size`。
+  - 在以下接口接入分页：
+    - `GET /api/user/ledger-entries`
+    - `GET /api/user/bet/orders`
+    - `GET /api/user/group-buy/my`
+    - `GET /api/user/recharge/orders`
+    - `GET /api/user/withdrawals`
+  - `GET /api/user/group-buy/plans` 增加分页参数并按创建时间倒序，兼容不传分页参数的全量返回。
+  - 新增统一时间解析与倒序排序工具：`parse_user_timestamp_seconds`、`compare_created_time_desc`，支持 `unix:` 与 `yyyy-mm-dd HH:MM:SS` 两种时间串格式，分页时稳定排序。
+- 验证结果：后端 `cargo check --bin bc-backend` 通过。编译不再出现未使用导入告警。
+
 ## 2026-06-15 03:46 HKT 彩种卡片隐藏过期控制期号
 
 - 完成任务：彩种控制台卡片上的“开奖控制”摘要不再展示已经过去的控制期号。

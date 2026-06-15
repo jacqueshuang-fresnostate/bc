@@ -9,8 +9,10 @@ use axum::{
     routing::{get, post, put},
     Extension, Json, Router,
 };
+use chrono::{NaiveDateTime, TimeZone};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -88,6 +90,7 @@ use crate::{
 const MAX_USER_BET_BATCH_SIZE: usize = 50;
 const REALTIME_HEARTBEAT_SECONDS: u64 = 30;
 const ROBOT_GROUP_BUY_PLAN_PREFIX: &str = "G-ROBOT-";
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const ROBOT_GROUP_BUY_DISPLAY_NAMES: &[&str] = &[
     "星河会员",
     "晨光会员",
@@ -112,6 +115,36 @@ const ROBOT_GROUP_BUY_DISPLAY_NAMES: &[&str] = &[
 /// 用户端客服图片上传响应，只返回可写入客服消息的图片链接。
 struct SupportImageUploadResponse {
     image_url: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 用户端列表分页参数。
+struct UserPageQuery {
+    page: Option<usize>,
+    page_size: Option<usize>,
+}
+
+impl UserPageQuery {
+    /// 当分页参数为空时返回全量，不分页；有分页参数时按页切片。
+    fn paginate<T>(&self, items: Vec<T>) -> Vec<T> {
+        if self.page.is_none() && self.page_size.is_none() {
+            return items;
+        }
+
+        let total_count = items.len();
+        let page_size = self.page_size.unwrap_or(20).max(1);
+        let max_page = if total_count == 0 {
+            1
+        } else {
+            total_count.div_ceil(page_size)
+        };
+        let page = self.page.unwrap_or(1).max(1).min(max_page);
+        let start = (page - 1).saturating_mul(page_size);
+        let end = (start + page_size).min(total_count);
+
+        items.into_iter().skip(start).take(end - start).collect()
+    }
 }
 
 /// 组装并返回当前用户模块对应的路由树。
@@ -592,8 +625,11 @@ fn user_with_account_balance(
 async fn list_ledger_entries(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
+    Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<LedgerEntry>>>> {
-    let entries = state.finance.user_ledger_entries(&session.user.id).await?;
+    let mut entries = state.finance.user_ledger_entries(&session.user.id).await?;
+    sort_ledger_entries_by_time_desc(&mut entries);
+    let entries = query.paginate(entries);
 
     Ok(Json(ApiEnvelope::success(entries)))
 }
@@ -828,12 +864,17 @@ struct UserGroupBuyOrderShare {
 async fn list_user_bet_orders(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
+    Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<UserBetOrderDetailResponse>>>> {
-    let orders = state.orders.list().await?;
+    let mut orders = state.orders.list().await?;
     let group_buy_plans = state.group_buys.list_details().await?;
     let ledger_entries = state.finance.user_ledger_entries(&session.user.id).await?;
+    orders.sort_by(|left, right| {
+        compare_created_time_desc(&right.created_at, &right.id, &left.created_at, &left.id)
+    });
     let orders =
         user_visible_bet_orders(&session.user.id, orders, &group_buy_plans, &ledger_entries)?;
+    let orders = query.paginate(orders);
 
     Ok(Json(ApiEnvelope::success(orders)))
 }
@@ -1112,6 +1153,19 @@ struct UserGroupBuyListQuery {
     lottery_id: Option<String>,
     #[serde(default, alias = "group_code")]
     group_code: Option<String>,
+    page: Option<usize>,
+    page_size: Option<usize>,
+}
+
+impl UserGroupBuyListQuery {
+    /// 复用用户分页规则，未传分页参数则返回全量。
+    fn paginate_plans(&self, items: Vec<UserGroupBuyPlan>) -> Vec<UserGroupBuyPlan> {
+        UserPageQuery {
+            page: self.page,
+            page_size: self.page_size,
+        }
+        .paginate(items)
+    }
 }
 
 /// 返回手机端合买大厅计划列表。
@@ -1121,7 +1175,7 @@ async fn list_user_group_buy_plans(
     Query(query): Query<UserGroupBuyListQuery>,
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlanPage>>> {
     let lotteries = state.lotteries.list().await?;
-    let items = user_group_buy_plans(&state, &session.user.id, &lotteries, query).await?;
+    let items = user_group_buy_plans(&state, &session.user.id, &lotteries, &query).await?;
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyPlanPage { items })))
 }
@@ -1150,10 +1204,11 @@ async fn get_user_group_buy_plan(
 async fn list_my_group_buy_plans(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
+    Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlanPage>>> {
     let lotteries = state.lotteries.list().await?;
     let access = state.access.snapshot().await?;
-    let items = state
+    let mut items = state
         .group_buys
         .list_details()
         .await?
@@ -1173,6 +1228,8 @@ async fn list_my_group_buy_plans(
             )
         })
         .collect::<ApiResult<Vec<_>>>()?;
+    sort_group_buy_plans_by_time_desc(&mut items);
+    let items = query.paginate(items);
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyPlanPage { items })))
 }
@@ -1492,7 +1549,7 @@ async fn user_group_buy_plans(
     state: &AppState,
     user_id: &str,
     lotteries: &[LotteryKind],
-    query: UserGroupBuyListQuery,
+    query: &UserGroupBuyListQuery,
 ) -> ApiResult<Vec<UserGroupBuyPlan>> {
     let access = state.access.snapshot().await?;
     let lottery_id = query
@@ -1506,7 +1563,7 @@ async fn user_group_buy_plans(
         .map(str::trim)
         .filter(|value| !value.is_empty());
 
-    state
+    let mut items = state
         .group_buys
         .list_details()
         .await?
@@ -1534,7 +1591,9 @@ async fn user_group_buy_plans(
             )
         })
         .map(|plan| user_group_buy_plan(&plan, lotteries, Some(user_id), &access.users, false))
-        .collect()
+        .collect::<ApiResult<Vec<_>>>()?;
+    sort_group_buy_plans_by_time_desc(&mut items);
+    Ok(query.paginate_plans(items))
 }
 
 /// 把单个合买计划转换为手机端展示详情。
@@ -1882,8 +1941,11 @@ async fn get_recharge_config(
 async fn list_recharge_orders(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
+    Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<RechargeOrderSummary>>>> {
-    let orders = state.recharges.list_for_user(&session.user.id).await?;
+    let mut orders = state.recharges.list_for_user(&session.user.id).await?;
+    sort_recharge_orders_by_time_desc(&mut orders);
+    let orders = query.paginate(orders);
 
     Ok(Json(ApiEnvelope::success(orders)))
 }
@@ -2234,10 +2296,69 @@ async fn delete_withdrawal_method(
 async fn list_withdrawal_orders(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
+    Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<WithdrawalOrderSummary>>>> {
-    let orders = state.withdrawals.list_for_user(&session.user.id).await?;
+    let mut orders = state.withdrawals.list_for_user(&session.user.id).await?;
+    sort_withdrawal_orders_by_time_desc(&mut orders);
+    let orders = query.paginate(orders);
 
     Ok(Json(ApiEnvelope::success(orders)))
+}
+
+/// 解析用户列表展示中的时间字符串，兼容 unix 秒字段。
+fn parse_user_timestamp_seconds(value: &str) -> Option<i64> {
+    let value = value.trim();
+    if let Some(seconds) = value.strip_prefix("unix:") {
+        return seconds.parse::<i64>().ok();
+    }
+
+    let parsed = NaiveDateTime::parse_from_str(value, TIMESTAMP_FORMAT).ok()?;
+    chrono::Local
+        .from_local_datetime(&parsed)
+        .single()
+        .map(|value| value.timestamp())
+        .or_else(|| Some(parsed.and_utc().timestamp()))
+}
+
+/// 按创建时间倒序比较，处理同秒时按业务流水/订单编号倒序保证分页稳定。
+fn compare_created_time_desc(
+    left_created_at: &str,
+    left_id: &str,
+    right_created_at: &str,
+    right_id: &str,
+) -> Ordering {
+    parse_user_timestamp_seconds(right_created_at)
+        .cmp(&parse_user_timestamp_seconds(left_created_at))
+        .then_with(|| right_created_at.cmp(left_created_at))
+        .then_with(|| right_id.cmp(left_id))
+}
+
+/// 资金流水列表按创建时间倒序展示。
+fn sort_ledger_entries_by_time_desc(entries: &mut [LedgerEntry]) {
+    entries.sort_by(|left, right| {
+        compare_created_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
+    });
+}
+
+/// 充值订单列表按创建时间倒序展示。
+fn sort_recharge_orders_by_time_desc(orders: &mut [RechargeOrderSummary]) {
+    orders.sort_by(|left, right| {
+        compare_created_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
+    });
+}
+
+/// 提现订单列表按创建时间倒序展示。
+fn sort_withdrawal_orders_by_time_desc(orders: &mut [WithdrawalOrderSummary]) {
+    orders.sort_by(|left, right| {
+        compare_created_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
+    });
+}
+
+/// 合买计划列表按创建时间倒序展示。
+fn sort_group_buy_plans_by_time_desc(plans: &mut [UserGroupBuyPlan]) {
+    plans.sort_by(|left, right| {
+        compare_created_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
+    });
 }
 
 /// 当前用户提交提现申请并冻结余额。
