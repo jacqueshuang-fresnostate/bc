@@ -190,6 +190,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/system-settings/cache/reload", post(reload_memory_cache))
         .route("/system-settings/{key}", patch(update_system_setting))
         .route("/image-bed/upload", post(upload_image_bed_file))
+        .route("/app-packages/upload", post(upload_app_package_file))
         .route(
             "/advertisements",
             get(list_advertisements).post(create_advertisement),
@@ -440,7 +441,7 @@ fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
     if path.starts_with("system-settings") {
         return Some(PermissionScope::SystemSettings);
     }
-    if path.starts_with("image-bed") {
+    if path.starts_with("image-bed") || path.starts_with("app-packages") {
         return Some(PermissionScope::SystemSettings);
     }
     if path.starts_with("advertisements") {
@@ -2124,6 +2125,25 @@ async fn upload_image_bed_file(
     let output =
         upload_configured_image_bed_file(&state.access, payload, ImageBedUploadOptions::default())
             .await?;
+
+    Ok(Json(ApiEnvelope::success(output)))
+}
+
+/// 处理管理员 APP 安装包上传请求：复用图床配置透传 APK/IPA 文件并返回下载链接。
+async fn upload_app_package_file(
+    State(state): State<AppState>,
+    payload: Multipart,
+) -> ApiResult<Json<ApiEnvelope<Value>>> {
+    let output = upload_configured_image_bed_file(
+        &state.access,
+        payload,
+        ImageBedUploadOptions {
+            image_only: false,
+            missing_file_message: "未检测到 APP 安装包文件字段",
+            default_file_name: "app-package.bin",
+        },
+    )
+    .await?;
 
     Ok(Json(ApiEnvelope::success(output)))
 }

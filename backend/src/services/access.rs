@@ -2646,6 +2646,66 @@ fn seed_settings() -> Vec<SystemSetting> {
             description: "手机端首页高频极速展示彩种 ID，多个用英文逗号分隔".to_string(),
         },
         SystemSetting {
+            key: "mobile_app_android_enabled".to_string(),
+            value: "false".to_string(),
+            description: "Android APP 更新检查开关".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_android_latest_version".to_string(),
+            value: "0.1.0".to_string(),
+            description: "Android APP 最新版本号".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_android_latest_build".to_string(),
+            value: "1".to_string(),
+            description: "Android APP 最新构建号，数字越大版本越新".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_android_package_url".to_string(),
+            value: "未配置".to_string(),
+            description: "Android APK 安装包下载链接".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_android_force_update".to_string(),
+            value: "false".to_string(),
+            description: "Android APP 是否强制更新".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_android_release_notes".to_string(),
+            value: String::new(),
+            description: "Android APP 更新说明".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_ios_enabled".to_string(),
+            value: "false".to_string(),
+            description: "iOS APP 更新检查开关".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_ios_latest_version".to_string(),
+            value: "0.1.0".to_string(),
+            description: "iOS APP 最新版本号".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_ios_latest_build".to_string(),
+            value: "1".to_string(),
+            description: "iOS APP 最新构建号，数字越大版本越新".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_ios_package_url".to_string(),
+            value: "未配置".to_string(),
+            description: "iOS IPA 安装包下载链接".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_ios_force_update".to_string(),
+            value: "false".to_string(),
+            description: "iOS APP 是否强制更新".to_string(),
+        },
+        SystemSetting {
+            key: "mobile_app_ios_release_notes".to_string(),
+            value: String::new(),
+            description: "iOS APP 更新说明".to_string(),
+        },
+        SystemSetting {
             key: "recharge_rebate_mode".to_string(),
             value: "immediate".to_string(),
             description: "代理充值返利模式".to_string(),

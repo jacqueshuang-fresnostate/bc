@@ -19,6 +19,20 @@ pub struct MobileSiteConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 手机端 APP 更新检查结果，供 Android/iOS 客户端启动时判断是否需要提示更新。
+pub struct MobileAppUpdateConfig {
+    pub platform: String,
+    pub enabled: bool,
+    pub latest_version: String,
+    pub latest_build: u32,
+    pub download_url: Option<String>,
+    pub force_update: bool,
+    pub release_notes: String,
+    pub update_available: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 /// 手机端首页各模块开关，决定轮播、公告、高频和统计是否展示。
 pub struct MobileLotteryHomeSettings {
     pub banners_enabled: bool,

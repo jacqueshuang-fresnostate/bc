@@ -108,6 +108,23 @@ export type MobileSiteConfig = {
   intro: string
 }
 
+export type MobileAppUpdateConfig = {
+  platform: 'android' | 'ios' | string
+  enabled: boolean
+  latestVersion: string
+  latestBuild: number
+  downloadUrl?: string | null
+  forceUpdate: boolean
+  releaseNotes: string
+  updateAvailable: boolean
+}
+
+export type MobileAppUpdateQuery = {
+  platform?: 'android' | 'ios' | string
+  currentVersion?: string
+  currentBuild?: number
+}
+
 export type MobileAdvertisement = {
   id: string
   title: string
@@ -541,6 +558,12 @@ export async function resetUserPassword(resetToken: string, newPassword: string)
 
 export async function fetchMobileSiteConfig() {
   return unwrapApiData<MobileSiteConfig>(await http.get('/user/mobile/site-config'))
+}
+
+export async function fetchMobileAppUpdate(query: MobileAppUpdateQuery) {
+  return unwrapApiData<MobileAppUpdateConfig>(
+    await http.get('/user/mobile/app-update', { params: query }),
+  )
 }
 
 export async function fetchMobileAdvertisements() {

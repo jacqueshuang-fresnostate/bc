@@ -3763,3 +3763,10 @@
 - 解决问题：普通卡片标题行里的 `lottery-state-pill group-lottery-card__state` 占用横向空间，影响彩种名称扫描；图片偏小，彩种识别度不够。
 - 实施内容：移除普通卡片标题行状态标签和对应 `.group-lottery-card__state` 样式；普通卡片 Logo 容器从 `2.05rem` 放大到 `2.38rem`，小屏从 `1.7rem` 放大到 `2rem`；主推卡和高频极速二级卡不变。
 - 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。
+
+## 2026-06-16 01:57 HKT 后台 APP 安装包上传与手机端更新检查
+
+- 完成任务：新增后台 Android APK、iOS IPA 安装包上传和更新策略配置，并接入手机端启动更新检查。
+- 解决问题：此前后台只能配置手机端 Logo 和介绍，无法维护 APP 安装包下载地址、最新版本、强制更新和更新说明；手机端启动后也没有统一的更新检查入口。
+- 实施内容：后端系统设置新增 Android/iOS 更新配置种子和迁移；新增 `/api/admin/app-packages/upload` 安装包上传接口与 `/api/user/mobile/app-update` 公开检查接口；OpenAPI 同步记录；后台“手机端设置”新增 APP 更新配置区块，支持上传安装包并回填链接；手机端启动后异步检查更新并按强制/可选策略展示中文更新弹窗。
+- 验证结果：后端 `cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml mobile_app_update -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml version_compare_handles_equal_and_newer_versions -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture` 和全量 `cargo test --manifest-path backend/Cargo.toml` 均通过（319 个测试成功）；后台 `npm run build`、手机端 `pnpm build`、手机端 `pnpm test` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示，手机端测试脚本当前显示 0 个测试用例。

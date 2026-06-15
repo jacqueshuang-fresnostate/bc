@@ -307,6 +307,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Multipart,
     ),
     doc(
+        "post",
+        "/admin/app-packages/upload",
+        "系统设置",
+        "上传 APP 安装包",
+        "通过后台保存的图床配置代理上传 APK 或 IPA 文件并返回下载链接。",
+        AuthMode::Admin,
+        RequestBodyKind::Multipart,
+    ),
+    doc(
         "get",
         "/admin/advertisements",
         "广告管理",
@@ -1145,6 +1154,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/user/mobile/app-update",
+        "用户端内容",
+        "手机端 APP 更新检查",
+        "根据平台、当前版本号和构建号返回 APP 是否需要更新以及下载地址。",
+        AuthMode::None,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
         "/user/register-options",
         "用户端账户",
         "注册配置",
@@ -1974,12 +1992,14 @@ mod tests {
         assert!(document["paths"]["/admin/robots/{id}"]["get"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["put"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["delete"].is_object());
+        assert!(document["paths"]["/admin/app-packages/upload"]["post"].is_object());
         assert!(document["paths"]["/lottery/home"]["get"].is_object());
         assert!(document["paths"]["/lottery/groups"]["get"].is_object());
         assert!(document["paths"]["/lottery/history/latest"]["get"].is_object());
         assert!(document["paths"]["/lottery/history"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/advertisements"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/site-config"]["get"].is_object());
+        assert!(document["paths"]["/user/mobile/app-update"]["get"].is_object());
         assert!(document["paths"]["/user/register-options"]["get"].is_object());
         assert!(document["paths"]["/user/invitations/summary"]["get"].is_object());
         assert!(document["paths"]["/user/agent/application"]["get"].is_object());

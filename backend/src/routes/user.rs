@@ -39,8 +39,8 @@ use crate::{
     domain::invite::{InviteRecord, InviteStatus},
     domain::lottery::{LotteryKind, LotteryNumberType},
     domain::mobile::{
-        MobileBetPageConfig, MobileCreateBetOrderBatchRequest, MobileCreateBetOrderBatchResponse,
-        MobileSiteConfig,
+        MobileAppUpdateConfig, MobileBetPageConfig, MobileCreateBetOrderBatchRequest,
+        MobileCreateBetOrderBatchResponse, MobileSiteConfig,
     },
     domain::order::{CreateOrderRequest, OrderDetail, OrderSource, OrderStatus},
     domain::permission::SystemSetting,
@@ -151,6 +151,15 @@ impl UserPageQuery {
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 手机端 APP 更新检查查询参数；平台为空时默认按 Android 处理。
+struct MobileAppUpdateQuery {
+    platform: Option<String>,
+    current_version: Option<String>,
+    current_build: Option<u32>,
+}
+
 /// 组装并返回当前用户模块对应的路由树。
 pub fn router(state: AppState) -> Router<AppState> {
     let protected_routes = Router::new()
@@ -244,6 +253,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/mobile/advertisements", get(list_mobile_advertisements))
         .route("/mobile/site-config", get(get_mobile_site_config))
+        .route("/mobile/app-update", get(get_mobile_app_update))
         .route("/realtime", get(open_user_realtime_socket))
         .route("/register-options", get(get_registration_options))
         .route(
@@ -382,6 +392,17 @@ async fn get_mobile_site_config(
     Ok(Json(ApiEnvelope::success(config)))
 }
 
+/// 返回手机端 APP 更新配置，客户端启动时据此展示强制或可选更新弹窗。
+async fn get_mobile_app_update(
+    State(state): State<AppState>,
+    Query(query): Query<MobileAppUpdateQuery>,
+) -> ApiResult<Json<ApiEnvelope<MobileAppUpdateConfig>>> {
+    let settings = state.access.settings().await?;
+    let config = mobile_app_update_from_settings(&settings, &query);
+
+    Ok(Json(ApiEnvelope::success(config)))
+}
+
 /// 返回手机端注册入口需要的公开注册策略。
 async fn get_registration_options(
     State(state): State<AppState>,
@@ -399,6 +420,101 @@ fn mobile_site_config_from_settings(settings: &[SystemSetting]) -> MobileSiteCon
         logo_image_url: optional_config_value(settings, "mobile_logo_image_url"),
         intro: config_value(settings, "mobile_site_intro")
             .unwrap_or_else(|| "欢迎使用彩票管理系统，祝您理性购彩、好运常伴。".to_string()),
+    }
+}
+
+/// 从系统设置组装 APP 更新检查结果，并根据客户端当前版本判断是否需要更新。
+fn mobile_app_update_from_settings(
+    settings: &[SystemSetting],
+    query: &MobileAppUpdateQuery,
+) -> MobileAppUpdateConfig {
+    let platform = normalize_mobile_app_platform(query.platform.as_deref());
+    let key_prefix = format!("mobile_app_{platform}");
+    let enabled = config_bool(settings, &format!("{key_prefix}_enabled"));
+    let latest_version = config_value(settings, &format!("{key_prefix}_latest_version"))
+        .unwrap_or_else(|| "0.1.0".to_string());
+    let latest_build = config_u32(settings, &format!("{key_prefix}_latest_build")).unwrap_or(1);
+    let download_url = optional_config_value(settings, &format!("{key_prefix}_package_url"))
+        .filter(|url| url.starts_with("http://") || url.starts_with("https://"));
+    let force_update = config_bool(settings, &format!("{key_prefix}_force_update"));
+    let release_notes =
+        config_value(settings, &format!("{key_prefix}_release_notes")).unwrap_or_default();
+    let current_version = query.current_version.as_deref().unwrap_or("0.0.0");
+    let current_build = query.current_build.unwrap_or(0);
+    let update_available = enabled
+        && download_url.is_some()
+        && (latest_build > current_build || version_is_newer(&latest_version, current_version));
+
+    MobileAppUpdateConfig {
+        platform: platform.to_string(),
+        enabled,
+        latest_version,
+        latest_build,
+        download_url,
+        force_update,
+        release_notes,
+        update_available,
+    }
+}
+
+/// 标准化客户端平台参数，避免 ipa、iphone 等别名导致读取不到 iOS 配置。
+fn normalize_mobile_app_platform(platform: Option<&str>) -> &'static str {
+    match platform
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "ios" | "iphone" | "ipad" | "ipa" => "ios",
+        _ => "android",
+    }
+}
+
+/// 读取布尔配置，只有明确写入 true、1、yes、on 时才视为开启。
+fn config_bool(settings: &[SystemSetting], key: &str) -> bool {
+    config_value(settings, key)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "true" | "1" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// 读取无符号整数配置，解析失败时交给调用方使用默认值。
+fn config_u32(settings: &[SystemSetting], key: &str) -> Option<u32> {
+    config_value(settings, key).and_then(|value| value.parse::<u32>().ok())
+}
+
+/// 比较版本号的数字片段，支持 1.2.3、1.2.3-beta 这类常见格式。
+fn version_is_newer(latest: &str, current: &str) -> bool {
+    let latest_parts = version_numeric_parts(latest);
+    let current_parts = version_numeric_parts(current);
+    let max_len = latest_parts.len().max(current_parts.len());
+    for index in 0..max_len {
+        let latest_part = latest_parts.get(index).copied().unwrap_or(0);
+        let current_part = current_parts.get(index).copied().unwrap_or(0);
+        match latest_part.cmp(&current_part) {
+            Ordering::Greater => return true,
+            Ordering::Less => return false,
+            Ordering::Equal => {}
+        }
+    }
+    false
+}
+
+/// 提取版本号中的数字片段，空版本统一按 0 处理。
+fn version_numeric_parts(version: &str) -> Vec<u32> {
+    let parts: Vec<u32> = version
+        .split(|character: char| !character.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse::<u32>().ok())
+        .collect();
+    if parts.is_empty() {
+        vec![0]
+    } else {
+        parts
     }
 }
 
@@ -2735,6 +2851,91 @@ mod tests {
     }
 
     #[test]
+    /// 验证 APP 更新配置在未配置下载地址时不会误提示客户端更新。
+    fn mobile_app_update_ignores_unconfigured_download_url() {
+        let settings = vec![
+            test_setting("mobile_app_android_enabled", "true"),
+            test_setting("mobile_app_android_latest_version", "2.0.0"),
+            test_setting("mobile_app_android_latest_build", "20"),
+            test_setting("mobile_app_android_package_url", "未配置"),
+        ];
+        let query = MobileAppUpdateQuery {
+            platform: Some("android".to_string()),
+            current_version: Some("1.0.0".to_string()),
+            current_build: Some(1),
+        };
+
+        let config = mobile_app_update_from_settings(&settings, &query);
+
+        assert_eq!(config.platform, "android");
+        assert!(config.enabled);
+        assert!(!config.update_available);
+        assert_eq!(config.download_url, None);
+    }
+
+    #[test]
+    /// 验证构建号落后时会返回需要更新，并携带强制更新配置。
+    fn mobile_app_update_detects_newer_build() {
+        let settings = vec![
+            test_setting("mobile_app_android_enabled", "true"),
+            test_setting("mobile_app_android_latest_version", "1.1.0"),
+            test_setting("mobile_app_android_latest_build", "12"),
+            test_setting(
+                "mobile_app_android_package_url",
+                "https://example.com/app.apk",
+            ),
+            test_setting("mobile_app_android_force_update", "true"),
+            test_setting("mobile_app_android_release_notes", "修复启动异常"),
+        ];
+        let query = MobileAppUpdateQuery {
+            platform: Some("apk".to_string()),
+            current_version: Some("1.1.0".to_string()),
+            current_build: Some(11),
+        };
+
+        let config = mobile_app_update_from_settings(&settings, &query);
+
+        assert!(config.update_available);
+        assert!(config.force_update);
+        assert_eq!(
+            config.download_url,
+            Some("https://example.com/app.apk".to_string())
+        );
+        assert_eq!(config.release_notes, "修复启动异常");
+    }
+
+    #[test]
+    /// 验证 iOS 平台别名会读取 iOS 配置，并能通过版本号判断更新。
+    fn mobile_app_update_supports_ios_alias_and_version_compare() {
+        let settings = vec![
+            test_setting("mobile_app_ios_enabled", "true"),
+            test_setting("mobile_app_ios_latest_version", "1.2.0"),
+            test_setting("mobile_app_ios_latest_build", "1"),
+            test_setting("mobile_app_ios_package_url", "https://example.com/app.ipa"),
+        ];
+        let query = MobileAppUpdateQuery {
+            platform: Some("iphone".to_string()),
+            current_version: Some("1.1.9".to_string()),
+            current_build: Some(1),
+        };
+
+        let config = mobile_app_update_from_settings(&settings, &query);
+
+        assert_eq!(config.platform, "ios");
+        assert_eq!(config.latest_version, "1.2.0");
+        assert!(config.update_available);
+    }
+
+    #[test]
+    /// 验证常见版本号数字片段比较不会把相同版本判定为更新。
+    fn version_compare_handles_equal_and_newer_versions() {
+        assert!(version_is_newer("1.2.10", "1.2.9"));
+        assert!(version_is_newer("2.0.0-beta.1", "1.9.9"));
+        assert!(!version_is_newer("1.2.3", "1.2.3"));
+        assert!(!version_is_newer("1.2.3", "1.2.4"));
+    }
+
+    #[test]
     /// 验证用户端展示机器人合买时会隐藏真实机器人账号和机器人标题。
     fn user_group_buy_plan_masks_robot_initiator_display() {
         let lotteries = vec![test_group_buy_lottery()];
@@ -3284,6 +3485,14 @@ mod tests {
 
     fn test_ledger_entry(id: &str, kind: LedgerEntryKind, amount_minor: i64) -> LedgerEntry {
         test_ledger_entry_for_user(id, "U90012", kind, amount_minor, None)
+    }
+
+    fn test_setting(key: &str, value: &str) -> SystemSetting {
+        SystemSetting {
+            key: key.to_string(),
+            value: value.to_string(),
+            description: "测试系统设置".to_string(),
+        }
     }
 
     fn test_ledger_entry_for_user(

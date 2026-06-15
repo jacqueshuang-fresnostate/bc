@@ -27,12 +27,16 @@ import {
   useEffect,
   useMemo,
   useState,
+  type ChangeEvent,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
 } from 'react';
-import { fetchLotteries } from '../api/client';
-import { ImageUploadAvatar } from '../components/ImageUploadAvatar';
+import { fetchLotteries, uploadAppPackageFile } from '../api/client';
+import {
+  ImageUploadAvatar,
+  extractImageUrlFromUploadResult,
+} from '../components/ImageUploadAvatar';
 import { PageControls } from '../components/PageControls';
 import { useAccessManagement } from '../hooks/useAccessManagement';
 import type {
@@ -114,6 +118,40 @@ const MOBILE_INTRO_SETTING_KEY = 'mobile_site_intro';
 const MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY = 'mobile_home_featured_enabled';
 const MOBILE_HOME_FEATURED_TITLE_SETTING_KEY = 'mobile_home_featured_title';
 const MOBILE_HOME_FEATURED_LOTTERY_CODES_SETTING_KEY = 'mobile_home_featured_lottery_codes';
+const MOBILE_APP_UPDATE_PLATFORMS = [
+  {
+    accept: '.apk,application/vnd.android.package-archive',
+    buildKey: 'mobile_app_android_latest_build',
+    downloadKey: 'mobile_app_android_package_url',
+    enabledKey: 'mobile_app_android_enabled',
+    forceKey: 'mobile_app_android_force_update',
+    label: 'Android',
+    notesKey: 'mobile_app_android_release_notes',
+    packageLabel: 'APK',
+    versionKey: 'mobile_app_android_latest_version',
+  },
+  {
+    accept: '.ipa,application/octet-stream,application/x-itunes-ipa',
+    buildKey: 'mobile_app_ios_latest_build',
+    downloadKey: 'mobile_app_ios_package_url',
+    enabledKey: 'mobile_app_ios_enabled',
+    forceKey: 'mobile_app_ios_force_update',
+    label: 'iOS',
+    notesKey: 'mobile_app_ios_release_notes',
+    packageLabel: 'IPA',
+    versionKey: 'mobile_app_ios_latest_version',
+  },
+] as const;
+const MOBILE_APP_UPDATE_SETTING_KEYS = MOBILE_APP_UPDATE_PLATFORMS.flatMap(
+  (platform) => [
+    platform.enabledKey,
+    platform.versionKey,
+    platform.buildKey,
+    platform.downloadKey,
+    platform.forceKey,
+    platform.notesKey,
+  ],
+);
 const RECHARGE_RAINBOW_ENABLED_SETTING_KEY = 'recharge_rainbow_epay_enabled';
 const RECHARGE_RAINBOW_PAY_TYPES_SETTING_KEY = 'recharge_rainbow_epay_pay_types';
 const RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY =
@@ -130,6 +168,7 @@ const MOBILE_CUSTOM_SETTING_KEYS = new Set([
   MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY,
   MOBILE_HOME_FEATURED_TITLE_SETTING_KEY,
   MOBILE_HOME_FEATURED_LOTTERY_CODES_SETTING_KEY,
+  ...MOBILE_APP_UPDATE_SETTING_KEYS,
 ]);
 const RECHARGE_PAYMENT_SETTING_KEYS = new Set([
   RECHARGE_RAINBOW_ENABLED_SETTING_KEY,
@@ -1787,6 +1826,7 @@ function MobileSettingsPanel({
   saving: boolean;
   settings: SystemSettingItem[];
 }) {
+  const [uploadingPackageKey, setUploadingPackageKey] = useState<string | null>(null);
   const platformNameValue = draftSettingValue(
     settings,
     drafts,
@@ -1809,6 +1849,32 @@ function MobileSettingsPanel({
   const selectedFeaturedLotteryCodes = settingListValue(featuredLotteryCodesValue);
   const logoImageUrl =
     logoValue && logoValue !== UNCONFIGURED_SETTING_VALUE ? logoValue : '';
+  const handlePackageUpload = async (
+    event: ChangeEvent<HTMLInputElement>,
+    downloadKey: string,
+    packageLabel: string,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+
+    setUploadingPackageKey(downloadKey);
+    try {
+      const response = await uploadAppPackageFile(file, imageBedUploadField || 'file');
+      const url = extractImageUrlFromUploadResult(response);
+      if (!url) {
+        throw new Error('上传成功但未识别到安装包下载链接，请检查图床返回链接字段配置');
+      }
+      onDraftChange(downloadKey, url);
+      Toast.success(`${packageLabel} 上传成功，记得保存配置`);
+    } catch (error: unknown) {
+      Toast.error(error instanceof Error ? error.message : `${packageLabel} 上传失败`);
+    } finally {
+      setUploadingPackageKey(null);
+    }
+  };
 
   return (
     <div className="rounded border border-slate-200 bg-slate-50 p-3">
@@ -2003,6 +2069,199 @@ function MobileSettingsPanel({
               >
                 保存彩种
               </Button>
+            </div>
+          </div>
+
+          <div className="rounded border border-slate-200 bg-white p-3">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium text-ink">
+                  <Smartphone size={16} />
+                  APP 更新配置
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  客户端启动时会自动检查；需要更新时弹窗提示，强制更新会隐藏“稍后再说”。
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-3">
+              {MOBILE_APP_UPDATE_PLATFORMS.map((platform) => {
+                const enabledValue =
+                  draftSettingValue(settings, drafts, platform.enabledKey) || 'false';
+                const forceValue =
+                  draftSettingValue(settings, drafts, platform.forceKey) || 'false';
+                const versionValue =
+                  draftSettingValue(settings, drafts, platform.versionKey) || '0.1.0';
+                const buildValue =
+                  draftSettingValue(settings, drafts, platform.buildKey) || '1';
+                const downloadValue = draftSettingValue(
+                  settings,
+                  drafts,
+                  platform.downloadKey,
+                );
+                const notesValue = draftSettingValue(settings, drafts, platform.notesKey);
+                const isUploading = uploadingPackageKey === platform.downloadKey;
+
+                return (
+                  <div
+                    key={platform.label}
+                    className="grid gap-3 rounded border border-slate-100 bg-slate-50 p-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold text-ink">
+                          {platform.label} 安装包
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          构建号优先判断版本，新构建号需要大于客户端当前构建号。
+                        </p>
+                      </div>
+                      <Tag color={enabledValue === 'true' ? 'green' : 'grey'}>
+                        {enabledValue === 'true' ? '检查已开启' : '检查已关闭'}
+                      </Tag>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <span className="mb-1 block text-xs font-medium text-slate-500">
+                          更新检查
+                        </span>
+                        <Select
+                          className="form-input"
+                          value={enabledValue}
+                          onChange={(value) =>
+                            onDraftChange(platform.enabledKey, String(value ?? 'false'))
+                          }
+                        >
+                          <Select.Option value="false">关闭检查</Select.Option>
+                          <Select.Option value="true">开启检查</Select.Option>
+                        </Select>
+                      </div>
+                      <div>
+                        <span className="mb-1 block text-xs font-medium text-slate-500">
+                          更新方式
+                        </span>
+                        <Select
+                          className="form-input"
+                          value={forceValue}
+                          onChange={(value) =>
+                            onDraftChange(platform.forceKey, String(value ?? 'false'))
+                          }
+                        >
+                          <Select.Option value="false">可选更新</Select.Option>
+                          <Select.Option value="true">强制更新</Select.Option>
+                        </Select>
+                      </div>
+                      <div>
+                        <span className="mb-1 block text-xs font-medium text-slate-500">
+                          最新版本号
+                        </span>
+                        <Input
+                          className="form-input"
+                          placeholder="例如：1.2.0"
+                          value={versionValue}
+                          onChange={(value) => onDraftChange(platform.versionKey, value)}
+                        />
+                      </div>
+                      <div>
+                        <span className="mb-1 block text-xs font-medium text-slate-500">
+                          最新构建号
+                        </span>
+                        <Input
+                          className="form-input"
+                          placeholder="例如：12"
+                          value={buildValue}
+                          onChange={(value) => onDraftChange(platform.buildKey, value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="mb-1 block text-xs font-medium text-slate-500">
+                        安装包下载链接
+                      </span>
+                      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+                        <Input
+                          className="form-input"
+                          placeholder={`上传或粘贴 ${platform.packageLabel} 下载链接`}
+                          value={downloadValue}
+                          onChange={(value) => onDraftChange(platform.downloadKey, value)}
+                        />
+                        <span className="relative inline-flex">
+                          <Button
+                            disabled={
+                              saving ||
+                              isUploading ||
+                              imageBedMissingConfigs.length > 0
+                            }
+                            icon={<UploadIcon size={16} />}
+                            loading={isUploading}
+                          >
+                            上传 {platform.packageLabel}
+                          </Button>
+                          <input
+                            accept={platform.accept}
+                            aria-label={`上传 ${platform.packageLabel} 安装包`}
+                            className="absolute inset-0 cursor-pointer opacity-0 disabled:pointer-events-none"
+                            disabled={
+                              saving ||
+                              isUploading ||
+                              imageBedMissingConfigs.length > 0
+                            }
+                            type="file"
+                            onChange={(event) =>
+                              void handlePackageUpload(
+                                event,
+                                platform.downloadKey,
+                                platform.packageLabel,
+                              )
+                            }
+                          />
+                        </span>
+                      </div>
+                      {imageBedMissingConfigs.length > 0 ? (
+                        <p className="mt-1 text-xs text-amber-600">
+                          请先补全图床配置：{imageBedMissingConfigs.join('、')}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div>
+                      <span className="mb-1 block text-xs font-medium text-slate-500">
+                        更新说明
+                      </span>
+                      <Input
+                        className="form-input"
+                        placeholder="填写本次更新给用户展示的中文说明"
+                        value={notesValue}
+                        onChange={(value) => onDraftChange(platform.notesKey, value)}
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {[
+                        platform.enabledKey,
+                        platform.versionKey,
+                        platform.buildKey,
+                        platform.downloadKey,
+                        platform.forceKey,
+                        platform.notesKey,
+                      ].map((key) => (
+                        <Button
+                          key={key}
+                          disabled={saving}
+                          icon={<Save size={16} />}
+                          size="small"
+                          onClick={() => onSaveSetting(key)}
+                        >
+                          保存{settingShortLabel(key)}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -2251,6 +2510,28 @@ function settingSelectOptions(
     ];
   }
   return options;
+}
+
+function settingShortLabel(key: string) {
+  if (key.endsWith('_enabled')) {
+    return '开关';
+  }
+  if (key.endsWith('_latest_version')) {
+    return '版本';
+  }
+  if (key.endsWith('_latest_build')) {
+    return '构建号';
+  }
+  if (key.endsWith('_package_url')) {
+    return '链接';
+  }
+  if (key.endsWith('_force_update')) {
+    return '方式';
+  }
+  if (key.endsWith('_release_notes')) {
+    return '说明';
+  }
+  return '配置';
 }
 
 function settingsGroups(

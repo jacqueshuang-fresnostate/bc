@@ -688,6 +688,33 @@ export async function uploadImageBedFile(
   return envelope.data;
 }
 
+export async function uploadAppPackageFile(
+  file: File,
+  uploadFieldName: string = 'file',
+) {
+  const token = getStoredAuthToken();
+  const headers = new Headers();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const body = new FormData();
+  body.append(uploadFieldName, file);
+
+  const response = await fetch(`${API_BASE_URL}/api/admin/app-packages/upload`, {
+    body,
+    headers,
+    method: 'POST',
+  });
+  const envelope = (await response.json()) as ApiEnvelope<unknown>;
+
+  if (!response.ok || !envelope.success || envelope.data === null) {
+    throw new Error(envelope.message || 'APP 安装包上传请求失败');
+  }
+
+  return envelope.data;
+}
+
 export function fetchRegistrationConfig(signal?: AbortSignal) {
   return requestJson<RegistrationConfig>('/api/admin/registration', { signal });
 }
