@@ -4036,3 +4036,10 @@
 - 解决问题：系统此前没有印尼5分彩，也没有能解析印尼接口 `latest_origin/latest_num/history/next_num/next_time` 响应结构的开奖源供应商，无法通过该接口同步期号和开奖号码。
 - 实施内容：后端 `DrawSourceProvider` 新增 `indonesiaLottery`；新增 `indonesia-id5` 默认开奖源和 `id5` 默认 API 彩种；解析器把 `20260617-042`、`20260617-42` 归一为系统数字期号 `20260617042`，使用 `latest_num` 和 `history.result` 返回开奖号码，使用 `next_num` 与 `next_time` 作为下一期锚点；后台开奖源维护新增“印尼开奖”供应商和“印尼5分彩采集”预设；数据库迁移 `20260617023000_add_indonesia5_draw_source.sql` 为已有库补默认开奖源并更新字段注释；架构说明同步记录接口字段口径。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_api -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml seeded_lotteries_include_requested_api68_lotteries -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
+
+## 2026-06-17 04:03 HKT 默认彩种数量测试修复
+
+- 完成任务：修复后端全量测试中 `repository_uses_seeded_memory_lotteries` 的默认彩种数量断言。
+- 解决问题：新增河内5分彩和印尼5分彩后，内存种子彩种数量从旧值增加，但测试仍硬编码为 `23`，导致 CI 报 `left: 25 right: 23`。
+- 实施内容：将测试断言改为对齐 `seed_lotteries().len()`，让仓储列表数量跟默认种子单一事实来源保持一致，后续新增彩种不再需要同步维护魔法数字。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml repository_uses_seeded_memory_lotteries -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml` 均通过（345 个测试成功）。
