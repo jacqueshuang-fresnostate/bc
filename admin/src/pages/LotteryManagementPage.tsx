@@ -613,7 +613,7 @@ export function LotteryManagementPage({
                   <Select.Option value="manual">指定号码</Select.Option>
                 </Select>
               </Field>
-              <Field label="封盘提前（秒）">
+              <Field label="封盘时间（秒）">
                 <Input
                   className="form-input"
                   min="1"
@@ -624,7 +624,7 @@ export function LotteryManagementPage({
                   }
                 />
                 <p className="text-xs text-slate-400">
-                  生成新期号时按计划开奖时间提前该秒数封盘，不同彩种可以单独配置。
+                  生成新期号时按开盘后可售秒数封盘，例如 300 秒周期配置 60 秒时，开盘后 60 秒封盘并等待开奖。
                 </p>
               </Field>
               {form.drawMode === 'api' ? (

@@ -1192,9 +1192,7 @@ fn normalize_lottery(mut lottery: LotteryKind) -> ApiResult<LotteryKind> {
     }
     lottery.issue_format = normalize_issue_format_pattern(&lottery.issue_format)?;
     if lottery.sale_close_lead_seconds == 0 {
-        return Err(ApiError::BadRequest(
-            "sale close lead seconds must be greater than zero".to_string(),
-        ));
+        return Err(ApiError::BadRequest("封盘时间必须大于 0 秒".to_string()));
     }
 
     if !number_type_supports_play_rules(&lottery.number_type) {
@@ -1519,7 +1517,7 @@ fn lottery_from_row(row: sqlx::postgres::PgRow) -> ApiResult<LotteryKind> {
             row.try_get::<i32, _>("sale_close_lead_seconds")
                 .map_err(database_error)?,
         )
-        .map_err(|_| ApiError::Internal("彩种封盘提前秒数数据无效".to_string()))?,
+        .map_err(|_| ApiError::Internal("彩种封盘时间数据无效".to_string()))?,
         schedule,
         sale_enabled: row.try_get("sale_enabled").map_err(database_error)?,
         group_buy,

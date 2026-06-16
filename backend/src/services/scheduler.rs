@@ -311,7 +311,7 @@ async fn load_scheduler_store(
             future_issue_count: u32::try_from(future_issue_count)
                 .map_err(|_| ApiError::Internal("开奖调度预生成数量数据无效".to_string()))?,
             sale_close_lead_seconds: u32::try_from(sale_close_lead_seconds)
-                .map_err(|_| ApiError::Internal("开奖调度封盘提前量数据无效".to_string()))?,
+                .map_err(|_| ApiError::Internal("开奖调度封盘时间数据无效".to_string()))?,
         })
     })
     .transpose()?;
@@ -437,7 +437,7 @@ async fn save_scheduler_store(
     )
     .bind(
         i32::try_from(store.config.sale_close_lead_seconds)
-            .map_err(|_| ApiError::Internal("开奖调度封盘提前量过大".to_string()))?,
+            .map_err(|_| ApiError::Internal("开奖调度封盘时间过大".to_string()))?,
     )
     .execute(&mut *tx)
     .await
@@ -631,7 +631,7 @@ impl DrawSchedulerConfig {
         }
         if self.sale_close_lead_seconds == 0 {
             return Err(ApiError::BadRequest(
-                "draw scheduler sale close lead seconds must be greater than zero".to_string(),
+                "开奖调度封盘时间必须大于 0 秒".to_string(),
             ));
         }
 
@@ -1308,13 +1308,16 @@ async fn create_draw_issue_from_plan(
         .await
 }
 
-/// 统计未来待处理期号数量。
+/// 统计未来待处理期号数量；已封盘但未到开奖时间的当前期也会占用缓冲，避免提前开下一期。
 fn future_issue_count(issues: &[DrawIssue], lottery: &LotteryKind, now: &str) -> u32 {
     issues
         .iter()
         .filter(|issue| {
             issue.lottery_id == lottery.id
-                && issue.status == DrawIssueStatus::Open
+                && matches!(
+                    issue.status,
+                    DrawIssueStatus::Open | DrawIssueStatus::Closed
+                )
                 && issue.scheduled_at.as_str() > now
         })
         .count() as u32
@@ -1716,7 +1719,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scheduler_opens_next_issue_after_current_issue_closes() {
+    async fn scheduler_waits_until_draw_time_before_opening_next_issue() {
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
         enable_lottery_sale(&lotteries, "ssc60").await;
@@ -1756,7 +1759,23 @@ mod tests {
         let stored_current = draws.get(&current_issue.id).await.expect("issue exists");
 
         assert_eq!(stored_current.status, DrawIssueStatus::Closed);
-        assert!(run
+        assert!(run.generated_issues.is_empty());
+
+        let draw_time_run = run_draw_scheduler_once(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &robots,
+            &access,
+            &config,
+            "2026-06-02 20:01:00".to_string(),
+        )
+        .await
+        .expect("scheduler can run at draw time");
+
+        assert!(draw_time_run
             .generated_issues
             .iter()
             .any(|issue| issue.lottery_id == "ssc60"

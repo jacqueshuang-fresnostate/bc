@@ -6,7 +6,7 @@ use crate::domain::play::PlayRuleCode;
 
 /// 平台开奖期号默认生成格式，按 `yyyyMMdd` 加 4 位每日递增序号生成。
 pub const DEFAULT_ISSUE_FORMAT_PATTERN: &str = "{date}{seq4}";
-/// 彩种默认封盘提前秒数，默认开奖前 1 秒停止销售。
+/// 彩种默认开盘后可售秒数，默认开盘后 1 秒停止销售。
 pub const DEFAULT_SALE_CLOSE_LEAD_SECONDS: u32 = 1;
 
 /// 彩种分类配置，允许按代码和展示名进行自定义。
@@ -157,7 +157,7 @@ pub struct LotteryKind {
     /// 平台开奖期号生成格式；仅平台开奖模式按该模板生成期号。
     #[serde(default = "default_issue_format_pattern")]
     pub issue_format: String,
-    /// 封盘提前秒数；生成新期号时使用，允许不同彩种配置不同封盘时间。
+    /// 开盘后可售秒数；生成新期号时使用，允许不同彩种配置不同封盘时间。
     #[serde(default = "default_sale_close_lead_seconds")]
     pub sale_close_lead_seconds: u32,
     pub schedule: DrawSchedule,
@@ -173,7 +173,7 @@ fn default_issue_format_pattern() -> String {
     DEFAULT_ISSUE_FORMAT_PATTERN.to_string()
 }
 
-/// 反序列化旧数据时补齐默认封盘提前秒数。
+/// 反序列化旧数据时补齐默认开盘后可售秒数。
 fn default_sale_close_lead_seconds() -> u32 {
     DEFAULT_SALE_CLOSE_LEAD_SECONDS
 }

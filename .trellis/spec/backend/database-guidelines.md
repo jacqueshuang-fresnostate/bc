@@ -44,7 +44,7 @@ YYYYMMDDHHMMSS_describe_change.sql
 
 - `lotteries.issue_format` 保存平台开奖期号生成格式，默认 `{date}{seq4}`，即 `yyyyMMdd` 加 4 位每日递增序号；模板也支持 `{seq1}`、`{seq2}`、`{seq3}`、`{seq4}` 四种每日递增序号变量。
 - `issue_format` 只控制 `draw_mode=platform` 的本地期号渲染；API 彩种期号仍来自开奖源锚点顺延。
-- `lotteries.sale_close_lead_seconds` 保存彩种封盘提前秒数，默认 `1` 且必须大于 `0`；自动补期、开奖源同步和开售后补期都按该字段计算 `sale_closed_at`。
+- `lotteries.sale_close_lead_seconds` 保存彩种开盘后可售秒数，默认 `1` 且必须大于 `0`；生成期号时按“本期开奖开盘时间 + 可售秒数”计算 `sale_closed_at`，超过开奖时间时按开奖时间封盘。字段名保留 `lead` 是为了兼容已发布 API 和数据库列名，业务含义不再是“开奖前提前多少秒封盘”。
 - `lotteries.schedule` 使用 JSONB 保存开奖时间配置；`timeNode` 表示自然时间节点周期，例如 `{"timeNode":{"intervalSeconds":300,"startTime":"00:00:00"}}` 会按 `00:05、00:10、00:15...` 生成开奖时间。
 - 新增或修改彩种字段时必须同步更新迁移字段注释，避免数据库结构说明落后于后台能力。
 

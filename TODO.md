@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-16 08:48 HKT 封盘时间按开盘后可售秒数修正
+
+- 完成任务：修正彩种封盘时间的业务口径和调度开盘时机。
+- 解决问题：此前 `saleCloseLeadSeconds` 被当成“开奖前提前多少秒封盘”，导致 300 秒周期配置 60 秒时会在开奖前 60 秒才封盘；用户要求正确流程是开盘后卖 60 秒，剩余 240 秒显示“开奖中”，到 300 秒开奖并开启下一期。
+- 实施内容：后端期号生成改为按“本期开奖开盘时间 + 可售秒数”计算 `saleClosedAt`，并允许生成已过封盘但未开奖的待开奖期以恢复“开奖中”状态；调度器把 `closed` 且未到开奖时间的当前期计入缓冲，避免封盘后提前生成下一期；后台彩种和调度配置文案改为“封盘时间（秒）”；新增数据库注释迁移并同步架构说明与 Trellis 规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml lottery -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml -- --nocapture`、管理后台 `npm run build` 和 `git diff --check` 均通过；后端全量 330 个测试成功，管理后台构建仍只有既有 chunk size warning。
+
 ## 2026-06-16 08:18 HKT 用户数据读取失败修复
 
 - 完成任务：修复后端启动或访问用户相关接口时可能返回 `Internal("用户数据读取失败")` 的问题。
@@ -14,11 +21,11 @@
 - 实施内容：动态下注页新增展示态归一化，`round.status=selling` 且 `sale_stop_at <= now` 时统一传给期号卡片 `opening`，并保留原有禁用投注、禁用合买和静默轮询下一期逻辑；同步更新架构说明和前端组件规范。
 - 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。
 
-## 2026-06-16 07:52 HKT 彩种封盘提前秒数动态配置
+## 2026-06-16 07:52 HKT 彩种封盘时间动态配置
 
-- 完成任务：为每个彩种新增可动态配置的封盘提前秒数。
-- 解决问题：此前自动补期和开奖源同步主要依赖调度器全局 `saleCloseLeadSeconds`，不同彩种无法单独设置封盘提前时间。
-- 实施内容：后端 `LotteryKind` 新增 `saleCloseLeadSeconds`，数据库 `lotteries.sale_close_lead_seconds` 持久化并增加中文字段注释；生成期号默认使用彩种封盘提前秒数，手动生成请求显式传值时仍可临时覆盖；常驻调度、API 彩种补期、开奖源同步和开售后补期改为读取彩种配置；后台彩种新增/编辑 SideSheet 新增“封盘提前（秒）”输入项。
+- 完成任务：为每个彩种新增可动态配置的封盘时间。
+- 解决问题：此前自动补期和开奖源同步主要依赖调度器全局 `saleCloseLeadSeconds`，不同彩种无法单独设置封盘时间。
+- 实施内容：后端 `LotteryKind` 新增 `saleCloseLeadSeconds`，数据库 `lotteries.sale_close_lead_seconds` 持久化并增加中文字段注释；生成期号默认使用彩种封盘时间，手动生成请求显式传值时仍可临时覆盖；常驻调度、API 彩种补期、开奖源同步和开售后补期改为读取彩种配置；后台彩种新增/编辑 SideSheet 新增“封盘时间（秒）”输入项。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml lottery -- --nocapture`、管理后台 `npm run build` 和 `git diff --check` 均通过；管理后台构建仍只有既有 chunk size warning。
 
 ## 2026-06-16 07:35 HKT 平台期号格式支持短序号变量
