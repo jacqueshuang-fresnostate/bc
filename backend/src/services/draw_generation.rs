@@ -81,7 +81,7 @@ pub(crate) fn plan_api_draw_source_target(
     for _ in 0..MAX_UNIQUE_ATTEMPTS_PER_ISSUE {
         let issue = issue_labeler.next_issue(scheduled_at)?;
         let sale_closed_at =
-            sale_closed_at_from_open_time(issue_opened_at, scheduled_at, sale_close_lead_seconds)?;
+            sale_closed_at_from_draw_time(issue_opened_at, scheduled_at, sale_close_lead_seconds)?;
 
         if scheduled_at > now {
             return Ok(DrawIssueGenerationPreview {
@@ -170,7 +170,7 @@ async fn plan_draw_issue_generation(
     for _ in 0..attempt_limit {
         let issue = issue_labeler.next_issue(scheduled_at)?;
         let sale_closed_at =
-            sale_closed_at_from_open_time(issue_opened_at, scheduled_at, sale_close_lead_seconds)?;
+            sale_closed_at_from_draw_time(issue_opened_at, scheduled_at, sale_close_lead_seconds)?;
 
         if scheduled_at > now && !known_issues.contains(&issue) {
             known_issues.insert(issue.clone());
@@ -215,19 +215,19 @@ fn validate_request(lottery: &LotteryKind, payload: &GenerateDrawIssuesRequest) 
     Ok(())
 }
 
-/// 根据本期开奖开盘时间和可售秒数计算封盘时间；超过开奖点时按开奖点封盘。
-fn sale_closed_at_from_open_time(
+/// 根据开奖时间和封盘提前秒数计算封盘时间；超过本期周期时按开盘时间封盘。
+fn sale_closed_at_from_draw_time(
     issue_opened_at: NaiveDateTime,
     scheduled_at: NaiveDateTime,
-    sale_duration_seconds: u32,
+    sale_close_lead_seconds: u32,
 ) -> ApiResult<NaiveDateTime> {
-    if sale_duration_seconds == 0 {
+    if sale_close_lead_seconds == 0 {
         return Err(ApiError::BadRequest("封盘时间必须大于 0 秒".to_string()));
     }
-    let configured_sale_close = issue_opened_at
-        .checked_add_signed(Duration::seconds(i64::from(sale_duration_seconds)))
+    let configured_sale_close = scheduled_at
+        .checked_sub_signed(Duration::seconds(i64::from(sale_close_lead_seconds)))
         .ok_or_else(|| ApiError::BadRequest("sale close time is out of range".to_string()))?;
-    Ok(configured_sale_close.min(scheduled_at))
+    Ok(configured_sale_close.max(issue_opened_at))
 }
 
 /// 处理 latest_scheduled_at 的具体内部流程。
@@ -1061,11 +1061,11 @@ mod tests {
 
         assert_eq!(issue.issue, "202606020001");
         assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
-        assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:01");
+        assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:59");
     }
 
     #[tokio::test]
-    async fn generation_uses_lottery_sale_duration_seconds_by_default() {
+    async fn generation_uses_lottery_sale_close_lead_seconds_by_default() {
         let draws = DrawRepository::memory();
         let mut lottery = lottery(DrawSchedule::Periodic {
             interval_seconds: 60,
@@ -1074,14 +1074,14 @@ mod tests {
 
         let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-02 20:00:00"))
             .await
-            .expect("issue can be generated with lottery sale duration seconds");
+            .expect("issue can be generated with lottery sale close lead seconds");
 
         assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
-        assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:15");
+        assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:45");
     }
 
     #[tokio::test]
-    async fn request_sale_duration_seconds_overrides_lottery_default() {
+    async fn request_sale_close_lead_seconds_overrides_lottery_default() {
         let draws = DrawRepository::memory();
         let mut lottery = lottery(DrawSchedule::Periodic {
             interval_seconds: 60,
@@ -1092,13 +1092,13 @@ mod tests {
 
         let issue = generate_next_draw_issue(&draws, &lottery, payload)
             .await
-            .expect("request sale duration seconds can override lottery config");
+            .expect("request sale close lead seconds can override lottery config");
 
-        assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:05");
+        assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:55");
     }
 
     #[tokio::test]
-    async fn sale_duration_closes_300_second_lottery_after_60_seconds() {
+    async fn sale_close_lead_closes_300_second_lottery_with_60_seconds_remaining() {
         let draws = DrawRepository::memory();
         let mut lottery = lottery(DrawSchedule::Periodic {
             interval_seconds: 300,
@@ -1107,10 +1107,10 @@ mod tests {
 
         let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-02 20:00:00"))
             .await
-            .expect("issue can be generated with 60 second sale duration");
+            .expect("issue can be generated with 60 second sale close lead");
 
         assert_eq!(issue.scheduled_at, "2026-06-02 20:05:00");
-        assert_eq!(issue.sale_closed_at, "2026-06-02 20:01:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-02 20:04:00");
     }
 
     #[tokio::test]
@@ -1127,7 +1127,7 @@ mod tests {
 
         assert_eq!(issue.issue, "202606020001");
         assert_eq!(issue.scheduled_at, "2026-06-02 00:05:00");
-        assert_eq!(issue.sale_closed_at, "2026-06-02 00:00:01");
+        assert_eq!(issue.sale_closed_at, "2026-06-02 00:04:59");
     }
 
     #[tokio::test]
@@ -1156,7 +1156,7 @@ mod tests {
 
         assert_eq!(issue.issue, "202606100001");
         assert_eq!(issue.scheduled_at, "2026-06-10 20:20:00");
-        assert_eq!(issue.sale_closed_at, "2026-06-10 20:18:53");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:59");
     }
 
     #[tokio::test]
@@ -1257,7 +1257,7 @@ mod tests {
             .expect("issue can be generated");
 
         assert_eq!(issue.issue, "202606030001");
-        assert_eq!(issue.sale_closed_at, "2026-06-02 22:00:01");
+        assert_eq!(issue.sale_closed_at, "2026-06-03 21:00:14");
     }
 
     #[tokio::test]
@@ -1354,7 +1354,7 @@ mod tests {
 
         assert_eq!(issue.issue, "51320850");
         assert_eq!(issue.scheduled_at, "2026-06-03 11:23:40");
-        assert_eq!(issue.sale_closed_at, "2026-06-03 11:18:41");
+        assert_eq!(issue.sale_closed_at, "2026-06-03 11:23:39");
     }
 
     #[tokio::test]
@@ -1575,7 +1575,7 @@ mod tests {
 
         assert_eq!(issue.issue, "202606100001");
         assert_eq!(issue.scheduled_at, "2026-06-10 20:19:27");
-        assert_eq!(issue.sale_closed_at, "2026-06-10 20:18:28");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:26");
     }
 
     #[tokio::test]

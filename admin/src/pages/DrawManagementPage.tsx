@@ -1606,7 +1606,7 @@ function SchedulerStatusSummary({
         <ResultMetric label="执行周期" value={`${status.config.intervalSeconds} 秒`} />
         <ResultMetric label="未来期号" value={`${status.config.futureIssueCount} 期`} />
         <ResultMetric
-          label="封盘时间"
+          label="封盘提前"
           value={`${status.config.saleCloseLeadSeconds} 秒`}
         />
         <ResultMetric label="保留历史" value={`${status.runCount} 条`} />
@@ -1700,7 +1700,7 @@ function SchedulerConfigForm({
             }
           />
         </Field>
-        <Field label="封盘时间（秒）">
+        <Field label="封盘提前（秒）">
           <Input
             className="form-input"
             min="1"

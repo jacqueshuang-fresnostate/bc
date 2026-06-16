@@ -1,10 +1,17 @@
 # TODO
 
-## 2026-06-16 08:48 HKT 封盘时间按开盘后可售秒数修正
+## 2026-06-16 09:46 HKT 封盘提前秒数口径纠正
+
+- 完成任务：把封盘时间计算从“开盘后可售秒数”纠正为“开奖前提前秒数”。
+- 解决问题：用户确认正确逻辑是 300 秒周期配置 60 秒时，在周期进行到 `300 - 60 = 240` 秒封盘，并在剩余 60 秒显示“开奖中”；上一版把 60 秒理解为开盘后只销售 60 秒，口径错误。
+- 实施内容：后端期号生成改为按 `saleClosedAt = scheduledAt - saleCloseLeadSeconds` 计算封盘时间，并保留封盘提前量超过本期周期时按本期开盘时间封盘的保护；调度器继续把已封盘但未开奖的当前期计入未来缓冲，避免封盘后提前开下一期；后台彩种和调度表单文案改为“封盘提前（秒）”；新增数据库注释迁移覆盖字段说明，并同步架构说明与 Trellis 规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml -- --nocapture`、管理后台 `npm run build` 和 `git diff --check` 均通过；后端全量 330 个测试成功，管理后台构建仍只有既有 chunk size warning。
+
+## 2026-06-16 08:48 HKT 封盘后等待开奖调度修正（口径已更正）
 
 - 完成任务：修正彩种封盘时间的业务口径和调度开盘时机。
-- 解决问题：此前 `saleCloseLeadSeconds` 被当成“开奖前提前多少秒封盘”，导致 300 秒周期配置 60 秒时会在开奖前 60 秒才封盘；用户要求正确流程是开盘后卖 60 秒，剩余 240 秒显示“开奖中”，到 300 秒开奖并开启下一期。
-- 实施内容：后端期号生成改为按“本期开奖开盘时间 + 可售秒数”计算 `saleClosedAt`，并允许生成已过封盘但未开奖的待开奖期以恢复“开奖中”状态；调度器把 `closed` 且未到开奖时间的当前期计入缓冲，避免封盘后提前生成下一期；后台彩种和调度配置文案改为“封盘时间（秒）”；新增数据库注释迁移并同步架构说明与 Trellis 规范。
+- 解决问题：本条曾把 `saleCloseLeadSeconds` 理解为“开盘后可售秒数”，该口径已在 09:46 HKT 更正为“开奖前封盘提前秒数”；本条仍保留的有效修复是封盘后到开奖前不提前开启下一期。
+- 实施内容：允许后端生成已过封盘但未开奖的待开奖期以恢复“开奖中”状态；调度器把 `closed` 且未到开奖时间的当前期计入缓冲，避免封盘后提前生成下一期；本条中关于“开盘后可售秒数”的计算和文案已由 09:46 HKT 修正覆盖。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml lottery -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml -- --nocapture`、管理后台 `npm run build` 和 `git diff --check` 均通过；后端全量 330 个测试成功，管理后台构建仍只有既有 chunk size warning。
 
 ## 2026-06-16 08:18 HKT 用户数据读取失败修复
@@ -25,7 +32,7 @@
 
 - 完成任务：为每个彩种新增可动态配置的封盘时间。
 - 解决问题：此前自动补期和开奖源同步主要依赖调度器全局 `saleCloseLeadSeconds`，不同彩种无法单独设置封盘时间。
-- 实施内容：后端 `LotteryKind` 新增 `saleCloseLeadSeconds`，数据库 `lotteries.sale_close_lead_seconds` 持久化并增加中文字段注释；生成期号默认使用彩种封盘时间，手动生成请求显式传值时仍可临时覆盖；常驻调度、API 彩种补期、开奖源同步和开售后补期改为读取彩种配置；后台彩种新增/编辑 SideSheet 新增“封盘时间（秒）”输入项。
+- 实施内容：后端 `LotteryKind` 新增 `saleCloseLeadSeconds`，数据库 `lotteries.sale_close_lead_seconds` 持久化并增加中文字段注释；生成期号默认使用彩种封盘时间，手动生成请求显式传值时仍可临时覆盖；常驻调度、API 彩种补期、开奖源同步和开售后补期改为读取彩种配置；后台彩种新增/编辑 SideSheet 新增“封盘提前（秒）”输入项。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml lottery -- --nocapture`、管理后台 `npm run build` 和 `git diff --check` 均通过；管理后台构建仍只有既有 chunk size warning。
 
 ## 2026-06-16 07:35 HKT 平台期号格式支持短序号变量
@@ -3283,8 +3290,8 @@
 ## 2026-06-03 15:43 HKT 开奖后自动开盘下一期修复
 
 - 完成任务：启动并修复 `06-03-draw-next-issue-open` 开奖后自动开盘下一期问题，调整常驻调度未来期号缓冲判断。
-- 解决问题：此前调度补齐未来期号时把 `closed` 期号也算作未来缓冲；当前期到封盘时间后变为 `closed`，但还没到开奖时间，系统会误以为未来期足够，从而不生成下一期 `open` 期号，导致封盘后没有新期可投注。
-- 技术说明：未来缓冲现在只统计同彩种、状态为 `open` 且 `scheduledAt > now` 的期号；`closed` 期号已不可投注，不再占用开盘缓冲。新增测试覆盖当前期封盘后会自动生成下一期 `open` 期号。
+- 解决问题：这是 2026-06-03 的历史修复记录，当时目标是避免开奖后没有下一期；当前 2026-06-16 规则已更正为封盘后等待开奖，到开奖点才开启下一期。
+- 技术说明：历史实现曾只统计 `open` 期号；当前调度口径已改为 `open` 或 `closed` 且 `scheduledAt > now` 的待处理期号占用未来缓冲，避免封盘后提前开下一期。
 - 验证结果：`cargo test scheduler_ -- --nocapture` 已通过，12 个调度测试全部成功；`cargo fmt --check`、`cargo check`、`cargo test`、`npm run build` 均通过，后端 125 个测试全部成功。前端构建仍只有既有 chunk size warning。
 - 后续动作：提交本阶段修复改动；后续可继续补调度运行页面中“当前封盘后已开新期”的视觉提示和调度失败告警。
 
