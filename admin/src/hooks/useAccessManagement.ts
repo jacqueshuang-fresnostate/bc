@@ -3,6 +3,7 @@ import {
   createAdmin,
   createRole,
   createUser,
+  clearChatHallMessages,
   deleteRole,
   deleteUser,
   fetchAdmins,
@@ -36,6 +37,7 @@ import type {
   UserStatus,
   UserSummary,
 } from '../types/access';
+import type { ClearRecordsResult } from '../types/finance';
 
 interface UseAccessManagementOptions {
   userQuery: UserListQuery;
@@ -308,10 +310,24 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     }
   }, [refresh]);
 
+  const clearChatHallHistory = useCallback(async (): Promise<ClearRecordsResult> => {
+    setSaving(true);
+    setError(null);
+    try {
+      return await clearChatHallMessages();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
   return {
     admins,
     changeAdminStatus,
     changeUserStatus,
+    clearChatHallHistory,
     error,
     loading,
     refresh,

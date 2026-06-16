@@ -1088,6 +1088,20 @@ fn extra_api68_lotteries() -> Vec<LotteryKind> {
             LotteryNumberType::ElevenFive,
             600,
         ),
+        api_lottery(
+            "hn5",
+            "河内5分彩",
+            "overseas",
+            LotteryNumberType::FiveDigit,
+            300,
+        ),
+        api_lottery(
+            "id5",
+            "印尼5分彩",
+            "overseas",
+            LotteryNumberType::FiveDigit,
+            300,
+        ),
     ]
 }
 
@@ -1631,6 +1645,8 @@ mod tests {
             ("au10", LotteryNumberType::Pk10, false),
             ("au20", LotteryNumberType::LuckTwenty, false),
             ("zj11x5", LotteryNumberType::ElevenFive, false),
+            ("hn5", LotteryNumberType::FiveDigit, true),
+            ("id5", LotteryNumberType::FiveDigit, true),
         ] {
             let lottery = lotteries
                 .iter()

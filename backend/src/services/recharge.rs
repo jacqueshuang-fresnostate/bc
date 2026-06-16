@@ -1253,6 +1253,7 @@ mod tests {
             balance_minor: 0,
             agent_id: None,
             invite_code: "ABC12345".to_string(),
+            registration_location: crate::domain::user::UserRegistrationLocation::default(),
             created_at: "2026-06-05 10:00:00".to_string(),
         }
     }

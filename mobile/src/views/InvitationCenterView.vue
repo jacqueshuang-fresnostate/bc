@@ -12,6 +12,8 @@ import {
   type AgentApplicationStatus,
   type InviteStatus,
   type RebateMode,
+  type UserInvitationBetPlaySummary,
+  type UserInvitationDirectUser,
   type UserInvitationSummary,
   type UserStatus,
 } from '../api/user'
@@ -108,6 +110,27 @@ function formatDate(value: string) {
 
 function formatMoney(value: number) {
   return (Number(value || 0) / 100).toFixed(2)
+}
+
+function topBetPlaySummaries(item: UserInvitationDirectUser): UserInvitationBetPlaySummary[] {
+  return (item.betPlaySummaries || []).slice(0, 3)
+}
+
+function hasBetProfile(item: UserInvitationDirectUser) {
+  return Number(item.totalBetAmountMinor || 0) > 0 || Boolean(item.latestBet)
+}
+
+function latestBetMainText(item: UserInvitationDirectUser) {
+  const latestBet = item.latestBet
+  if (!latestBet) return '暂无投注记录'
+  return `${latestBet.lotteryName || '未知彩种'} · ${latestBet.playName || latestBet.ruleCode || '未知玩法'}`
+}
+
+function latestBetMetaText(item: UserInvitationDirectUser) {
+  const latestBet = item.latestBet
+  if (!latestBet) return ''
+  const issue = latestBet.issue ? `第 ${latestBet.issue} 期` : '期号未记录'
+  return `${issue} · ¥${formatMoney(latestBet.amountMinor)}`
 }
 
 function formatBasisPoints(value: number) {
@@ -272,6 +295,29 @@ async function submitApplication() {
               <span class="rounded-full bg-white px-2.5 py-1">{{ item.rebateEnabled ? '返利开启' : '返利关闭' }}</span>
               <span class="rounded-full bg-white px-2.5 py-1">充值 ¥{{ formatMoney(item.totalDepositMinor) }}</span>
               <span class="rounded-full bg-white px-2.5 py-1">提现 ¥{{ formatMoney(item.totalWithdrawalMinor) }}</span>
+              <span class="rounded-full bg-white px-2.5 py-1 font-bold text-red-900">投注 ¥{{ formatMoney(item.totalBetAmountMinor) }}</span>
+            </div>
+            <div class="mt-3 rounded-2xl border border-red-900/5 bg-white/80 px-3 py-2.5">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="text-[11px] font-bold text-red-900">最近投注</p>
+                  <p class="mt-1 truncate text-xs font-bold text-on-surface">{{ latestBetMainText(item) }}</p>
+                  <p v-if="item.latestBet" class="mt-0.5 text-[11px] text-on-surface-variant">{{ latestBetMetaText(item) }}</p>
+                </div>
+                <span class="shrink-0 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-bold text-primary">
+                  {{ hasBetProfile(item) ? `${topBetPlaySummaries(item).length || 1} 类玩法` : '无投注' }}
+                </span>
+              </div>
+              <div v-if="topBetPlaySummaries(item).length" class="mt-2 space-y-1.5">
+                <div
+                  v-for="play in topBetPlaySummaries(item)"
+                  :key="`${item.id}-${play.lotteryId}-${play.ruleCode}`"
+                  class="flex items-center justify-between gap-2 rounded-xl bg-stone-50 px-2.5 py-2 text-[11px]"
+                >
+                  <span class="min-w-0 truncate font-bold text-on-surface">{{ play.lotteryName }} · {{ play.playName }}</span>
+                  <span class="shrink-0 text-red-900">¥{{ formatMoney(play.amountMinor) }} · {{ play.orderCount }}笔</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

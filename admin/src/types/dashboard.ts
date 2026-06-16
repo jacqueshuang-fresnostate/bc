@@ -38,7 +38,11 @@ export type LotteryNumberType =
   | 'fastThree'
   | 'luckTwenty';
 export type DrawMode = 'platform' | 'api' | 'manual';
-export type DrawSourceProvider = 'api68' | 'kjApi';
+export type DrawSourceProvider =
+  | 'api68'
+  | 'kjApi'
+  | 'bbKaijiang'
+  | 'indonesiaLottery';
 export type LotteryCategory = string;
 
 export interface LotteryCategoryConfig {
@@ -170,6 +174,15 @@ export interface UserSummary {
   balanceMinor: number;
   agentId: string | null;
   inviteCode: string;
+  registrationLocation?: UserRegistrationLocation;
+}
+
+export interface UserRegistrationLocation {
+  registeredIp: string;
+  country: string;
+  region: string;
+  city: string;
+  source: 'client' | 'gps' | 'ip' | 'unknown' | string;
 }
 
 export type UserStatus = 'active' | 'suspended' | 'locked';

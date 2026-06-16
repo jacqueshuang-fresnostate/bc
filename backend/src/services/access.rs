@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, HashSet},
+    net::IpAddr,
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -26,8 +27,9 @@ use crate::{
             UserAuthSession, UserAvatarRequest, UserBindEmailRequest, UserChangePasswordRequest,
             UserForgotPasswordRequest, UserForgotPasswordResponse, UserKind, UserLoginRequest,
             UserLogoutResponse, UserPasswordResetRequest, UserRegisterRequest,
-            UserResetPasswordRequest, UserResetPasswordResponse, UserStatus, UserSummary,
-            WithdrawalMethod, WithdrawalMethodRequest, WithdrawalMethodType,
+            UserRegistrationLocation, UserResetPasswordRequest, UserResetPasswordResponse,
+            UserStatus, UserSummary, WithdrawalMethod, WithdrawalMethodRequest,
+            WithdrawalMethodType,
         },
     },
     error::{ApiError, ApiResult},
@@ -682,6 +684,11 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
     let mut users = BTreeMap::new();
     for row in sqlx::query(
         "SELECT id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code,
+                COALESCE(registered_ip, '') AS registered_ip,
+                COALESCE(register_country, '') AS register_country,
+                COALESCE(register_region, '') AS register_region,
+                COALESCE(register_city, '') AS register_city,
+                COALESCE(register_geo_source, 'unknown') AS register_geo_source,
                 to_char(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at
          FROM users
          ORDER BY id ASC",
@@ -726,6 +733,23 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
                 invite_code: row
                     .try_get("invite_code")
                     .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                registration_location: UserRegistrationLocation {
+                    registered_ip: row
+                        .try_get("registered_ip")
+                        .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                    country: row
+                        .try_get("register_country")
+                        .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                    region: row
+                        .try_get("register_region")
+                        .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                    city: row
+                        .try_get("register_city")
+                        .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                    source: row
+                        .try_get("register_geo_source")
+                        .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+                },
                 created_at: row
                     .try_get("created_at")
                     .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
@@ -1073,8 +1097,15 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
 
     for user in store.users.values() {
         sqlx::query(
-            "INSERT INTO users (id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::timestamptz)",
+            "INSERT INTO users (
+                id, username, email, avatar_url, contact_qq, kind, status, balance_minor,
+                agent_id, invite_code, registered_ip, register_country, register_region,
+                register_city, register_geo_source, created_at
+             )
+             VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                $9, $10, $11, $12, $13, $14, $15, $16::timestamptz
+             )",
         )
         .bind(&user.id)
         .bind(&user.username)
@@ -1086,6 +1117,11 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
         .bind(user.balance_minor)
         .bind(&user.agent_id)
         .bind(&user.invite_code)
+        .bind(&user.registration_location.registered_ip)
+        .bind(&user.registration_location.country)
+        .bind(&user.registration_location.region)
+        .bind(&user.registration_location.city)
+        .bind(&user.registration_location.source)
         .bind(&user.created_at)
         .execute(&mut *tx)
         .await
@@ -1339,6 +1375,7 @@ impl AccessStore {
         user.balance_minor = existing.balance_minor;
         user.invite_code = existing.invite_code;
         user.avatar_url = existing.avatar_url;
+        user.registration_location = existing.registration_location;
         user.created_at = existing.created_at;
 
         self.users.insert(id.to_string(), user.clone());
@@ -1463,6 +1500,8 @@ impl AccessStore {
 
         let user_id = next_user_id(&self.users, &mut self.user_id_counter)?;
         let invite_code = random_invite_code(&self.users)?;
+        let registration_location =
+            registration_location_from_request(payload.registration_location);
         let user = UserSummary {
             id: user_id,
             username,
@@ -1474,6 +1513,7 @@ impl AccessStore {
             balance_minor: 0,
             agent_id,
             invite_code,
+            registration_location,
             created_at: format_local_time(),
         };
 
@@ -2160,6 +2200,7 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
         .map(|agent_id| agent_id.trim().to_string())
         .filter(|agent_id| !agent_id.is_empty());
     user.invite_code = user.invite_code.trim().to_string();
+    user.registration_location = normalize_registration_location(user.registration_location);
     user.created_at = user.created_at.trim().to_string();
     if user.created_at.is_empty() {
         user.created_at = format_local_time();
@@ -2172,6 +2213,65 @@ fn normalize_user(mut user: UserSummary) -> ApiResult<UserSummary> {
     }
 
     Ok(user)
+}
+
+/// 从注册请求中整理注册地，保留服务端写入的请求 IP，并补充可读来源。
+fn registration_location_from_request(
+    location: Option<UserRegistrationLocation>,
+) -> UserRegistrationLocation {
+    normalize_registration_location(location.unwrap_or_default())
+}
+
+/// 统一清洗注册地字段，避免空白、异常来源和内网 IP 在列表中直接暴露为难读内容。
+fn normalize_registration_location(
+    mut location: UserRegistrationLocation,
+) -> UserRegistrationLocation {
+    location.registered_ip = location.registered_ip.trim().to_string();
+    location.country = location.country.trim().to_string();
+    location.region = location.region.trim().to_string();
+    location.city = location.city.trim().to_string();
+    location.source = normalize_registration_source(&location.source);
+
+    if location.source == "unknown" && !location.registered_ip.is_empty() {
+        location.source = "ip".to_string();
+    }
+
+    if is_local_or_private_ip(&location.registered_ip)
+        && location.country.is_empty()
+        && location.region.is_empty()
+        && location.city.is_empty()
+    {
+        location.country = "内网".to_string();
+        location.region = "本地网络".to_string();
+        location.source = "ip".to_string();
+    }
+
+    location
+}
+
+/// 将客户端传入的定位来源收敛到后台可展示的固定枚举。
+fn normalize_registration_source(source: &str) -> String {
+    match source.trim().to_ascii_lowercase().as_str() {
+        "gps" | "geo" | "geolocation" => "gps".to_string(),
+        "ip" | "client_ip" => "ip".to_string(),
+        "client" | "manual" => "client".to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// 判断注册 IP 是否属于本机、内网或保留地址，用于给本地联调账号显示友好注册地。
+fn is_local_or_private_ip(ip: &str) -> bool {
+    ip.parse::<IpAddr>().map_or(false, |addr| match addr {
+        IpAddr::V4(addr) => {
+            addr.is_loopback()
+                || addr.is_private()
+                || addr.is_link_local()
+                || addr.is_unspecified()
+                || addr.octets() == [255, 255, 255, 255]
+                || addr.octets()[0] == 100 && (64..=127).contains(&addr.octets()[1])
+        }
+        IpAddr::V6(addr) => addr.is_loopback() || addr.is_unspecified() || addr.is_unique_local(),
+    })
 }
 
 /// 按用户状态返回登录拦截文案，让停用和锁定在用户端表现为不同原因。
@@ -2506,6 +2606,7 @@ fn seed_users() -> Vec<UserSummary> {
             balance_minor: 12_000,
             agent_id: Some("U90001".to_string()),
             invite_code: DEMO_USER_INVITE_CODE.to_string(),
+            registration_location: UserRegistrationLocation::default(),
             created_at: "2026-06-01 10:00:00".to_string(),
         },
         UserSummary {
@@ -2519,6 +2620,7 @@ fn seed_users() -> Vec<UserSummary> {
             balance_minor: 520_000,
             agent_id: None,
             invite_code: DEMO_AGENT_INVITE_CODE.to_string(),
+            registration_location: UserRegistrationLocation::default(),
             created_at: "2026-06-01 09:00:00".to_string(),
         },
         UserSummary {
@@ -2532,6 +2634,7 @@ fn seed_users() -> Vec<UserSummary> {
             balance_minor: 0,
             agent_id: Some("U90001".to_string()),
             invite_code: RISK_USER_INVITE_CODE.to_string(),
+            registration_location: UserRegistrationLocation::default(),
             created_at: "2026-06-01 11:00:00".to_string(),
         },
     ]
@@ -2863,6 +2966,7 @@ mod tests {
                 balance_minor: 1000,
                 agent_id: None,
                 invite_code: String::new(),
+                registration_location: UserRegistrationLocation::default(),
                 created_at: "2026-06-05 10:00:00".to_string(),
             })
             .await
@@ -2964,6 +3068,7 @@ mod tests {
                 balance_minor: 0,
                 agent_id: None,
                 invite_code: String::new(),
+                registration_location: UserRegistrationLocation::default(),
                 created_at: "2026-06-05 10:00:00".to_string(),
             })
             .await
@@ -2980,6 +3085,7 @@ mod tests {
                 balance_minor: 0,
                 agent_id: None,
                 invite_code: String::new(),
+                registration_location: UserRegistrationLocation::default(),
                 created_at: "2026-06-05 10:01:00".to_string(),
             })
             .await
@@ -3009,6 +3115,13 @@ mod tests {
                     balance_minor: 999_999,
                     agent_id: original.agent_id.clone(),
                     invite_code: "ZZZZ9999".to_string(),
+                    registration_location: UserRegistrationLocation {
+                        registered_ip: "8.8.8.8".to_string(),
+                        country: "测试国家".to_string(),
+                        region: String::new(),
+                        city: String::new(),
+                        source: "client".to_string(),
+                    },
                     created_at: "2026-06-05 12:00:00".to_string(),
                 },
             )
@@ -3019,6 +3132,10 @@ mod tests {
         assert_eq!(updated.balance_minor, original.balance_minor);
         assert_eq!(updated.invite_code, original.invite_code);
         assert_eq!(updated.avatar_url, original.avatar_url);
+        assert_eq!(
+            updated.registration_location,
+            original.registration_location
+        );
         assert_eq!(updated.contact_qq, "234567");
     }
 
@@ -3077,6 +3194,7 @@ mod tests {
                 balance_minor: 0,
                 agent_id: None,
                 invite_code: DEMO_AGENT_INVITE_CODE.to_string(),
+                registration_location: UserRegistrationLocation::default(),
                 created_at: "2026-06-05 10:00:00".to_string(),
             })
             .await
@@ -3261,12 +3379,24 @@ mod tests {
                 contact_qq: Some("1234567".to_string()),
                 password: "newPassword123".to_string(),
                 invite_code: None,
+                registration_location: Some(UserRegistrationLocation {
+                    registered_ip: "192.168.2.10".to_string(),
+                    country: String::new(),
+                    region: String::new(),
+                    city: String::new(),
+                    source: "ip".to_string(),
+                }),
             })
             .await
             .expect("username register should succeed");
 
         assert_eq!(username_user.username, "new_member");
         assert_eq!(username_user.contact_qq, "1234567");
+        assert_eq!(
+            username_user.registration_location.registered_ip,
+            "192.168.2.10"
+        );
+        assert_eq!(username_user.registration_location.country, "内网");
         assert_invite_code_format(&username_user.invite_code);
 
         let _ = access
@@ -3285,6 +3415,7 @@ mod tests {
                 contact_qq: None,
                 password: "emailPassword123".to_string(),
                 invite_code: None,
+                registration_location: None,
             })
             .await
             .expect("email register should succeed");
@@ -3421,6 +3552,7 @@ mod tests {
                 contact_qq: None,
                 password: "forbidPassword123".to_string(),
                 invite_code: None,
+                registration_location: None,
             })
             .await
             .expect_err("username register should be rejected");

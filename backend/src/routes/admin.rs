@@ -85,17 +85,19 @@ use crate::{
         },
         group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
         group_buy_robot::{
-            is_group_buy_robot_user_id, run_group_buy_robots, ROBOT_GROUP_BUY_USER_ID,
+            force_fill_user_group_buy_plans_before_refund, is_group_buy_robot_user_id,
+            run_group_buy_robots, ROBOT_GROUP_BUY_USER_ID,
         },
         image_bed::{upload_configured_image_bed_file, ImageBedUploadOptions},
         order::validate_draw_issue_accepts_order,
         pagination::PageRequest,
         play_rules::{evaluate_play_rule, play_rule_summaries},
         realtime::{
-            admin_audience_matches, balance_changed_event, draw_result_event, heartbeat_event,
-            issue_closed_event, issue_opened_event, order_changed_event, recharge_changed_event,
-            support_conversation_deleted_event, support_conversation_updated_event,
-            support_message_created_event, withdrawal_changed_event,
+            admin_audience_matches, balance_changed_event, chat_hall_messages_cleared_event,
+            draw_result_event, heartbeat_event, issue_closed_event, issue_opened_event,
+            order_changed_event, recharge_changed_event, support_conversation_deleted_event,
+            support_conversation_updated_event, support_message_created_event,
+            withdrawal_changed_event,
         },
         rebate::credit_recharge_rebate_for_order,
         scheduler::DrawSchedulerConfig,
@@ -113,6 +115,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/finance-overview", get(get_finance_overview))
         .route("/financial-accounts", get(list_financial_accounts))
         .route("/ledger-entries", get(list_ledger_entries))
+        .route("/ledger-entries/clear", delete(clear_ledger_entries))
         .route("/recharge-orders", get(list_recharge_orders))
         .route("/recharge-orders/export", get(export_recharge_orders))
         .route("/recharge-orders/clear", delete(clear_recharge_orders))
@@ -188,6 +191,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/system-settings", get(list_system_settings))
         .route("/system-settings/cache/reload", post(reload_memory_cache))
+        .route(
+            "/system-settings/chat-hall/messages/clear",
+            delete(clear_chat_hall_messages),
+        )
         .route("/system-settings/{key}", patch(update_system_setting))
         .route("/image-bed/upload", post(upload_image_bed_file))
         .route("/app-packages/upload", post(upload_app_package_file))
@@ -519,6 +526,18 @@ async fn run_draw_automation_request(
     State(state): State<AppState>,
     Json(payload): Json<DrawAutomationRunRequest>,
 ) -> ApiResult<Json<ApiEnvelope<DrawAutomationRun>>> {
+    let robot_run = force_fill_user_group_buy_plans_before_refund(
+        &state.robots,
+        &state.draws,
+        &state.lotteries,
+        &state.orders,
+        &state.finance,
+        &state.group_buys,
+        &state.access,
+        payload.now.clone(),
+    )
+    .await?;
+    publish_group_buy_robot_events(&state, &robot_run).await;
     let run = run_draw_automation(
         &state.draws,
         &state.lotteries,
@@ -2117,6 +2136,22 @@ async fn reload_memory_cache(
     Ok(Json(ApiEnvelope::success(result)))
 }
 
+/// 一键清除聊天大厅历史消息；只清除大厅展示记录，不回滚已产生的资金流水。
+async fn clear_chat_hall_messages(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
+    let deleted_count = state.chat_hall.clear_messages().await?;
+    if deleted_count > 0 {
+        state
+            .realtime
+            .publish_public(chat_hall_messages_cleared_event());
+    }
+
+    Ok(Json(ApiEnvelope::success(ClearRecordsResult {
+        deleted_count,
+    })))
+}
+
 /// 处理管理员图片上传请求：读取图床配置后透传 multipart 文件到第三方服务。
 async fn upload_image_bed_file(
     State(state): State<AppState>,
@@ -2695,6 +2730,17 @@ async fn list_ledger_entries(
         page_size: page.page_size,
         total_count: page.total_count,
         total_pages: page.total_pages,
+    })))
+}
+
+/// 一键清除资金流水历史；不会回滚用户余额，也不会重置后续流水编号。
+async fn clear_ledger_entries(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
+    let deleted_count = state.finance.clear_ledger_entries().await?;
+
+    Ok(Json(ApiEnvelope::success(ClearRecordsResult {
+        deleted_count,
     })))
 }
 
@@ -4345,6 +4391,7 @@ mod tests {
             id: id.to_string(),
             invite_code: format!("{id}CODE"),
             kind: UserKind::Regular,
+            registration_location: crate::domain::user::UserRegistrationLocation::default(),
             status: UserStatus::Active,
             username: username.to_string(),
             created_at: "2026-06-05 10:00:00".to_string(),

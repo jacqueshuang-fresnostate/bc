@@ -247,6 +247,12 @@ export function fetchLedgerEntries(signal?: AbortSignal, query?: FinancePageQuer
   );
 }
 
+export function clearLedgerEntries() {
+  return requestJson<ClearRecordsResult>('/api/admin/ledger-entries/clear', {
+    method: 'DELETE',
+  });
+}
+
 export function fetchRechargeOrders(signal?: AbortSignal, query?: FinancePageQuery) {
   return requestJson<FinancePage<RechargeOrderSummary>>(
     adminQueryPath('/api/admin/recharge-orders', query),
@@ -622,6 +628,15 @@ export function reloadBackendMemoryCache() {
     '/api/admin/system-settings/cache/reload',
     {
       method: 'POST',
+    },
+  );
+}
+
+export function clearChatHallMessages() {
+  return requestJson<ClearRecordsResult>(
+    '/api/admin/system-settings/chat-hall/messages/clear',
+    {
+      method: 'DELETE',
     },
   );
 }

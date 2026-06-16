@@ -58,13 +58,20 @@ export type MobileChatHallMessage = {
   createdAt: string
 }
 
-export type MobileChatHallRealtimeEvent = {
-  event: 'chat_hall_message_created'
-  sourceEvent: 'chat_hall.message_created'
-  message: MobileChatHallMessage
-  data: Record<string, unknown>
-  occurredAt: string
-}
+export type MobileChatHallRealtimeEvent =
+  | {
+      event: 'chat_hall_message_created'
+      sourceEvent: 'chat_hall.message_created'
+      message: MobileChatHallMessage
+      data: Record<string, unknown>
+      occurredAt: string
+    }
+  | {
+      event: 'chat_hall_messages_cleared'
+      sourceEvent: 'chat_hall.messages_cleared'
+      data: Record<string, unknown>
+      occurredAt: string
+    }
 
 export type MobileHeartbeatEvent = {
   event: 'heartbeat'
@@ -158,6 +165,14 @@ export function normalizeRealtimeEvent(raw: unknown): MobileRealtimeEvent | null
       event: 'chat_hall_message_created',
       sourceEvent: event,
       message,
+      data,
+      occurredAt,
+    }
+  }
+  if (event === 'chat_hall.messages_cleared') {
+    return {
+      event: 'chat_hall_messages_cleared',
+      sourceEvent: event,
       data,
       occurredAt,
     }

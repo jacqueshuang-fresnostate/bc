@@ -23,6 +23,34 @@ pub enum UserStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 用户注册地信息，记录请求 IP、粗粒度地区和地区来源，便于后台审计注册来源。
+pub struct UserRegistrationLocation {
+    #[serde(default)]
+    pub registered_ip: String,
+    #[serde(default)]
+    pub country: String,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub city: String,
+    #[serde(default)]
+    pub source: String,
+}
+
+impl Default for UserRegistrationLocation {
+    fn default() -> Self {
+        Self {
+            registered_ip: String::new(),
+            country: String::new(),
+            region: String::new(),
+            city: String::new(),
+            source: "unknown".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 /// 用户摘要，后台和用户端都通过它展示账号基础信息。
 pub struct UserSummary {
     pub id: String,
@@ -38,6 +66,8 @@ pub struct UserSummary {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub invite_code: String,
+    #[serde(default)]
+    pub registration_location: UserRegistrationLocation,
     #[serde(default)]
     pub created_at: String,
 }
@@ -55,6 +85,8 @@ pub struct UserRegisterRequest {
     pub password: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invite_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_location: Option<UserRegistrationLocation>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -186,7 +218,43 @@ pub struct UserProfileResponse {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 邀请中心直属用户展示项，包含邀请状态、返利开关和充值汇总。
+/// 邀请中心直属用户按彩种汇总的投注金额。
+pub struct UserInvitationBetLotterySummary {
+    pub lottery_id: String,
+    pub lottery_name: String,
+    pub amount_minor: i64,
+    pub order_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 邀请中心直属用户按彩种和玩法汇总的投注金额。
+pub struct UserInvitationBetPlaySummary {
+    pub lottery_id: String,
+    pub lottery_name: String,
+    pub rule_code: String,
+    pub play_name: String,
+    pub amount_minor: i64,
+    pub order_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 邀请中心直属用户最近一笔投注摘要，用于手机端快速查看下级购买内容。
+pub struct UserInvitationLatestBet {
+    pub order_id: String,
+    pub lottery_id: String,
+    pub lottery_name: String,
+    pub issue: String,
+    pub rule_code: String,
+    pub play_name: String,
+    pub amount_minor: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 邀请中心直属用户展示项，包含邀请状态、返利开关、资金汇总和投注画像。
 pub struct UserInvitationDirectUser {
     pub id: String,
     pub username: String,
@@ -195,6 +263,10 @@ pub struct UserInvitationDirectUser {
     pub rebate_enabled: bool,
     pub total_deposit_minor: i64,
     pub total_withdrawal_minor: i64,
+    pub total_bet_amount_minor: i64,
+    pub bet_lottery_summaries: Vec<UserInvitationBetLotterySummary>,
+    pub bet_play_summaries: Vec<UserInvitationBetPlaySummary>,
+    pub latest_bet: Option<UserInvitationLatestBet>,
     pub registered_at: String,
     pub created_at: String,
 }

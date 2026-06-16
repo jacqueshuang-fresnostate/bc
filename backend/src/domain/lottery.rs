@@ -121,6 +121,8 @@ pub struct DrawSource {
 pub enum DrawSourceProvider {
     Api68,
     KjApi,
+    BbKaijiang,
+    IndonesiaLottery,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

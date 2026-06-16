@@ -77,6 +77,20 @@ impl FinanceRepository {
             .map(|store| store.ledger_entries())
     }
 
+    /// 一键清除资金流水历史；只清除审计列表，不回滚账户余额也不重置流水序号。
+    pub async fn clear_ledger_entries(&self) -> ApiResult<usize> {
+        let (deleted_count, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let deleted_count = store.clear_ledger_entries();
+            (deleted_count, store.clone())
+        };
+        self.persist(&snapshot).await?;
+        Ok(deleted_count)
+    }
+
     /// 分页返回资金账户；数据库模式下将用户过滤和分页下推到 SQL。
     pub async fn account_page(
         &self,
@@ -896,6 +910,13 @@ impl FinanceStore {
     /// 处理 ledger_entries 的具体内部流程。
     fn ledger_entries(&self) -> Vec<LedgerEntry> {
         self.ledger_entries.iter().rev().cloned().collect()
+    }
+
+    /// 清除资金流水审计列表，保留余额和下一流水序号，避免后续流水 ID 重复。
+    fn clear_ledger_entries(&mut self) -> usize {
+        let deleted_count = self.ledger_entries.len();
+        self.ledger_entries.clear();
+        deleted_count
     }
 
     /// 处理 ledger_entries_for_user 的具体内部流程。
@@ -1907,6 +1928,48 @@ mod tests {
         assert_eq!(entry.kind, LedgerEntryKind::ManualAdjustment);
         assert_eq!(entry.amount_minor, 1_000);
         assert_eq!(account.available_balance_minor, 13_000);
+    }
+
+    #[test]
+    /// 清除资金流水只清理审计列表，不回滚余额，也不重置下一流水序号。
+    fn store_clears_ledger_entries_without_changing_balance_or_sequence() {
+        let mut store = FinanceStore::seeded();
+
+        let first_entry = store
+            .manual_adjust(ManualBalanceAdjustmentRequest {
+                user_id: "U10001".to_string(),
+                amount_minor: 1_000,
+                description: "后台补款".to_string(),
+            })
+            .expect("manual adjustment can be applied");
+        let balance_before_clear = store
+            .account("U10001")
+            .expect("account exists")
+            .available_balance_minor;
+        let sequence_before_clear = store.next_sequence;
+
+        let deleted_count = store.clear_ledger_entries();
+        let account_after_clear = store.account("U10001").expect("account exists");
+
+        assert_eq!(first_entry.id, "L000000000001");
+        assert_eq!(deleted_count, 1);
+        assert!(store.ledger_entries().is_empty());
+        assert_eq!(
+            account_after_clear.available_balance_minor,
+            balance_before_clear
+        );
+        assert_eq!(store.next_sequence, sequence_before_clear);
+
+        let second_entry = store
+            .manual_adjust(ManualBalanceAdjustmentRequest {
+                user_id: "U10001".to_string(),
+                amount_minor: -500,
+                description: "后台扣款".to_string(),
+            })
+            .expect("manual adjustment can be applied after clearing ledger entries");
+
+        assert_eq!(second_entry.id, "L000000000002");
+        assert_eq!(store.ledger_entries().len(), 1);
     }
 
     #[test]

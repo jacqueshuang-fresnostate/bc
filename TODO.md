@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-17 00:40 HKT 合买机器人流单前兜底补满
+
+- 完成任务：为合买机器人增加封盘流单前兜底补满能力。
+- 解决问题：如果常规分阶段补单窗口被调度延迟、期号已经封盘但还没开奖，用户发起的合买计划仍可能保持未满单并在封盘流单阶段被取消退款。
+- 实施内容：新增封盘后开奖前兜底成单口径，只允许已存在合买计划在 `Closed` 且未到 `scheduledAt` 时补建真实订单；新增 `force_fill_user_group_buy_plans_before_refund`，在流单退款前扫描用户发起的未满计划并由已启用合买机器人补满；常驻调度慢阶段和后台手动自动化触发均接入兜底；补充机器人与调度器单元测试，并同步架构说明和 Trellis 后端契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml group_buy_flow -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml -- --nocapture` 和 `git diff --check` 均通过；后端全量 333 个测试成功。
+
+## 2026-06-16 18:35 HKT 后台资金流水一键清除
+
+- 完成任务：为后台财务管理补充资金流水一键清除能力。
+- 解决问题：后台此前只能分页查看资金流水，测试和运营维护时无法像充值、提现、订单和合买计划一样清理历史流水列表。
+- 实施内容：后端新增 `DELETE /api/admin/ledger-entries/clear`，资金仓储清理 `ledger_entries` 但保留资金账户余额和下一流水序号；管理后台 API client、`useFinance` 和财务管理“资金流水”标签页新增清理入口；同步更新 OpenAPI、架构说明和 Trellis 前后端规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml store_clears_ledger_entries_without_changing_balance_or_sequence -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml -- --nocapture`、管理后台 `npm run build` 和 `git diff --check` 均通过；后端全量 331 个测试成功，管理后台构建仍只有既有 chunk size warning。
+
 ## 2026-06-16 09:46 HKT 封盘提前秒数口径纠正
 
 - 完成任务：把封盘时间计算从“开盘后可售秒数”纠正为“开奖前提前秒数”。
@@ -3980,3 +3994,45 @@
 - 解决问题：首页分类 Tabs 使用默认导航布局时，多个分类在胶囊容器内的横向分布不够均匀。
 - 实施内容：将 `HomeView.vue` 中 `.home-category-tabs :deep(.van-tabs__nav)` 设置为全宽 `flex` 布局，并使用 `justify-content: space-around` 让分类项横向均分。
 - 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。
+
+## 2026-06-17 01:04 HKT 用户注册来源与注册地审计
+
+- 完成任务：用户注册时记录注册 IP、粗粒度注册地和来源，并在后台用户列表/用户维护中展示。
+- 解决问题：此前用户注册只保存账号、邮箱、QQ、邀请码等资料，后台无法审计用户注册来源，也无法区分注册来源来自请求 IP、客户端定位或未知来源。
+- 实施内容：后端 `UserSummary` 增加 `registrationLocation`；注册接口从常见反代请求头提取客户端 IP；访问控制仓储创建、读取、保存用户时持久化注册地字段；数据库新增用户注册来源字段和中文注释；手机端注册提交时尝试获取定位授权并上报粗粒度来源；后台用户列表新增“注册地”列，用户维护抽屉新增只读注册来源信息。
+- 验证结果：后端 `cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml access_repository_registers_user_by_username_or_email -- --nocapture` 和后端全量 `cargo test --manifest-path backend/Cargo.toml` 均通过（333 个测试成功）；后台 `npm run build`、手机端 `pnpm build`、手机端 `pnpm test` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示，手机端测试脚本当前显示 0 个测试用例。
+
+## 2026-06-17 01:22 HKT 系统设置一键清除聊天大厅消息
+
+- 完成任务：把聊天大厅历史消息清理入口放到后台系统设置中，提供一键清除能力，不展示聊天大厅列表。
+- 解决问题：运营只需要清空公共聊天大厅展示记录，后台此前没有对应维护按钮；如果只手动清库，还可能与后端内存快照不一致。
+- 实施内容：后端新增 `DELETE /api/admin/system-settings/chat-hall/messages/clear`，清空聊天大厅消息、红包展示记录和红包领取展示记录，保留后续消息序号且不回滚资金流水；清空成功后广播 `chat_hall.messages_cleared` 实时事件；后台系统设置页新增确认、loading 和清除条数反馈；手机端聊天大厅收到清空事件后同步清空本地消息和未读提示；OpenAPI 和架构说明同步更新。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、后台 `npm run build`、手机端 `pnpm build`、手机端 `pnpm test` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示，手机端测试脚本当前显示 0 个测试用例。
+
+## 2026-06-17 01:37 HKT 聊天大厅红包领取记录查看
+
+- 完成任务：聊天大厅红包支持查看谁抢了红包。
+- 解决问题：红包卡片此前只显示领取进度，用户无法查看具体领取人、领取金额和领取时间；不可领取时按钮虽然显示“查看”，但整个卡片被禁用，实际无法打开详情。
+- 实施内容：后端新增 `GET /api/user/chat-hall/red-packets/{id}/claims`，返回红包总额、已领进度和领取记录；聊天大厅仓储新增只读查询并补充单元测试；手机端新增领取记录 API、红包领取记录底部弹窗，显示领取用户名、金额和时间；领取成功后本机记录已领取状态，再次点击同一红包会打开领取记录；OpenAPI、Trellis 契约、前端规范和架构说明同步更新。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、手机端 `pnpm build`、手机端 `pnpm test` 和 `git diff --check` 均通过；手机端测试脚本当前显示 0 个测试用例。
+
+## 2026-06-17 02:00 HKT 手机端代理中心下级投注画像
+
+- 完成任务：手机端代理中心直属下级列表新增购买信息，代理可以看到下级买过的彩种、玩法、投注金额和最近购买记录。
+- 解决问题：代理中心此前只展示下级注册时间、状态、充值和提现，无法判断下级实际玩了什么彩种、买了什么玩法、购买了多少金额；合买认购中但未满单的记录也容易被漏掉。
+- 实施内容：后端 `GET /api/user/invitations/summary` 的 `directUsers` 新增 `totalBetAmountMinor`、`betLotterySummaries`、`betPlaySummaries` 和 `latestBet`；普通独立下注按未取消注单汇总，合买按参与人认购记录汇总且跳过已取消计划；玩法名复用 `play_rule_summaries()` 中文标签；直属充值统计改为一次性按资金流水汇总；手机端 `InvitationCenterView.vue` 展示投注总额、最近投注和主要玩法汇总；同步更新 Trellis 接口/前端规范和架构说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_invitation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、手机端 `pnpm build`、手机端 `pnpm test` 和 `git diff --check` 均通过；手机端测试脚本当前显示 0 个测试用例。
+
+## 2026-06-17 02:19 HKT 河内5分彩 BB 开奖源接入
+
+- 完成任务：新增“河内5分彩”彩种，并接入 BB 开奖接口 `gameCodeList=VIFFC5`。
+- 解决问题：系统此前没有河内5分彩，也没有能解析 BB 开奖 `newest/last/next` 响应结构的开奖源供应商，无法通过该接口同步期号和开奖号码。
+- 实施内容：后端 `DrawSourceProvider` 新增 `bbKaijiang`；新增 `bb-hn5` 默认开奖源和 `hn5` 默认 API 彩种；BB 开奖解析器按 `last` 作为最近已开奖锚点、`newest` 作为下一期参考，按期号开奖时要求对应快照存在非空 `openNumber`；后台开奖源维护新增“BB开奖”供应商和“河内5分彩采集”预设；数据库迁移 `20260617021000_add_hanoi5_bb_source.sql` 为已有库补默认开奖源并更新字段注释；架构说明同步记录接口字段口径。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_api -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml seeded_lotteries_include_requested_api68_lotteries -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。
+
+## 2026-06-17 03:33 HKT 印尼5分彩开奖源接入
+
+- 完成任务：新增“印尼5分彩”彩种，并接入印尼开奖接口 `https://draw.indonesia-lottery.org/others/draw.php`。
+- 解决问题：系统此前没有印尼5分彩，也没有能解析印尼接口 `latest_origin/latest_num/history/next_num/next_time` 响应结构的开奖源供应商，无法通过该接口同步期号和开奖号码。
+- 实施内容：后端 `DrawSourceProvider` 新增 `indonesiaLottery`；新增 `indonesia-id5` 默认开奖源和 `id5` 默认 API 彩种；解析器把 `20260617-042`、`20260617-42` 归一为系统数字期号 `20260617042`，使用 `latest_num` 和 `history.result` 返回开奖号码，使用 `next_num` 与 `next_time` 作为下一期锚点；后台开奖源维护新增“印尼开奖”供应商和“印尼5分彩采集”预设；数据库迁移 `20260617023000_add_indonesia5_draw_source.sql` 为已有库补默认开奖源并更新字段注释；架构说明同步记录接口字段口径。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_api -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml seeded_lotteries_include_requested_api68_lotteries -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、后台 `npm run build` 和 `git diff --check` 均通过；后台构建仍有既有的大 chunk 提示。

@@ -449,6 +449,7 @@ mod tests {
                 balance_minor: 0,
                 agent_id: Some("U90001".to_string()),
                 invite_code: "ZXCV1234".to_string(),
+                registration_location: crate::domain::user::UserRegistrationLocation::default(),
                 created_at: "2026-06-05 10:00:00".to_string(),
             })
             .await

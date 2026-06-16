@@ -83,6 +83,19 @@ pub struct ChatHallRedPacketPayload {
     pub claimed_count: u32,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 红包领取记录查询响应，供聊天大厅红包卡片查看已领取用户。
+pub struct ChatHallRedPacketClaimsResponse {
+    pub red_packet_id: String,
+    pub greeting: String,
+    pub total_amount_minor: i64,
+    pub remaining_amount_minor: i64,
+    pub claim_count: u32,
+    pub claimed_count: u32,
+    pub claims: Vec<ChatHallRedPacketClaim>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 /// 合买计划分享消息的 payload，保存卡片展示所需的计划摘要。

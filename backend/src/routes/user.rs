@@ -3,7 +3,7 @@
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     extract::{Form, Multipart, Path, Query, Request, State},
-    http::header::AUTHORIZATION,
+    http::{header::AUTHORIZATION, HeaderMap},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -23,9 +23,9 @@ use crate::{
         AgentApplication, SubmitAgentApplicationRequest, UserAgentApplicationResponse,
     },
     domain::chat_hall::{
-        ChatHallGroupBuyPlanPayload, ChatHallMessage, ClaimChatHallRedPacketResponse,
-        CreateChatHallMessageRequest, CreateChatHallRedPacketRequest,
-        ShareChatHallGroupBuyPlanRequest,
+        ChatHallGroupBuyPlanPayload, ChatHallMessage, ChatHallRedPacketClaimsResponse,
+        ClaimChatHallRedPacketResponse, CreateChatHallMessageRequest,
+        CreateChatHallRedPacketRequest, ShareChatHallGroupBuyPlanRequest,
     },
     domain::draw::DrawIssueStatus,
     domain::finance::{FinancialAccountSummary, LedgerEntry, LedgerEntryKind},
@@ -54,8 +54,9 @@ use crate::{
     domain::user::{
         RegistrationConfig, UserAuthSession, UserAvatarRequest, UserBalanceResponse,
         UserBindEmailRequest, UserChangePasswordRequest, UserForgotPasswordRequest,
-        UserForgotPasswordResponse, UserInvitationDirectUser, UserInvitationSummaryResponse,
-        UserKind, UserLoginRequest, UserLogoutResponse, UserProfileResponse, UserRegisterRequest,
+        UserForgotPasswordResponse, UserInvitationBetLotterySummary, UserInvitationBetPlaySummary,
+        UserInvitationDirectUser, UserInvitationLatestBet, UserInvitationSummaryResponse, UserKind,
+        UserLoginRequest, UserLogoutResponse, UserProfileResponse, UserRegisterRequest,
         UserResetPasswordRequest, UserResetPasswordResponse, UserStatus, UserSummary,
         WithdrawalMethodRequest,
     },
@@ -204,6 +205,10 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(list_chat_hall_messages).post(send_chat_hall_message),
         )
         .route("/chat-hall/red-packets", post(send_chat_hall_red_packet))
+        .route(
+            "/chat-hall/red-packets/{id}/claims",
+            get(get_chat_hall_red_packet_claims),
+        )
         .route(
             "/chat-hall/red-packets/{id}/claim",
             post(claim_chat_hall_red_packet),
@@ -531,13 +536,72 @@ fn config_value(settings: &[SystemSetting], key: &str) -> Option<String> {
 /// 用户注册接口，支持用户名或邮箱注册。
 async fn register_user(
     State(state): State<AppState>,
-    Json(payload): Json<UserRegisterRequest>,
+    headers: HeaderMap,
+    Json(mut payload): Json<UserRegisterRequest>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
+    attach_registration_ip(&mut payload, registration_ip_from_headers(&headers));
     let user = state.access.register_user(payload).await?;
     let account = state.finance.account_or_create(&user.id).await?;
     let user = user_with_account_balance(user, Some(&account));
 
     Ok(Json(ApiEnvelope::success(user)))
+}
+
+/// 给注册请求补入服务端可见的请求 IP，客户端定位失败时也不阻断注册。
+fn attach_registration_ip(payload: &mut UserRegisterRequest, registered_ip: Option<String>) {
+    let mut location = payload.registration_location.take().unwrap_or_default();
+    if let Some(ip) = registered_ip {
+        location.registered_ip = ip;
+        if location.source.trim().is_empty() || location.source == "unknown" {
+            location.source = "ip".to_string();
+        }
+    }
+    if location.source.trim().is_empty() {
+        location.source = "unknown".to_string();
+    }
+    payload.registration_location = Some(location);
+}
+
+/// 从常见反向代理请求头里提取第一个客户端 IP，用于注册来源审计。
+fn registration_ip_from_headers(headers: &HeaderMap) -> Option<String> {
+    [
+        "x-forwarded-for",
+        "x-real-ip",
+        "cf-connecting-ip",
+        "x-client-ip",
+    ]
+    .iter()
+    .filter_map(|name| headers.get(*name))
+    .filter_map(|value| value.to_str().ok())
+    .find_map(first_registration_ip)
+}
+
+/// 解析单个 IP 请求头值，兼容逗号链路、Forwarded 风格和 IPv4 端口。
+fn first_registration_ip(value: &str) -> Option<String> {
+    value.split(',').find_map(|part| {
+        let candidate = part
+            .trim()
+            .trim_start_matches("for=")
+            .trim_matches('"')
+            .trim();
+        if candidate.is_empty() {
+            return None;
+        }
+        let candidate = candidate
+            .strip_prefix('[')
+            .and_then(|value| value.split(']').next())
+            .unwrap_or(candidate);
+        let candidate = if candidate.matches('.').count() == 3 {
+            candidate.split(':').next().unwrap_or(candidate)
+        } else {
+            candidate
+        };
+        if candidate.is_empty() {
+            None
+        } else {
+            Some(candidate.to_string())
+        }
+    })
 }
 
 /// 用户登录接口，支持用户名或邮箱作为登录标识。
@@ -770,21 +834,34 @@ async fn get_user_invitation_summary(
             &invite_records,
             can_invite,
         );
+        let recharge_totals = direct_user_recharge_totals(&state).await?;
         let withdrawal_totals = direct_user_withdrawal_totals(&state).await?;
+        let mut bet_profiles = direct_user_bet_profiles(&state).await?;
         let mut direct_users = Vec::with_capacity(candidates.len());
         for candidate in candidates {
+            let total_deposit_minor = recharge_totals
+                .get(&candidate.user.id)
+                .copied()
+                .unwrap_or_default();
             let total_withdrawal_minor = withdrawal_totals
                 .get(&candidate.user.id)
                 .copied()
                 .unwrap_or_default();
+            let bet_profile = bet_profiles
+                .remove(&candidate.user.id)
+                .unwrap_or_else(DirectUserBetProfile::default);
             direct_users.push(UserInvitationDirectUser {
                 id: candidate.user.id.clone(),
                 username: candidate.user.username.clone(),
                 status: candidate.user.status.clone(),
                 invite_status: candidate.invite_status,
                 rebate_enabled: candidate.rebate_enabled,
-                total_deposit_minor: direct_user_recharge_minor(&state, &candidate.user.id).await?,
+                total_deposit_minor,
                 total_withdrawal_minor,
+                total_bet_amount_minor: bet_profile.total_bet_amount_minor,
+                bet_lottery_summaries: bet_profile.lottery_summary_items(),
+                bet_play_summaries: bet_profile.play_summary_items(),
+                latest_bet: bet_profile.latest_bet.clone(),
                 registered_at: candidate.user.created_at.clone(),
                 created_at: candidate.created_at,
             });
@@ -901,10 +978,277 @@ fn collect_direct_invitation_candidates(
     candidates.into_values().collect()
 }
 
-/// 统计直属用户充值入账流水，金额统一使用最小货币单位。
-async fn direct_user_recharge_minor(state: &AppState, user_id: &str) -> ApiResult<i64> {
-    let entries = state.finance.user_ledger_entries(user_id).await?;
-    sum_recharge_credits_minor(&entries)
+#[derive(Debug, Clone)]
+/// 邀请中心下级单笔投注输入，统一承载普通注单和合买认购记录。
+struct DirectUserBetInput {
+    order_id: String,
+    lottery_id: String,
+    lottery_name: String,
+    issue: String,
+    rule_code: String,
+    play_name: String,
+    amount_minor: i64,
+    created_at: String,
+}
+
+#[derive(Debug, Clone, Default)]
+/// 邀请中心下级投注画像聚合结果，按用户累计总金额、彩种、玩法和最近投注。
+struct DirectUserBetProfile {
+    total_bet_amount_minor: i64,
+    lottery_summaries: BTreeMap<String, DirectUserBetLotteryAccumulator>,
+    play_summaries: BTreeMap<String, DirectUserBetPlayAccumulator>,
+    latest_bet: Option<UserInvitationLatestBet>,
+}
+
+impl DirectUserBetProfile {
+    /// 纳入一笔下级投注，正向金额才进入统计并同步刷新最近投注。
+    fn add_bet(&mut self, bet: DirectUserBetInput) -> ApiResult<()> {
+        if bet.amount_minor <= 0 {
+            return Ok(());
+        }
+
+        self.total_bet_amount_minor = self
+            .total_bet_amount_minor
+            .checked_add(bet.amount_minor)
+            .ok_or_else(|| ApiError::Internal("直属用户投注汇总金额溢出".to_string()))?;
+
+        let lottery_entry = self
+            .lottery_summaries
+            .entry(bet.lottery_id.clone())
+            .or_insert_with(|| DirectUserBetLotteryAccumulator {
+                lottery_id: bet.lottery_id.clone(),
+                lottery_name: bet.lottery_name.clone(),
+                amount_minor: 0,
+                order_count: 0,
+            });
+        lottery_entry.amount_minor = lottery_entry
+            .amount_minor
+            .checked_add(bet.amount_minor)
+            .ok_or_else(|| ApiError::Internal("直属用户彩种投注金额溢出".to_string()))?;
+        lottery_entry.order_count = lottery_entry.order_count.saturating_add(1);
+
+        let play_key = format!("{}::{}", bet.lottery_id, bet.rule_code);
+        let play_entry =
+            self.play_summaries
+                .entry(play_key)
+                .or_insert_with(|| DirectUserBetPlayAccumulator {
+                    lottery_id: bet.lottery_id.clone(),
+                    lottery_name: bet.lottery_name.clone(),
+                    rule_code: bet.rule_code.clone(),
+                    play_name: bet.play_name.clone(),
+                    amount_minor: 0,
+                    order_count: 0,
+                });
+        play_entry.amount_minor = play_entry
+            .amount_minor
+            .checked_add(bet.amount_minor)
+            .ok_or_else(|| ApiError::Internal("直属用户玩法投注金额溢出".to_string()))?;
+        play_entry.order_count = play_entry.order_count.saturating_add(1);
+
+        let latest_bet = UserInvitationLatestBet {
+            order_id: bet.order_id,
+            lottery_id: bet.lottery_id,
+            lottery_name: bet.lottery_name,
+            issue: bet.issue,
+            rule_code: bet.rule_code,
+            play_name: bet.play_name,
+            amount_minor: bet.amount_minor,
+            created_at: bet.created_at,
+        };
+        if self
+            .latest_bet
+            .as_ref()
+            .map(|current| {
+                latest_bet.created_at > current.created_at
+                    || (latest_bet.created_at == current.created_at
+                        && latest_bet.order_id > current.order_id)
+            })
+            .unwrap_or(true)
+        {
+            self.latest_bet = Some(latest_bet);
+        }
+
+        Ok(())
+    }
+
+    /// 转成按投注金额倒序的彩种汇总，便于手机端直接展示。
+    fn lottery_summary_items(&self) -> Vec<UserInvitationBetLotterySummary> {
+        let mut items = self
+            .lottery_summaries
+            .values()
+            .map(DirectUserBetLotteryAccumulator::summary)
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            right
+                .amount_minor
+                .cmp(&left.amount_minor)
+                .then_with(|| right.order_count.cmp(&left.order_count))
+                .then_with(|| left.lottery_name.cmp(&right.lottery_name))
+        });
+        items
+    }
+
+    /// 转成按投注金额倒序的玩法汇总，便于手机端查看买了什么玩法。
+    fn play_summary_items(&self) -> Vec<UserInvitationBetPlaySummary> {
+        let mut items = self
+            .play_summaries
+            .values()
+            .map(DirectUserBetPlayAccumulator::summary)
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            right
+                .amount_minor
+                .cmp(&left.amount_minor)
+                .then_with(|| right.order_count.cmp(&left.order_count))
+                .then_with(|| left.lottery_name.cmp(&right.lottery_name))
+                .then_with(|| left.play_name.cmp(&right.play_name))
+        });
+        items
+    }
+}
+
+#[derive(Debug, Clone)]
+/// 下级彩种投注金额累加器，内部使用后再转换为接口结构。
+struct DirectUserBetLotteryAccumulator {
+    lottery_id: String,
+    lottery_name: String,
+    amount_minor: i64,
+    order_count: usize,
+}
+
+impl DirectUserBetLotteryAccumulator {
+    /// 输出手机端接口使用的彩种投注汇总。
+    fn summary(&self) -> UserInvitationBetLotterySummary {
+        UserInvitationBetLotterySummary {
+            lottery_id: self.lottery_id.clone(),
+            lottery_name: self.lottery_name.clone(),
+            amount_minor: self.amount_minor,
+            order_count: self.order_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+/// 下级玩法投注金额累加器，内部使用后再转换为接口结构。
+struct DirectUserBetPlayAccumulator {
+    lottery_id: String,
+    lottery_name: String,
+    rule_code: String,
+    play_name: String,
+    amount_minor: i64,
+    order_count: usize,
+}
+
+impl DirectUserBetPlayAccumulator {
+    /// 输出手机端接口使用的玩法投注汇总。
+    fn summary(&self) -> UserInvitationBetPlaySummary {
+        UserInvitationBetPlaySummary {
+            lottery_id: self.lottery_id.clone(),
+            lottery_name: self.lottery_name.clone(),
+            rule_code: self.rule_code.clone(),
+            play_name: self.play_name.clone(),
+            amount_minor: self.amount_minor,
+            order_count: self.order_count,
+        }
+    }
+}
+
+/// 一次性汇总所有充值入账流水，避免邀请中心按直属用户重复查询。
+async fn direct_user_recharge_totals(state: &AppState) -> ApiResult<BTreeMap<String, i64>> {
+    let entries = state.finance.ledger_entries().await?;
+    let mut totals = BTreeMap::new();
+    for entry in entries.iter().filter(|entry| {
+        matches!(entry.kind, LedgerEntryKind::RechargeCredit) && entry.amount_minor > 0
+    }) {
+        let current = totals.entry(entry.user_id.clone()).or_insert(0_i64);
+        *current = current
+            .checked_add(entry.amount_minor)
+            .ok_or_else(|| ApiError::Internal("直属用户充值汇总金额溢出".to_string()))?;
+    }
+    Ok(totals)
+}
+
+/// 汇总直属下级投注画像，普通下注按注单统计，合买按参与记录统计。
+async fn direct_user_bet_profiles(
+    state: &AppState,
+) -> ApiResult<BTreeMap<String, DirectUserBetProfile>> {
+    let play_labels = play_rule_label_map()?;
+    let mut profiles: BTreeMap<String, DirectUserBetProfile> = BTreeMap::new();
+
+    for order in state.orders.list().await?.into_iter().filter(|order| {
+        matches!(order.order_source, OrderSource::Direct)
+            && !matches!(order.status, OrderStatus::Cancelled)
+            && order.amount_minor > 0
+    }) {
+        let rule_code = enum_to_string(&order.rule_code)?;
+        let play_name = play_rule_label(&play_labels, &rule_code);
+        profiles
+            .entry(order.user_id.clone())
+            .or_default()
+            .add_bet(DirectUserBetInput {
+                order_id: order.id,
+                lottery_id: order.lottery_id,
+                lottery_name: order.lottery_name,
+                issue: order.issue,
+                rule_code,
+                play_name,
+                amount_minor: order.amount_minor,
+                created_at: order.created_at,
+            })?;
+    }
+
+    for plan in state
+        .group_buys
+        .list_details()
+        .await?
+        .into_iter()
+        .filter(|plan| !matches!(plan.status, GroupBuyPlanStatus::Cancelled))
+    {
+        let plan_order_id = plan.order_id.clone().unwrap_or_else(|| plan.id.clone());
+        let lottery_id = plan.lottery_id.clone();
+        let lottery_name = plan.lottery_name.clone();
+        let issue = plan.issue.clone();
+        let rule_code = plan.rule_code.clone();
+        let play_name = play_rule_label(&play_labels, &rule_code);
+        for participant in plan
+            .participants
+            .into_iter()
+            .filter(|participant| participant.amount_minor > 0)
+        {
+            profiles
+                .entry(participant.user_id.clone())
+                .or_default()
+                .add_bet(DirectUserBetInput {
+                    order_id: format!("{}:{}", plan_order_id, participant.id),
+                    lottery_id: lottery_id.clone(),
+                    lottery_name: lottery_name.clone(),
+                    issue: issue.clone(),
+                    rule_code: rule_code.clone(),
+                    play_name: play_name.clone(),
+                    amount_minor: participant.amount_minor,
+                    created_at: participant.created_at,
+                })?;
+        }
+    }
+
+    Ok(profiles)
+}
+
+/// 构造玩法编码到中文玩法名的映射，供邀请中心投注画像复用。
+fn play_rule_label_map() -> ApiResult<HashMap<String, String>> {
+    let mut labels = HashMap::new();
+    for summary in play_rule_summaries() {
+        labels.insert(enum_to_string(&summary.code)?, summary.label);
+    }
+    Ok(labels)
+}
+
+/// 根据玩法编码返回中文名；未知编码保留原始编码便于排查配置问题。
+fn play_rule_label(labels: &HashMap<String, String>, rule_code: &str) -> String {
+    labels
+        .get(rule_code)
+        .cloned()
+        .unwrap_or_else(|| rule_code.to_string())
 }
 
 /// 汇总全部已通过提现订单，供邀请中心展示直属下级提现金额。
@@ -929,6 +1273,7 @@ fn sum_approved_withdrawal_minor_by_user(
 }
 
 /// 汇总充值入账流水，忽略非充值流水和异常的负数充值记录。
+#[cfg(test)]
 fn sum_recharge_credits_minor(entries: &[LedgerEntry]) -> ApiResult<i64> {
     entries
         .iter()
@@ -2435,6 +2780,16 @@ async fn claim_chat_hall_red_packet(
     Ok(Json(ApiEnvelope::success(response)))
 }
 
+/// 当前用户查看指定聊天大厅红包的领取记录，用于展示谁抢到了红包。
+async fn get_chat_hall_red_packet_claims(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<ChatHallRedPacketClaimsResponse>>> {
+    let response = state.chat_hall.red_packet_claims(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(response)))
+}
+
 /// 当前用户把自己发起或参与过的合买计划分享到聊天大厅。
 async fn share_chat_hall_group_buy_plan(
     State(state): State<AppState>,
@@ -2765,6 +3120,45 @@ mod tests {
         assert!(!user_can_invite(&regular, &policy));
         assert!(user_can_invite(&agent, &policy));
         assert!(!user_can_invite(&agent, &test_invite_policy(false)));
+    }
+
+    #[test]
+    /// 验证邀请中心下级投注画像会累计玩法金额，并选出最近一笔投注。
+    fn user_invitation_bet_profile_summarizes_play_and_latest_bet() {
+        let mut profile = DirectUserBetProfile::default();
+
+        profile
+            .add_bet(DirectUserBetInput {
+                order_id: "O-1".to_string(),
+                lottery_id: "txffc".to_string(),
+                lottery_name: "腾讯分分彩".to_string(),
+                issue: "202606170001".to_string(),
+                rule_code: "fiveFrontDirect".to_string(),
+                play_name: "前 3 直选".to_string(),
+                amount_minor: 1_000,
+                created_at: "2026-06-17 10:00:00".to_string(),
+            })
+            .expect("首笔投注应可汇总");
+        profile
+            .add_bet(DirectUserBetInput {
+                order_id: "O-2".to_string(),
+                lottery_id: "txffc".to_string(),
+                lottery_name: "腾讯分分彩".to_string(),
+                issue: "202606170002".to_string(),
+                rule_code: "fiveBackDirect".to_string(),
+                play_name: "后 3 直选".to_string(),
+                amount_minor: 2_500,
+                created_at: "2026-06-17 10:02:00".to_string(),
+            })
+            .expect("第二笔投注应可汇总");
+
+        assert_eq!(profile.total_bet_amount_minor, 3_500);
+        let play_summaries = profile.play_summary_items();
+        assert_eq!(play_summaries[0].play_name, "后 3 直选");
+        assert_eq!(play_summaries[0].amount_minor, 2_500);
+        let latest_bet = profile.latest_bet.expect("应存在最近投注");
+        assert_eq!(latest_bet.order_id, "O-2");
+        assert_eq!(latest_bet.issue, "202606170002");
     }
 
     #[test]
@@ -3577,6 +3971,7 @@ mod tests {
             balance_minor: 0,
             agent_id,
             invite_code: "ABCDEFGH".to_string(),
+            registration_location: crate::domain::user::UserRegistrationLocation::default(),
             created_at: "2026-06-05 18:00:00".to_string(),
         }
     }

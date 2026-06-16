@@ -42,6 +42,14 @@ pub const KJ_TXFFC_SOURCE_ID: &str = "kj-txffc";
 pub const KJ_TXFFC_SOURCE_NAME: &str = "KJAPI 腾讯分分彩";
 pub const KJ_TXFFC_LOTTERY_ID: &str = "txffc";
 pub const KJ_TXFFC_LOT_KEY: &str = "txffc";
+pub const BB_HN5_SOURCE_ID: &str = "bb-hn5";
+pub const BB_HN5_SOURCE_NAME: &str = "BB开奖 河内5分彩";
+pub const BB_HN5_LOTTERY_ID: &str = "hn5";
+pub const BB_HN5_GAME_CODE: &str = "VIFFC5";
+pub const IDN5_SOURCE_ID: &str = "indonesia-id5";
+pub const IDN5_SOURCE_NAME: &str = "印尼开奖 印尼5分彩";
+pub const IDN5_LOTTERY_ID: &str = "id5";
+pub const IDN5_LOT_CODE: &str = "IDFFC5";
 const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
     "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do";
 const DEFAULT_API68_PL3_ENDPOINT: &str = "https://api.api68.com/QuanGuoCai/getLotteryInfo1.do";
@@ -54,6 +62,9 @@ const DEFAULT_API68_ELEVEN_FIVE_ENDPOINT: &str =
 const DEFAULT_API68_LUCK_TWENTY_ENDPOINT: &str =
     "https://api.api68.com/LuckTwenty/getBaseLuckTewnty.do";
 const DEFAULT_KJ_ENDPOINT: &str = "https://kjapi.net/hall/hallajax/getLotteryInfo";
+const DEFAULT_BB_ENDPOINT: &str =
+    "https://www.bbkaijiang.com/api/st-lottery-open/open-result/list-newest-result";
+const DEFAULT_INDONESIA_ENDPOINT: &str = "https://draw.indonesia-lottery.org/others/draw.php";
 const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +155,38 @@ impl ApiDrawSourceRepository {
         }
     }
 
+    #[cfg(test)]
+    /// 使用静态响应内容创建 BB 开奖预置源，便于测试河内 5 分彩解析。
+    pub fn bb_seeded_with_static_response(response_body: impl Into<String>) -> Self {
+        let mut static_responses = BTreeMap::new();
+        static_responses.insert(BB_HN5_SOURCE_ID.to_string(), response_body.into());
+
+        Self {
+            client: reqwest::Client::new(),
+            inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(
+                default_api_draw_sources(),
+            ))),
+            static_responses: Arc::new(static_responses),
+            persistence: None,
+        }
+    }
+
+    #[cfg(test)]
+    /// 使用静态响应内容创建印尼开奖预置源，便于测试印尼 5 分彩解析。
+    pub fn indonesia_seeded_with_static_response(response_body: impl Into<String>) -> Self {
+        let mut static_responses = BTreeMap::new();
+        static_responses.insert(IDN5_SOURCE_ID.to_string(), response_body.into());
+
+        Self {
+            client: reqwest::Client::new(),
+            inner: Arc::new(RwLock::new(ApiDrawSourceStore::new(
+                default_api_draw_sources(),
+            ))),
+            static_responses: Arc::new(static_responses),
+            persistence: None,
+        }
+    }
+
     /// 返回完整列表。
     pub async fn list(&self) -> ApiResult<Vec<DrawSource>> {
         self.inner
@@ -223,6 +266,13 @@ impl ApiDrawSourceRepository {
         let result = match source.provider {
             DrawSourceProvider::Api68 => self.fetch_api68_draw_number(&source, &issue.issue).await,
             DrawSourceProvider::KjApi => self.fetch_kj_draw_number(&source, &issue.issue).await,
+            DrawSourceProvider::BbKaijiang => {
+                self.fetch_bb_draw_number(&source, &issue.issue).await
+            }
+            DrawSourceProvider::IndonesiaLottery => {
+                self.fetch_indonesia_draw_number(&source, &issue.issue)
+                    .await
+            }
         };
 
         if let Err(error) = &result {
@@ -257,6 +307,10 @@ impl ApiDrawSourceRepository {
         let result = match source.provider {
             DrawSourceProvider::Api68 => self.fetch_api68_latest_issue(&source).await,
             DrawSourceProvider::KjApi => self.fetch_kj_latest_issue(&source).await,
+            DrawSourceProvider::BbKaijiang => self.fetch_bb_latest_issue(&source).await,
+            DrawSourceProvider::IndonesiaLottery => {
+                self.fetch_indonesia_latest_issue(&source).await
+            }
         };
 
         if let Err(error) = &result {
@@ -395,6 +449,132 @@ impl ApiDrawSourceRepository {
             .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
 
         parse_kj_latest_issue(&response_body)
+    }
+
+    async fn fetch_bb_draw_number(
+        &self,
+        source: &ApiDrawSourceConfig,
+        issue: &str,
+    ) -> ApiResult<String> {
+        if let Some(response_body) = self.static_responses.get(&source.id) {
+            return parse_bb_draw_number(response_body, issue);
+        }
+
+        let response = self
+            .client
+            .get(source.url())
+            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
+            .send()
+            .await
+            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ApiError::Internal(format!(
+                "API 开奖源返回 HTTP 状态 {status}"
+            )));
+        }
+
+        let response_body = response
+            .text()
+            .await
+            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
+
+        parse_bb_draw_number(&response_body, issue)
+    }
+
+    async fn fetch_bb_latest_issue(
+        &self,
+        source: &ApiDrawSourceConfig,
+    ) -> ApiResult<ApiDrawSourceLatestIssue> {
+        if let Some(response_body) = self.static_responses.get(&source.id) {
+            return parse_bb_latest_issue(response_body);
+        }
+
+        let response = self
+            .client
+            .get(source.url())
+            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
+            .send()
+            .await
+            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ApiError::Internal(format!(
+                "API 开奖源返回 HTTP 状态 {status}"
+            )));
+        }
+
+        let response_body = response
+            .text()
+            .await
+            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
+
+        parse_bb_latest_issue(&response_body)
+    }
+
+    async fn fetch_indonesia_draw_number(
+        &self,
+        source: &ApiDrawSourceConfig,
+        issue: &str,
+    ) -> ApiResult<String> {
+        if let Some(response_body) = self.static_responses.get(&source.id) {
+            return parse_indonesia_draw_number(response_body, issue);
+        }
+
+        let response = self
+            .client
+            .get(source.url())
+            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
+            .send()
+            .await
+            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ApiError::Internal(format!(
+                "API 开奖源返回 HTTP 状态 {status}"
+            )));
+        }
+
+        let response_body = response
+            .text()
+            .await
+            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
+
+        parse_indonesia_draw_number(&response_body, issue)
+    }
+
+    async fn fetch_indonesia_latest_issue(
+        &self,
+        source: &ApiDrawSourceConfig,
+    ) -> ApiResult<ApiDrawSourceLatestIssue> {
+        if let Some(response_body) = self.static_responses.get(&source.id) {
+            return parse_indonesia_latest_issue(response_body);
+        }
+
+        let response = self
+            .client
+            .get(source.url())
+            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
+            .send()
+            .await
+            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ApiError::Internal(format!(
+                "API 开奖源返回 HTTP 状态 {status}"
+            )));
+        }
+
+        let response_body = response
+            .text()
+            .await
+            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
+
+        parse_indonesia_latest_issue(&response_body)
     }
 
     /// 从数据库重新加载 API 开奖源配置，供后台缓存维护和手动改库后校准使用。
@@ -769,11 +949,39 @@ impl ApiDrawSourceConfig {
         }
     }
 
+    /// 构造 BB 开奖河内 5 分彩默认开奖源。
+    fn bb_hn5() -> Self {
+        Self {
+            id: BB_HN5_SOURCE_ID.to_string(),
+            name: BB_HN5_SOURCE_NAME.to_string(),
+            provider: DrawSourceProvider::BbKaijiang,
+            lot_code: BB_HN5_GAME_CODE.to_string(),
+            endpoint: default_bb_endpoint(),
+            reusable_for_lottery_ids: vec![BB_HN5_LOTTERY_ID.to_string()],
+        }
+    }
+
+    /// 构造印尼开奖印尼 5 分彩默认开奖源。
+    fn indonesia_id5() -> Self {
+        Self {
+            id: IDN5_SOURCE_ID.to_string(),
+            name: IDN5_SOURCE_NAME.to_string(),
+            provider: DrawSourceProvider::IndonesiaLottery,
+            lot_code: IDN5_LOT_CODE.to_string(),
+            endpoint: default_indonesia_endpoint(),
+            reusable_for_lottery_ids: vec![IDN5_LOTTERY_ID.to_string()],
+        }
+    }
+
     /// 处理 url 的具体内部流程。
     fn url(&self) -> String {
         match self.provider {
             DrawSourceProvider::Api68 => source_url(&self.endpoint, "lotCode", &self.lot_code),
             DrawSourceProvider::KjApi => source_url(&self.endpoint, "lotKey", &self.lot_code),
+            DrawSourceProvider::BbKaijiang => {
+                source_url(&self.endpoint, "gameCodeList", &self.lot_code)
+            }
+            DrawSourceProvider::IndonesiaLottery => self.endpoint.clone(),
         }
     }
 
@@ -821,6 +1029,16 @@ fn default_kj_endpoint() -> String {
     DEFAULT_KJ_ENDPOINT.to_string()
 }
 
+/// 处理 default_bb_endpoint 的具体内部流程。
+fn default_bb_endpoint() -> String {
+    DEFAULT_BB_ENDPOINT.to_string()
+}
+
+/// 处理 default_indonesia_endpoint 的具体内部流程。
+fn default_indonesia_endpoint() -> String {
+    DEFAULT_INDONESIA_ENDPOINT.to_string()
+}
+
 /// 处理 normalized_endpoint 的具体内部流程。
 fn normalized_endpoint(endpoint: Option<&str>, provider: &DrawSourceProvider) -> String {
     endpoint
@@ -830,6 +1048,8 @@ fn normalized_endpoint(endpoint: Option<&str>, provider: &DrawSourceProvider) ->
         .unwrap_or_else(|| match provider {
             DrawSourceProvider::Api68 => default_api68_quanguocai_endpoint(),
             DrawSourceProvider::KjApi => default_kj_endpoint(),
+            DrawSourceProvider::BbKaijiang => default_bb_endpoint(),
+            DrawSourceProvider::IndonesiaLottery => default_indonesia_endpoint(),
         })
 }
 
@@ -841,6 +1061,8 @@ fn default_api_draw_sources() -> Vec<ApiDrawSourceConfig> {
         ApiDrawSourceConfig::api68_pl5(),
         ApiDrawSourceConfig::api68_au5(),
         ApiDrawSourceConfig::kj_txffc(),
+        ApiDrawSourceConfig::bb_hn5(),
+        ApiDrawSourceConfig::indonesia_id5(),
     ];
     sources.extend(extra_api68_draw_sources());
     sources
@@ -1114,6 +1336,144 @@ pub(crate) fn parse_kj_latest_issue(response_body: &str) -> ApiResult<ApiDrawSou
     })
 }
 
+pub(crate) fn parse_bb_draw_number(response_body: &str, expected_issue: &str) -> ApiResult<String> {
+    let expected_issue = expected_issue.trim();
+    if expected_issue.is_empty() {
+        return Err(ApiError::BadRequest("issue is required".to_string()));
+    }
+
+    let envelope = parse_bb_envelope(response_body)?;
+    let returned_issue = envelope
+        .value
+        .first()
+        .and_then(|item| item.last.as_ref())
+        .map(|draw| draw.numero.trim().to_string())
+        .filter(|issue| !issue.is_empty());
+
+    for item in envelope.value {
+        for draw in item.draws() {
+            if draw.numero.trim() != expected_issue {
+                continue;
+            }
+            let Some(draw_number) = draw.open_number.as_deref().map(str::trim) else {
+                continue;
+            };
+            if draw_number.is_empty() {
+                continue;
+            }
+            return Ok(draw_number.to_string());
+        }
+    }
+
+    let detail = returned_issue
+        .map(|issue| format!("，当前返回期号 `{issue}`"))
+        .unwrap_or_default();
+    Err(ApiError::NotFound(format!(
+        "API 开奖源未找到期号 `{expected_issue}` 的开奖号码{detail}"
+    )))
+}
+
+pub(crate) fn parse_bb_latest_issue(response_body: &str) -> ApiResult<ApiDrawSourceLatestIssue> {
+    let envelope = parse_bb_envelope(response_body)?;
+    let Some(item) = envelope.value.into_iter().find(|item| {
+        item.last
+            .as_ref()
+            .is_some_and(|draw| !draw.numero.trim().is_empty())
+    }) else {
+        return Err(ApiError::Internal("BB 开奖源最新期号为空".to_string()));
+    };
+    let last = item
+        .last
+        .ok_or_else(|| ApiError::Internal("BB 开奖源最新期号为空".to_string()))?;
+    let issue = last.numero.trim().to_string();
+    let draw_time = last
+        .actual_open_time
+        .as_deref()
+        .or(last.plan_open_time.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let next_issue = item
+        .newest
+        .as_ref()
+        .or(item.next.as_ref())
+        .map(|draw| draw.numero.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let next_draw_time = item
+        .newest
+        .as_ref()
+        .or(item.next.as_ref())
+        .and_then(|draw| draw.plan_open_time.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+
+    Ok(ApiDrawSourceLatestIssue {
+        issue,
+        draw_time,
+        next_issue,
+        next_draw_time,
+    })
+}
+
+pub(crate) fn parse_indonesia_draw_number(
+    response_body: &str,
+    expected_issue: &str,
+) -> ApiResult<String> {
+    let expected_issue = expected_issue.trim();
+    if expected_issue.is_empty() {
+        return Err(ApiError::BadRequest("issue is required".to_string()));
+    }
+    let expected_issue = normalize_indonesia_issue(expected_issue)
+        .ok_or_else(|| ApiError::BadRequest("issue is invalid".to_string()))?;
+    let data = parse_indonesia_data(response_body)?;
+
+    if normalize_indonesia_issue(&data.latest_origin).as_deref() == Some(expected_issue.as_str()) {
+        let latest_num = data.latest_num.trim();
+        if !latest_num.is_empty() {
+            return Ok(latest_num.to_string());
+        }
+    }
+
+    for history in data.history {
+        if normalize_indonesia_issue(&history.num).as_deref() != Some(expected_issue.as_str()) {
+            continue;
+        }
+        let result = history.result.trim();
+        if !result.is_empty() {
+            return Ok(result.to_string());
+        }
+    }
+
+    let detail = normalize_indonesia_issue(&data.latest_origin)
+        .map(|issue| format!("，当前返回期号 `{issue}`"))
+        .unwrap_or_default();
+    Err(ApiError::NotFound(format!(
+        "API 开奖源未找到期号 `{expected_issue}` 的开奖号码{detail}"
+    )))
+}
+
+pub(crate) fn parse_indonesia_latest_issue(
+    response_body: &str,
+) -> ApiResult<ApiDrawSourceLatestIssue> {
+    let data = parse_indonesia_data(response_body)?;
+    let issue = normalize_indonesia_issue(&data.latest_origin)
+        .or_else(|| normalize_indonesia_issue(&data.latest))
+        .ok_or_else(|| ApiError::Internal("印尼开奖源最新期号为空".to_string()))?;
+    let next_issue = normalize_indonesia_issue(&data.next_num);
+    let next_draw_time = data
+        .next_time
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    Ok(ApiDrawSourceLatestIssue {
+        issue,
+        draw_time: None,
+        next_issue,
+        next_draw_time,
+    })
+}
+
 /// 解析输入并返回结构化值。
 fn parse_api68_result(response_body: &str) -> ApiResult<Api68Result> {
     let envelope = serde_json::from_str::<Api68Envelope>(response_body)
@@ -1156,6 +1516,47 @@ fn parse_kj_data(response_body: &str) -> ApiResult<KjData> {
         .result
         .and_then(|result| result.data)
         .ok_or_else(|| ApiError::Internal("KJAPI result.data 为空".to_string()))
+}
+
+/// 解析 BB 开奖响应并校验业务成功状态。
+fn parse_bb_envelope(response_body: &str) -> ApiResult<BbEnvelope> {
+    let envelope = serde_json::from_str::<BbEnvelope>(response_body)
+        .map_err(|_| ApiError::Internal("API 开奖源响应无法解析".to_string()))?;
+
+    if !envelope.success {
+        return Err(ApiError::Internal("BB 开奖源返回失败状态".to_string()));
+    }
+
+    Ok(envelope)
+}
+
+/// 解析印尼开奖响应并返回当前快照。
+fn parse_indonesia_data(response_body: &str) -> ApiResult<IndonesiaDrawData> {
+    serde_json::from_str::<IndonesiaDrawData>(response_body)
+        .map_err(|_| ApiError::Internal("API 开奖源响应无法解析".to_string()))
+}
+
+/// 将印尼接口的日期-序号期号转换为系统可递增数字期号。
+fn normalize_indonesia_issue(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Some(value.to_string());
+    }
+    let (date, sequence) = value.split_once('-')?;
+    let date = date.trim();
+    let sequence = sequence.trim();
+    if date.len() != 8
+        || !date.bytes().all(|byte| byte.is_ascii_digit())
+        || sequence.is_empty()
+        || !sequence.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let sequence_number = sequence.parse::<u32>().ok()?;
+    Some(format!("{date}{sequence_number:03}"))
 }
 
 /// 处理 api68_issue_value 的具体内部流程。
@@ -1244,12 +1645,73 @@ struct KjData {
     draw_time: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BbEnvelope {
+    success: bool,
+    #[serde(default)]
+    value: Vec<BbLotteryResult>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BbLotteryResult {
+    #[serde(default)]
+    newest: Option<BbDrawSnapshot>,
+    #[serde(default)]
+    last: Option<BbDrawSnapshot>,
+    #[serde(default)]
+    next: Option<BbDrawSnapshot>,
+}
+
+impl BbLotteryResult {
+    /// 返回响应中可能携带开奖号码的快照，供按期号查找时统一遍历。
+    fn draws(&self) -> Vec<&BbDrawSnapshot> {
+        [&self.last, &self.newest, &self.next]
+            .into_iter()
+            .filter_map(|draw| draw.as_ref())
+            .collect()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BbDrawSnapshot {
+    numero: String,
+    #[serde(default)]
+    plan_open_time: Option<String>,
+    #[serde(default)]
+    actual_open_time: Option<String>,
+    #[serde(default)]
+    open_number: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IndonesiaDrawData {
+    next_num: String,
+    latest_num: String,
+    latest_origin: String,
+    #[serde(default)]
+    history: Vec<IndonesiaHistoryItem>,
+    latest: String,
+    #[serde(default)]
+    next_time: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IndonesiaHistoryItem {
+    num: String,
+    result: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_api68_draw_number, parse_api68_latest_issue, parse_kj_draw_number,
-        parse_kj_latest_issue, ApiDrawSourceRepository, API68_AU5_SOURCE_ID, API68_FC3D_SOURCE_ID,
-        API68_PL3_SOURCE_ID, API68_PL5_SOURCE_ID, KJ_TXFFC_SOURCE_ID,
+        parse_api68_draw_number, parse_api68_latest_issue, parse_bb_draw_number,
+        parse_bb_latest_issue, parse_indonesia_draw_number, parse_indonesia_latest_issue,
+        parse_kj_draw_number, parse_kj_latest_issue, ApiDrawSourceRepository, API68_AU5_SOURCE_ID,
+        API68_FC3D_SOURCE_ID, API68_PL3_SOURCE_ID, API68_PL5_SOURCE_ID, BB_HN5_SOURCE_ID,
+        IDN5_SOURCE_ID, KJ_TXFFC_SOURCE_ID,
     };
     use crate::{
         domain::lottery::{DrawSourceProvider, SaveDrawSourceRequest},
@@ -1299,6 +1761,56 @@ mod tests {
                 "drawTime": "2026-06-03 19:39:00"
             }
         }
+    }"#;
+    const BB_SAMPLE: &str = r#"{
+        "success": true,
+        "value": [
+            {
+                "newest": {
+                    "groupCode": "SSC",
+                    "gameCode": "VIFFC5",
+                    "numero": "20260617027",
+                    "prettyNumero": "20260617-027",
+                    "planOpenTime": "2026-06-17 02:15:00",
+                    "actualOpenTime": null,
+                    "openStatus": "SELLING",
+                    "openNumber": null
+                },
+                "last": {
+                    "groupCode": "SSC",
+                    "gameCode": "VIFFC5",
+                    "numero": "20260617026",
+                    "prettyNumero": "20260617-026",
+                    "planOpenTime": "2026-06-17 02:10:00",
+                    "actualOpenTime": "2026-06-17 02:10:04",
+                    "openStatus": "SETTLE",
+                    "openNumber": "5,8,2,6,2"
+                },
+                "next": {
+                    "groupCode": "SSC",
+                    "gameCode": "VIFFC5",
+                    "numero": "20260617028",
+                    "prettyNumero": "20260617-028",
+                    "planOpenTime": "2026-06-17 02:20:00",
+                    "actualOpenTime": null,
+                    "openStatus": "NONE",
+                    "openNumber": null
+                },
+                "frequency": 300
+            }
+        ]
+    }"#;
+    const INDONESIA_SAMPLE: &str = r#"{
+        "next_num": "20260617-43",
+        "latest_num": "8,7,3,5,8",
+        "latest_origin": "20260617-042",
+        "history": [
+            { "num": "20260617-42", "result": "8,7,3,5,8" },
+            { "num": "20260617-41", "result": "7,4,4,3,1" }
+        ],
+        "latest": "20260617-42",
+        "next_time": "2026-06-17 03:35:00",
+        "next_second": 235
     }"#;
 
     #[test]
@@ -1387,6 +1899,53 @@ mod tests {
         assert_eq!(
             latest.next_draw_time.as_deref(),
             Some("2026-06-03 19:39:00")
+        );
+    }
+
+    #[test]
+    /// 解析 BB 开奖河内 5 分彩响应并返回最近已开奖期号。
+    fn parse_bb_draw_number_matches_last_settled_issue() {
+        let draw_number =
+            parse_bb_draw_number(BB_SAMPLE, "20260617026").expect("draw number can be parsed");
+
+        assert_eq!(draw_number, "5,8,2,6,2");
+    }
+
+    #[test]
+    /// 解析 BB 开奖源最新期号时用 last 作为已开奖锚点、newest 作为下一期开奖。
+    fn parse_bb_latest_issue_uses_last_and_newest_issue() {
+        let latest = parse_bb_latest_issue(BB_SAMPLE).expect("latest issue can be parsed");
+
+        assert_eq!(latest.issue, "20260617026");
+        assert_eq!(latest.draw_time.as_deref(), Some("2026-06-17 02:10:04"));
+        assert_eq!(latest.next_issue.as_deref(), Some("20260617027"));
+        assert_eq!(
+            latest.next_draw_time.as_deref(),
+            Some("2026-06-17 02:15:00")
+        );
+    }
+
+    #[test]
+    /// 解析印尼 5 分彩响应时把 20260617-042 归一为数字期号并返回开奖号码。
+    fn parse_indonesia_draw_number_matches_padded_issue() {
+        let draw_number = parse_indonesia_draw_number(INDONESIA_SAMPLE, "20260617042")
+            .expect("draw number can be parsed");
+
+        assert_eq!(draw_number, "8,7,3,5,8");
+    }
+
+    #[test]
+    /// 解析印尼 5 分彩最新期号时用 next_num 和 next_time 作为下一期锚点。
+    fn parse_indonesia_latest_issue_uses_next_issue_and_time() {
+        let latest =
+            parse_indonesia_latest_issue(INDONESIA_SAMPLE).expect("latest issue can be parsed");
+
+        assert_eq!(latest.issue, "20260617042");
+        assert_eq!(latest.draw_time, None);
+        assert_eq!(latest.next_issue.as_deref(), Some("20260617043"));
+        assert_eq!(
+            latest.next_draw_time.as_deref(),
+            Some("2026-06-17 03:35:00")
         );
     }
 
@@ -1549,6 +2108,71 @@ mod tests {
             Some("https://kjapi.net/hall/hallajax/getLotteryInfo")
         );
         assert_eq!(source.reusable_for_lottery_ids, vec!["txffc".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn seeded_sources_include_hn5_bb_source() {
+        let repository = ApiDrawSourceRepository::api68_seeded();
+        let sources = repository.list().await.expect("sources can be listed");
+        let source = sources
+            .iter()
+            .find(|source| source.id == BB_HN5_SOURCE_ID)
+            .expect("hn5 seeded source exists");
+
+        assert_eq!(source.provider, Some(DrawSourceProvider::BbKaijiang));
+        assert_eq!(source.lot_code.as_deref(), Some("VIFFC5"));
+        assert_eq!(
+            source.endpoint.as_deref(),
+            Some("https://www.bbkaijiang.com/api/st-lottery-open/open-result/list-newest-result")
+        );
+        assert_eq!(source.reusable_for_lottery_ids, vec!["hn5".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn seeded_bb_source_returns_latest_issue_for_hn5() {
+        let repository = ApiDrawSourceRepository::bb_seeded_with_static_response(BB_SAMPLE);
+
+        let latest = repository
+            .latest_issue_for_lottery("hn5")
+            .await
+            .expect("latest issue can be fetched")
+            .expect("hn5 has source");
+
+        assert_eq!(latest.issue, "20260617026");
+        assert_eq!(latest.next_issue.as_deref(), Some("20260617027"));
+    }
+
+    #[tokio::test]
+    async fn seeded_sources_include_id5_indonesia_source() {
+        let repository = ApiDrawSourceRepository::api68_seeded();
+        let sources = repository.list().await.expect("sources can be listed");
+        let source = sources
+            .iter()
+            .find(|source| source.id == IDN5_SOURCE_ID)
+            .expect("id5 seeded source exists");
+
+        assert_eq!(source.provider, Some(DrawSourceProvider::IndonesiaLottery));
+        assert_eq!(source.lot_code.as_deref(), Some("IDFFC5"));
+        assert_eq!(
+            source.endpoint.as_deref(),
+            Some("https://draw.indonesia-lottery.org/others/draw.php")
+        );
+        assert_eq!(source.reusable_for_lottery_ids, vec!["id5".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn seeded_indonesia_source_returns_latest_issue_for_id5() {
+        let repository =
+            ApiDrawSourceRepository::indonesia_seeded_with_static_response(INDONESIA_SAMPLE);
+
+        let latest = repository
+            .latest_issue_for_lottery("id5")
+            .await
+            .expect("latest issue can be fetched")
+            .expect("id5 has source");
+
+        assert_eq!(latest.issue, "20260617042");
+        assert_eq!(latest.next_issue.as_deref(), Some("20260617043"));
     }
 
     #[tokio::test]

@@ -5,10 +5,13 @@ import { useRouter } from 'vue-router'
 import {
   claimChatHallRedPacket,
   errorMessage,
+  fetchChatHallRedPacketClaims,
   fetchChatHallMessages,
   sendChatHallMessage,
   sendChatHallRedPacket,
   shareChatHallGroupBuyPlan,
+  type ChatHallRedPacketClaim,
+  type ChatHallRedPacketClaimsResponse,
   type ChatHallGroupBuyPlanPayload,
   type ChatHallMessage,
   type ChatHallRedPacketPayload,
@@ -37,6 +40,11 @@ const redPacketCount = ref('1')
 const redPacketGreeting = ref('恭喜发财，大吉大利')
 const sendingRedPacket = ref(false)
 const claimingRedPacketId = ref('')
+const redPacketClaimsDialogVisible = ref(false)
+const loadingRedPacketClaims = ref(false)
+const selectedRedPacketClaims = ref<ChatHallRedPacketClaimsResponse | null>(null)
+const selectedRedPacketMessage = ref<ChatHallMessage | null>(null)
+const claimedRedPacketIds = ref<Set<string>>(new Set())
 const groupBuyDialogVisible = ref(false)
 const loadingGroupBuys = ref(false)
 const sharingGroupBuyId = ref('')
@@ -163,7 +171,40 @@ function moneyToMinor(value: string) {
 
 function canClaimRedPacket(message: ChatHallMessage) {
   const payload = redPacketPayload(message)
-  return Boolean(payload && !isMine(message) && payload.remainingAmountMinor > 0 && payload.claimedCount < payload.claimCount)
+  return Boolean(
+    payload
+    && !isMine(message)
+    && !hasClaimedRedPacket(message)
+    && payload.remainingAmountMinor > 0
+    && payload.claimedCount < payload.claimCount,
+  )
+}
+
+function redPacketId(message: ChatHallMessage) {
+  return redPacketPayload(message)?.redPacketId || ''
+}
+
+function hasClaimedRedPacket(message: ChatHallMessage) {
+  const id = redPacketId(message)
+  if (!id || !currentUserId.value) return false
+  if (claimedRedPacketIds.value.has(id)) return true
+  return Boolean(
+    selectedRedPacketClaims.value?.redPacketId === id
+    && selectedRedPacketClaims.value.claims.some(claim => claim.userId === currentUserId.value),
+  )
+}
+
+function rememberClaimedRedPacket(redPacketIdValue: string) {
+  if (!redPacketIdValue) return
+  const next = new Set(claimedRedPacketIds.value)
+  next.add(redPacketIdValue)
+  claimedRedPacketIds.value = next
+}
+
+function redPacketActionText(message: ChatHallMessage) {
+  const id = redPacketId(message)
+  if (claimingRedPacketId.value && claimingRedPacketId.value === id) return '领取中'
+  return canClaimRedPacket(message) ? '领取' : '查看'
 }
 
 function redPacketProgressText(message: ChatHallMessage) {
@@ -269,6 +310,7 @@ async function claimRedPacket(message: ChatHallMessage) {
   claimingRedPacketId.value = payload.redPacketId
   try {
     const response = await claimChatHallRedPacket(payload.redPacketId)
+    rememberClaimedRedPacket(payload.redPacketId)
     upsertMessage(response.message, { forceScroll: true })
     showToast(`领取红包 ¥${formatMinor(response.claim.amountMinor)}`)
   } catch (error) {
@@ -276,6 +318,60 @@ async function claimRedPacket(message: ChatHallMessage) {
   } finally {
     claimingRedPacketId.value = ''
   }
+}
+
+async function handleRedPacketAction(message: ChatHallMessage) {
+  if (canClaimRedPacket(message)) {
+    await claimRedPacket(message)
+    return
+  }
+  await openRedPacketClaims(message)
+}
+
+async function openRedPacketClaims(message: ChatHallMessage) {
+  const payload = redPacketPayload(message)
+  if (!payload || loadingRedPacketClaims.value) return
+  selectedRedPacketMessage.value = message
+  selectedRedPacketClaims.value = null
+  redPacketClaimsDialogVisible.value = true
+  loadingRedPacketClaims.value = true
+  try {
+    const response = await fetchChatHallRedPacketClaims(payload.redPacketId)
+    selectedRedPacketClaims.value = response
+    if (response.claims.some(claim => claim.userId === currentUserId.value)) {
+      rememberClaimedRedPacket(response.redPacketId)
+    }
+  } catch (error) {
+    redPacketClaimsDialogVisible.value = false
+    showToast(errorMessage(error, '加载红包领取记录失败'))
+  } finally {
+    loadingRedPacketClaims.value = false
+  }
+}
+
+function claimDisplayName(claim: ChatHallRedPacketClaim) {
+  if (claim.userId === currentUserId.value) return '我'
+  return claim.username || '会员'
+}
+
+function selectedRedPacketFallbackPayload() {
+  return selectedRedPacketMessage.value ? redPacketPayload(selectedRedPacketMessage.value) : null
+}
+
+function selectedRedPacketGreeting() {
+  return selectedRedPacketClaims.value?.greeting || selectedRedPacketFallbackPayload()?.greeting || '红包'
+}
+
+function selectedRedPacketTotalAmountMinor() {
+  return selectedRedPacketClaims.value?.totalAmountMinor ?? selectedRedPacketFallbackPayload()?.totalAmountMinor ?? 0
+}
+
+function selectedRedPacketClaimedCount() {
+  return selectedRedPacketClaims.value?.claimedCount ?? selectedRedPacketFallbackPayload()?.claimedCount ?? 0
+}
+
+function selectedRedPacketClaimCount() {
+  return selectedRedPacketClaims.value?.claimCount ?? selectedRedPacketFallbackPayload()?.claimCount ?? 0
 }
 
 async function openGroupBuyDialog() {
@@ -442,8 +538,14 @@ function sendMessageByEnter(event: KeyboardEvent) {
 }
 
 watch(() => props.wsMessage, (message) => {
-  if (message?.event !== 'chat_hall_message_created') return
-  upsertMessage(message.message as ChatHallMessage)
+  if (message?.event === 'chat_hall_message_created') {
+    upsertMessage(message.message as ChatHallMessage)
+    return
+  }
+  if (message?.event === 'chat_hall_messages_cleared') {
+    messages.value = []
+    newMessageCount.value = 0
+  }
 })
 
 onMounted(() => {
@@ -497,16 +599,16 @@ onBeforeUnmount(() => {
               v-if="redPacketPayload(message)"
               class="chat-hall-red-packet"
               :class="{ 'chat-hall-red-packet--mine': isMine(message) }"
-              :disabled="!canClaimRedPacket(message) || claimingRedPacketId === redPacketPayload(message)?.redPacketId"
+              :disabled="claimingRedPacketId === redPacketPayload(message)?.redPacketId"
               type="button"
-              @click="claimRedPacket(message)"
+              @click="handleRedPacketAction(message)"
             >
               <span class="chat-hall-red-packet__icon">¥</span>
               <span class="chat-hall-red-packet__body">
                 <strong>{{ redPacketPayload(message)?.greeting }}</strong>
                 <small>总额 ¥{{ formatMinor(redPacketPayload(message)?.totalAmountMinor) }} · {{ redPacketProgressText(message) }}</small>
               </span>
-              <span class="chat-hall-red-packet__action">{{ canClaimRedPacket(message) ? '领取' : '查看' }}</span>
+              <span class="chat-hall-red-packet__action">{{ redPacketActionText(message) }}</span>
             </button>
             <button
               v-else-if="groupBuyPayload(message)"
@@ -578,6 +680,50 @@ onBeforeUnmount(() => {
           <button class="chat-hall-modal__primary" :disabled="sendingRedPacket" type="button" @click="submitRedPacket">
             {{ sendingRedPacket ? '发送中...' : '发送红包' }}
           </button>
+        </section>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="redPacketClaimsDialogVisible"
+        class="chat-hall-modal"
+        @click.self="redPacketClaimsDialogVisible = false"
+      >
+        <section class="chat-hall-modal__sheet chat-hall-modal__sheet--tall">
+          <div class="chat-hall-modal__header">
+            <h2>红包领取记录</h2>
+            <button type="button" aria-label="关闭" @click="redPacketClaimsDialogVisible = false">
+              <LucideIcon name="close" />
+            </button>
+          </div>
+          <div class="chat-hall-red-packet-claims__summary">
+            <strong>{{ selectedRedPacketGreeting() }}</strong>
+            <span>
+              总额 ¥{{ formatMinor(selectedRedPacketTotalAmountMinor()) }}
+              · 已领 {{ selectedRedPacketClaimedCount() }}/{{ selectedRedPacketClaimCount() }}
+            </span>
+          </div>
+          <div v-if="loadingRedPacketClaims" class="chat-hall-modal__state">正在加载领取记录...</div>
+          <div
+            v-else-if="!selectedRedPacketClaims?.claims.length"
+            class="chat-hall-modal__state"
+          >
+            暂时还没有人领取
+          </div>
+          <div v-else class="chat-hall-red-packet-claims">
+            <div
+              v-for="claim in selectedRedPacketClaims.claims"
+              :key="claim.id"
+              class="chat-hall-red-packet-claims__item"
+            >
+              <div>
+                <strong>{{ claimDisplayName(claim) }}</strong>
+                <small>{{ formatMessageTime(claim.createdAt) }}</small>
+              </div>
+              <span>¥{{ formatMinor(claim.amountMinor) }}</span>
+            </div>
+          </div>
         </section>
       </div>
     </Teleport>
@@ -1211,6 +1357,78 @@ onBeforeUnmount(() => {
   font-weight: 800;
   outline: none;
   padding: 0 0.9rem;
+}
+
+.chat-hall-red-packet-claims__summary {
+  display: grid;
+  gap: 0.25rem;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, #fff2d7, #ffe4dd);
+  padding: 0.78rem 0.85rem;
+  color: #6f280c;
+}
+
+.chat-hall-red-packet-claims__summary strong {
+  overflow: hidden;
+  font-size: 0.92rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-hall-red-packet-claims__summary span {
+  color: rgba(111, 40, 12, 0.72);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.chat-hall-red-packet-claims {
+  display: grid;
+  gap: 0.52rem;
+  margin-top: 0.7rem;
+}
+
+.chat-hall-red-packet-claims__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border: 1px solid rgba(143, 20, 31, 0.08);
+  border-radius: 0.95rem;
+  background: #fffafa;
+  padding: 0.66rem 0.75rem;
+}
+
+.chat-hall-red-packet-claims__item div {
+  min-width: 0;
+}
+
+.chat-hall-red-packet-claims__item strong,
+.chat-hall-red-packet-claims__item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-hall-red-packet-claims__item strong {
+  color: #2b1f1f;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.chat-hall-red-packet-claims__item small {
+  margin-top: 0.18rem;
+  color: #9a8582;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.chat-hall-red-packet-claims__item span {
+  flex: 0 0 auto;
+  color: #a41420;
+  font-size: 0.86rem;
+  font-weight: 900;
 }
 
 .chat-hall-modal__primary {

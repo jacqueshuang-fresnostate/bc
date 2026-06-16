@@ -53,9 +53,11 @@ import type {
   PermissionScope,
   RegistrationConfig,
   UserKind,
+  UserRegistrationLocation,
   UserStatus,
   UserSummary,
 } from '../types/dashboard';
+import type { ClearRecordsResult } from '../types/finance';
 import { formatMoney } from '../utils/format';
 import { minorToYuanInput, yuanInputToMinor } from '../utils/moneyInput';
 
@@ -77,6 +79,7 @@ interface UserFormState {
   inviteCode: string;
   kind: UserKind;
   password: string;
+  registrationLocation: UserRegistrationLocation;
   status: UserStatus;
   username: string;
 }
@@ -260,6 +263,7 @@ export function AccessManagementPage({
     admins,
     changeAdminStatus,
     changeUserStatus,
+    clearChatHallHistory,
     error,
     loading,
     refresh,
@@ -581,6 +585,11 @@ export function AccessManagementPage({
             setSettingDrafts((current) => ({ ...current, [key]: value }))
           }
           onRegistrationChange={setRegistrationForm}
+          onClearChatHallMessages={async () => {
+            const result = await clearChatHallHistory();
+            onDashboardRefresh();
+            return result;
+          }}
           onReloadMemoryCache={async () => {
             const result = await reloadMemoryCache();
             onDashboardRefresh();
@@ -734,10 +743,11 @@ function UserSection({
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1040px] text-left text-sm">
+          <table className="w-full min-w-[1160px] text-left text-sm">
             <thead className="border-b border-line text-xs text-slate-500">
               <tr>
                 <th className="py-2 pr-4 font-medium">用户</th>
+                <th className="py-2 pr-4 font-medium">注册地</th>
                 <th className="py-2 pr-4 font-medium">类型</th>
                 <th className="py-2 pr-4 font-medium">余额</th>
                 <th className="py-2 pr-4 font-medium">上级代理</th>
@@ -766,6 +776,14 @@ function UserSection({
                       {user.id}
                       {user.email ? ` · ${user.email}` : ''}
                       {user.contactQq ? ` · QQ ${user.contactQq}` : ''}
+                    </div>
+                  </td>
+                  <td className="py-3 pr-4 text-slate-600">
+                    <div className="max-w-[180px] truncate font-medium text-ink">
+                      {registrationLocationLabel(user.registrationLocation)}
+                    </div>
+                    <div className="mt-1 max-w-[180px] truncate text-xs text-slate-400">
+                      {registrationLocationMeta(user.registrationLocation)}
                     </div>
                   </td>
                   <td className="py-3 pr-4">
@@ -898,6 +916,16 @@ function UserSection({
                 setFormValue(onSetForm, 'contactQq', value)
               }
             />
+          </Field>
+          <Field label="注册来源">
+            <div className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+              <div className="font-medium text-ink">
+                {registrationLocationLabel(form.registrationLocation)}
+              </div>
+              <div className="mt-1 text-xs text-slate-400">
+                {registrationLocationMeta(form.registrationLocation)}
+              </div>
+            </div>
           </Field>
           <Field label={editingId ? '重置密码' : '初始密码'}>
             <Input
@@ -1335,6 +1363,7 @@ function RoleSection({
 function SettingsSection({
   drafts,
   lotteries,
+  onClearChatHallMessages,
   onDraftChange,
   onRegistrationChange,
   onReloadMemoryCache,
@@ -1346,6 +1375,7 @@ function SettingsSection({
 }: {
   drafts: Record<string, string>;
   lotteries: LotteryKind[];
+  onClearChatHallMessages: () => Promise<ClearRecordsResult>;
   onDraftChange: (key: string, value: string) => void;
   onRegistrationChange: Dispatch<SetStateAction<RegistrationConfig | null>>;
   onReloadMemoryCache: () => Promise<MemoryCacheReloadResult>;
@@ -1367,8 +1397,11 @@ function SettingsSection({
     'links.download';
   const [settingKeyword, setSettingKeyword] = useState('');
   const [cacheRefreshing, setCacheRefreshing] = useState(false);
+  const [chatHallClearing, setChatHallClearing] = useState(false);
   const [lastCacheReloadResult, setLastCacheReloadResult] =
     useState<MemoryCacheReloadResult | null>(null);
+  const [lastChatHallClearCount, setLastChatHallClearCount] =
+    useState<number | null>(null);
   const imageBedMissingConfigs = [
     imageBedUploadUrl.trim() ? null : '上传地址',
     imageBedUploadToken.trim() ? null : 'Token',
@@ -1420,6 +1453,26 @@ function SettingsSection({
     }
   };
 
+  const handleClearChatHallMessages = async () => {
+    const confirmed = window.confirm(
+      '确定一键清除聊天大厅全部历史消息吗？这会清除大厅文本、红包卡片和合买分享展示记录，不会回滚已经产生的资金流水。',
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setChatHallClearing(true);
+    try {
+      const result = await onClearChatHallMessages();
+      setLastChatHallClearCount(result.deletedCount);
+      Toast.success(`聊天大厅消息已清除：${result.deletedCount} 条`);
+    } catch (error) {
+      Toast.error(error instanceof Error ? error.message : '聊天大厅消息清除失败');
+    } finally {
+      setChatHallClearing(false);
+    }
+  };
+
   return (
     <section className="space-y-4">
       <Card className="rounded-md border border-line">
@@ -1433,7 +1486,17 @@ function SettingsSection({
           <div className="flex flex-wrap items-center gap-2">
             <Tag color="cyan">{settings.length} 项</Tag>
             <Button
-              disabled={saving || cacheRefreshing}
+              disabled={saving || cacheRefreshing || chatHallClearing}
+              icon={<Trash2 size={15} />}
+              loading={chatHallClearing}
+              size="small"
+              type="danger"
+              onClick={() => void handleClearChatHallMessages()}
+            >
+              清除聊天大厅消息
+            </Button>
+            <Button
+              disabled={saving || cacheRefreshing || chatHallClearing}
               icon={<RefreshCcw size={15} />}
               loading={cacheRefreshing}
               size="small"
@@ -1458,6 +1521,11 @@ function SettingsSection({
                 已刷新模块：{lastCacheReloadResult.reloadedModules.join('、')}
               </p>
             ) : null}
+          </div>
+        ) : null}
+        {lastChatHallClearCount !== null ? (
+          <div className="mb-3 rounded border border-orange-100 bg-orange-50 p-3 text-xs text-orange-800">
+            <Tag color="orange">已清除聊天大厅消息 {lastChatHallClearCount} 条</Tag>
           </div>
         ) : null}
         <div className="mb-3">
@@ -2665,6 +2733,16 @@ function readSettingValue(
   return settings.find((item) => item.key === key)?.value ?? '';
 }
 
+function emptyRegistrationLocation(): UserRegistrationLocation {
+  return {
+    city: '',
+    country: '',
+    registeredIp: '',
+    region: '',
+    source: 'unknown',
+  };
+}
+
 function emptyUserForm(): UserFormState {
   return {
     agentId: '',
@@ -2675,6 +2753,7 @@ function emptyUserForm(): UserFormState {
     inviteCode: '',
     kind: 'regular',
     password: '',
+    registrationLocation: emptyRegistrationLocation(),
     status: 'active',
     username: 'new_user',
   };
@@ -2690,6 +2769,7 @@ function userFormFromSummary(user: UserSummary): UserFormState {
     inviteCode: user.inviteCode,
     kind: user.kind,
     password: '',
+    registrationLocation: user.registrationLocation ?? emptyRegistrationLocation(),
     status: user.status,
     username: user.username,
   };
@@ -2704,9 +2784,40 @@ function userPayload(form: UserFormState): UserSummary {
     id: form.id.trim(),
     inviteCode: form.inviteCode.trim(),
     kind: form.kind,
+    registrationLocation: form.registrationLocation,
     status: form.status,
     username: form.username.trim(),
   };
+}
+
+function registrationLocationLabel(location?: UserRegistrationLocation) {
+  if (!location) return '未知地区';
+  const parts = [location.country, location.region, location.city]
+    .map((part) => part?.trim())
+    .filter(Boolean);
+  if (parts.length > 0) return parts.join(' / ');
+  if (location.registeredIp?.trim()) return `IP ${location.registeredIp.trim()}`;
+  return '未知地区';
+}
+
+function registrationLocationMeta(location?: UserRegistrationLocation) {
+  if (!location) return '来源：未知';
+  const source = registrationSourceText(location.source);
+  const ip = location.registeredIp?.trim();
+  return ip ? `来源：${source} · IP ${ip}` : `来源：${source}`;
+}
+
+function registrationSourceText(source?: string) {
+  switch ((source ?? 'unknown').trim()) {
+    case 'gps':
+      return '客户端定位';
+    case 'ip':
+      return '请求 IP';
+    case 'client':
+      return '客户端上报';
+    default:
+      return '未知';
+  }
 }
 
 function emptyAdminForm(roleId: string): AdminFormState {

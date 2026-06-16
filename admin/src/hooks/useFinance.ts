@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   approveWithdrawalOrder,
+  clearLedgerEntries,
   clearRechargeOrders,
   clearWithdrawalOrders,
   confirmRechargeOrder,
@@ -216,6 +217,21 @@ export function useFinance({
     }
   }, [refresh]);
 
+  const clearLedgerRecords = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await clearLedgerEntries();
+      refresh();
+      return result;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
   const clearWithdrawalRecords = useCallback(async () => {
     setSaving(true);
     setError(null);
@@ -235,6 +251,7 @@ export function useFinance({
     accounts,
     adjustBalance,
     approveWithdrawal,
+    clearLedgerRecords,
     clearRechargeRecords,
     clearWithdrawalRecords,
     confirmRecharge,

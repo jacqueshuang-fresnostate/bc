@@ -257,6 +257,11 @@ pub fn chat_hall_message_created_event(message: &ChatHallMessage) -> Value {
     )
 }
 
+/// 封装聊天大厅已被后台清空事件，手机端收到后移除本地大厅历史。
+pub fn chat_hall_messages_cleared_event() -> Value {
+    realtime_envelope("chat_hall.messages_cleared", "public", json!({}))
+}
+
 /// 统一构造实时事件信封，保证客户端只解析一种结构。
 fn realtime_envelope(event: &str, scope: &str, data: Value) -> Value {
     json!({
@@ -491,5 +496,15 @@ mod tests {
             "https://cdn.example.com/avatar.png"
         );
         assert_eq!(event["data"]["message"]["content"], "大家晚上好。");
+    }
+
+    #[test]
+    /// 验证聊天大厅清空事件是公开事件，便于所有在线手机端同步清空本地消息。
+    fn chat_hall_messages_cleared_event_is_public() {
+        let event = chat_hall_messages_cleared_event();
+
+        assert_eq!(event["event"], "chat_hall.messages_cleared");
+        assert_eq!(event["scope"], "public");
+        assert!(event["data"].is_object());
     }
 }

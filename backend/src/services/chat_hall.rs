@@ -13,8 +13,9 @@ use crate::{
     domain::{
         chat_hall::{
             ChatHallGroupBuyPlanPayload, ChatHallMessage, ChatHallMessageType, ChatHallRedPacket,
-            ChatHallRedPacketClaim, ChatHallRedPacketPayload, ClaimChatHallRedPacketResponse,
-            CreateChatHallMessageRequest, CreateChatHallRedPacketRequest,
+            ChatHallRedPacketClaim, ChatHallRedPacketClaimsResponse, ChatHallRedPacketPayload,
+            ClaimChatHallRedPacketResponse, CreateChatHallMessageRequest,
+            CreateChatHallRedPacketRequest,
         },
         user::UserSummary,
     },
@@ -64,6 +65,23 @@ impl ChatHallRepository {
             .read()
             .map_err(|_| ApiError::Internal("聊天大厅数据锁读取失败".to_string()))
             .map(|store| store.list())
+    }
+
+    /// 一键清除聊天大厅历史消息和对应红包展示记录；资金流水不做回滚。
+    pub async fn clear_messages(&self) -> ApiResult<usize> {
+        let (deleted_count, snapshot) = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("聊天大厅数据锁写入失败".to_string()))?;
+            let deleted_count = store.clear_messages();
+            (deleted_count, store.clone())
+        };
+        if deleted_count > 0 {
+            self.persist(&snapshot).await?;
+        }
+
+        Ok(deleted_count)
     }
 
     /// 发送一条聊天大厅消息，保存后由路由层负责广播实时事件。
@@ -161,6 +179,17 @@ impl ChatHallRepository {
             claim,
             available_balance_minor: account.available_balance_minor,
         })
+    }
+
+    /// 返回指定聊天大厅红包的领取记录，供手机端查看谁抢到了红包。
+    pub async fn red_packet_claims(
+        &self,
+        red_packet_id: &str,
+    ) -> ApiResult<ChatHallRedPacketClaimsResponse> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("聊天大厅数据锁读取失败".to_string()))?
+            .red_packet_claims(red_packet_id)
     }
 
     /// 分享一条当前用户自己的合买计划摘要到聊天大厅。
@@ -286,6 +315,36 @@ impl ChatHallStore {
             .collect::<Vec<_>>();
         messages.reverse();
         messages
+    }
+
+    /// 返回指定红包的领取进度和领取人列表，不修改红包或资金状态。
+    fn red_packet_claims(&self, red_packet_id: &str) -> ApiResult<ChatHallRedPacketClaimsResponse> {
+        let red_packet_id = red_packet_id.trim();
+        if red_packet_id.is_empty() {
+            return Err(ApiError::BadRequest("红包编号不能为空".to_string()));
+        }
+        let red_packet = self
+            .red_packets
+            .get(red_packet_id)
+            .ok_or_else(|| ApiError::NotFound("红包不存在".to_string()))?;
+
+        Ok(ChatHallRedPacketClaimsResponse {
+            red_packet_id: red_packet.id.clone(),
+            greeting: red_packet.greeting.clone(),
+            total_amount_minor: red_packet.total_amount_minor,
+            remaining_amount_minor: red_packet.remaining_amount_minor,
+            claim_count: red_packet.claim_count,
+            claimed_count: red_packet.claimed_count,
+            claims: red_packet.claims.clone(),
+        })
+    }
+
+    /// 清空全部大厅展示消息，保留下一条消息序号，避免后续消息编号复用。
+    fn clear_messages(&mut self) -> usize {
+        let deleted_count = self.messages.len();
+        self.messages.clear();
+        self.red_packets.clear();
+        deleted_count
     }
 
     /// 校验用户输入并追加一条新的聊天消息。
@@ -941,6 +1000,42 @@ mod tests {
     }
 
     #[test]
+    /// 验证后台清空聊天大厅消息会清除展示记录，但不会重置后续消息序号。
+    fn chat_hall_store_clears_messages_without_resetting_sequence() {
+        let mut store = ChatHallStore::default();
+        let user = test_user("U90001", "alice");
+        store
+            .send(
+                &user,
+                CreateChatHallMessageRequest {
+                    content: "第一条".to_string(),
+                },
+            )
+            .expect("message can be sent");
+        store
+            .send(
+                &user,
+                CreateChatHallMessageRequest {
+                    content: "第二条".to_string(),
+                },
+            )
+            .expect("message can be sent");
+
+        assert_eq!(store.clear_messages(), 2);
+        assert!(store.list().is_empty());
+
+        let next_message = store
+            .send(
+                &user,
+                CreateChatHallMessageRequest {
+                    content: "清空后新消息".to_string(),
+                },
+            )
+            .expect("message can be sent after clear");
+        assert_eq!(next_message.id, "CHM-000000000003");
+    }
+
+    #[test]
     /// 验证用户更新头像后，聊天大厅历史消息会同步刷新头像链接。
     fn chat_hall_store_updates_user_avatar_snapshot() {
         let mut store = ChatHallStore::default();
@@ -1020,6 +1115,39 @@ mod tests {
     }
 
     #[test]
+    /// 验证红包领取记录可以查询到领取人、金额和领取进度。
+    fn chat_hall_store_lists_red_packet_claims() {
+        let mut store = ChatHallStore::default();
+        let sender = test_user("U90001", "alice");
+        let receiver = test_user("U90002", "bob");
+        let prepared = store
+            .prepare_red_packet(
+                &sender,
+                CreateChatHallRedPacketRequest {
+                    amount_minor: 200,
+                    claim_count: 2,
+                    greeting: "手气不错".to_string(),
+                },
+            )
+            .unwrap();
+        store.insert_prepared_red_packet(prepared).unwrap();
+        let prepared_claim = store
+            .prepare_red_packet_claim(&receiver, "CHRP-000000000001")
+            .unwrap();
+        store
+            .apply_prepared_red_packet_claim(prepared_claim)
+            .unwrap();
+
+        let response = store.red_packet_claims("CHRP-000000000001").unwrap();
+        assert_eq!(response.greeting, "手气不错");
+        assert_eq!(response.claimed_count, 1);
+        assert_eq!(response.remaining_amount_minor, 100);
+        assert_eq!(response.claims.len(), 1);
+        assert_eq!(response.claims[0].username, "bob");
+        assert_eq!(response.claims[0].amount_minor, 100);
+    }
+
+    #[test]
     /// 验证红包不能被发送人领取，也不能被同一用户重复领取。
     fn chat_hall_store_rejects_invalid_red_packet_claim() {
         let mut store = ChatHallStore::default();
@@ -1069,6 +1197,7 @@ mod tests {
             balance_minor: 0,
             agent_id: None,
             invite_code: "INVITE1".to_string(),
+            registration_location: crate::domain::user::UserRegistrationLocation::default(),
             created_at: "2026-06-05 10:00:00".to_string(),
         }
     }

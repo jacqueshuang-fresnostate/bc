@@ -20,6 +20,11 @@ use crate::{
     },
 };
 
+enum GroupBuyOrderIssuePolicy<'a> {
+    OpenOnly,
+    AllowClosedBeforeDraw { now: &'a str },
+}
+
 /// 根据合买计划生成无需重复扣款的真实投注订单请求。
 pub async fn build_group_buy_order_request(
     draws: &DrawRepository,
@@ -31,11 +36,37 @@ pub async fn build_group_buy_order_request(
     numbers: &str,
     total_amount_minor: i64,
 ) -> ApiResult<CreateOrderRequest> {
+    build_group_buy_order_request_with_issue_policy(
+        draws,
+        orders,
+        lottery,
+        user_id,
+        issue,
+        rule_code,
+        numbers,
+        total_amount_minor,
+        GroupBuyOrderIssuePolicy::OpenOnly,
+    )
+    .await
+}
+
+/// 根据指定期号状态策略生成合买真实订单请求，用于正常满单和封盘兜底成单。
+async fn build_group_buy_order_request_with_issue_policy(
+    draws: &DrawRepository,
+    orders: &OrderRepository,
+    lottery: &LotteryKind,
+    user_id: &str,
+    issue: &str,
+    rule_code: &str,
+    numbers: &str,
+    total_amount_minor: i64,
+    issue_policy: GroupBuyOrderIssuePolicy<'_>,
+) -> ApiResult<CreateOrderRequest> {
     let issue = required_text(issue, "请选择合买期号")?;
     let rule_code = parse_group_buy_rule_code(rule_code)?;
     let selection = parse_group_buy_selection(&rule_code, numbers)?;
     let draw_issue = draws.get_by_lottery_issue(&lottery.id, &issue).await?;
-    validate_draw_issue_accepts_order(&draw_issue, lottery, &issue)?;
+    validate_group_buy_draw_issue_accepts_order(&draw_issue, lottery, &issue, issue_policy)?;
 
     let probe = CreateOrderRequest {
         user_id: user_id.trim().to_string(),
@@ -68,6 +99,48 @@ pub async fn build_group_buy_order_request(
         unit_amount_minor,
         ..probe
     })
+}
+
+/// 校验合买成单期号状态；封盘兜底只允许已存在合买在开奖前完成成单。
+fn validate_group_buy_draw_issue_accepts_order(
+    draw_issue: &crate::domain::draw::DrawIssue,
+    lottery: &LotteryKind,
+    issue: &str,
+    issue_policy: GroupBuyOrderIssuePolicy<'_>,
+) -> ApiResult<()> {
+    if draw_issue.status == crate::domain::draw::DrawIssueStatus::Open {
+        return validate_draw_issue_accepts_order(draw_issue, lottery, issue);
+    }
+
+    match issue_policy {
+        GroupBuyOrderIssuePolicy::OpenOnly => {
+            validate_draw_issue_accepts_order(draw_issue, lottery, issue)
+        }
+        GroupBuyOrderIssuePolicy::AllowClosedBeforeDraw { now }
+            if draw_issue.status == crate::domain::draw::DrawIssueStatus::Closed
+                && draw_issue.scheduled_at.as_str() > now.trim() =>
+        {
+            if draw_issue.lottery_id != lottery.id {
+                return Err(ApiError::BadRequest(
+                    "draw issue lottery does not match order lottery".to_string(),
+                ));
+            }
+            if draw_issue.issue != issue.trim() {
+                return Err(ApiError::BadRequest(
+                    "draw issue number does not match order issue".to_string(),
+                ));
+            }
+            if draw_issue.number_type != lottery.number_type {
+                return Err(ApiError::BadRequest(
+                    "draw issue number type does not match lottery".to_string(),
+                ));
+            }
+            Ok(())
+        }
+        GroupBuyOrderIssuePolicy::AllowClosedBeforeDraw { .. } => Err(ApiError::BadRequest(
+            "合买计划已经到开奖时间，不能补单成单".to_string(),
+        )),
+    }
 }
 
 /// 根据已经保存的合买计划生成真实投注订单请求。
@@ -114,6 +187,49 @@ pub async fn create_order_for_filled_group_buy(
                     order_id = %order.id,
                     error = %rollback_error.log_message(),
                     "合买满单关联订单失败后移除未入账订单失败"
+                );
+            }
+            Err(error)
+        }
+    }
+}
+
+/// 封盘后开奖前的兜底成单入口，只允许已存在的满单合买补建真实投注订单。
+pub async fn create_order_for_filled_group_buy_before_draw_guard(
+    draws: &DrawRepository,
+    orders: &OrderRepository,
+    group_buys: &GroupBuyRepository,
+    lottery: &LotteryKind,
+    plan: &GroupBuyPlan,
+    now: &str,
+) -> ApiResult<Option<(OrderDetail, GroupBuyPlan)>> {
+    if plan.status != GroupBuyPlanStatus::Filled || plan.order_id.is_some() {
+        return Ok(None);
+    }
+
+    let payload = build_group_buy_order_request_with_issue_policy(
+        draws,
+        orders,
+        lottery,
+        &plan.initiator_user_id,
+        &plan.issue,
+        &plan.rule_code,
+        &plan.numbers,
+        plan.total_amount_minor,
+        GroupBuyOrderIssuePolicy::AllowClosedBeforeDraw { now },
+    )
+    .await?;
+    let order = orders
+        .create_with_source(lottery, payload, OrderSource::GroupBuy)
+        .await?;
+    match group_buys.attach_order(&plan.id, &order.id).await {
+        Ok(attached_plan) => Ok(Some((order, attached_plan))),
+        Err(error) => {
+            if let Err(rollback_error) = orders.remove_unfunded(&order.id).await {
+                tracing::error!(
+                    order_id = %order.id,
+                    error = %rollback_error.log_message(),
+                    "合买兜底成单关联订单失败后移除未入账订单失败"
                 );
             }
             Err(error)

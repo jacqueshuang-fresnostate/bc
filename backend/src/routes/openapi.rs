@@ -298,6 +298,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Json,
     ),
     doc(
+        "delete",
+        "/admin/system-settings/chat-hall/messages/clear",
+        "系统设置",
+        "清除聊天大厅消息",
+        "一键清除手机端聊天大厅全部历史消息和卡片展示记录，不回滚资金流水。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
         "post",
         "/admin/image-bed/upload",
         "图床配置",
@@ -402,6 +411,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "财务管理",
         "资金流水列表",
         "分页返回后台可查看的资金流水，包含用户 ID、用户名和中文可映射的流水类型；默认过滤机器人流水，可通过 includeRobotData=true 显示。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "delete",
+        "/admin/ledger-entries/clear",
+        "财务管理",
+        "清除资金流水",
+        "一键清除全部资金流水历史；不会回滚用户余额，也不会重置后续流水编号。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -1432,6 +1450,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::None,
     ),
     doc(
+        "get",
+        "/user/chat-hall/red-packets/{id}/claims",
+        "用户端聊天大厅",
+        "红包领取记录",
+        "返回指定聊天大厅红包的领取进度和领取人列表，供用户查看谁抢到了红包。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
         "post",
         "/user/chat-hall/group-buy-plans",
         "用户端聊天大厅",
@@ -1993,6 +2020,10 @@ mod tests {
         assert!(document["paths"]["/admin/robots/{id}"]["put"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["delete"].is_object());
         assert!(document["paths"]["/admin/app-packages/upload"]["post"].is_object());
+        assert!(
+            document["paths"]["/admin/system-settings/chat-hall/messages/clear"]["delete"]
+                .is_object()
+        );
         assert!(document["paths"]["/lottery/home"]["get"].is_object());
         assert!(document["paths"]["/lottery/groups"]["get"].is_object());
         assert!(document["paths"]["/lottery/history/latest"]["get"].is_object());
@@ -2020,6 +2051,7 @@ mod tests {
         assert!(document["paths"]["/user/chat-hall/messages"]["post"].is_object());
         assert!(document["paths"]["/user/chat-hall/red-packets"]["post"].is_object());
         assert!(document["paths"]["/user/chat-hall/red-packets/{id}/claim"]["post"].is_object());
+        assert!(document["paths"]["/user/chat-hall/red-packets/{id}/claims"]["get"].is_object());
         assert!(document["paths"]["/user/chat-hall/group-buy-plans"]["post"].is_object());
         assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
         assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());

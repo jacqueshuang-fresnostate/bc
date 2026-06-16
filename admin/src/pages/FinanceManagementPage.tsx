@@ -80,6 +80,7 @@ export function FinanceManagementPage({
     accounts,
     adjustBalance,
     approveWithdrawal,
+    clearLedgerRecords,
     clearRechargeRecords,
     clearWithdrawalRecords,
     confirmRecharge,
@@ -222,6 +223,24 @@ export function FinanceManagementPage({
       Toast.success(`已清除 ${result.deletedCount} 笔提现记录`);
     } catch {
       Toast.error('提现记录清除失败，请查看接口错误提示');
+    }
+  };
+
+  const clearLedgerEntryRecords = async () => {
+    if (
+      !window.confirm(
+        '确定一键清除全部资金流水吗？该操作只清除流水审计列表，不会回滚或调整用户余额，后续新流水编号不会重置。',
+      )
+    ) {
+      return;
+    }
+    try {
+      const result = await clearLedgerRecords();
+      setLedgerPage(1);
+      onDashboardRefresh();
+      Toast.success(`已清除 ${result.deletedCount} 笔资金流水`);
+    } catch {
+      Toast.error('资金流水清除失败，请查看接口错误提示');
     }
   };
 
@@ -675,18 +694,29 @@ export function FinanceManagementPage({
               </Tag>
             ) : null}
           </div>
-          <PageControls
-            loading={loading}
-            page={ledgerEntries.page}
-            pageSize={ledgerPageSize}
-            totalCount={ledgerEntries.totalCount}
-            totalPages={ledgerEntries.totalPages}
-            onPageChange={setLedgerPage}
-            onPageSizeChange={(nextPageSize) => {
-              setLedgerPage(1);
-              setLedgerPageSize(nextPageSize);
-            }}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              disabled={saving || loading || ledgerEntries.totalCount === 0}
+              icon={<Trash2 size={16} />}
+              theme="solid"
+              type="danger"
+              onClick={() => void clearLedgerEntryRecords()}
+            >
+              一键清除
+            </Button>
+            <PageControls
+              loading={loading}
+              page={ledgerEntries.page}
+              pageSize={ledgerPageSize}
+              totalCount={ledgerEntries.totalCount}
+              totalPages={ledgerEntries.totalPages}
+              onPageChange={setLedgerPage}
+              onPageSizeChange={(nextPageSize) => {
+                setLedgerPage(1);
+                setLedgerPageSize(nextPageSize);
+              }}
+            />
+          </div>
         </div>
 
         {loading ? (

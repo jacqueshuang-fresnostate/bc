@@ -84,6 +84,29 @@ interface SchedulerConfigFormState {
 
 const DRAW_SOURCE_PRESETS: Array<{ label: string; form: DrawSourceFormState }> = [
   {
+    label: '印尼5分彩采集',
+    form: {
+      endpoint: 'https://draw.indonesia-lottery.org/others/draw.php',
+      id: 'indonesia-id5',
+      lotCode: 'IDFFC5',
+      name: '印尼开奖 印尼5分彩',
+      provider: 'indonesiaLottery',
+      reusableForLotteryIds: ['id5'],
+    },
+  },
+  {
+    label: '河内5分彩采集',
+    form: {
+      endpoint:
+        'https://www.bbkaijiang.com/api/st-lottery-open/open-result/list-newest-result',
+      id: 'bb-hn5',
+      lotCode: 'VIFFC5',
+      name: 'BB开奖 河内5分彩',
+      provider: 'bbKaijiang',
+      reusableForLotteryIds: ['hn5'],
+    },
+  },
+  {
     label: '腾讯分分彩采集',
     form: {
       endpoint: 'https://kjapi.net/hall/hallajax/getLotteryInfo',
@@ -1424,9 +1447,11 @@ function DrawSourceSideSheet({
             >
               <Select.Option value="api68">API68</Select.Option>
               <Select.Option value="kjApi">KJAPI</Select.Option>
+              <Select.Option value="bbKaijiang">BB开奖</Select.Option>
+              <Select.Option value="indonesiaLottery">印尼开奖</Select.Option>
             </Select>
           </Field>
-          <Field label="lotCode / lotKey">
+          <Field label="lotCode / lotKey / gameCode">
             <Input
               className="form-input font-mono"
               value={form.lotCode}
@@ -2020,6 +2045,8 @@ function drawSourceProviderText(provider: DrawSourceProvider) {
   const labels: Record<DrawSourceProvider, string> = {
     api68: 'API68',
     kjApi: 'KJAPI',
+    bbKaijiang: 'BB开奖',
+    indonesiaLottery: '印尼开奖',
   };
   return labels[provider];
 }

@@ -17,6 +17,14 @@ export type UserListQuery = {
 export type UserKind = 'regular' | 'agent'
 export type UserStatus = 'active' | 'suspended' | 'locked'
 
+export type UserRegistrationLocation = {
+  registeredIp: string
+  country: string
+  region: string
+  city: string
+  source: 'client' | 'gps' | 'ip' | 'unknown' | string
+}
+
 export type UserSummary = {
   id: string
   username: string
@@ -28,12 +36,40 @@ export type UserSummary = {
   balanceMinor: number
   agentId?: string | null
   inviteCode: string
+  registrationLocation?: UserRegistrationLocation
   createdAt?: string
 }
 
 export type InviteStatus = 'pending' | 'active' | 'disabled'
 export type RebateMode = 'immediate' | 'rechargeTiered'
 export type AgentApplicationStatus = 'pending' | 'approved' | 'rejected'
+
+export type UserInvitationBetLotterySummary = {
+  lotteryId: string
+  lotteryName: string
+  amountMinor: number
+  orderCount: number
+}
+
+export type UserInvitationBetPlaySummary = {
+  lotteryId: string
+  lotteryName: string
+  ruleCode: string
+  playName: string
+  amountMinor: number
+  orderCount: number
+}
+
+export type UserInvitationLatestBet = {
+  orderId: string
+  lotteryId: string
+  lotteryName: string
+  issue: string
+  ruleCode: string
+  playName: string
+  amountMinor: number
+  createdAt: string
+}
 
 export type UserInvitationDirectUser = {
   id: string
@@ -43,6 +79,10 @@ export type UserInvitationDirectUser = {
   rebateEnabled: boolean
   totalDepositMinor: number
   totalWithdrawalMinor: number
+  totalBetAmountMinor: number
+  betLotterySummaries: UserInvitationBetLotterySummary[]
+  betPlaySummaries: UserInvitationBetPlaySummary[]
+  latestBet?: UserInvitationLatestBet | null
   registeredAt: string
   createdAt: string
 }
@@ -358,6 +398,16 @@ export type ClaimChatHallRedPacketResponse = {
   availableBalanceMinor: number
 }
 
+export type ChatHallRedPacketClaimsResponse = {
+  redPacketId: string
+  greeting: string
+  totalAmountMinor: number
+  remainingAmountMinor: number
+  claimCount: number
+  claimedCount: number
+  claims: ChatHallRedPacketClaim[]
+}
+
 type LoginPayload = {
   loginKey: string
   password: string
@@ -369,6 +419,7 @@ type RegisterPayload = {
   contactQq?: string
   password: string
   inviteCode?: string
+  registrationLocation?: Partial<UserRegistrationLocation>
 }
 
 function isEnvelope<T>(payload: unknown): payload is ApiEnvelope<T> {
@@ -652,6 +703,12 @@ export async function sendChatHallRedPacket(payload: CreateChatHallRedPacketPayl
 export async function claimChatHallRedPacket(redPacketId: string) {
   return unwrapApiData<ClaimChatHallRedPacketResponse>(
     await http.post(`/user/chat-hall/red-packets/${encodeURIComponent(redPacketId)}/claim`),
+  )
+}
+
+export async function fetchChatHallRedPacketClaims(redPacketId: string) {
+  return unwrapApiData<ChatHallRedPacketClaimsResponse>(
+    await http.get(`/user/chat-hall/red-packets/${encodeURIComponent(redPacketId)}/claims`),
   )
 }
 
