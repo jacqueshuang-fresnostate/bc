@@ -331,6 +331,8 @@ SystemSetting {
 
 余额校验遇到缺失账户时必须按 0 余额处理，返回余额不足，不返回 `financial account not found` 给用户端。
 
+`users.created_at` 在 PostgreSQL 中是 `timestamptz`，但业务接口和 `UserSummary` 使用 `YYYY-MM-DD HH:mm:ss` 文本。读取用户运行时快照时必须在 SQL 层用 `to_char(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at` 显式投影，不能直接 `try_get::<String>("created_at")` 解码时间戳列。
+
 ### 4. 校验与错误矩阵
 
 | 条件 | 预期行为 |

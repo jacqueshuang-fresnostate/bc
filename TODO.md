@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-16 08:18 HKT 用户数据读取失败修复
+
+- 完成任务：修复后端启动或访问用户相关接口时可能返回 `Internal("用户数据读取失败")` 的问题。
+- 解决问题：`users.created_at` 在 PostgreSQL 中是 `timestamptz`，但访问仓储读取运行时用户快照时直接按 `String` 解码，SQLx 无法完成该类型转换，导致用户数据加载失败。
+- 实施内容：用户读取 SQL 将 `created_at` 显式投影为 `YYYY-MM-DD HH:mm:ss` 文本；用户快照保存时显式把文本时间按 `timestamptz` 写入，避免参数类型推断不稳定；同步补充架构说明和数据库规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml access -- --nocapture` 和 `git diff --check` 均通过；使用外部 PostgreSQL 临时启动后端，`GET /api/health` 返回 `ok`，未再出现“用户数据读取失败”。
+
 ## 2026-06-16 07:57 HKT 手机端下注页封盘后展示开奖中
 
 - 完成任务：修正手机端下注页封盘时间到达后到下一期开盘前的展示状态。

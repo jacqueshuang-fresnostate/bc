@@ -681,7 +681,8 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
     let pool = database.pool();
     let mut users = BTreeMap::new();
     for row in sqlx::query(
-        "SELECT id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code, created_at
+        "SELECT id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code,
+                to_char(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at
          FROM users
          ORDER BY id ASC",
     )
@@ -1073,7 +1074,7 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
     for user in store.users.values() {
         sqlx::query(
             "INSERT INTO users (id, username, email, avatar_url, contact_qq, kind, status, balance_minor, agent_id, invite_code, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::timestamptz)",
         )
         .bind(&user.id)
         .bind(&user.username)
