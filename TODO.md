@@ -4043,3 +4043,10 @@
 - 解决问题：新增河内5分彩和印尼5分彩后，内存种子彩种数量从旧值增加，但测试仍硬编码为 `23`，导致 CI 报 `left: 25 right: 23`。
 - 实施内容：将测试断言改为对齐 `seed_lotteries().len()`，让仓储列表数量跟默认种子单一事实来源保持一致，后续新增彩种不再需要同步维护魔法数字。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml repository_uses_seeded_memory_lotteries -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml` 均通过（345 个测试成功）。
+
+## 2026-06-18 10:18 HKT 时间节点周期跨零点期号归属修正
+
+- 完成任务：修正时间节点周期开奖的跨零点业务口径，明确节点同时完成上一期开奖并开启下一注。
+- 解决问题：`00:00:00` 节点不应该被理解为当天第一期开奖时间；正确逻辑是 `23:55:00` 开盘的前一天最后一注在次日 `00:00:00` 开奖，同时 `00:00:00` 开启当天第一期下注，该期在 `00:05:00` 开奖。
+- 实施内容：后端期号生成在 `timeNode` 排期下继续按严格晚于基线的下一个自然节点作为 `scheduledAt`，但期号模板和 `{seqN}` 每日序号改为按本期的开盘节点归属；新增跨零点测试覆盖 `23:55 -> 00:00` 仍归属前一天，以及 `00:00 -> 00:05` 归属当天第一期；架构说明和 Trellis 契约同步更新。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml` 均通过（347 个测试成功）。全量测试初次运行时发现本地未提交的 API68 PKS 默认地址多出 `17` 前缀导致开奖源测试失败，已恢复为正确地址后重新验证通过。

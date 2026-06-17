@@ -79,7 +79,8 @@ pub(crate) fn plan_api_draw_source_target(
     let mut scheduled_at = next_scheduled_at(&lottery.schedule, baseline)?;
 
     for _ in 0..MAX_UNIQUE_ATTEMPTS_PER_ISSUE {
-        let issue = issue_labeler.next_issue(scheduled_at)?;
+        let label_time = issue_label_time(&lottery.schedule, issue_opened_at, scheduled_at)?;
+        let issue = issue_labeler.next_issue(label_time)?;
         let sale_closed_at =
             sale_closed_at_from_draw_time(issue_opened_at, scheduled_at, sale_close_lead_seconds)?;
 
@@ -168,7 +169,8 @@ async fn plan_draw_issue_generation(
     let attempt_limit = payload.count.saturating_mul(MAX_UNIQUE_ATTEMPTS_PER_ISSUE);
 
     for _ in 0..attempt_limit {
-        let issue = issue_labeler.next_issue(scheduled_at)?;
+        let label_time = issue_label_time(&lottery.schedule, issue_opened_at, scheduled_at)?;
+        let issue = issue_labeler.next_issue(label_time)?;
         let sale_closed_at =
             sale_closed_at_from_draw_time(issue_opened_at, scheduled_at, sale_close_lead_seconds)?;
 
@@ -228,6 +230,31 @@ fn sale_closed_at_from_draw_time(
         .checked_sub_signed(Duration::seconds(i64::from(sale_close_lead_seconds)))
         .ok_or_else(|| ApiError::BadRequest("sale close time is out of range".to_string()))?;
     Ok(configured_sale_close.max(issue_opened_at))
+}
+
+/// 计算期号模板使用的时间；时间节点周期按开盘节点归属期号，避免 00:00 开奖被算成新一天第一期。
+fn issue_label_time(
+    schedule: &DrawSchedule,
+    issue_opened_at: NaiveDateTime,
+    scheduled_at: NaiveDateTime,
+) -> ApiResult<NaiveDateTime> {
+    match schedule {
+        DrawSchedule::TimeNode {
+            interval_seconds, ..
+        } => {
+            if *interval_seconds == 0 {
+                return Err(ApiError::BadRequest(
+                    "time node interval must be greater than zero".to_string(),
+                ));
+            }
+            scheduled_at
+                .checked_sub_signed(Duration::seconds(i64::from(*interval_seconds)))
+                .ok_or_else(|| ApiError::BadRequest("issue open time is out of range".to_string()))
+        }
+        DrawSchedule::Periodic { .. }
+        | DrawSchedule::Daily { .. }
+        | DrawSchedule::Weekly { .. } => Ok(issue_opened_at.max(scheduled_at)),
+    }
 }
 
 /// 处理 latest_scheduled_at 的具体内部流程。
@@ -797,6 +824,7 @@ impl IssueSequenceState {
     /// 根据已存在期号恢复当天下一个序号，避免调度重启后重复生成。
     fn from_existing_issues(
         pattern: &str,
+        schedule: &DrawSchedule,
         issues: &[DrawIssue],
         lottery_id: &str,
     ) -> ApiResult<Self> {
@@ -807,11 +835,12 @@ impl IssueSequenceState {
 
         for issue in issues.iter().filter(|issue| issue.lottery_id == lottery_id) {
             let scheduled_at = parse_timestamp(&issue.scheduled_at, "existing scheduled time")?;
-            let Some(seq) = parse_pattern_sequence(pattern, scheduled_at, &issue.issue) else {
+            let label_time = issue_label_time(schedule, scheduled_at, scheduled_at)?;
+            let Some(seq) = parse_pattern_sequence(pattern, label_time, &issue.issue) else {
                 continue;
             };
             let next_seq = seq.saturating_add(1);
-            let entry = state.next_by_date.entry(scheduled_at.date()).or_insert(1);
+            let entry = state.next_by_date.entry(label_time.date()).or_insert(1);
             *entry = (*entry).max(next_seq);
         }
 
@@ -935,8 +964,12 @@ impl IssueLabeler {
             DEFAULT_ISSUE_FORMAT_PATTERN.to_string()
         };
 
-        let sequence_state =
-            IssueSequenceState::from_existing_issues(&pattern, existing_issues, &lottery.id)?;
+        let sequence_state = IssueSequenceState::from_existing_issues(
+            &pattern,
+            &lottery.schedule,
+            existing_issues,
+            &lottery.id,
+        )?;
 
         Ok(Self::Pattern {
             pattern,
@@ -1126,6 +1159,44 @@ mod tests {
             .expect("time node issue can be generated");
 
         assert_eq!(issue.issue, "202606020001");
+        assert_eq!(issue.scheduled_at, "2026-06-02 00:05:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-02 00:04:59");
+    }
+
+    #[tokio::test]
+    async fn time_node_midnight_draw_uses_previous_open_node_for_issue_label() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::TimeNode {
+            interval_seconds: 300,
+            start_time: "00:00:00".to_string(),
+        });
+        lottery.draw_mode = DrawMode::Platform;
+        lottery.issue_format = "{date}{time}".to_string();
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-01 23:55:00"))
+            .await
+            .expect("midnight draw issue can be generated");
+
+        assert_eq!(issue.issue, "20260601235500");
+        assert_eq!(issue.scheduled_at, "2026-06-02 00:00:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-01 23:59:59");
+    }
+
+    #[tokio::test]
+    async fn time_node_zero_clock_opens_first_current_day_issue() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::TimeNode {
+            interval_seconds: 300,
+            start_time: "00:00:00".to_string(),
+        });
+        lottery.draw_mode = DrawMode::Platform;
+        lottery.issue_format = "{date}{time}".to_string();
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-02 00:00:00"))
+            .await
+            .expect("zero clock open issue can be generated");
+
+        assert_eq!(issue.issue, "20260602000000");
         assert_eq!(issue.scheduled_at, "2026-06-02 00:05:00");
         assert_eq!(issue.sale_closed_at, "2026-06-02 00:04:59");
     }
