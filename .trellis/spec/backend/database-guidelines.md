@@ -505,7 +505,7 @@ let lotteries = LotteryRepository::postgres(&database_url).await?;
 | 模块 | 表 |
 |------|------|
 | 用户权限 | `users`、`admin_roles`、`admins`、`admin_password_hashes`、`admin_sessions`、`system_settings`、`registration_config`、`access_runtime` |
-| 开奖 | `draw_issues`、`draw_controls`、`draw_sources` |
+| 开奖 | `draw_issues`、`draw_controls`、`draw_sources`、`api_draw_source_snapshots` |
 | 订单结算 | `orders`、`order_settlement_runs`、`order_settlements`、`order_runtime` |
 | 资金 | `financial_accounts`、`ledger_entries`、`finance_runtime` |
 | 合买 | `group_buy_plans`、`group_buy_participants` |
@@ -517,6 +517,8 @@ let lotteries = LotteryRepository::postgres(&database_url).await?;
 合买模块仍使用运行时快照保存时，所有创建、认购、回滚、满单关联订单和结算回写都必须经过仓储级写操作锁；数据库保存前必须锁定 `group_buy_participants` 和 `group_buy_plans`，避免多个快照异步落库时旧数据覆盖新数据。参与记录写入失败时日志必须输出实际数据库错误、合买计划 ID、参与记录 ID、用户 ID、金额和份数，接口可以继续返回中文内部错误文案。
 
 复杂业务字段可以继续用 JSONB 列保存当前 API 契约中的结构，例如角色权限范围、投注选择、展开投注、中奖匹配和 API 开奖源复用彩种；不得把整个模块重新塞回单张状态文档表。
+
+API 开奖源每次抓取最新期号或开奖号码都需要写入 `api_draw_source_snapshots`。该表用于审计和数据比对，不参与开奖主流程回放；字段必须保留原始响应文本、可解析 JSON、HTTP 状态、解析结果和错误信息，迁移中每个字段都需要中文注释。
 
 ### 4. 校验与错误矩阵
 

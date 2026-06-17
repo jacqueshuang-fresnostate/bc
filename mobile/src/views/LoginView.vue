@@ -7,7 +7,6 @@ import { useAuthStore } from '../stores/auth'
 import { useBrandingStore } from '../stores/branding'
 import { showToast } from 'vant'
 import { errorMessage, fetchRegisterOptions, loginUser, registerUser } from '../api/user'
-import type { UserRegistrationLocation } from '../api/user'
 
 const route = useRoute()
 const router = useRouter()
@@ -48,51 +47,6 @@ const invitationCode = ref('')
 const contactQq = ref('')
 const loading = ref(false)
 
-function browserRegistrationLocation(): Partial<UserRegistrationLocation> | undefined {
-  if (typeof navigator === 'undefined') return undefined
-  const language = navigator.language || ''
-  const languageParts = language.split('-')
-  const country = (languageParts[languageParts.length - 1] || '').toUpperCase()
-  const timeZone =
-    typeof Intl !== 'undefined'
-      ? Intl.DateTimeFormat().resolvedOptions().timeZone
-      : ''
-  if (!country && !timeZone) return undefined
-  return {
-    country: country.length === 2 ? country : '',
-    region: timeZone || '',
-    source: 'client',
-  }
-}
-
-async function resolveRegistrationLocation(): Promise<Partial<UserRegistrationLocation> | undefined> {
-  const fallback = browserRegistrationLocation()
-  if (typeof navigator === 'undefined' || !navigator.geolocation) {
-    return fallback
-  }
-  return new Promise((resolve) => {
-    const timer = window.setTimeout(() => resolve(fallback), 2200)
-    navigator.geolocation.getCurrentPosition(
-      () => {
-        window.clearTimeout(timer)
-        resolve({
-          ...fallback,
-          source: 'gps',
-        })
-      },
-      () => {
-        window.clearTimeout(timer)
-        resolve(fallback)
-      },
-      {
-        enableHighAccuracy: false,
-        maximumAge: 10 * 60 * 1000,
-        timeout: 2000,
-      },
-    )
-  })
-}
-
 async function doLogin() {
   if (!account.value.trim()) { showToast('请输入用户名或邮箱'); return }
   if (!password.value) { showToast('请输入密码'); return }
@@ -128,14 +82,12 @@ async function doRegister() {
   if (!password.value || password.value.length < 8) { showToast('请输入至少8位密码'); return }
   loading.value = true
   try {
-    const registrationLocation = await resolveRegistrationLocation()
     if (regType.value === 'email') {
       await registerUser({
         contactQq: qq || undefined,
         email: email.value.trim(),
         password: password.value,
         inviteCode: invite || undefined,
-        registrationLocation,
       })
       account.value = email.value
     } else {
@@ -144,7 +96,6 @@ async function doRegister() {
         username: account.value.trim(),
         password: password.value,
         inviteCode: invite || undefined,
-        registrationLocation,
       })
     }
     await doLogin()

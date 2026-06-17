@@ -4050,3 +4050,11 @@
 - 解决问题：`00:00:00` 节点不应该被理解为当天第一期开奖时间；正确逻辑是 `23:55:00` 开盘的前一天最后一注在次日 `00:00:00` 开奖，同时 `00:00:00` 开启当天第一期下注，该期在 `00:05:00` 开奖。
 - 实施内容：后端期号生成在 `timeNode` 排期下继续按严格晚于基线的下一个自然节点作为 `scheduledAt`，但期号模板和 `{seqN}` 每日序号改为按本期的开盘节点归属；新增跨零点测试覆盖 `23:55 -> 00:00` 仍归属前一天，以及 `00:00 -> 00:05` 归属当天第一期；架构说明和 Trellis 契约同步更新。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml` 均通过（347 个测试成功）。全量测试初次运行时发现本地未提交的 API68 PKS 默认地址多出 `17` 前缀导致开奖源测试失败，已恢复为正确地址后重新验证通过。
+
+## 2026-06-18 06:15 HKT API 开奖源抓取快照与注册地来源修正
+
+- 完成任务：API 开奖源每次读取最新期号或开奖号码时保存抓取快照；手机端注册不再用浏览器语言/时区推断注册地。
+- 解决问题：API 源只把解析结果用于调度，缺少原始抓取记录，后续难以对比第三方期号和本地期号；注册地此前会把浏览器语言、系统地区或时区当成定位来源，导致后台显示与真实 IP 不匹配。
+- 实施内容：新增 `api_draw_source_snapshots` 数据表和中文字段注释；统一 API68、KJAPI、BB 开奖、印尼开奖的请求-解析-快照保存流程，成功、HTTP 异常和解析失败都会保存快照；后端注册 IP 解析支持 `Forwarded` 头和带端口地址；访问控制仓储清洗 `source=client` 或未知来源的地区字段；手机端注册页移除浏览器语言/时区定位上报；架构说明和 Trellis 规范同步更新。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_api -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml registration_location -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml registration_ip_parser_handles_proxy_headers -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml` 均通过（350 个测试成功）；手机端 `pnpm build`、`pnpm test` 和 `git diff --check` 均通过，手机端测试脚本当前显示 0 个测试用例。
+- 外部库备注：尝试使用指定 PostgreSQL 启动后端烟测，迁移阶段未输出错误，但测试库当前启用的开奖调度在启动早期反复写入历史并报“开奖调度历史数据保存失败”，未等到监听日志；该问题属于既有调度历史保存链路，未作为本次 API 快照和注册来源修正的通过项。

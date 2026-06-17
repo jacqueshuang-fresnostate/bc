@@ -2232,8 +2232,23 @@ fn normalize_registration_location(
     location.city = location.city.trim().to_string();
     location.source = normalize_registration_source(&location.source);
 
-    if location.source == "unknown" && !location.registered_ip.is_empty() {
-        location.source = "ip".to_string();
+    if location.source == "gps" {
+        if location.country.is_empty() && location.region.is_empty() && location.city.is_empty() {
+            location.source = if location.registered_ip.is_empty() {
+                "unknown".to_string()
+            } else {
+                "ip".to_string()
+            };
+        }
+    } else {
+        location.country.clear();
+        location.region.clear();
+        location.city.clear();
+        location.source = if location.registered_ip.is_empty() {
+            "unknown".to_string()
+        } else {
+            "ip".to_string()
+        };
     }
 
     if is_local_or_private_ip(&location.registered_ip)
@@ -3440,6 +3455,64 @@ mod tests {
         assert_invite_code_format(&email_user.invite_code);
 
         assert_ne!(username_user.username, email_user.username);
+    }
+
+    #[tokio::test]
+    async fn access_repository_discards_client_inferred_registration_location() {
+        let access = AccessRepository::memory_seeded();
+
+        let user = access
+            .register_user(UserRegisterRequest {
+                username: Some("client_location_user".to_string()),
+                email: None,
+                contact_qq: None,
+                password: "locationPass123".to_string(),
+                invite_code: None,
+                registration_location: Some(UserRegistrationLocation {
+                    registered_ip: "8.8.8.8".to_string(),
+                    country: "US".to_string(),
+                    region: "America/Los_Angeles".to_string(),
+                    city: "Los Angeles".to_string(),
+                    source: "client".to_string(),
+                }),
+            })
+            .await
+            .expect("user can be registered");
+
+        assert_eq!(user.registration_location.registered_ip, "8.8.8.8");
+        assert_eq!(user.registration_location.country, "");
+        assert_eq!(user.registration_location.region, "");
+        assert_eq!(user.registration_location.city, "");
+        assert_eq!(user.registration_location.source, "ip");
+    }
+
+    #[tokio::test]
+    async fn access_repository_keeps_gps_registration_location() {
+        let access = AccessRepository::memory_seeded();
+
+        let user = access
+            .register_user(UserRegisterRequest {
+                username: Some("gps_location_user".to_string()),
+                email: None,
+                contact_qq: None,
+                password: "locationPass123".to_string(),
+                invite_code: None,
+                registration_location: Some(UserRegistrationLocation {
+                    registered_ip: "8.8.4.4".to_string(),
+                    country: "中国".to_string(),
+                    region: "广东".to_string(),
+                    city: "深圳".to_string(),
+                    source: "gps".to_string(),
+                }),
+            })
+            .await
+            .expect("user can be registered");
+
+        assert_eq!(user.registration_location.registered_ip, "8.8.4.4");
+        assert_eq!(user.registration_location.country, "中国");
+        assert_eq!(user.registration_location.region, "广东");
+        assert_eq!(user.registration_location.city, "深圳");
+        assert_eq!(user.registration_location.source, "gps");
     }
 
     #[tokio::test]

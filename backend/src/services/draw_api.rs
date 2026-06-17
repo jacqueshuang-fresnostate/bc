@@ -3,9 +3,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use rand_core::{OsRng, RngCore};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sqlx::Row;
@@ -74,6 +75,65 @@ pub struct ApiDrawSourceLatestIssue {
     pub draw_time: Option<String>,
     pub next_issue: Option<String>,
     pub next_draw_time: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// API 开奖源采集快照的请求用途。
+enum ApiDrawSourceRequestKind {
+    LatestIssue,
+    DrawNumber,
+}
+
+/// API 开奖源采集快照用途的字符串映射。
+impl ApiDrawSourceRequestKind {
+    /// 返回数据库保存的稳定枚举值。
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::LatestIssue => "latestIssue",
+            Self::DrawNumber => "drawNumber",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+/// 第三方开奖接口的原始响应摘要。
+struct ApiDrawSourceHttpResponse {
+    status: Option<u16>,
+    body: String,
+}
+
+/// 第三方开奖接口响应的状态辅助方法。
+impl ApiDrawSourceHttpResponse {
+    /// 判断当前响应是否可以进入业务解析；静态测试响应没有 HTTP 状态，视为成功。
+    fn is_success(&self) -> bool {
+        self.status
+            .map(|status| (200..300).contains(&status))
+            .unwrap_or(true)
+    }
+}
+
+#[derive(Debug, Clone)]
+/// API 开奖源采集快照，保存请求、解析结果和原始响应，便于后续对比外部数据。
+struct ApiDrawSourceCrawlSnapshot {
+    id: String,
+    source_id: String,
+    source_name: String,
+    provider: String,
+    lottery_id: String,
+    request_kind: String,
+    requested_issue: Option<String>,
+    latest_issue: Option<String>,
+    latest_draw_time: Option<String>,
+    next_issue: Option<String>,
+    next_draw_time: Option<String>,
+    draw_number: Option<String>,
+    endpoint: String,
+    lot_code: String,
+    http_status: Option<i32>,
+    success: bool,
+    error_message: Option<String>,
+    raw_response: Option<Value>,
+    raw_response_text: String,
 }
 
 #[derive(Clone)]
@@ -264,13 +324,20 @@ impl ApiDrawSourceRepository {
         };
 
         let result = match source.provider {
-            DrawSourceProvider::Api68 => self.fetch_api68_draw_number(&source, &issue.issue).await,
-            DrawSourceProvider::KjApi => self.fetch_kj_draw_number(&source, &issue.issue).await,
+            DrawSourceProvider::Api68 => {
+                self.fetch_api68_draw_number(&source, &issue.lottery_id, &issue.issue)
+                    .await
+            }
+            DrawSourceProvider::KjApi => {
+                self.fetch_kj_draw_number(&source, &issue.lottery_id, &issue.issue)
+                    .await
+            }
             DrawSourceProvider::BbKaijiang => {
-                self.fetch_bb_draw_number(&source, &issue.issue).await
+                self.fetch_bb_draw_number(&source, &issue.lottery_id, &issue.issue)
+                    .await
             }
             DrawSourceProvider::IndonesiaLottery => {
-                self.fetch_indonesia_draw_number(&source, &issue.issue)
+                self.fetch_indonesia_draw_number(&source, &issue.lottery_id, &issue.issue)
                     .await
             }
         };
@@ -305,11 +372,11 @@ impl ApiDrawSourceRepository {
         };
 
         let result = match source.provider {
-            DrawSourceProvider::Api68 => self.fetch_api68_latest_issue(&source).await,
-            DrawSourceProvider::KjApi => self.fetch_kj_latest_issue(&source).await,
-            DrawSourceProvider::BbKaijiang => self.fetch_bb_latest_issue(&source).await,
+            DrawSourceProvider::Api68 => self.fetch_api68_latest_issue(&source, lottery_id).await,
+            DrawSourceProvider::KjApi => self.fetch_kj_latest_issue(&source, lottery_id).await,
+            DrawSourceProvider::BbKaijiang => self.fetch_bb_latest_issue(&source, lottery_id).await,
             DrawSourceProvider::IndonesiaLottery => {
-                self.fetch_indonesia_latest_issue(&source).await
+                self.fetch_indonesia_latest_issue(&source, lottery_id).await
             }
         };
 
@@ -328,230 +395,145 @@ impl ApiDrawSourceRepository {
     async fn fetch_api68_draw_number(
         &self,
         source: &ApiDrawSourceConfig,
+        lottery_id: &str,
         issue: &str,
     ) -> ApiResult<String> {
-        if let Some(response_body) = self.static_responses.get(&source.id) {
-            return parse_api68_draw_number(response_body, issue);
-        }
-
-        let response = self
-            .client
-            .get(source.url())
-            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
-            .send()
+        self.fetch_draw_number_with_snapshot(source, lottery_id, issue, parse_api68_draw_number)
             .await
-            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ApiError::Internal(format!(
-                "API 开奖源返回 HTTP 状态 {status}"
-            )));
-        }
-
-        let response_body = response
-            .text()
-            .await
-            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
-
-        parse_api68_draw_number(&response_body, issue)
     }
 
     async fn fetch_api68_latest_issue(
         &self,
         source: &ApiDrawSourceConfig,
+        lottery_id: &str,
     ) -> ApiResult<ApiDrawSourceLatestIssue> {
-        if let Some(response_body) = self.static_responses.get(&source.id) {
-            return parse_api68_latest_issue(response_body);
-        }
-
-        let response = self
-            .client
-            .get(source.url())
-            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
-            .send()
+        self.fetch_latest_issue_with_snapshot(source, lottery_id, parse_api68_latest_issue)
             .await
-            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ApiError::Internal(format!(
-                "API 开奖源返回 HTTP 状态 {status}"
-            )));
-        }
-
-        let response_body = response
-            .text()
-            .await
-            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
-
-        parse_api68_latest_issue(&response_body)
     }
 
     async fn fetch_kj_draw_number(
         &self,
         source: &ApiDrawSourceConfig,
+        lottery_id: &str,
         issue: &str,
     ) -> ApiResult<String> {
-        if let Some(response_body) = self.static_responses.get(&source.id) {
-            return parse_kj_draw_number(response_body, issue);
-        }
-
-        let response = self
-            .client
-            .get(source.url())
-            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
-            .send()
+        self.fetch_draw_number_with_snapshot(source, lottery_id, issue, parse_kj_draw_number)
             .await
-            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ApiError::Internal(format!(
-                "API 开奖源返回 HTTP 状态 {status}"
-            )));
-        }
-
-        let response_body = response
-            .text()
-            .await
-            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
-
-        parse_kj_draw_number(&response_body, issue)
     }
 
     async fn fetch_kj_latest_issue(
         &self,
         source: &ApiDrawSourceConfig,
+        lottery_id: &str,
     ) -> ApiResult<ApiDrawSourceLatestIssue> {
-        if let Some(response_body) = self.static_responses.get(&source.id) {
-            return parse_kj_latest_issue(response_body);
-        }
-
-        let response = self
-            .client
-            .get(source.url())
-            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
-            .send()
+        self.fetch_latest_issue_with_snapshot(source, lottery_id, parse_kj_latest_issue)
             .await
-            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ApiError::Internal(format!(
-                "API 开奖源返回 HTTP 状态 {status}"
-            )));
-        }
-
-        let response_body = response
-            .text()
-            .await
-            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
-
-        parse_kj_latest_issue(&response_body)
     }
 
     async fn fetch_bb_draw_number(
         &self,
         source: &ApiDrawSourceConfig,
+        lottery_id: &str,
         issue: &str,
     ) -> ApiResult<String> {
-        if let Some(response_body) = self.static_responses.get(&source.id) {
-            return parse_bb_draw_number(response_body, issue);
-        }
-
-        let response = self
-            .client
-            .get(source.url())
-            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
-            .send()
+        self.fetch_draw_number_with_snapshot(source, lottery_id, issue, parse_bb_draw_number)
             .await
-            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ApiError::Internal(format!(
-                "API 开奖源返回 HTTP 状态 {status}"
-            )));
-        }
-
-        let response_body = response
-            .text()
-            .await
-            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
-
-        parse_bb_draw_number(&response_body, issue)
     }
 
     async fn fetch_bb_latest_issue(
         &self,
         source: &ApiDrawSourceConfig,
+        lottery_id: &str,
     ) -> ApiResult<ApiDrawSourceLatestIssue> {
-        if let Some(response_body) = self.static_responses.get(&source.id) {
-            return parse_bb_latest_issue(response_body);
-        }
-
-        let response = self
-            .client
-            .get(source.url())
-            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
-            .send()
+        self.fetch_latest_issue_with_snapshot(source, lottery_id, parse_bb_latest_issue)
             .await
-            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ApiError::Internal(format!(
-                "API 开奖源返回 HTTP 状态 {status}"
-            )));
-        }
-
-        let response_body = response
-            .text()
-            .await
-            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
-
-        parse_bb_latest_issue(&response_body)
     }
 
     async fn fetch_indonesia_draw_number(
         &self,
         source: &ApiDrawSourceConfig,
+        lottery_id: &str,
         issue: &str,
     ) -> ApiResult<String> {
-        if let Some(response_body) = self.static_responses.get(&source.id) {
-            return parse_indonesia_draw_number(response_body, issue);
-        }
-
-        let response = self
-            .client
-            .get(source.url())
-            .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
-            .send()
+        self.fetch_draw_number_with_snapshot(source, lottery_id, issue, parse_indonesia_draw_number)
             .await
-            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ApiError::Internal(format!(
-                "API 开奖源返回 HTTP 状态 {status}"
-            )));
-        }
-
-        let response_body = response
-            .text()
-            .await
-            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
-
-        parse_indonesia_draw_number(&response_body, issue)
     }
 
     async fn fetch_indonesia_latest_issue(
         &self,
         source: &ApiDrawSourceConfig,
+        lottery_id: &str,
     ) -> ApiResult<ApiDrawSourceLatestIssue> {
+        self.fetch_latest_issue_with_snapshot(source, lottery_id, parse_indonesia_latest_issue)
+            .await
+    }
+
+    async fn fetch_draw_number_with_snapshot(
+        &self,
+        source: &ApiDrawSourceConfig,
+        lottery_id: &str,
+        issue: &str,
+        parser: fn(&str, &str) -> ApiResult<String>,
+    ) -> ApiResult<String> {
+        let response = match self.fetch_source_response(source).await {
+            Ok(response) => response,
+            Err(error) => {
+                let result: ApiResult<String> = Err(error);
+                self.record_draw_number_snapshot(source, lottery_id, issue, None, &result)
+                    .await?;
+                return result;
+            }
+        };
+        let result = if response.is_success() {
+            parser(&response.body, issue)
+        } else {
+            Err(ApiError::Internal(format!(
+                "API 开奖源返回 HTTP 状态 {}",
+                response.status.unwrap_or_default()
+            )))
+        };
+        self.record_draw_number_snapshot(source, lottery_id, issue, Some(&response), &result)
+            .await?;
+        result
+    }
+
+    async fn fetch_latest_issue_with_snapshot(
+        &self,
+        source: &ApiDrawSourceConfig,
+        lottery_id: &str,
+        parser: fn(&str) -> ApiResult<ApiDrawSourceLatestIssue>,
+    ) -> ApiResult<ApiDrawSourceLatestIssue> {
+        let response = match self.fetch_source_response(source).await {
+            Ok(response) => response,
+            Err(error) => {
+                let result: ApiResult<ApiDrawSourceLatestIssue> = Err(error);
+                self.record_latest_issue_snapshot(source, lottery_id, None, &result)
+                    .await?;
+                return result;
+            }
+        };
+        let result = if response.is_success() {
+            parser(&response.body)
+        } else {
+            Err(ApiError::Internal(format!(
+                "API 开奖源返回 HTTP 状态 {}",
+                response.status.unwrap_or_default()
+            )))
+        };
+        self.record_latest_issue_snapshot(source, lottery_id, Some(&response), &result)
+            .await?;
+        result
+    }
+
+    async fn fetch_source_response(
+        &self,
+        source: &ApiDrawSourceConfig,
+    ) -> ApiResult<ApiDrawSourceHttpResponse> {
         if let Some(response_body) = self.static_responses.get(&source.id) {
-            return parse_indonesia_latest_issue(response_body);
+            return Ok(ApiDrawSourceHttpResponse {
+                status: None,
+                body: response_body.clone(),
+            });
         }
 
         let response = self
@@ -560,21 +542,109 @@ impl ApiDrawSourceRepository {
             .timeout(Duration::from_secs(API_DRAW_SOURCE_TIMEOUT_SECONDS))
             .send()
             .await
-            .map_err(|_| ApiError::Internal("API 开奖源请求失败".to_string()))?;
+            .map_err(|error| ApiError::Internal(format!("API 开奖源请求失败：{error}")))?;
 
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ApiError::Internal(format!(
-                "API 开奖源返回 HTTP 状态 {status}"
-            )));
-        }
-
+        let status = response.status().as_u16();
         let response_body = response
             .text()
             .await
-            .map_err(|_| ApiError::Internal("API 开奖源响应读取失败".to_string()))?;
+            .map_err(|error| ApiError::Internal(format!("API 开奖源响应读取失败：{error}")))?;
 
-        parse_indonesia_latest_issue(&response_body)
+        Ok(ApiDrawSourceHttpResponse {
+            status: Some(status),
+            body: response_body,
+        })
+    }
+
+    async fn record_draw_number_snapshot(
+        &self,
+        source: &ApiDrawSourceConfig,
+        lottery_id: &str,
+        issue: &str,
+        response: Option<&ApiDrawSourceHttpResponse>,
+        result: &ApiResult<String>,
+    ) -> ApiResult<()> {
+        let snapshot = self.crawl_snapshot_base(
+            source,
+            lottery_id,
+            ApiDrawSourceRequestKind::DrawNumber,
+            response,
+            result.as_ref().err(),
+        )?;
+        let snapshot = ApiDrawSourceCrawlSnapshot {
+            requested_issue: Some(issue.to_string()),
+            draw_number: result.as_ref().ok().cloned(),
+            ..snapshot
+        };
+        self.persist_crawl_snapshot(snapshot).await
+    }
+
+    async fn record_latest_issue_snapshot(
+        &self,
+        source: &ApiDrawSourceConfig,
+        lottery_id: &str,
+        response: Option<&ApiDrawSourceHttpResponse>,
+        result: &ApiResult<ApiDrawSourceLatestIssue>,
+    ) -> ApiResult<()> {
+        let latest = result.as_ref().ok();
+        let snapshot = self.crawl_snapshot_base(
+            source,
+            lottery_id,
+            ApiDrawSourceRequestKind::LatestIssue,
+            response,
+            result.as_ref().err(),
+        )?;
+        let snapshot = ApiDrawSourceCrawlSnapshot {
+            latest_issue: latest.map(|issue| issue.issue.clone()),
+            latest_draw_time: latest.and_then(|issue| issue.draw_time.clone()),
+            next_issue: latest.and_then(|issue| issue.next_issue.clone()),
+            next_draw_time: latest.and_then(|issue| issue.next_draw_time.clone()),
+            ..snapshot
+        };
+        self.persist_crawl_snapshot(snapshot).await
+    }
+
+    fn crawl_snapshot_base(
+        &self,
+        source: &ApiDrawSourceConfig,
+        lottery_id: &str,
+        request_kind: ApiDrawSourceRequestKind,
+        response: Option<&ApiDrawSourceHttpResponse>,
+        error: Option<&ApiError>,
+    ) -> ApiResult<ApiDrawSourceCrawlSnapshot> {
+        let raw_response_text = response
+            .map(|response| response.body.clone())
+            .unwrap_or_default();
+        let raw_response = serde_json::from_str::<Value>(&raw_response_text).ok();
+        Ok(ApiDrawSourceCrawlSnapshot {
+            id: next_crawl_snapshot_id(),
+            source_id: source.id.clone(),
+            source_name: source.name.clone(),
+            provider: enum_to_string(&source.provider)?,
+            lottery_id: lottery_id.to_string(),
+            request_kind: request_kind.as_str().to_string(),
+            requested_issue: None,
+            latest_issue: None,
+            latest_draw_time: None,
+            next_issue: None,
+            next_draw_time: None,
+            draw_number: None,
+            endpoint: source.url(),
+            lot_code: source.lot_code.clone(),
+            http_status: response.and_then(|response| response.status.map(i32::from)),
+            success: error.is_none(),
+            error_message: error.map(ApiError::log_message),
+            raw_response,
+            raw_response_text,
+        })
+    }
+
+    async fn persist_crawl_snapshot(&self, snapshot: ApiDrawSourceCrawlSnapshot) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            save_api_draw_source_crawl_snapshot(persistence, &snapshot).await?;
+        }
+
+        Ok(())
     }
 
     /// 从数据库重新加载 API 开奖源配置，供后台缓存维护和手动改库后校准使用。
@@ -701,6 +771,49 @@ async fn save_draw_source_store(
     tx.commit()
         .await
         .map_err(|_| ApiError::Internal("开奖源事务提交失败".to_string()))
+}
+
+async fn save_api_draw_source_crawl_snapshot(
+    database: &BusinessDatabase,
+    snapshot: &ApiDrawSourceCrawlSnapshot,
+) -> ApiResult<()> {
+    sqlx::query(
+        "INSERT INTO api_draw_source_snapshots
+         (id, source_id, source_name, provider, lottery_id, request_kind, requested_issue,
+          latest_issue, latest_draw_time, next_issue, next_draw_time, draw_number,
+          endpoint, lot_code, http_status, success, error_message, raw_response,
+          raw_response_text)
+         VALUES
+         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+          $16, $17, $18, $19)",
+    )
+    .bind(&snapshot.id)
+    .bind(&snapshot.source_id)
+    .bind(&snapshot.source_name)
+    .bind(&snapshot.provider)
+    .bind(&snapshot.lottery_id)
+    .bind(&snapshot.request_kind)
+    .bind(&snapshot.requested_issue)
+    .bind(&snapshot.latest_issue)
+    .bind(&snapshot.latest_draw_time)
+    .bind(&snapshot.next_issue)
+    .bind(&snapshot.next_draw_time)
+    .bind(&snapshot.draw_number)
+    .bind(&snapshot.endpoint)
+    .bind(&snapshot.lot_code)
+    .bind(snapshot.http_status)
+    .bind(snapshot.success)
+    .bind(&snapshot.error_message)
+    .bind(&snapshot.raw_response)
+    .bind(&snapshot.raw_response_text)
+    .execute(database.pool())
+    .await
+    .map_err(|error| {
+        tracing::error!(error = %error, "API 开奖源采集快照保存失败");
+        ApiError::Internal(format!("API 开奖源采集快照保存失败：{error}"))
+    })?;
+
+    Ok(())
 }
 
 impl ApiDrawSourceStore {
@@ -1037,6 +1150,19 @@ fn default_bb_endpoint() -> String {
 /// 处理 default_indonesia_endpoint 的具体内部流程。
 fn default_indonesia_endpoint() -> String {
     DEFAULT_INDONESIA_ENDPOINT.to_string()
+}
+
+/// 生成 API 开奖源采集快照编号，避免高并发采集时主键冲突。
+fn next_crawl_snapshot_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let mut bytes = [0u8; 4];
+    OsRng.fill_bytes(&mut bytes);
+    let suffix = u32::from_be_bytes(bytes);
+
+    format!("ADS-{millis}-{suffix:08X}")
 }
 
 /// 处理 normalized_endpoint 的具体内部流程。

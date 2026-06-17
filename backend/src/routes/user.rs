@@ -566,6 +566,7 @@ fn attach_registration_ip(payload: &mut UserRegisterRequest, registered_ip: Opti
 fn registration_ip_from_headers(headers: &HeaderMap) -> Option<String> {
     [
         "x-forwarded-for",
+        "forwarded",
         "x-real-ip",
         "cf-connecting-ip",
         "x-client-ip",
@@ -579,28 +580,35 @@ fn registration_ip_from_headers(headers: &HeaderMap) -> Option<String> {
 /// 解析单个 IP 请求头值，兼容逗号链路、Forwarded 风格和 IPv4 端口。
 fn first_registration_ip(value: &str) -> Option<String> {
     value.split(',').find_map(|part| {
-        let candidate = part
-            .trim()
-            .trim_start_matches("for=")
+        let trimmed = part.trim();
+        let forwarded_value = trimmed
+            .split(';')
+            .find_map(|segment| segment.trim().strip_prefix("for="));
+        let candidate = forwarded_value
+            .unwrap_or_else(|| trimmed.split(';').next().unwrap_or(trimmed))
             .trim_matches('"')
             .trim();
         if candidate.is_empty() {
+            return None;
+        }
+        if candidate.eq_ignore_ascii_case("unknown") {
             return None;
         }
         let candidate = candidate
             .strip_prefix('[')
             .and_then(|value| value.split(']').next())
             .unwrap_or(candidate);
-        let candidate = if candidate.matches('.').count() == 3 {
+        let candidate = if candidate.parse::<std::net::IpAddr>().is_ok() {
+            candidate
+        } else if candidate.matches('.').count() == 3 {
             candidate.split(':').next().unwrap_or(candidate)
         } else {
             candidate
         };
-        if candidate.is_empty() {
-            None
-        } else {
-            Some(candidate.to_string())
-        }
+        candidate
+            .parse::<std::net::IpAddr>()
+            .ok()
+            .map(|ip| ip.to_string())
     })
 }
 
@@ -3109,6 +3117,23 @@ mod tests {
         rebate::RebateMode,
     };
     use std::collections::HashSet;
+
+    #[test]
+    /// 验证注册 IP 解析兼容常见反向代理请求头形态。
+    fn registration_ip_parser_handles_proxy_headers() {
+        assert_eq!(
+            first_registration_ip("for=\"203.0.113.5\";proto=https"),
+            Some("203.0.113.5".to_string())
+        );
+        assert_eq!(
+            first_registration_ip("198.51.100.8:443, 10.0.0.2"),
+            Some("198.51.100.8".to_string())
+        );
+        assert_eq!(
+            first_registration_ip("for=\"[2001:db8::1]\";proto=https"),
+            Some("2001:db8::1".to_string())
+        );
+    }
 
     #[test]
     /// 验证用户端邀请中心只允许代理在策略开启时使用邀请码。

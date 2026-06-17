@@ -69,6 +69,7 @@ export function MetricCard({ label, value }: MetricCardProps) {
 - 手机端充值页金额输入属于浏览器原生 `type="number"` 输入，运行时可能返回字符串或数字；金额解析函数不能直接调用 `value.trim()`，必须先用 `String(value ?? '').trim()` 归一化，再按两位小数转换为最小货币单位。
 - 手机端资金类金额输入不能在每个按键后立即强制格式化或夹到最小金额，否则用户按删除键、选择文本或粘贴时会被立刻回填；应允许编辑态为空或部分小数，失焦、回车、快捷金额、加减按钮或提交时再做最终归一化。
 - 手机端登录/注册页必须在一个视口内完整展示，不允许依赖页面滚动；根容器优先基于 `html/body/#app` 的 `height: 100%` 使用满高布局，避免 `100dvh` 在部分 WebView 或浏览器环境里比实际可视高度多出少量像素。品牌区、Logo、表单卡片、输入框、按钮和切换入口都要使用紧凑尺寸，小高度屏幕继续收紧间距，并且不要在登录页保留会撑高首屏的页脚。
+- 手机端注册页不要用浏览器语言、系统地区或时区推断注册地，也不要把这些字段作为 `registrationLocation` 上报；默认让后端从代理请求头记录注册 IP。只有后续接入真实定位能力且来源明确为 `gps` 时，才允许上报粗粒度地区字段。
 - 手机端固定或吸顶顶部栏必须接入公共安全区样式：品牌型 Header 使用 `mobile-safe-header`，紧凑返回栏使用 `mobile-safe-compact-header`，固定 Header 后面的主内容使用 `mobile-safe-main-top`、`mobile-safe-main-top-tight` 或 `mobile-safe-main-top-loose`。不要直接写裸 `fixed top-0 h-16` 或 `sticky top-0 h-14`，否则 Tauri Android 真机会让 Header 被状态栏遮挡。聊天/客服等 scoped CSS 顶部栏也必须使用 `--mobile-status-safe-top` 变量同步留白。
 - 手机端所有页面 Header 背景和底部主导航背景必须和首页保持一致，统一使用 `--mobile-app-header-background`、`--mobile-app-header-border` 和 `--mobile-app-header-shadow`；能用 `mobile-safe-header` / `mobile-safe-compact-header` 的页面不要再单独写白底 Header，自定义聊天顶部栏和 `mobile-bottom-nav` 里的导航容器也要复用这组变量。
 - 手机端弹窗要按用途限制高度，避免默认做成接近整页：普通选择弹层建议控制在 `62-66dvh`，详情和购物篮控制在 `66-68dvh`，表单/创建类控制在 `70dvh` 左右，聊天红包/合买选择控制在 `64dvh` 左右。内容较长时必须让弹窗内部滚动，不要把外层高度放到 `85-90vh`。`emoji-mart` 表情面板必须显式设置 `dynamicWidth`、较小 `emojiButtonSize/emojiSize` 和约 `300px` 高度，避免默认 `435px` 面板在真机上过大。

@@ -1309,6 +1309,7 @@ await createUserBetOrders([{
 - `preDrawCode` 必须继续经过后端开奖号码校验，保存和返回仍统一为英文逗号分隔格式。
 - API68 解析器必须兼容 `result.data` 为数组或单对象两种形态；单对象接口还应读取 `drawIssue` 和 `drawTime` 作为下一期锚点。
 - 暂未配置外部源的 API 彩种仍保留本地生成器占位能力，仅用于当前内存演示阶段；生产接入时需要显式配置来源。
+- 配置 PostgreSQL 时，每次读取 API 最新期号或按期号读取开奖号码都必须写入 `api_draw_source_snapshots`，保存来源、彩种、请求用途、目标期号、解析出的最新期号/下一期/开奖号码、HTTP 状态、原始响应和错误信息。即使第三方 HTTP 非 2xx 或解析失败，也要保留失败快照，便于后续和本地期号、调度跳过原因做数据比对。
 
 开奖源响应：
 
@@ -3740,6 +3741,8 @@ if !session.scopes.contains(&required_scope) {
 ```
 
 用户登录 token 必须和管理员登录 token 使用同一安全策略：返回给客户端的是 `bcst_` 前缀 opaque Bearer token，不能包含用户 ID、用户名、邮箱、时间戳或计数器；内存会话索引和数据库 `user_sessions.token` 只能保存 `sha256:` 摘要。上线迁移清理旧明文会话后，用户端历史登录态需要重新登录。
+
+用户注册来源审计字段 `registrationLocation` 只允许后端服务端识别到的请求 IP 作为默认事实来源；手机端不得再用浏览器语言、系统国家或时区推断注册地。客户端只有在真实定位来源可用并标记为 `gps` 时才允许上报粗粒度地区字段；否则注册请求不传 `registrationLocation`，由后端从 `x-forwarded-for`、`Forwarded`、`x-real-ip`、`cf-connecting-ip` 或 `x-client-ip` 中提取 IP。后端读取到 `source=client` 或未知来源时必须清空国家、省份和城市字段，避免把语言/时区误展示成 IP 定位结果。
 
 ### 4. 校验与错误矩阵
 
