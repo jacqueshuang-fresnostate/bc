@@ -4086,3 +4086,10 @@
 - 解决问题：此前 `api_draw_source_snapshots` 已经保存第三方期号、开奖号码和原始响应，但后台“开奖期号与开奖源”页面没有任何入口查看，运营无法确认 API 抓取到的数据是否和本地期号、调度结果一致；采集快照持续增长后也缺少后台维护清理入口。
 - 实施内容：后端新增 `GET /api/admin/draw-source-snapshots`，支持按彩种、开奖源、采集用途、成功状态和期号筛选，并使用数据库分页倒序读取；新增 `DELETE /api/admin/draw-source-snapshots/clear`，只清除 API 采集快照审计记录并返回 `deletedCount`；新增采集快照领域分页模型、仓储查询/清理入口和 OpenAPI 文档；管理后台新增“采集快照”分段，列表展示采集摘要并可通过 `SideSheet` 查看 endpoint、错误信息、原始 JSON 和原始文本，同时提供中文确认的一键清除按钮；同步更新架构说明。
 - 验证结果：管理后台 `npm run build` 通过；`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_api -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml`（350 个测试成功）和 `git diff --check` 均通过。
+
+## 2026-06-18 14:05 HKT 修复 Tauri 图标格式导致的宏展开失败
+
+- 完成任务：修复手机端 Tauri 编译时报 `tauri::generate_context!()` proc macro panic 的问题。
+- 解决问题：`mobile/src-tauri/icons/icon.png` 文件名是 PNG，但图像内容缺少 RGBA alpha 通道，Tauri 编译期读取图标时报 `icon ... is not RGBA`，导致宏展开失败。
+- 实施内容：保留现有图标画面内容，将图标重新编码为真正的 RGBA PNG，避免 Tauri 编译期图标解析失败。
+- 验证结果：`cd mobile/src-tauri && cargo check` 通过，`generate_context!()` 不再 panic。
