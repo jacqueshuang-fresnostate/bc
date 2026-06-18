@@ -241,7 +241,7 @@ pub fn number_type_for_rule(rule_code: &PlayRuleCode) -> LotteryNumberType {
     }
 }
 
-/// 聚合并返回摘要结果。
+/// 转换为接口可返回的摘要结构。
 fn summary(
     code: PlayRuleCode,
     label: &str,
@@ -345,7 +345,7 @@ pub fn play_position_label(rule_code: &PlayRuleCode, position_key: &str) -> Stri
         .unwrap_or_else(|| position_key.to_string())
 }
 
-/// 处理 expand_bets 的具体内部流程。
+/// 按玩法规则把选号展开为可计奖投注组合。
 fn expand_bets(rule_code: &PlayRuleCode, selection: &PlaySelection) -> ApiResult<Vec<String>> {
     use PlayRuleCode::*;
 
@@ -378,7 +378,7 @@ fn expand_bets(rule_code: &PlayRuleCode, selection: &PlaySelection) -> ApiResult
     }
 }
 
-/// 处理 match_bets 的具体内部流程。
+/// 按开奖号码匹配中奖投注组合。
 fn match_bets(
     rule_code: &PlayRuleCode,
     selection: &PlaySelection,
@@ -433,7 +433,7 @@ fn match_bets(
     }
 }
 
-/// 处理 expand_direct 的具体内部流程。
+/// 展开直选各位置笛卡尔积组合。
 fn expand_direct(positions: &[Vec<u8>]) -> ApiResult<Vec<String>> {
     if positions.len() != 3 {
         return Err(ApiError::BadRequest(
@@ -457,7 +457,7 @@ fn expand_direct(positions: &[Vec<u8>]) -> ApiResult<Vec<String>> {
     Ok(bets)
 }
 
-/// 处理 expand_direct_combination 的具体内部流程。
+/// 展开直选组合玩法的排列投注。
 fn expand_direct_combination(numbers: &[u8]) -> ApiResult<Vec<String>> {
     let numbers = normalized_digits(numbers)?;
     if numbers.len() < 3 {
@@ -479,7 +479,7 @@ fn expand_direct_combination(numbers: &[u8]) -> ApiResult<Vec<String>> {
     Ok(bets)
 }
 
-/// 处理 expand_group_three 的具体内部流程。
+/// 展开组三号码投注组合。
 fn expand_group_three(numbers: &[u8]) -> ApiResult<Vec<String>> {
     let numbers = normalized_digits(numbers)?;
     if numbers.len() < 2 {
@@ -499,7 +499,7 @@ fn expand_group_three(numbers: &[u8]) -> ApiResult<Vec<String>> {
     Ok(bets)
 }
 
-/// 处理 expand_group_three_banker 的具体内部流程。
+/// 展开组三胆拖投注组合。
 fn expand_group_three_banker(bankers: &[u8], drags: &[u8]) -> ApiResult<Vec<String>> {
     let bankers = normalized_digits(bankers)?;
     let drags = normalized_digits(drags)?;
@@ -524,7 +524,7 @@ fn expand_group_three_banker(bankers: &[u8], drags: &[u8]) -> ApiResult<Vec<Stri
     Ok(bets)
 }
 
-/// 处理 expand_group_six 的具体内部流程。
+/// 展开组六号码投注组合。
 fn expand_group_six(numbers: &[u8]) -> ApiResult<Vec<String>> {
     let numbers = normalized_digits(numbers)?;
     if numbers.len() < 3 {
@@ -538,7 +538,7 @@ fn expand_group_six(numbers: &[u8]) -> ApiResult<Vec<String>> {
         .collect())
 }
 
-/// 处理 expand_group_six_banker 的具体内部流程。
+/// 展开组六胆拖投注组合。
 fn expand_group_six_banker(bankers: &[u8], drags: &[u8]) -> ApiResult<Vec<String>> {
     let bankers = normalized_digits(bankers)?;
     let drags = normalized_digits(drags)?;
@@ -567,7 +567,7 @@ fn expand_group_six_banker(bankers: &[u8], drags: &[u8]) -> ApiResult<Vec<String
         .collect())
 }
 
-/// 处理 expand_big_small_odd_even 的具体内部流程。
+/// 展开大小单双玩法投注编码。
 fn expand_big_small_odd_even(picks: &[BigSmallOddEvenPick]) -> ApiResult<Vec<String>> {
     if picks.is_empty() {
         return Err(ApiError::BadRequest(
@@ -593,7 +593,7 @@ fn expand_big_small_odd_even(picks: &[BigSmallOddEvenPick]) -> ApiResult<Vec<Str
     Ok(bets)
 }
 
-/// 处理 match_grouped_bets 的具体内部流程。
+/// 按组三或组六形态匹配中奖组合。
 fn match_grouped_bets(
     expanded_bets: &[String],
     window: &[u8],
@@ -615,7 +615,7 @@ fn match_grouped_bets(
         .collect()
 }
 
-/// 处理 match_big_small_odd_even 的具体内部流程。
+/// 按开奖窗口匹配大小单双属性。
 fn match_big_small_odd_even(picks: &[BigSmallOddEvenPick], window: &[u8]) -> Vec<String> {
     let tens = window[1];
     let ones = window[2];
@@ -640,7 +640,7 @@ fn match_big_small_odd_even(picks: &[BigSmallOddEvenPick], window: &[u8]) -> Vec
     matches
 }
 
-/// 校验输入参数并返回校验结果。
+/// 校验开奖号码是否符合彩种号码类型。
 fn validate_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> ApiResult<()> {
     let expected_len = match number_type {
         LotteryNumberType::ThreeDigit => 3,
@@ -665,7 +665,7 @@ fn validate_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> A
     Ok(())
 }
 
-/// 处理 digits_from_string 的具体内部流程。
+/// 把逗号分隔或连续数字解析为数字列表。
 fn digits_from_string(value: &str) -> ApiResult<Vec<u8>> {
     let value = value.trim();
     if value.contains(',') || value.contains('，') {
@@ -713,7 +713,7 @@ fn normalized_digits(digits: &[u8]) -> ApiResult<Vec<u8>> {
     Ok(normalized)
 }
 
-/// 处理 ensure_no_overlap 的具体内部流程。
+/// 校验胆拖玩法胆码和拖码没有重复。
 fn ensure_no_overlap(left: &[u8], right: &[u8]) -> ApiResult<()> {
     if left.iter().any(|digit| right.contains(digit)) {
         return Err(ApiError::BadRequest(
@@ -723,7 +723,7 @@ fn ensure_no_overlap(left: &[u8], right: &[u8]) -> ApiResult<()> {
     Ok(())
 }
 
-/// 处理 draw_window 的具体内部流程。
+/// 按玩法窗口截取开奖号码中的三位。
 fn draw_window(draw_digits: &[u8], window: ThreeDigitWindow) -> ApiResult<Vec<u8>> {
     match window {
         ThreeDigitWindow::Full if draw_digits.len() == 3 => Ok(draw_digits.to_vec()),
@@ -736,7 +736,7 @@ fn draw_window(draw_digits: &[u8], window: ThreeDigitWindow) -> ApiResult<Vec<u8
     }
 }
 
-/// 处理 window_for_rule 的具体内部流程。
+/// 根据玩法编码确定取号窗口。
 fn window_for_rule(rule_code: &PlayRuleCode) -> ThreeDigitWindow {
     use PlayRuleCode::*;
     match rule_code {
@@ -767,7 +767,7 @@ fn window_for_rule(rule_code: &PlayRuleCode) -> ThreeDigitWindow {
     }
 }
 
-/// 处理 digits_to_string 的具体内部流程。
+/// 把数字列表拼接为投注编码。
 fn digits_to_string(digits: &[u8]) -> String {
     digits
         .iter()
@@ -775,7 +775,7 @@ fn digits_to_string(digits: &[u8]) -> String {
         .collect()
 }
 
-/// 处理 combinations 的具体内部流程。
+/// 生成指定数量的无序组合。
 fn combinations(digits: &[u8], count: usize) -> Vec<Vec<u8>> {
     /// 遍历并展开组合集合。
     fn walk(
@@ -809,7 +809,7 @@ enum DigitShape {
     GroupSix,
 }
 
-/// 处理 digit_shape 的具体内部流程。
+/// 识别三位号码的直选、组三或组六形态。
 fn digit_shape(digits: &[u8]) -> DigitShape {
     let mut sorted = digits.to_vec();
     sorted.sort_unstable();
@@ -822,14 +822,14 @@ fn digit_shape(digits: &[u8]) -> DigitShape {
     }
 }
 
-/// 处理 sorted_digits_key 的具体内部流程。
+/// 生成排序后的号码匹配键。
 fn sorted_digits_key(digits: &[u8]) -> String {
     let mut sorted = digits.to_vec();
     sorted.sort_unstable();
     digits_to_string(&sorted)
 }
 
-/// 处理 digit_matches_attribute 的具体内部流程。
+/// 判断单个数字是否命中大小单双属性。
 fn digit_matches_attribute(digit: u8, attribute: &DigitAttribute) -> bool {
     match attribute {
         DigitAttribute::Big => digit >= 5,
@@ -839,7 +839,7 @@ fn digit_matches_attribute(digit: u8, attribute: &DigitAttribute) -> bool {
     }
 }
 
-/// 处理 big_small_position_code 的具体内部流程。
+/// 转换大小单双位置为投注编码。
 fn big_small_position_code(position: &BigSmallOddEvenPosition) -> &'static str {
     match position {
         BigSmallOddEvenPosition::Tens => "tens",
@@ -847,7 +847,7 @@ fn big_small_position_code(position: &BigSmallOddEvenPosition) -> &'static str {
     }
 }
 
-/// 处理 digit_attribute_code 的具体内部流程。
+/// 转换大小单双属性为投注编码。
 fn digit_attribute_code(attribute: &DigitAttribute) -> &'static str {
     match attribute {
         DigitAttribute::Big => "big",
@@ -870,7 +870,7 @@ mod tests {
     use super::evaluate_play_rule;
 
     #[test]
-    /// 处理 three_direct_matches_exact_order 的具体内部流程。
+    /// 验证三位直选只按顺序命中。
     fn three_direct_matches_exact_order() {
         let evaluation = evaluate(PlayRuleEvaluateRequest {
             number_type: LotteryNumberType::ThreeDigit,
@@ -888,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 three_group_three_counts_and_matches_permutations 的具体内部流程。
+    /// 验证组三按形态统计并匹配排列。
     fn three_group_three_counts_and_matches_permutations() {
         let evaluation = evaluate(PlayRuleEvaluateRequest {
             number_type: LotteryNumberType::ThreeDigit,
@@ -906,7 +906,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 three_group_three_banker_counts_banker_drag_shapes 的具体内部流程。
+    /// 验证组三胆拖的胆码拖码规则。
     fn three_group_three_banker_counts_banker_drag_shapes() {
         let evaluation = evaluate(PlayRuleEvaluateRequest {
             number_type: LotteryNumberType::ThreeDigit,
@@ -925,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 three_group_six_counts_combinations 的具体内部流程。
+    /// 验证组六组合计数和命中规则。
     fn three_group_six_counts_combinations() {
         let evaluation = evaluate(PlayRuleEvaluateRequest {
             number_type: LotteryNumberType::ThreeDigit,
@@ -943,7 +943,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 three_group_six_banker_counts_drag_combinations 的具体内部流程。
+    /// 验证组六胆拖组合计数规则。
     fn three_group_six_banker_counts_drag_combinations() {
         let evaluation = evaluate(PlayRuleEvaluateRequest {
             number_type: LotteryNumberType::ThreeDigit,
@@ -962,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 five_middle_direct_uses_middle_window 的具体内部流程。
+    /// 验证五位中三直选使用中间三位窗口。
     fn five_middle_direct_uses_middle_window() {
         let evaluation = evaluate(PlayRuleEvaluateRequest {
             number_type: LotteryNumberType::FiveDigit,
@@ -980,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 five_front_direct_combination_counts_permutations 的具体内部流程。
+    /// 验证五位前三直选组合按排列计数。
     fn five_front_direct_combination_counts_permutations() {
         let evaluation = evaluate(PlayRuleEvaluateRequest {
             number_type: LotteryNumberType::FiveDigit,
@@ -998,7 +998,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 five_back_group_six_uses_back_window 的具体内部流程。
+    /// 验证五位后三组六使用尾三位窗口。
     fn five_back_group_six_uses_back_window() {
         let evaluation = evaluate(PlayRuleEvaluateRequest {
             number_type: LotteryNumberType::FiveDigit,
@@ -1016,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 five_big_small_odd_even_uses_tail_two_digits 的具体内部流程。
+    /// 验证五位大小单双使用后两位窗口。
     fn five_big_small_odd_even_uses_tail_two_digits() {
         let evaluation = evaluate(PlayRuleEvaluateRequest {
             number_type: LotteryNumberType::FiveDigit,
@@ -1043,7 +1043,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 rejects_overlapping_banker_and_drag_digits 的具体内部流程。
+    /// 验证胆码和拖码重复会被拒绝。
     fn rejects_overlapping_banker_and_drag_digits() {
         let error = evaluate_play_rule(PlayRuleEvaluateRequest {
             number_type: LotteryNumberType::ThreeDigit,
@@ -1060,7 +1060,7 @@ mod tests {
         assert!(error.to_string().contains("cannot overlap"));
     }
 
-    /// 处理 evaluate 的具体内部流程。
+    /// 执行玩法计奖测试请求。
     fn evaluate(request: PlayRuleEvaluateRequest) -> super::PlayRuleEvaluation {
         evaluate_play_rule(request).expect("play rule can be evaluated")
     }

@@ -62,9 +62,13 @@ struct PendingApiIssueGeneration {
 #[serde(rename_all = "camelCase")]
 /// 开奖调度器配置，控制启停、执行间隔和未来期号缓冲。
 pub struct DrawSchedulerConfig {
+    /// 功能开关。
     pub enabled: bool,
+    /// intervalseconds字段。
     pub interval_seconds: u64,
+    /// 未来期号count字段。
     pub future_issue_count: u32,
+    /// 开奖前封盘提前秒数。
     pub sale_close_lead_seconds: u32,
 }
 
@@ -72,17 +76,24 @@ pub struct DrawSchedulerConfig {
 #[serde(rename_all = "camelCase")]
 /// 调度器跳过彩种的原因记录。
 pub struct DrawSchedulerSkippedLottery {
+    /// 彩种 ID。
     pub lottery_id: String,
+    /// 申请、审核或跳过原因。
     pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 调度器单轮执行结果，汇总自动开奖、结算和补期信息。
 pub struct DrawSchedulerRun {
+    /// 当前业务时间字符串。
     pub now: String,
+    /// automationrun字段。
     pub automation_run: DrawAutomationRun,
+    /// 本次生成的新期号列表。
     pub generated_issues: Vec<DrawIssue>,
+    /// 机器人run字段。
     pub robot_run: GroupBuyRobotRun,
+    /// skipped彩种字段。
     pub skipped_lotteries: Vec<DrawSchedulerSkippedLottery>,
 }
 
@@ -105,21 +116,37 @@ pub enum DrawSchedulerRunTrigger {
 #[serde(rename_all = "camelCase")]
 /// 调度器历史执行记录。
 pub struct DrawSchedulerRunRecord {
+    /// 业务唯一标识。
     pub id: String,
+    /// trigger字段。
     pub trigger: DrawSchedulerRunTrigger,
+    /// 业务状态，用于筛选、禁用或流转。
     pub status: DrawSchedulerRunStatus,
+    /// startedat字段。
     pub started_at: String,
+    /// finishedat字段。
     pub finished_at: String,
+    /// 当前业务时间字符串。
     pub now: String,
+    /// 错误字段。
     pub error: Option<String>,
+    /// 封盘期号count字段。
     pub closed_issue_count: usize,
+    /// 已开奖期号count字段。
     pub drawn_issue_count: usize,
+    /// 结算runcount字段。
     pub settlement_run_count: usize,
+    /// 流水记录count字段。
     pub ledger_entry_count: usize,
+    /// generated期号count字段。
     pub generated_issue_count: usize,
+    /// skipped期号count字段。
     pub skipped_issue_count: usize,
+    /// skipped彩种count字段。
     pub skipped_lottery_count: usize,
+    /// 本轮跳过处理的期号及原因。
     pub skipped_issues: Vec<DrawAutomationSkippedIssue>,
+    /// skipped彩种字段。
     pub skipped_lotteries: Vec<DrawSchedulerSkippedLottery>,
 }
 
@@ -127,10 +154,15 @@ pub struct DrawSchedulerRunRecord {
 #[serde(rename_all = "camelCase")]
 /// 后台展示的调度器当前状态。
 pub struct DrawSchedulerStatus {
+    /// 功能开关。
     pub enabled: bool,
+    /// 配置字段。
     pub config: DrawSchedulerConfig,
+    /// runcount字段。
     pub run_count: usize,
+    /// lastrun字段。
     pub last_run: Option<DrawSchedulerRunRecord>,
+    /// 最近runs字段。
     pub recent_runs: Vec<DrawSchedulerRunRecord>,
 }
 
@@ -268,7 +300,7 @@ impl DrawSchedulerRepository {
             .map_err(|_| ApiError::Internal("开奖调度缓存刷新失败".to_string()))? = store;
         Ok(true)
     }
-
+    /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &DrawSchedulerStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_scheduler_store(persistence, store).await?;
@@ -510,7 +542,7 @@ fn max_sequence(ids: &[String]) -> u64 {
 
 /// 开奖调度器快照的校验、记录和历史裁剪方法。
 impl DrawSchedulerStore {
-    /// 创建并初始化新实例。
+    /// 初始化内部状态容器。
     fn new(config: DrawSchedulerConfig) -> Self {
         Self {
             config,
@@ -531,14 +563,14 @@ impl DrawSchedulerStore {
         }
     }
 
-    /// 处理 update_config 的具体内部流程。
+    /// 更新开奖调度器配置并返回最新状态。
     fn update_config(&mut self, config: DrawSchedulerConfig) -> ApiResult<DrawSchedulerStatus> {
         config.validate()?;
         self.config = config;
         Ok(self.status())
     }
 
-    /// 处理 record_success 的具体内部流程。
+    /// 记录一轮调度成功结果和耗时指标。
     fn record_success(
         &mut self,
         trigger: DrawSchedulerRunTrigger,
@@ -568,7 +600,7 @@ impl DrawSchedulerStore {
         self.push_record(record)
     }
 
-    /// 处理 record_failure 的具体内部流程。
+    /// 记录一轮调度失败原因和耗时指标。
     fn record_failure(
         &mut self,
         trigger: DrawSchedulerRunTrigger,
@@ -598,14 +630,14 @@ impl DrawSchedulerStore {
         self.push_record(record)
     }
 
-    /// 处理 next_record 的具体内部流程。
+    /// 为调度执行记录分配递增编号。
     fn next_record(&mut self, mut record: DrawSchedulerRunRecord) -> DrawSchedulerRunRecord {
         self.next_sequence += 1;
         record.id = format!("SCH{:012}", self.next_sequence);
         record
     }
 
-    /// 处理 push_record 的具体内部流程。
+    /// 保存调度执行记录并裁剪历史长度。
     fn push_record(&mut self, record: DrawSchedulerRunRecord) -> ApiResult<DrawSchedulerRunRecord> {
         self.runs.push_front(record.clone());
         while self.runs.len() > MAX_SCHEDULER_HISTORY {
@@ -913,7 +945,7 @@ pub async fn run_draw_scheduler_once(
     )
     .await
 }
-
+/// 执行一轮完整开奖调度并在关键节点推送实时事件。
 async fn run_draw_scheduler_once_with_realtime(
     draws: &DrawRepository,
     lotteries: &LotteryRepository,
@@ -965,7 +997,7 @@ async fn run_draw_scheduler_once_with_realtime(
         skipped_lotteries: opening_run.skipped_lotteries,
     })
 }
-
+/// 执行调度快阶段，负责开盘、补未来期号和推送开盘事件。
 async fn run_draw_scheduler_opening_once_with_realtime(
     draws: &DrawRepository,
     lotteries: &LotteryRepository,
@@ -1033,7 +1065,7 @@ async fn run_draw_scheduler_opening_once_with_realtime(
         skipped_lotteries,
     })
 }
-
+/// 执行调度慢阶段，负责开奖、结算、机器人和派奖。
 async fn run_draw_scheduler_slow_once_with_realtime(
     draws: &DrawRepository,
     lotteries: &LotteryRepository,
@@ -1135,7 +1167,7 @@ async fn run_draw_scheduler_slow_once_with_realtime(
 
     Ok(run)
 }
-
+/// 构造空的合买合买机器人run。
 fn empty_group_buy_robot_run(now: String) -> GroupBuyRobotRun {
     GroupBuyRobotRun {
         now,
@@ -1159,7 +1191,7 @@ fn merge_group_buy_robot_runs(
     first.skipped_items.extend(second.skipped_items);
     first
 }
-
+/// 确保平台或人工彩种存在足够的未来期号。
 async fn ensure_non_api_future_draw_issues(
     draws: &DrawRepository,
     lotteries: &LotteryRepository,
@@ -1225,7 +1257,7 @@ async fn ensure_non_api_future_draw_issues(
 
     Ok((generated_issues, skipped_lotteries, pending_api_generations))
 }
-
+/// 按第三方开奖源锚点确保 API 彩种未来期号。
 async fn ensure_api_future_draw_issues(
     draws: &DrawRepository,
     _config: &DrawSchedulerConfig,
@@ -1305,7 +1337,7 @@ async fn ensure_api_future_draw_issues(
 
     Ok((generated_issues, skipped_lotteries))
 }
-
+/// 把期号生成计划转换为实际开奖期号。
 async fn create_draw_issue_from_plan(
     draws: &DrawRepository,
     lottery: &LotteryKind,
@@ -1374,7 +1406,7 @@ mod tests {
             },
         },
     };
-
+    /// 验证调度器会为销售中彩种生成未来期号。
     #[tokio::test]
     async fn scheduler_generates_future_issues_for_enabled_lotteries() {
         let draws = DrawRepository::memory();
@@ -1413,7 +1445,7 @@ mod tests {
             .iter()
             .any(|lottery| lottery.lottery_id == "manual-test"));
     }
-
+    /// 验证 API 期号生成失败时调度器会跳过该彩种。
     #[tokio::test]
     async fn scheduler_skips_lottery_when_api_issue_generation_fails() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1456,7 +1488,7 @@ mod tests {
             .iter()
             .any(|issue| issue.lottery_id == "ssc60"));
     }
-
+    /// 验证非 API 彩种期号生成早于 API 期号生成。
     #[tokio::test]
     async fn scheduler_generates_non_api_issues_before_api_generation() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1488,7 +1520,7 @@ mod tests {
             .any(|pending| pending.lottery.id == "txffc"));
         assert!(!skipped.iter().any(|lottery| lottery.lottery_id == "ssc60"));
     }
-
+    /// 验证未来期号数量足够时调度器不会重复生成。
     #[tokio::test]
     async fn scheduler_does_not_duplicate_when_future_buffer_is_satisfied() {
         let draws = DrawRepository::memory();
@@ -1530,7 +1562,7 @@ mod tests {
 
         assert!(second.generated_issues.is_empty());
     }
-
+    /// 验证到期开奖自动化先于未来期号补齐执行。
     #[tokio::test]
     async fn scheduler_runs_due_automation_before_generating_future_issues() {
         let draws = DrawRepository::memory();
@@ -1580,7 +1612,7 @@ mod tests {
                 && issue.issue == "202606020001"
                 && issue.draw_mode == DrawMode::Platform));
     }
-
+    /// 验证封盘前会先尝试补满用户合买计划。
     #[tokio::test]
     async fn scheduler_fills_user_group_buy_before_closing_issue() {
         let draws = DrawRepository::memory();
@@ -1666,7 +1698,7 @@ mod tests {
             .any(|filled| filled.id == plan.id && filled.order_id.is_some()));
         assert!(run.automation_run.ledger_entries.is_empty());
     }
-
+    /// 验证已封盘用户合买会在退款前执行兜底补满。
     #[tokio::test]
     async fn scheduler_force_fills_closed_user_group_buy_before_refund() {
         let draws = DrawRepository::memory();
@@ -1753,7 +1785,7 @@ mod tests {
             .any(|filled| filled.id == plan.id && filled.order_id.is_some()));
         assert!(run.automation_run.ledger_entries.is_empty());
     }
-
+    /// 验证调度器先推送新期开奖事件再推送开奖结果。
     #[tokio::test]
     async fn scheduler_publishes_opening_events_before_draw_result() {
         let draws = DrawRepository::memory();
@@ -1820,7 +1852,7 @@ mod tests {
             ]
         );
     }
-
+    /// 验证未到开奖时间不会提前开启下一期。
     #[tokio::test]
     async fn scheduler_waits_until_draw_time_before_opening_next_issue() {
         let draws = DrawRepository::memory();
@@ -1885,7 +1917,7 @@ mod tests {
                 && issue.issue == "202606020002"
                 && issue.status == DrawIssueStatus::Open));
     }
-
+    /// 验证调度器线程可启动但会按后台配置决定是否执行。
     #[tokio::test]
     async fn scheduler_spawn_starts_worker_even_when_disabled() {
         let handle = spawn_draw_scheduler(
@@ -1904,7 +1936,7 @@ mod tests {
         assert!(!handle.is_finished());
         handle.abort();
     }
-
+    /// 验证后台开启调度后工作线程开始执行。
     #[tokio::test]
     async fn scheduler_worker_runs_after_backend_config_enables_it() {
         let draws = DrawRepository::memory();
@@ -1951,7 +1983,7 @@ mod tests {
 
         handle.abort();
     }
-
+    /// 验证调度仓储会记录成功执行摘要。
     #[tokio::test]
     async fn scheduler_repository_records_success_summary() {
         let draws = DrawRepository::memory();
@@ -2008,7 +2040,7 @@ mod tests {
             .iter()
             .any(|lottery| lottery.lottery_id == "manual-test"));
     }
-
+    /// 验证调度仓储会记录失败执行摘要。
     #[tokio::test]
     async fn scheduler_repository_records_failure_summary() {
         let config = enabled_config(1);
@@ -2033,7 +2065,7 @@ mod tests {
         assert_eq!(status.run_count, 1);
         assert_eq!(status.recent_runs[0].status, DrawSchedulerRunStatus::Failed);
     }
-
+    /// 验证调度配置更新会先做参数校验。
     #[tokio::test]
     async fn scheduler_repository_updates_config_with_validation() {
         let scheduler = DrawSchedulerRepository::new(DrawSchedulerConfig::default());
@@ -2065,7 +2097,7 @@ mod tests {
 
         assert!(error.to_string().contains("interval seconds"));
     }
-
+    /// 验证调度执行历史只保留最近记录。
     #[tokio::test]
     async fn scheduler_repository_keeps_recent_history_limit() {
         let scheduler = DrawSchedulerRepository::new(enabled_config(1));
@@ -2090,7 +2122,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 scheduler_config_uses_database_seed_defaults 的具体内部流程。
+    /// 验证调度配置默认值来自数据库种子。
     fn scheduler_config_uses_database_seed_defaults() {
         let config = DrawSchedulerConfig::default();
 
@@ -2104,7 +2136,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 scheduler_config_rejects_invalid_values 的具体内部流程。
+    /// 验证调度器拒绝非法配置值。
     fn scheduler_config_rejects_invalid_values() {
         let mut config = DrawSchedulerConfig::default();
         config.interval_seconds = 0;
@@ -2115,7 +2147,7 @@ mod tests {
             .contains("interval seconds must be greater than zero"));
     }
 
-    /// 处理 enabled_config 的具体内部流程。
+    /// 构造测试用已启用调度配置。
     fn enabled_config(future_issue_count: u32) -> DrawSchedulerConfig {
         DrawSchedulerConfig {
             enabled: true,

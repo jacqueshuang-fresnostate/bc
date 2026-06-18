@@ -41,13 +41,21 @@ pub enum SupportMessageType {
 #[serde(rename_all = "camelCase")]
 /// 单条客服消息，保存作者快照、内容类型、文本内容和可选图片链接。
 pub struct SupportMessage {
+    /// 客服消息 ID。
     pub id: String,
+    /// 消息发送方类型。
     pub author: SupportMessageAuthor,
+    /// 消息发送方 ID。
     pub author_id: String,
+    /// 消息发送方展示名。
     pub author_name: String,
+    /// 消息类型，区分文本、图片、红包等。
     pub message_type: SupportMessageType,
+    /// 消息正文内容。
     pub content: String,
+    /// 图片消息地址。
     pub image_url: Option<String>,
+    /// 创建时间。
     pub created_at: String,
 }
 
@@ -55,20 +63,31 @@ pub struct SupportMessage {
 #[serde(rename_all = "camelCase")]
 /// 客服会话完整实体，包含分配客服、后台未读数、用户未读数和消息列表。
 pub struct SupportConversation {
+    /// 客服会话 ID。
     pub id: String,
+    /// 关联用户 ID。
     pub user_id: String,
+    /// 用户展示名。
     pub username: String,
+    /// 客服会话主题。
     pub subject: String,
+    /// 业务状态，用于筛选、禁用或流转。
     pub status: SupportConversationStatus,
+    /// 客服会话优先级。
     pub priority: SupportPriority,
+    /// 当前分配的客服管理员 ID。
     pub assigned_admin_id: Option<String>,
+    /// 当前分配的客服管理员名称。
     pub assigned_admin_name: Option<String>,
     /// 后台客服侧未读消息数，只统计用户发来的待处理消息。
     pub unread_count: u16,
     /// 用户侧未读消息数，只统计客服发来的未查看消息。
     pub user_unread_count: u16,
+    /// 创建时间。
     pub created_at: String,
+    /// 最后更新时间。
     pub updated_at: String,
+    /// 会话内消息列表。
     pub messages: Vec<SupportMessage>,
 }
 
@@ -76,10 +95,15 @@ pub struct SupportConversation {
 #[serde(rename_all = "camelCase")]
 /// 后台为用户创建客服会话时提交的首条消息。
 pub struct CreateSupportConversationRequest {
+    /// 业务唯一标识。
     pub id: String,
+    /// 关联用户 ID。
     pub user_id: String,
+    /// 客服会话主题。
     pub subject: String,
+    /// 客服会话优先级。
     pub priority: SupportPriority,
+    /// 消息正文内容。
     pub content: String,
 }
 
@@ -87,8 +111,11 @@ pub struct CreateSupportConversationRequest {
 #[serde(rename_all = "camelCase")]
 /// 后台更新客服会话状态、优先级和分配客服时提交的请求。
 pub struct UpdateSupportConversationRequest {
+    /// 业务状态，用于筛选、禁用或流转。
     pub status: SupportConversationStatus,
+    /// 客服会话优先级。
     pub priority: SupportPriority,
+    /// 当前分配的客服管理员 ID。
     pub assigned_admin_id: Option<String>,
 }
 
@@ -96,9 +123,13 @@ pub struct UpdateSupportConversationRequest {
 #[serde(rename_all = "camelCase")]
 /// 后台客服回复会话时提交的客服编号、内容类型、文本内容和图片链接。
 pub struct SupportReplyRequest {
+    /// 操作管理员 ID。
     pub admin_id: String,
+    /// 消息正文内容。
     pub content: Option<String>,
+    /// 消息类型，区分文本、图片、红包等。
     pub message_type: Option<SupportMessageType>,
+    /// 图片消息地址。
     pub image_url: Option<String>,
 }
 
@@ -106,7 +137,10 @@ pub struct SupportReplyRequest {
 #[serde(rename_all = "camelCase")]
 /// 用户端继续回复自己客服会话时提交的内容，支持文本和已上传图床的图片消息。
 pub struct UserSupportReplyRequest {
+    /// 消息正文内容。
     pub content: Option<String>,
+    /// 消息类型，区分文本、图片、红包等。
     pub message_type: Option<SupportMessageType>,
+    /// 图片消息地址。
     pub image_url: Option<String>,
 }

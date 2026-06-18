@@ -441,7 +441,7 @@ fn now_string() -> String {
 mod tests {
     use super::*;
     use crate::domain::user::AdminSummary;
-
+    /// 构造测试用用户摘要。
     fn test_user(kind: UserKind) -> UserSummary {
         UserSummary {
             id: "U10001".to_string(),
@@ -458,7 +458,7 @@ mod tests {
             created_at: "2026-06-05 10:00:00".to_string(),
         }
     }
-
+    /// 构造测试用管理员摘要。
     fn test_admin() -> AdminSummary {
         AdminSummary {
             id: "A001".to_string(),
@@ -468,7 +468,7 @@ mod tests {
             status: UserStatus::Active,
         }
     }
-
+    /// 验证agent申请submitis幂等用于待处理用户。
     #[tokio::test]
     async fn agent_application_submit_is_idempotent_for_pending_user() {
         let repository = AgentApplicationRepository::memory();
@@ -495,7 +495,7 @@ mod tests {
         assert_eq!(first.id, second.id);
         assert_eq!(repository.list(None).await.expect("列表可读取").len(), 1);
     }
-
+    /// 验证agent申请拒绝已有agent。
     #[tokio::test]
     async fn agent_application_rejects_existing_agent() {
         let repository = AgentApplicationRepository::memory();
@@ -511,7 +511,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证agent申请审核记录管理员快照。
     #[tokio::test]
     async fn agent_application_review_records_admin_snapshot() {
         let repository = AgentApplicationRepository::memory();

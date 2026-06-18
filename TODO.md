@@ -4065,3 +4065,10 @@
 - 解决问题：早期 SQL 迁移会在空库中先插入 `getBaseCQShiCaiList.do`，而当前代码和后台预设使用 `getBaseCQShiCai.do`；新机器部署时可能出现数据库初始化地址和当前系统预设不一致。
 - 实施内容：新增前向迁移 `20260618114500_update_au5_draw_source_endpoint.sql`，通过 `id=api68-au5`、`provider=api68`、`lot_code=10010` 精准更新 endpoint，并只把旧默认名称规整为“API68 澳洲幸运5”；同步更新架构说明。
 - 验证结果：`git diff --check` 通过。
+
+## 2026-06-18 08:14 HKT 后端中文注释全量治理
+
+- 完成任务：给后端代码补齐中文注释，覆盖公开领域模型字段、公开常量、公开函数、仓储方法、数据库持久化入口、内部 helper 和测试 helper。
+- 解决问题：后端仍残留部分字段无注释、私有方法缺少用途说明，以及“具体内部流程”“说明 xxx 的业务用途”等模板化注释，维护时难以快速判断业务边界。
+- 实施内容：为 `backend/src/domain` 全部公开字段补充中文字段含义；为 `backend/src/services`、`backend/src/routes`、`app/error/response/main` 中函数和方法补充中文用途说明；重点清洗开奖源解析、开奖调度、资金、充值、客服、彩种、用户访问控制、合买机器人等关键链路注释；同步更新架构说明。
+- 验证结果：后端注释扫描确认函数、公开字段、公开常量均已有中文注释，模板化占位注释为 0；`cargo fmt --manifest-path backend/Cargo.toml` 和 `cargo check --manifest-path backend/Cargo.toml` 均通过，后续继续执行测试编译验证。

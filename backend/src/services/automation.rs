@@ -234,7 +234,7 @@ pub async fn draw_due_issues(
 
     Ok(run)
 }
-
+/// 规范化自动开奖请求中的当前时间参数。
 fn normalize_automation_now(payload: &DrawAutomationRunRequest) -> ApiResult<String> {
     let now = payload.now.trim().to_string();
     if now.is_empty() {
@@ -245,7 +245,7 @@ fn normalize_automation_now(payload: &DrawAutomationRunRequest) -> ApiResult<Str
 
     Ok(now)
 }
-
+/// 创建没有任何处理结果的自动开奖运行记录。
 fn empty_draw_automation_run(now: &str) -> DrawAutomationRun {
     DrawAutomationRun {
         now: now.to_string(),
@@ -428,7 +428,7 @@ fn is_due_at_with_delay(value: &str, now: &str, delay_seconds: u32) -> bool {
         _ => is_due_at(value, now),
     }
 }
-
+/// 解析业务时间字符串，失败时返回空值。
 fn parse_timestamp(value: &str) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(value.trim(), TIMESTAMP_FORMAT).ok()
 }
@@ -442,7 +442,7 @@ fn skipped_issue(issue: &DrawIssue, reason: &str) -> DrawAutomationSkippedIssue 
         reason: reason.to_string(),
     }
 }
-
+/// 记录跳过期号并避免同一期号重复写入跳过原因。
 fn push_skipped_issue_once(run: &mut DrawAutomationRun, issue: &DrawIssue, reason: &str) {
     if !run
         .skipped_issues
@@ -491,7 +491,7 @@ fn stale_api_issue_retry_reason(
         "距离开奖源最新期号 {latest_issue} 已超过 {API_DRAW_RETRY_MAX_LATEST_ISSUE_DISTANCE} 期，停止重试旧期号"
     ))
 }
-
+/// 并发预取自动开奖所需的彩种、开奖源和期号配置。
 async fn lottery_automation_configs(
     lotteries: &crate::services::lottery::LotteryRepository,
 ) -> ApiResult<HashMap<String, LotteryAutomationConfig>> {
@@ -588,7 +588,7 @@ mod tests {
             ]
         }
     }"#;
-
+    /// 验证自动开奖封盘draws结算和入账due期号。
     #[tokio::test]
     async fn automation_closes_draws_settles_and_credits_due_issue() {
         let draws = DrawRepository::memory();
@@ -647,7 +647,7 @@ mod tests {
             .as_deref()
             .is_some_and(|number| { number.split(',').count() == 3 }));
     }
-
+    /// 验证自动开奖skipsallstepswhen彩种stopped。
     #[tokio::test]
     async fn automation_skips_all_steps_when_lottery_stopped() {
         let draws = DrawRepository::memory();
@@ -686,7 +686,7 @@ mod tests {
         assert!(run.skipped_issues[0].reason.contains("已停售"));
         assert_eq!(stored.status, DrawIssueStatus::Open);
     }
-
+    /// 验证自动开奖skipsdue人工期号without开奖号码。
     #[tokio::test]
     async fn automation_skips_due_manual_issue_without_draw_number() {
         let draws = DrawRepository::memory();
@@ -721,7 +721,7 @@ mod tests {
         assert_eq!(stored.status, DrawIssueStatus::Closed);
         assert!(run.skipped_issues[0].reason.contains("管理员录入开奖号码"));
     }
-
+    /// 验证自动开奖drawsdue人工期号带control号码。
     #[tokio::test]
     async fn automation_draws_due_manual_issue_with_control_number() {
         let draws = DrawRepository::memory();
@@ -769,7 +769,7 @@ mod tests {
         assert_eq!(stored.status, DrawIssueStatus::Drawn);
         assert_eq!(stored.draw_number.as_deref(), Some("2,4,7"));
     }
-
+    /// 验证自动开奖skipsAPI期号when开奖来源misses期号。
     #[tokio::test]
     async fn automation_skips_api_issue_when_draw_source_misses_issue() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -807,7 +807,7 @@ mod tests {
         assert!(stored.draw_number.is_none());
         assert!(run.skipped_issues[0].reason.contains("未找到"));
     }
-
+    /// 验证自动开奖stopsretryingAPI期号whenitismorethanfive期号behind最新。
     #[tokio::test]
     async fn automation_stops_retrying_api_issue_when_it_is_more_than_five_issues_behind_latest() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -845,7 +845,7 @@ mod tests {
         assert!(stored.draw_number.is_none());
         assert!(run.skipped_issues[0].reason.contains("停止重试旧期号"));
     }
-
+    /// 验证自动开奖keepsretryingAPI期号withinfive期号distance。
     #[tokio::test]
     async fn automation_keeps_retrying_api_issue_within_five_issue_distance() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -884,7 +884,7 @@ mod tests {
         assert!(run.skipped_issues[0].reason.contains("未找到"));
         assert!(!run.skipped_issues[0].reason.contains("停止重试旧期号"));
     }
-
+    /// 验证自动开奖退款unfilled合买合买when期号封盘。
     #[tokio::test]
     async fn automation_refunds_unfilled_group_buy_when_issue_closes() {
         let draws = DrawRepository::memory();
@@ -951,7 +951,7 @@ mod tests {
         assert_eq!(run.ledger_entries.len(), 1);
         assert_eq!(run.ledger_entries[0].kind, LedgerEntryKind::GroupBuyRefund);
     }
-
+    /// 验证自动开奖waits用于API开奖delay之前requesting来源。
     #[tokio::test]
     async fn automation_waits_for_api_draw_delay_before_requesting_source() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1011,7 +1011,7 @@ mod tests {
         );
     }
 
-    /// 处理 create_request 的具体内部流程。
+    /// 构造测试用创建请求。
     fn create_request(issue: &str) -> CreateDrawIssueRequest {
         CreateDrawIssueRequest {
             lottery_id: "fc3d".to_string(),
@@ -1021,7 +1021,7 @@ mod tests {
         }
     }
 
-    /// 处理 lottery 的具体内部流程。
+    /// 构造测试或种子使用的彩种配置。
     fn lottery(draw_mode: DrawMode) -> LotteryKind {
         LotteryKind {
             id: "fc3d".to_string(),
@@ -1062,7 +1062,7 @@ mod tests {
             .expect("lottery sale can be enabled for automation test");
     }
 
-    /// 处理 full_direct_selection 的具体内部流程。
+    /// 构造覆盖直选全部位置的测试选号。
     fn full_direct_selection() -> PlaySelection {
         let all_digits = (0..=9).collect::<Vec<_>>();
         PlaySelection {

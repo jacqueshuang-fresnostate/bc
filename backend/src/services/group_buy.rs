@@ -30,7 +30,9 @@ use super::{
 #[derive(Clone)]
 /// 合买计划和参与记录仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct GroupBuyRepository {
+    /// 合买模块内存快照锁，保存计划、参与人和序号状态。
     pub(crate) inner: Arc<RwLock<GroupBuyStore>>,
+    /// 可选数据库持久化句柄；内存模式下为空。
     pub(crate) persistence: Option<BusinessDatabase>,
     /// 串行化合买写操作，避免多个快照异步落库时旧快照覆盖新快照。
     pub(crate) mutation_lock: Arc<Mutex<()>>,
@@ -57,7 +59,7 @@ impl GroupBuyRepository {
         })
     }
 
-    /// 返回完整列表。
+    /// 按当前仓储快照返回全部合买计划列表。
     pub async fn list(&self) -> ApiResult<Vec<GroupBuyPlanSummary>> {
         self.inner
             .read()
@@ -186,7 +188,7 @@ impl GroupBuyRepository {
         .await
     }
 
-    /// 按 ID 查询单条记录。
+    /// 按业务标识读取单条记录，未命中时返回未找到错误。
     pub async fn get(&self, id: &str) -> ApiResult<GroupBuyPlan> {
         self.inner
             .read()
@@ -319,7 +321,7 @@ impl GroupBuyRepository {
 
         Ok(result)
     }
-
+    /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &GroupBuyStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_group_buy_store(persistence, store).await?;
@@ -853,7 +855,7 @@ impl GroupBuyStore {
         Self { plans }
     }
 
-    /// 返回完整数据列表。
+    /// 按当前仓储快照返回全部合买计划列表。
     fn list(&self) -> Vec<GroupBuyPlanSummary> {
         sorted_group_buy_plans(self.plans.values())
             .into_iter()
@@ -1149,7 +1151,7 @@ impl GroupBuyStore {
         cancelled
     }
 
-    /// 处理 add_participant 的具体内部流程。
+    /// 为合买计划追加参与人并更新认购进度。
     pub(crate) fn add_participant(
         &mut self,
         id: &str,
@@ -1304,7 +1306,7 @@ fn sorted_group_buy_plans<'a>(
     sorted_plans
 }
 
-/// 处理 participant_min_amount 的具体内部流程。
+/// 计算合买计划当前最小可认购金额。
 fn participant_min_amount(plan: &GroupBuyPlan) -> i64 {
     plan.participant_min_amount_minor
         .max(plan.min_share_amount_minor)
@@ -1327,7 +1329,7 @@ fn find_user<'a>(users: &'a [UserSummary], id: &str) -> ApiResult<&'a UserSummar
         .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))
 }
 
-/// 校验输入参数并返回校验结果。
+/// 校验金额必须大于 0。
 fn validate_positive_amount(amount: i64, label: &str) -> ApiResult<()> {
     if amount <= 0 {
         return Err(ApiError::BadRequest(format!(
@@ -1338,7 +1340,7 @@ fn validate_positive_amount(amount: i64, label: &str) -> ApiResult<()> {
     Ok(())
 }
 
-/// 校验输入参数并返回校验结果。
+/// 校验金额必须符合单份金额倍数。
 fn validate_share_amount(amount: i64, min_share_amount_minor: i64, label: &str) -> ApiResult<()> {
     if min_share_amount_minor <= 0 {
         return Err(ApiError::BadRequest(
@@ -1355,7 +1357,7 @@ fn validate_share_amount(amount: i64, min_share_amount_minor: i64, label: &str) 
     Ok(())
 }
 
-/// 处理 minimum_amount_by_percent 的具体内部流程。
+/// 按总金额和比例计算最低认购金额。
 fn minimum_amount_by_percent(total_amount_minor: i64, percent: u8) -> ApiResult<i64> {
     let raw = total_amount_minor
         .checked_mul(i64::from(percent))
@@ -1364,7 +1366,7 @@ fn minimum_amount_by_percent(total_amount_minor: i64, percent: u8) -> ApiResult<
     Ok((raw + 99) / 100)
 }
 
-/// 处理 share_count 的具体内部流程。
+/// 按金额和单份金额计算份数。
 fn share_count(amount_minor: i64, min_share_amount_minor: i64) -> ApiResult<u32> {
     validate_share_amount(amount_minor, min_share_amount_minor, "amount")?;
     let shares = amount_minor / min_share_amount_minor;
@@ -1400,7 +1402,7 @@ fn current_time_label() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-/// 返回内置种子或测试数据。
+/// 返回内置合买计划种子数据。
 fn seed_group_buy_plans() -> Vec<GroupBuyPlan> {
     vec![GroupBuyPlan {
         id: "G202606020001".to_string(),
@@ -1452,7 +1454,7 @@ mod tests {
         domain::lottery::LotteryKind,
         services::{access::AccessRepository, lottery::seed_lotteries},
     };
-
+    /// 验证合买合买仓储创建计划带发起人参与人。
     #[tokio::test]
     async fn group_buy_repository_creates_plan_with_initiator_participant() {
         let repository = GroupBuyRepository::memory_seeded();
@@ -1487,7 +1489,7 @@ mod tests {
         assert_eq!(plan.participants.len(), 1);
         assert_eq!(plan.participants[0].share_count, 100);
     }
-
+    /// 验证合买合买仓储列表最新期号优先。
     #[tokio::test]
     async fn group_buy_repository_lists_latest_issue_first() {
         let repository = GroupBuyRepository::memory_seeded();
@@ -1552,7 +1554,7 @@ mod tests {
             ["20260602003", "20260602002", "20260602001"]
         );
     }
-
+    /// 验证合买合买仓储skips未结算计划whenclearing。
     #[test]
     fn group_buy_store_skips_unsettled_plans_when_clearing() {
         let mut store = GroupBuyStore::seeded();
@@ -1563,7 +1565,7 @@ mod tests {
         assert_eq!(deleted_count, 0);
         assert_eq!(store.list().len(), 1);
     }
-
+    /// 验证合买合买仓储清理已完成记录和keeps未结算。
     #[test]
     fn group_buy_store_clears_finished_records_and_keeps_unsettled() {
         let mut store = GroupBuyStore::seeded();
@@ -1596,7 +1598,7 @@ mod tests {
             GroupBuyPlanStatus::Cancelled | GroupBuyPlanStatus::Settled
         )));
     }
-
+    /// 验证合买合买仓储清理已完成记录。
     #[test]
     fn group_buy_store_clears_finished_records() {
         let mut store = GroupBuyStore::seeded();
@@ -1612,7 +1614,7 @@ mod tests {
         );
         assert!(store.list().is_empty());
     }
-
+    /// 验证合买合买仓储拒绝停用彩种。
     #[tokio::test]
     async fn group_buy_repository_rejects_disabled_lottery() {
         let repository = GroupBuyRepository::memory_seeded();
@@ -1643,7 +1645,7 @@ mod tests {
 
         assert!(error.to_string().contains("group buy is disabled"));
     }
-
+    /// 验证合买合买仓储拒绝低发起人金额。
     #[tokio::test]
     async fn group_buy_repository_rejects_low_initiator_amount() {
         let repository = GroupBuyRepository::memory_seeded();
@@ -1676,7 +1678,7 @@ mod tests {
             .to_string()
             .contains("initiator amount must be at least"));
     }
-
+    /// 验证合买合买仓储adds参与人和补满计划。
     #[tokio::test]
     async fn group_buy_repository_adds_participant_and_fills_plan() {
         let repository = GroupBuyRepository::memory_seeded();
@@ -1725,7 +1727,7 @@ mod tests {
         assert_eq!(filled.status, GroupBuyPlanStatus::Filled);
         assert_eq!(filled.participants.len(), 2);
     }
-
+    /// 验证合买合买仓储allowsfinal尾差below参与人minimum。
     #[tokio::test]
     async fn group_buy_repository_allows_final_remainder_below_participant_minimum() {
         let repository = GroupBuyRepository::memory_seeded();
@@ -1772,7 +1774,7 @@ mod tests {
         assert_eq!(filled.status, GroupBuyPlanStatus::Filled);
         assert_eq!(filled.participants[1].share_count, 5);
     }
-
+    /// 验证合买合买仓储拒绝参与人thatleavesunjoinable尾差。
     #[tokio::test]
     async fn group_buy_repository_rejects_participant_that_leaves_unjoinable_remainder() {
         let repository = GroupBuyRepository::memory_seeded();
@@ -1817,7 +1819,7 @@ mod tests {
 
         assert!(error.to_string().contains("剩余金额低于最低认购金额"));
     }
-
+    /// 验证合买合买仓储拒绝参与人超额认购。
     #[tokio::test]
     async fn group_buy_repository_rejects_participant_overfill() {
         let repository = GroupBuyRepository::memory_seeded();

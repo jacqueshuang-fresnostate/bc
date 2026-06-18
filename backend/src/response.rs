@@ -9,8 +9,11 @@ pub struct ApiEnvelope<T>
 where
     T: Serialize,
 {
+    /// 请求是否处理成功。
     pub success: bool,
+    /// 成功时携带的业务数据；失败时为空。
     pub data: Option<T>,
+    /// 给前端展示或调试使用的中文消息。
     pub message: String,
 }
 

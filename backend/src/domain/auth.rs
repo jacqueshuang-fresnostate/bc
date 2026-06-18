@@ -11,7 +11,9 @@ use super::{
 #[serde(rename_all = "camelCase")]
 /// 管理员登录请求，携带账号和原始密码。
 pub struct AdminLoginRequest {
+    /// 用户展示名。
     pub username: String,
+    /// 用户输入的登录密码明文，仅用于请求校验和哈希生成。
     pub password: String,
 }
 
@@ -19,9 +21,13 @@ pub struct AdminLoginRequest {
 #[serde(rename_all = "camelCase")]
 /// 管理员登录成功后的会话信息，包含返回给前端的 token 和权限范围。
 pub struct AdminAuthSession {
+    /// 管理员登录会话 token。
     pub token: String,
+    /// 管理员账号摘要。
     pub admin: AdminSummary,
+    /// 管理员角色信息。
     pub role: AdminRole,
+    /// 角色拥有的权限范围列表。
     pub scopes: Vec<PermissionScope>,
 }
 
@@ -29,8 +35,11 @@ pub struct AdminAuthSession {
 #[serde(rename_all = "camelCase")]
 /// 当前管理员资料接口返回的数据，不重复返回登录 token。
 pub struct CurrentAdminProfile {
+    /// 管理员账号摘要。
     pub admin: AdminSummary,
+    /// 管理员角色信息。
     pub role: AdminRole,
+    /// 角色拥有的权限范围列表。
     pub scopes: Vec<PermissionScope>,
 }
 
@@ -38,6 +47,7 @@ pub struct CurrentAdminProfile {
 #[serde(rename_all = "camelCase")]
 /// 管理员登出接口响应，标记当前登录态是否已经失效。
 pub struct AdminLogoutResponse {
+    /// 当前会话是否已经登出。
     pub logged_out: bool,
 }
 

@@ -412,7 +412,7 @@ async fn require_admin_auth(
     Ok(next.run(request).await)
 }
 
-/// 处理 bearer_token 的具体内部流程。
+/// 从 Authorization 请求头提取 Bearer token。
 fn bearer_token(request: &Request) -> ApiResult<&str> {
     let header = request
         .headers()
@@ -428,7 +428,7 @@ fn bearer_token(request: &Request) -> ApiResult<&str> {
     Ok(token)
 }
 
-/// 处理 required_scope_for_path 的具体内部流程。
+/// 根据后台请求路径匹配所需的权限范围。
 fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
     let path = path.trim_start_matches('/');
     let path = path.strip_prefix("admin/").unwrap_or(path);
@@ -3751,7 +3751,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    /// 处理 required_scope_maps_admin_paths 的具体内部流程。
+    /// 验证后台路由到权限范围的映射关系。
     fn required_scope_maps_admin_paths() {
         assert_eq!(required_scope_for_path("/dashboard"), None);
         assert_eq!(
@@ -4352,7 +4352,7 @@ mod tests {
         assert_eq!(payload.target_issue, None);
         assert_eq!(payload.target_order_id, None);
     }
-
+    /// 构造路由测试所需的应用状态。
     fn test_state() -> AppState {
         AppState {
             access: AccessRepository::memory_seeded(),
@@ -4380,7 +4380,7 @@ mod tests {
             withdrawals: WithdrawalRepository::memory(),
         }
     }
-
+    /// 构造测试用用户摘要。
     fn test_user(id: &str, username: &str, balance_minor: i64) -> UserSummary {
         UserSummary {
             agent_id: None,
@@ -4397,7 +4397,7 @@ mod tests {
             created_at: "2026-06-05 10:00:00".to_string(),
         }
     }
-
+    /// 构造测试用资金流水。
     fn test_ledger_entry(id: &str, created_at: &str) -> LedgerEntry {
         LedgerEntry {
             amount_minor: 100,
@@ -4410,7 +4410,7 @@ mod tests {
             user_id: "U10001".to_string(),
         }
     }
-
+    /// 构造测试用代理返利流水。
     fn test_agent_rebate_entry(
         id: &str,
         kind: LedgerEntryKind,
@@ -4429,7 +4429,7 @@ mod tests {
             user_id: "U90001".to_string(),
         }
     }
-
+    /// 构造测试用资金账户摘要。
     fn test_financial_account(user_id: &str) -> AdminFinancialAccountSummary {
         AdminFinancialAccountSummary {
             available_balance_minor: 1000,
@@ -4438,7 +4438,7 @@ mod tests {
             username: Some(format!("user_{user_id}")),
         }
     }
-
+    /// 构造测试用充值订单。
     fn test_recharge_order(id: &str, created_at: &str) -> RechargeOrderSummary {
         test_recharge_order_for_user(
             id,
@@ -4449,7 +4449,7 @@ mod tests {
             created_at,
         )
     }
-
+    /// 构造指定用户的测试充值订单。
     fn test_recharge_order_for_user(
         id: &str,
         user_id: &str,
@@ -4473,7 +4473,7 @@ mod tests {
             username: username.to_string(),
         }
     }
-
+    /// 构造测试用提现订单。
     fn test_withdrawal_order(id: &str, created_at: &str) -> WithdrawalOrderSummary {
         test_withdrawal_order_for_user(
             id,
@@ -4484,7 +4484,7 @@ mod tests {
             created_at,
         )
     }
-
+    /// 构造指定用户的测试提现订单。
     fn test_withdrawal_order_for_user(
         id: &str,
         user_id: &str,

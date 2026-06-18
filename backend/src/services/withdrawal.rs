@@ -27,7 +27,9 @@ use super::business_database::{enum_from_string, enum_to_string};
 #[derive(Clone)]
 /// 提现申请仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct WithdrawalRepository {
+    /// 提现模块内存快照锁，保存提现申请和运行序号。
     pub(crate) inner: Arc<RwLock<WithdrawalStore>>,
+    /// 可选数据库持久化句柄；内存模式下为空。
     pub(crate) persistence: Option<BusinessDatabase>,
 }
 
@@ -238,7 +240,7 @@ impl WithdrawalRepository {
         self.replace_store(store)?;
         Ok(true)
     }
-
+    /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &WithdrawalStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             let mut tx = persistence
@@ -606,7 +608,7 @@ pub(crate) async fn save_withdrawal_store_in_transaction(
 
     Ok(())
 }
-
+/// 清洗必填字符串，空值时返回接口错误。
 fn required_trimmed(value: impl Into<String>, label: &str) -> ApiResult<String> {
     let value = value.into().trim().to_string();
     if value.is_empty() {
@@ -614,7 +616,7 @@ fn required_trimmed(value: impl Into<String>, label: &str) -> ApiResult<String> 
     }
     Ok(value)
 }
-
+/// 生成当前本地时间字符串。
 fn current_time_label() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
@@ -749,7 +751,7 @@ mod tests {
         );
         assert!(store.list().is_empty());
     }
-
+    /// 构造提现测试用户。
     fn sample_user() -> UserSummary {
         UserSummary {
             id: "U10001".to_string(),
@@ -766,7 +768,7 @@ mod tests {
             created_at: "2026-06-05 10:00:00".to_string(),
         }
     }
-
+    /// 构造提现测试方式。
     fn sample_method(user_id: &str) -> WithdrawalMethod {
         WithdrawalMethod {
             id: "WM0001".to_string(),

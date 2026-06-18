@@ -1180,11 +1180,11 @@ mod tests {
             Err(ApiError::Conflict(_))
         ));
     }
-
+    /// 构造测试用用户摘要。
     fn test_user(id: &str, username: &str) -> UserSummary {
         test_user_with_avatar(id, username, "")
     }
-
+    /// 构造用户带头像测试数据。
     fn test_user_with_avatar(id: &str, username: &str, avatar_url: &str) -> UserSummary {
         UserSummary {
             id: id.to_string(),

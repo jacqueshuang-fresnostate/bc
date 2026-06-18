@@ -33,6 +33,7 @@ pub struct ImageBedUploadOptions {
 }
 
 impl Default for ImageBedUploadOptions {
+    /// 返回默认值。
     fn default() -> Self {
         Self {
             image_only: false,

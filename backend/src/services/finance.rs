@@ -30,7 +30,9 @@ use super::{
 #[derive(Clone)]
 /// 资金账户和资金流水仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct FinanceRepository {
+    /// 资金模块内存快照锁，保证余额和流水读写的一致性。
     pub(crate) inner: Arc<RwLock<FinanceStore>>,
+    /// 可选数据库持久化句柄；内存模式下为空。
     pub(crate) persistence: Option<BusinessDatabase>,
 }
 
@@ -384,7 +386,7 @@ impl FinanceRepository {
         self.persist(&snapshot).await?;
         Ok(result)
     }
-
+    /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &FinanceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_finance_store(persistence, store).await?;
@@ -844,7 +846,7 @@ impl FinanceStore {
         store
     }
 
-    /// 返回内置种子或测试数据。
+    /// 构造内置用户的初始化资金账户。
     fn seed_account(
         &mut self,
         user_id: &str,
@@ -861,7 +863,7 @@ impl FinanceStore {
         );
     }
 
-    /// 处理 overview 的具体内部流程。
+    /// 聚合资金账户和流水生成财务概览。
     fn overview(&self) -> ApiResult<FinanceOverview> {
         let mut total_balance_minor = 0_i64;
         for account in self.accounts.values() {
@@ -902,12 +904,12 @@ impl FinanceStore {
         })
     }
 
-    /// 处理 accounts 的具体内部流程。
+    /// 返回资金账户列表。
     fn accounts(&self) -> Vec<FinancialAccountSummary> {
         self.accounts.values().cloned().collect()
     }
 
-    /// 处理 ledger_entries 的具体内部流程。
+    /// 返回资金流水列表。
     fn ledger_entries(&self) -> Vec<LedgerEntry> {
         self.ledger_entries.iter().rev().cloned().collect()
     }
@@ -919,7 +921,7 @@ impl FinanceStore {
         deleted_count
     }
 
-    /// 处理 ledger_entries_for_user 的具体内部流程。
+    /// 按用户筛选资金流水。
     fn ledger_entries_for_user(&self, user_id: &str) -> Vec<LedgerEntry> {
         self.ledger_entries
             .iter()
@@ -929,7 +931,7 @@ impl FinanceStore {
             .collect()
     }
 
-    /// 处理 ensure_available 的具体内部流程。
+    /// 校验用户可用余额是否足够扣款。
     pub(crate) fn ensure_available(&self, user_id: &str, amount_minor: i64) -> ApiResult<()> {
         let user_id = user_id.trim();
         if user_id.is_empty() {
@@ -955,7 +957,7 @@ impl FinanceStore {
         Ok(())
     }
 
-    /// 处理 account_or_create 的具体内部流程。
+    /// 读取资金账户；不存在时按用户信息创建初始账户。
     pub(crate) fn account_or_create(
         &mut self,
         user_id: &str,
@@ -979,7 +981,7 @@ impl FinanceStore {
         Ok(account)
     }
 
-    /// 处理 ensure_order_can_refund 的具体内部流程。
+    /// 校验订单退款前账户和流水状态是否允许退款。
     pub(crate) fn ensure_order_can_refund(&self, order: &OrderDetail) -> ApiResult<()> {
         if !self.has_reference(&LedgerEntryKind::OrderDebit, &order.id) {
             return Err(ApiError::BadRequest(
@@ -996,7 +998,7 @@ impl FinanceStore {
         Ok(())
     }
 
-    /// 处理 manual_adjust 的具体内部流程。
+    /// 执行后台手动调账并记录资金流水。
     fn manual_adjust(&mut self, payload: ManualBalanceAdjustmentRequest) -> ApiResult<LedgerEntry> {
         let user_id = payload.user_id.trim();
         if user_id.is_empty() {
@@ -1024,7 +1026,7 @@ impl FinanceStore {
         )
     }
 
-    /// 处理 debit_order 的具体内部流程。
+    /// 投注下单时扣减用户可用余额并写入流水。
     pub(crate) fn debit_order(&mut self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
         if self.has_reference(&LedgerEntryKind::OrderDebit, &order.id) {
             return Err(ApiError::Conflict(format!(
@@ -1046,7 +1048,7 @@ impl FinanceStore {
         )
     }
 
-    /// 处理 refund_order 的具体内部流程。
+    /// 投注取消或流单时退回用户投注本金。
     pub(crate) fn refund_order(&mut self, order: &OrderDetail) -> ApiResult<LedgerEntry> {
         if let Some(entry) = self.reference_entry(&LedgerEntryKind::OrderRefund, &order.id) {
             return Ok(entry);
@@ -1063,7 +1065,7 @@ impl FinanceStore {
     }
 
     #[cfg(test)]
-    /// 处理 credit_settlement 的具体内部流程。
+    /// 结算中奖订单并按派奖金额入账。
     fn credit_settlement(&mut self, settlement: &SettlementRun) -> ApiResult<Vec<LedgerEntry>> {
         let mut entries = Vec::new();
 
@@ -1542,7 +1544,7 @@ impl FinanceStore {
         )
     }
 
-    /// 处理 account 的具体内部流程。
+    /// 按用户 ID 读取资金账户。
     #[cfg(test)]
     fn account(&self, user_id: &str) -> ApiResult<&FinancialAccountSummary> {
         let user_id = user_id.trim();
@@ -1551,7 +1553,7 @@ impl FinanceStore {
             .ok_or_else(|| ApiError::NotFound(format!("financial account `{user_id}` not found")))
     }
 
-    /// 处理 apply_available_delta 的具体内部流程。
+    /// 调整可用余额并保证余额不为负。
     fn apply_available_delta(
         &mut self,
         user_id: &str,
@@ -1601,7 +1603,7 @@ impl FinanceStore {
         self.reference_entry(kind, reference_id).is_some()
     }
 
-    /// 处理 reference_entry 的具体内部流程。
+    /// 按流水类型和关联单号查找幂等流水。
     fn reference_entry(&self, kind: &LedgerEntryKind, reference_id: &str) -> Option<LedgerEntry> {
         self.ledger_entries
             .iter()
@@ -1709,7 +1711,7 @@ fn sequence_from_ledger_entry_id(id: &str) -> Option<u64> {
     id.strip_prefix('L')?.parse().ok()
 }
 
-/// 处理 current_timestamp_label 的具体内部流程。
+/// 生成当前本地时间字符串。
 fn current_timestamp_label() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1734,7 +1736,7 @@ mod tests {
     };
 
     #[test]
-    /// 处理 store_debits_order_and_records_ledger 的具体内部流程。
+    /// 验证下单扣款会生成对应资金流水。
     fn store_debits_order_and_records_ledger() {
         let mut store = FinanceStore::seeded();
         let order = order_detail("O000000000001", "U10001", 200, 0);
@@ -1750,7 +1752,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 store_rejects_insufficient_order_balance 的具体内部流程。
+    /// 验证余额不足时拒绝投注扣款。
     fn store_rejects_insufficient_order_balance() {
         let mut store = FinanceStore::seeded();
         let order = order_detail("O000000000001", "U10004", 200, 0);
@@ -1827,7 +1829,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 store_refunds_order_once 的具体内部流程。
+    /// 验证订单退款具备幂等保护。
     fn store_refunds_order_once() {
         let mut store = FinanceStore::seeded();
         let order = order_detail("O000000000001", "U10001", 200, 0);
@@ -1844,7 +1846,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 store_credits_winning_settlement 的具体内部流程。
+    /// 验证派奖结算会增加用户余额。
     fn store_credits_winning_settlement() {
         let mut store = FinanceStore::seeded();
         let settlement = settlement_run("S000000000001", "U10001", 2_000);
@@ -1912,7 +1914,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 store_applies_manual_adjustment 的具体内部流程。
+    /// 验证后台手动调账会更新余额和流水。
     fn store_applies_manual_adjustment() {
         let mut store = FinanceStore::seeded();
 
@@ -2121,7 +2123,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 store_filters_ledger_entries_by_user 的具体内部流程。
+    /// 验证资金流水可按用户筛选。
     fn store_filters_ledger_entries_by_user() {
         let mut store = FinanceStore::seeded();
         let order = order_detail("O000000000001", "U10001", 200, 0);
@@ -2142,7 +2144,7 @@ mod tests {
         assert_eq!(entries[0].kind, LedgerEntryKind::OrderDebit);
     }
 
-    /// 处理 order_detail 的具体内部流程。
+    /// 构造资金测试所需的订单详情。
     fn order_detail(id: &str, user_id: &str, amount_minor: i64, payout_minor: i64) -> OrderDetail {
         OrderDetail {
             id: id.to_string(),
@@ -2182,7 +2184,7 @@ mod tests {
         }
     }
 
-    /// 处理 settlement_run 的具体内部流程。
+    /// 构造资金测试所需的结算记录。
     fn settlement_run(id: &str, user_id: &str, payout_minor: i64) -> SettlementRun {
         SettlementRun {
             id: id.to_string(),

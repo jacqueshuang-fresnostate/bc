@@ -32,7 +32,7 @@ pub fn build_mobile_bet_page_config(
     let now_timestamp = Local::now().naive_local().and_utc().timestamp();
     build_mobile_bet_page_config_at(lottery, issues, now_timestamp)
 }
-
+/// 按指定时间构建手机端下注页配置。
 fn build_mobile_bet_page_config_at(
     lottery: &LotteryKind,
     issues: Vec<DrawIssue>,
@@ -564,7 +564,7 @@ mod tests {
             }
         );
     }
-
+    /// 构造下注页测试彩种。
     fn lottery_fixture() -> LotteryKind {
         LotteryKind {
             id: "txffc".to_string(),
@@ -604,7 +604,7 @@ mod tests {
             ],
         }
     }
-
+    /// 构造下注页测试期号。
     fn issue_fixture(issue: &str, status: DrawIssueStatus, draw_number: Option<&str>) -> DrawIssue {
         let minute = match issue {
             "I001" => "01",

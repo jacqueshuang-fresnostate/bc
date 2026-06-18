@@ -58,17 +58,24 @@ const MAX_CONTACT_QQ_LEN: usize = 12;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct PasswordResetTokenRecord {
+    /// 关联用户 ID。
     pub user_id: String,
+    /// expiresatunix字段。
     pub expires_at_unix: i64,
 }
 
 #[derive(Debug, Clone)]
 /// 用户权限模块的完整快照，用于后台仪表盘和跨仓储读取。
 pub struct AccessSnapshot {
+    /// 用户摘要列表。
     pub users: Vec<UserSummary>,
+    /// 管理员摘要列表。
     pub admins: Vec<AdminSummary>,
+    /// 管理员角色列表。
     pub roles: Vec<AdminRole>,
+    /// 移动端或模块配置集合。
     pub settings: Vec<SystemSetting>,
+    /// 用户注册开关和限制配置。
     pub registration: RegistrationConfig,
 }
 
@@ -649,7 +656,7 @@ impl AccessRepository {
             .map_err(|_| ApiError::Internal("访问控制缓存刷新失败".to_string()))? = store;
         Ok(true)
     }
-
+    /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &AccessStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_access_store(persistence, store).await?;
@@ -1316,7 +1323,7 @@ impl AccessStore {
         }
     }
 
-    /// 处理 snapshot 的具体内部流程。
+    /// 生成当前模块的只读业务快照。
     fn snapshot(&self) -> AccessSnapshot {
         AccessSnapshot {
             users: self.users(),
@@ -1905,12 +1912,12 @@ impl AccessStore {
         Ok(())
     }
 
-    /// 处理 admins 的具体内部流程。
+    /// 返回管理员账号列表。
     fn admins(&self) -> Vec<AdminSummary> {
         self.admins.values().cloned().collect()
     }
 
-    /// 处理 get_admin 的具体内部流程。
+    /// 按管理员 ID 读取账号详情。
     fn get_admin(&self, id: &str) -> ApiResult<AdminSummary> {
         self.admins
             .get(id)
@@ -1918,7 +1925,7 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("admin `{id}` not found")))
     }
 
-    /// 处理 create_admin 的具体内部流程。
+    /// 创建管理员账号并写入初始密码哈希。
     fn create_admin(&mut self, request: AdminSaveRequest) -> ApiResult<AdminSummary> {
         let password = request
             .password
@@ -1940,7 +1947,7 @@ impl AccessStore {
         Ok(admin)
     }
 
-    /// 处理 update_admin 的具体内部流程。
+    /// 更新管理员账号资料并同步角色名称。
     fn update_admin(&mut self, id: &str, request: AdminSaveRequest) -> ApiResult<AdminSummary> {
         let password = match request.password.as_deref() {
             Some(password) => Some(validate_admin_password(password)?),
@@ -1965,7 +1972,7 @@ impl AccessStore {
         Ok(admin)
     }
 
-    /// 处理 set_admin_status 的具体内部流程。
+    /// 修改管理员账号状态。
     fn set_admin_status(&mut self, id: &str, status: UserStatus) -> ApiResult<AdminSummary> {
         let admin = self
             .admins
@@ -1975,7 +1982,7 @@ impl AccessStore {
         Ok(admin.clone())
     }
 
-    /// 处理 reset_admin_password 的具体内部流程。
+    /// 重置管理员登录密码并替换密码哈希。
     fn reset_admin_password(
         &mut self,
         id: &str,
@@ -1989,12 +1996,12 @@ impl AccessStore {
         Ok(admin)
     }
 
-    /// 处理 roles 的具体内部流程。
+    /// 返回后台角色列表。
     fn roles(&self) -> Vec<AdminRole> {
         self.roles.values().cloned().collect()
     }
 
-    /// 处理 get_role 的具体内部流程。
+    /// 按角色 ID 读取角色详情。
     fn get_role(&self, id: &str) -> ApiResult<AdminRole> {
         self.roles
             .get(id)
@@ -2002,7 +2009,7 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("role `{id}` not found")))
     }
 
-    /// 处理 create_role 的具体内部流程。
+    /// 创建后台角色并校验名称唯一。
     fn create_role(&mut self, role: AdminRole) -> ApiResult<AdminRole> {
         let role = normalize_role(role)?;
         if self.roles.contains_key(&role.id) {
@@ -2016,7 +2023,7 @@ impl AccessStore {
         Ok(role)
     }
 
-    /// 处理 update_role 的具体内部流程。
+    /// 更新后台角色并同步管理员角色名称。
     fn update_role(&mut self, id: &str, role: AdminRole) -> ApiResult<AdminRole> {
         let role = normalize_role(role)?;
         if id != role.id {
@@ -2033,7 +2040,7 @@ impl AccessStore {
         Ok(role)
     }
 
-    /// 处理 delete_role 的具体内部流程。
+    /// 删除未被管理员占用的后台角色。
     fn delete_role(&mut self, id: &str) -> ApiResult<AdminRole> {
         if self.admins.values().any(|admin| admin.role_id == id) {
             return Err(ApiError::Conflict(format!(
@@ -2046,12 +2053,12 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("role `{id}` not found")))
     }
 
-    /// 处理 settings 的具体内部流程。
+    /// 返回系统设置列表。
     fn settings(&self) -> Vec<SystemSetting> {
         self.settings.values().cloned().collect()
     }
 
-    /// 处理 setting 的具体内部流程。
+    /// 按配置键读取单项系统设置。
     fn setting(&self, key: &str) -> ApiResult<SystemSetting> {
         self.settings
             .get(key)
@@ -2059,7 +2066,7 @@ impl AccessStore {
             .ok_or_else(|| ApiError::NotFound(format!("setting `{key}` not found")))
     }
 
-    /// 处理 update_setting 的具体内部流程。
+    /// 更新系统设置值和中文说明。
     fn update_setting(
         &mut self,
         key: &str,
@@ -2080,7 +2087,7 @@ impl AccessStore {
         Ok(setting.clone())
     }
 
-    /// 处理 update_registration 的具体内部流程。
+    /// 更新注册开关和注册安全策略。
     fn update_registration(
         &mut self,
         registration: RegistrationConfig,
@@ -2095,7 +2102,7 @@ impl AccessStore {
         Ok(self.registration.clone())
     }
 
-    /// 处理 login 的具体内部流程。
+    /// 校验管理员账号密码并生成后台登录会话。
     fn login(&mut self, payload: AdminLoginRequest) -> ApiResult<AdminAuthSession> {
         let username = required_trimmed(payload.username, "admin username")?;
         let password = required_trimmed(payload.password, "admin password")?;
@@ -2126,7 +2133,7 @@ impl AccessStore {
         self.session_from_token(&token)
     }
 
-    /// 处理 session_from_token 的具体内部流程。
+    /// 按后台 token 解析管理员会话。
     fn session_from_token(&self, token: &str) -> ApiResult<AdminAuthSession> {
         let token = token.trim();
         if token.is_empty() {
@@ -2156,13 +2163,13 @@ impl AccessStore {
         })
     }
 
-    /// 处理 logout 的具体内部流程。
+    /// 删除后台登录 token。
     fn logout(&mut self, token: &str) -> ApiResult<()> {
         self.sessions.remove(&session_token_hash(token.trim()));
         Ok(())
     }
 
-    /// 处理 sync_admin_role_names 的具体内部流程。
+    /// 角色名称变更后同步到管理员摘要。
     fn sync_admin_role_names(&mut self, role_id: &str) {
         let Some(role) = self.roles.get(role_id) else {
             return;
@@ -2552,7 +2559,7 @@ fn seed_user_password_hashes(users: &BTreeMap<String, UserSummary>) -> BTreeMap<
         .collect()
 }
 
-/// 校验输入参数并返回校验结果。
+/// 校验管理员密码长度和空白字符规则。
 fn validate_admin_password(password: &str) -> ApiResult<String> {
     let password = required_trimmed(password.to_string(), "admin password")?;
     if password.chars().count() < MIN_ADMIN_PASSWORD_LEN {
@@ -2564,7 +2571,7 @@ fn validate_admin_password(password: &str) -> ApiResult<String> {
     Ok(password)
 }
 
-/// 处理 hash_admin_password 的具体内部流程。
+/// 使用 Argon2 生成管理员密码哈希。
 fn hash_admin_password(password: &str) -> ApiResult<String> {
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
@@ -2573,7 +2580,7 @@ fn hash_admin_password(password: &str) -> ApiResult<String> {
         .map_err(|_| ApiError::Internal("admin password hash failed".to_string()))
 }
 
-/// 处理 verify_admin_password 的具体内部流程。
+/// 校验管理员输入密码是否匹配已保存哈希。
 fn verify_admin_password(password: &str, password_hash: &str) -> ApiResult<bool> {
     let parsed_hash = PasswordHash::new(password_hash)
         .map_err(|_| ApiError::Internal("admin password hash is invalid".to_string()))?;
@@ -2655,7 +2662,7 @@ fn seed_users() -> Vec<UserSummary> {
     ]
 }
 
-/// 返回内置种子或测试数据。
+/// 返回初始化内置管理员账号。
 fn seed_admins() -> Vec<AdminSummary> {
     vec![
         AdminSummary {
@@ -2675,7 +2682,7 @@ fn seed_admins() -> Vec<AdminSummary> {
     ]
 }
 
-/// 返回内置种子或测试数据。
+/// 为内置管理员生成默认密码哈希。
 fn seed_admin_password_hashes(admins: &BTreeMap<String, AdminSummary>) -> BTreeMap<String, String> {
     admins
         .keys()
@@ -2687,7 +2694,7 @@ fn seed_admin_password_hashes(admins: &BTreeMap<String, AdminSummary>) -> BTreeM
         .collect()
 }
 
-/// 返回内置种子或测试数据。
+/// 返回初始化内置角色和权限范围。
 fn seed_roles() -> Vec<AdminRole> {
     vec![
         AdminRole {
@@ -2718,7 +2725,7 @@ fn seed_roles() -> Vec<AdminRole> {
     ]
 }
 
-/// 返回内置种子或测试数据。
+/// 返回系统设置的初始化默认值。
 fn seed_settings() -> Vec<SystemSetting> {
     vec![
         SystemSetting {
@@ -2914,7 +2921,7 @@ fn seed_settings() -> Vec<SystemSetting> {
         },
     ]
 }
-
+/// 补齐缺失的系统设置默认项，避免旧库升级后读取失败。
 fn fill_missing_system_settings(settings: &mut BTreeMap<String, SystemSetting>) -> bool {
     let mut changed = false;
 
@@ -2938,7 +2945,7 @@ mod tests {
         UserPasswordResetRequest, UserRegisterRequest, UserResetPasswordRequest,
         WithdrawalMethodRequest,
     };
-
+    /// 断言邀请code格式满足测试要求。
     fn assert_invite_code_format(code: &str) {
         assert_eq!(code.len(), INVITE_CODE_LENGTH);
         assert!(code
@@ -2947,7 +2954,7 @@ mod tests {
         assert!(code.chars().any(|ch| ch.is_ascii_uppercase()));
         assert!(code.chars().any(|ch| ch.is_ascii_digit()));
     }
-
+    /// 断言会话令牌isopaque满足测试要求。
     fn assert_session_token_is_opaque(token: &str) {
         assert_eq!(
             token.len(),
@@ -2958,14 +2965,14 @@ mod tests {
             .chars()
             .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
     }
-
+    /// 验证内置用户邀请码使用随机字母数字格式。
     #[test]
     fn seed_invite_codes_use_alnum_format() {
         assert_invite_code_format(DEMO_USER_INVITE_CODE);
         assert_invite_code_format(DEMO_AGENT_INVITE_CODE);
         assert_invite_code_format(RISK_USER_INVITE_CODE);
     }
-
+    /// 验证访问控制仓储可以创建并更新用户。
     #[tokio::test]
     async fn access_repository_creates_and_updates_user() {
         let access = AccessRepository::memory_seeded();
@@ -2996,7 +3003,7 @@ mod tests {
             .expect("status can be updated");
         assert_eq!(updated.status, UserStatus::Locked);
     }
-
+    /// 验证存在直属邀请下级时不允许删除用户。
     #[tokio::test]
     async fn access_repository_rejects_delete_user_with_direct_invitees() {
         let access = AccessRepository::memory_seeded();
@@ -3010,7 +3017,7 @@ mod tests {
             matches!(error, ApiError::Conflict(message) if message == "该用户仍有下级用户，请先调整下级代理关系")
         );
     }
-
+    /// 验证删除用户时同步清理会话、密码和提现方式等访问数据。
     #[tokio::test]
     async fn access_repository_deletes_user_and_access_artifacts() {
         let access = AccessRepository::memory_seeded();
@@ -3067,7 +3074,7 @@ mod tests {
             .contains_key(&reset.reset_token));
         assert!(!store.user_withdrawal_methods.contains_key(&method.id));
     }
-
+    /// 验证访问控制仓储生成的邀请码保持唯一。
     #[tokio::test]
     async fn access_repository_generates_unique_invite_codes() {
         let access = AccessRepository::memory_seeded();
@@ -3110,7 +3117,7 @@ mod tests {
         assert_invite_code_format(&second.invite_code);
         assert_ne!(first.invite_code, second.invite_code);
     }
-
+    /// 验证后台更新用户资料时保留用户名、余额和邀请码。
     #[tokio::test]
     async fn access_repository_update_preserves_username_balance_and_invite_code() {
         let access = AccessRepository::memory_seeded();
@@ -3153,7 +3160,7 @@ mod tests {
         );
         assert_eq!(updated.contact_qq, "234567");
     }
-
+    /// 验证用户头像可以更新并持久化。
     #[tokio::test]
     async fn access_repository_updates_user_avatar() {
         let access = AccessRepository::memory_seeded();
@@ -3177,7 +3184,7 @@ mod tests {
             "https://cdn.example.com/avatar.png"
         );
     }
-
+    /// 验证非法头像地址会被拒绝。
     #[tokio::test]
     async fn access_repository_rejects_invalid_user_avatar_url() {
         let access = AccessRepository::memory_seeded();
@@ -3193,7 +3200,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证重复邀请码不会被写入。
     #[tokio::test]
     async fn access_repository_rejects_duplicate_invite_code() {
         let access = AccessRepository::memory_seeded();
@@ -3217,7 +3224,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::Conflict(_)));
     }
-
+    /// 验证角色权限范围不能为空。
     #[tokio::test]
     async fn access_repository_rejects_empty_role_scopes() {
         let access = AccessRepository::memory_seeded();
@@ -3232,7 +3239,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证已分配给管理员的角色不能删除。
     #[tokio::test]
     async fn access_repository_prevents_deleting_assigned_role() {
         let access = AccessRepository::memory_seeded();
@@ -3243,7 +3250,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::Conflict(_)));
     }
-
+    /// 验证角色名称更新后同步到管理员摘要。
     #[tokio::test]
     async fn access_repository_syncs_admin_role_name_after_role_update() {
         let access = AccessRepository::memory_seeded();
@@ -3265,7 +3272,7 @@ mod tests {
             .expect("admin can be fetched");
         assert_eq!(admin.role_name, "运营主管");
     }
-
+    /// 验证关闭注册时用户注册会被拒绝。
     #[tokio::test]
     async fn access_repository_rejects_closed_registration() {
         let access = AccessRepository::memory_seeded();
@@ -3280,7 +3287,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证启用状态管理员可以登录。
     #[tokio::test]
     async fn access_repository_logs_in_active_admin() {
         let access = AccessRepository::memory_seeded();
@@ -3301,7 +3308,7 @@ mod tests {
             .expect("session token can be resolved");
         assert_eq!(current.admin.username, "admin");
     }
-
+    /// 验证管理员会话 token 落库前会哈希。
     #[tokio::test]
     async fn access_repository_hashes_admin_session_token_at_rest() {
         let access = AccessRepository::memory_seeded();
@@ -3327,7 +3334,7 @@ mod tests {
             .keys()
             .all(|token| token.starts_with(SESSION_TOKEN_HASH_PREFIX)));
     }
-
+    /// 验证锁定管理员不能登录。
     #[tokio::test]
     async fn access_repository_rejects_locked_admin_login() {
         let access = AccessRepository::memory_seeded();
@@ -3341,7 +3348,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::Forbidden(_)));
     }
-
+    /// 验证管理员密码错误时拒绝登录。
     #[tokio::test]
     async fn access_repository_rejects_wrong_admin_password() {
         let access = AccessRepository::memory_seeded();
@@ -3355,7 +3362,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::Unauthorized(_)));
     }
-
+    /// 验证新增管理员使用独立密码哈希。
     #[tokio::test]
     async fn access_repository_creates_admin_with_individual_password() {
         let access = AccessRepository::memory_seeded();
@@ -3382,7 +3389,7 @@ mod tests {
             .expect("new admin can login with individual password");
         assert_eq!(session.admin.id, "A20001");
     }
-
+    /// 验证用户可按用户名或邮箱注册。
     #[tokio::test]
     async fn access_repository_registers_user_by_username_or_email() {
         let access = AccessRepository::memory_seeded();
@@ -3456,7 +3463,7 @@ mod tests {
 
         assert_ne!(username_user.username, email_user.username);
     }
-
+    /// 验证客户端推断的注册地不会覆盖服务端来源。
     #[tokio::test]
     async fn access_repository_discards_client_inferred_registration_location() {
         let access = AccessRepository::memory_seeded();
@@ -3485,7 +3492,7 @@ mod tests {
         assert_eq!(user.registration_location.city, "");
         assert_eq!(user.registration_location.source, "ip");
     }
-
+    /// 验证明确 GPS 来源的注册地会被保留。
     #[tokio::test]
     async fn access_repository_keeps_gps_registration_location() {
         let access = AccessRepository::memory_seeded();
@@ -3514,7 +3521,7 @@ mod tests {
         assert_eq!(user.registration_location.city, "深圳");
         assert_eq!(user.registration_location.source, "gps");
     }
-
+    /// 验证用户会话 token 落库前会哈希。
     #[tokio::test]
     async fn access_repository_hashes_user_session_token_at_rest() {
         let access = AccessRepository::memory_seeded();
@@ -3546,7 +3553,7 @@ mod tests {
             .keys()
             .all(|token| token.starts_with(SESSION_TOKEN_HASH_PREFIX)));
     }
-
+    /// 验证停用和锁定用户登录错误文案可区分。
     #[tokio::test]
     async fn access_repository_distinguishes_suspended_and_locked_user_login_errors() {
         let access = AccessRepository::memory_seeded();
@@ -3604,7 +3611,7 @@ mod tests {
             ApiError::Forbidden(message) if message == "用户账号已锁定"
         ));
     }
-
+    /// 验证只允许邮箱注册时非法邮箱会被拒绝。
     #[tokio::test]
     async fn access_repository_rejects_invalid_user_email_register_when_username_only_disabled() {
         let access = AccessRepository::memory_seeded();
@@ -3632,7 +3639,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证用户可以通过旧密码修改密码。
     #[tokio::test]
     async fn access_repository_supports_user_password_change() {
         let access = AccessRepository::memory_seeded();
@@ -3656,7 +3663,7 @@ mod tests {
             .await
             .is_ok());
     }
-
+    /// 验证管理员可以重置用户密码。
     #[tokio::test]
     async fn access_repository_supports_admin_reset_user_password() {
         let access = AccessRepository::memory_seeded();
@@ -3686,7 +3693,7 @@ mod tests {
             .await
             .is_err());
     }
-
+    /// 验证忘记密码和重置密码完整流程。
     #[tokio::test]
     async fn access_repository_forget_and_reset_password_flow() {
         let access = AccessRepository::memory_seeded();
@@ -3718,7 +3725,7 @@ mod tests {
             .await
             .is_ok());
     }
-
+    /// 验证用户提现方式的新增、默认和删除流程。
     #[tokio::test]
     async fn access_repository_manage_user_withdrawal_methods() {
         let access = AccessRepository::memory_seeded();
@@ -3806,7 +3813,7 @@ mod tests {
             .expect("final methods list");
         assert_eq!(methods.len(), 1);
     }
-
+    /// 验证管理员密码可以被重置。
     #[tokio::test]
     async fn access_repository_resets_admin_password() {
         let access = AccessRepository::memory_seeded();
@@ -3850,7 +3857,7 @@ mod tests {
             .expect("new password can login");
         assert_eq!(session.admin.id, "A20002");
     }
-
+    /// 验证过短管理员密码会被拒绝。
     #[tokio::test]
     async fn access_repository_rejects_short_admin_password() {
         let access = AccessRepository::memory_seeded();
@@ -3868,7 +3875,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证新增管理员必须提供初始密码。
     #[tokio::test]
     async fn access_repository_requires_password_for_new_admin() {
         let access = AccessRepository::memory_seeded();
@@ -3886,7 +3893,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证登出后 token 立即失效。
     #[tokio::test]
     async fn access_repository_invalidates_logout_token() {
         let access = AccessRepository::memory_seeded();

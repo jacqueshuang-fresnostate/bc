@@ -282,7 +282,7 @@ async fn require_user_auth(
     Ok(next.run(request).await)
 }
 
-/// 处理 bearer_token 的具体内部流程。
+/// 从 Authorization 请求头提取 Bearer token。
 fn bearer_token(request: &Request) -> ApiResult<&str> {
     let header = request
         .headers()
@@ -3839,7 +3839,7 @@ mod tests {
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].participation_payout_minor, Some(832));
     }
-
+    /// 构造合买接口测试使用的彩种。
     fn test_group_buy_lottery() -> LotteryKind {
         LotteryKind {
             id: "ssc60".to_string(),
@@ -3866,7 +3866,7 @@ mod tests {
             play_configs: Vec::new(),
         }
     }
-
+    /// 构造合买接口测试使用的计划。
     fn test_group_buy_plan(
         id: &str,
         issue: &str,
@@ -3904,7 +3904,7 @@ mod tests {
             updated_at: "2026-06-05 20:00:00".to_string(),
         }
     }
-
+    /// 构造已成单的合买测试计划。
     fn test_group_buy_plan_with_order(
         id: &str,
         order_id: &str,
@@ -3917,11 +3917,11 @@ mod tests {
         plan.participants = participants;
         plan
     }
-
+    /// 构造合买测试参与人。
     fn test_group_buy_participant(id: &str, user_id: &str) -> GroupBuyParticipant {
         test_group_buy_participant_with_amount(id, user_id, 1_000)
     }
-
+    /// 按金额构造合买测试参与人。
     fn test_group_buy_participant_with_amount(
         id: &str,
         user_id: &str,
@@ -3937,7 +3937,7 @@ mod tests {
             created_at: "2026-06-05 20:00:00".to_string(),
         }
     }
-
+    /// 构造用户端测试订单。
     fn test_order(id: &str, user_id: &str, order_source: OrderSource) -> OrderDetail {
         OrderDetail {
             id: id.to_string(),
@@ -3965,7 +3965,7 @@ mod tests {
             created_at: "2026-06-05 20:00:00".to_string(),
         }
     }
-
+    /// 构造带派奖金额的中奖测试订单。
     fn test_won_order_with_payout(
         id: &str,
         user_id: &str,
@@ -3978,7 +3978,7 @@ mod tests {
         order.settled_at = Some("2026-06-05 20:05:00".to_string());
         order
     }
-
+    /// 构造邀请中心测试用户。
     fn test_invitation_user(
         id: &str,
         username: &str,
@@ -4000,7 +4000,7 @@ mod tests {
             created_at: "2026-06-05 18:00:00".to_string(),
         }
     }
-
+    /// 构造邀请策略测试数据。
     fn test_invite_policy(agents_can_invite: bool) -> InvitePolicySummary {
         InvitePolicySummary {
             agents_can_invite,
@@ -4010,11 +4010,11 @@ mod tests {
             default_recharge_rebate_basis_points: 300,
         }
     }
-
+    /// 构造测试用资金流水。
     fn test_ledger_entry(id: &str, kind: LedgerEntryKind, amount_minor: i64) -> LedgerEntry {
         test_ledger_entry_for_user(id, "U90012", kind, amount_minor, None)
     }
-
+    /// 构造指定用户的测试提现订单。
     fn test_withdrawal_order_for_user(
         id: &str,
         user_id: &str,
@@ -4035,7 +4035,7 @@ mod tests {
             reviewed_at: Some("2026-06-05 19:05:00".to_string()),
         }
     }
-
+    /// 构造系统设置测试项。
     fn test_setting(key: &str, value: &str) -> SystemSetting {
         SystemSetting {
             key: key.to_string(),
@@ -4043,7 +4043,7 @@ mod tests {
             description: "测试系统设置".to_string(),
         }
     }
-
+    /// 构造指定用户的资金流水测试项。
     fn test_ledger_entry_for_user(
         id: &str,
         user_id: &str,

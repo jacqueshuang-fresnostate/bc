@@ -23,33 +23,61 @@ use super::business_database::{
     enum_from_string, enum_to_string, from_json, to_json, BusinessDatabase,
 };
 
+/// API68 福彩3D 默认开奖源 ID。
 pub const API68_FC3D_SOURCE_ID: &str = "api68-fc3d";
+/// API68 福彩3D 默认开奖源名称。
 pub const API68_FC3D_SOURCE_NAME: &str = "API68 福彩 3D";
+/// API68 福彩3D 对应的本地彩种 ID。
 pub const API68_FC3D_LOTTERY_ID: &str = "fc3d";
+/// API68 体彩排列3 默认开奖源 ID。
 pub const API68_PL3_SOURCE_ID: &str = "api68-pl3";
+/// API68 体彩排列3 默认开奖源名称。
 pub const API68_PL3_SOURCE_NAME: &str = "API68 体彩排列3";
+/// API68 体彩排列3 对应的本地彩种 ID。
 pub const API68_PL3_LOTTERY_ID: &str = "pl3";
+/// API68 福彩3D 第三方彩种编码。
 pub const API68_FC3D_LOT_CODE: &str = "10041";
+/// API68 体彩排列3 第三方彩种编码。
 pub const API68_PL3_LOT_CODE: &str = "10043";
+/// API68 体彩排列5 默认开奖源 ID。
 pub const API68_PL5_SOURCE_ID: &str = "api68-pl5";
+/// API68 体彩排列5 默认开奖源名称。
 pub const API68_PL5_SOURCE_NAME: &str = "API68 体彩排列5";
+/// API68 体彩排列5 对应的本地彩种 ID。
 pub const API68_PL5_LOTTERY_ID: &str = "pl5";
+/// API68 体彩排列5 第三方彩种编码。
 pub const API68_PL5_LOT_CODE: &str = "10044";
+/// API68 澳洲幸运5 默认开奖源 ID。
 pub const API68_AU5_SOURCE_ID: &str = "api68-au5";
+/// API68 澳洲幸运5 默认开奖源名称。
 pub const API68_AU5_SOURCE_NAME: &str = "API68 澳洲幸运5";
+/// API68 澳洲幸运5 对应的本地彩种 ID。
 pub const API68_AU5_LOTTERY_ID: &str = "au5";
+/// API68 澳洲幸运5 第三方彩种编码。
 pub const API68_AU5_LOT_CODE: &str = "10010";
+/// KJAPI 腾讯分分彩默认开奖源 ID。
 pub const KJ_TXFFC_SOURCE_ID: &str = "kj-txffc";
+/// KJAPI 腾讯分分彩默认开奖源名称。
 pub const KJ_TXFFC_SOURCE_NAME: &str = "KJAPI 腾讯分分彩";
+/// KJAPI 腾讯分分彩对应的本地彩种 ID。
 pub const KJ_TXFFC_LOTTERY_ID: &str = "txffc";
+/// KJAPI 腾讯分分彩第三方彩种键。
 pub const KJ_TXFFC_LOT_KEY: &str = "txffc";
+/// BB 开奖河内5分彩默认开奖源 ID。
 pub const BB_HN5_SOURCE_ID: &str = "bb-hn5";
+/// BB 开奖河内5分彩默认开奖源名称。
 pub const BB_HN5_SOURCE_NAME: &str = "BB开奖 河内5分彩";
+/// BB 开奖河内5分彩对应的本地彩种 ID。
 pub const BB_HN5_LOTTERY_ID: &str = "hn5";
+/// BB 开奖河内5分彩第三方游戏编码。
 pub const BB_HN5_GAME_CODE: &str = "VIFFC5";
+/// 印尼开奖印尼5分彩默认开奖源 ID。
 pub const IDN5_SOURCE_ID: &str = "indonesia-id5";
+/// 印尼开奖印尼5分彩默认开奖源名称。
 pub const IDN5_SOURCE_NAME: &str = "印尼开奖 印尼5分彩";
+/// 印尼开奖印尼5分彩对应的本地彩种 ID。
 pub const IDN5_LOTTERY_ID: &str = "id5";
+/// 印尼开奖印尼5分彩本地归一化彩种编码。
 pub const IDN5_LOT_CODE: &str = "IDFFC5";
 const DEFAULT_API68_QUANGUOCAI_ENDPOINT: &str =
     "https://api.api68.com/QuanGuoCai/getLotteryInfoList.do";
@@ -71,9 +99,13 @@ const API_DRAW_SOURCE_TIMEOUT_SECONDS: u64 = 10;
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 外部开奖源返回的最新期号和开奖时间摘要。
 pub struct ApiDrawSourceLatestIssue {
+    /// 彩票期号。
     pub issue: String,
+    /// 开奖时间字段。
     pub draw_time: Option<String>,
+    /// 外部开奖源提示的下一期期号。
     pub next_issue: Option<String>,
+    /// 外部开奖源提示的下一期开奖时间。
     pub next_draw_time: Option<String>,
 }
 
@@ -158,7 +190,7 @@ impl ApiDrawSourceRepository {
         Self::new(default_api_draw_sources())
     }
 
-    /// 创建并初始化新实例。
+    /// 初始化内部状态容器。
     fn new(sources: Vec<ApiDrawSourceConfig>) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -247,7 +279,7 @@ impl ApiDrawSourceRepository {
         }
     }
 
-    /// 返回完整列表。
+    /// 按当前仓储快照返回全部开奖源列表。
     pub async fn list(&self) -> ApiResult<Vec<DrawSource>> {
         self.inner
             .read()
@@ -391,7 +423,7 @@ impl ApiDrawSourceRepository {
 
         result.map(Some)
     }
-
+    /// 请求 API68 并解析指定期号开奖号码。
     async fn fetch_api68_draw_number(
         &self,
         source: &ApiDrawSourceConfig,
@@ -401,7 +433,7 @@ impl ApiDrawSourceRepository {
         self.fetch_draw_number_with_snapshot(source, lottery_id, issue, parse_api68_draw_number)
             .await
     }
-
+    /// 请求 API68 并解析最新期号信息。
     async fn fetch_api68_latest_issue(
         &self,
         source: &ApiDrawSourceConfig,
@@ -410,7 +442,7 @@ impl ApiDrawSourceRepository {
         self.fetch_latest_issue_with_snapshot(source, lottery_id, parse_api68_latest_issue)
             .await
     }
-
+    /// 请求 KJAPI 并解析指定期号开奖号码。
     async fn fetch_kj_draw_number(
         &self,
         source: &ApiDrawSourceConfig,
@@ -420,7 +452,7 @@ impl ApiDrawSourceRepository {
         self.fetch_draw_number_with_snapshot(source, lottery_id, issue, parse_kj_draw_number)
             .await
     }
-
+    /// 请求 KJAPI 并解析最新期号信息。
     async fn fetch_kj_latest_issue(
         &self,
         source: &ApiDrawSourceConfig,
@@ -429,7 +461,7 @@ impl ApiDrawSourceRepository {
         self.fetch_latest_issue_with_snapshot(source, lottery_id, parse_kj_latest_issue)
             .await
     }
-
+    /// 请求 BB 开奖并解析指定期号开奖号码。
     async fn fetch_bb_draw_number(
         &self,
         source: &ApiDrawSourceConfig,
@@ -439,7 +471,7 @@ impl ApiDrawSourceRepository {
         self.fetch_draw_number_with_snapshot(source, lottery_id, issue, parse_bb_draw_number)
             .await
     }
-
+    /// 请求 BB 开奖并解析最新期号信息。
     async fn fetch_bb_latest_issue(
         &self,
         source: &ApiDrawSourceConfig,
@@ -448,7 +480,7 @@ impl ApiDrawSourceRepository {
         self.fetch_latest_issue_with_snapshot(source, lottery_id, parse_bb_latest_issue)
             .await
     }
-
+    /// 请求印尼开奖并解析指定期号开奖号码。
     async fn fetch_indonesia_draw_number(
         &self,
         source: &ApiDrawSourceConfig,
@@ -458,7 +490,7 @@ impl ApiDrawSourceRepository {
         self.fetch_draw_number_with_snapshot(source, lottery_id, issue, parse_indonesia_draw_number)
             .await
     }
-
+    /// 请求印尼开奖并解析最新期号信息。
     async fn fetch_indonesia_latest_issue(
         &self,
         source: &ApiDrawSourceConfig,
@@ -467,7 +499,7 @@ impl ApiDrawSourceRepository {
         self.fetch_latest_issue_with_snapshot(source, lottery_id, parse_indonesia_latest_issue)
             .await
     }
-
+    /// 请求第三方开奖号码并保存采集快照。
     async fn fetch_draw_number_with_snapshot(
         &self,
         source: &ApiDrawSourceConfig,
@@ -496,7 +528,7 @@ impl ApiDrawSourceRepository {
             .await?;
         result
     }
-
+    /// 请求第三方最新期号并保存采集快照。
     async fn fetch_latest_issue_with_snapshot(
         &self,
         source: &ApiDrawSourceConfig,
@@ -524,7 +556,7 @@ impl ApiDrawSourceRepository {
             .await?;
         result
     }
-
+    /// 按开奖源配置发起 HTTP 请求并返回原始响应。
     async fn fetch_source_response(
         &self,
         source: &ApiDrawSourceConfig,
@@ -555,7 +587,7 @@ impl ApiDrawSourceRepository {
             body: response_body,
         })
     }
-
+    /// 记录指定期号开奖号码采集快照。
     async fn record_draw_number_snapshot(
         &self,
         source: &ApiDrawSourceConfig,
@@ -578,7 +610,7 @@ impl ApiDrawSourceRepository {
         };
         self.persist_crawl_snapshot(snapshot).await
     }
-
+    /// 记录最新期号采集快照。
     async fn record_latest_issue_snapshot(
         &self,
         source: &ApiDrawSourceConfig,
@@ -603,7 +635,7 @@ impl ApiDrawSourceRepository {
         };
         self.persist_crawl_snapshot(snapshot).await
     }
-
+    /// 构造 API 开奖源采集快照的公共字段。
     fn crawl_snapshot_base(
         &self,
         source: &ApiDrawSourceConfig,
@@ -638,7 +670,7 @@ impl ApiDrawSourceRepository {
             raw_response_text,
         })
     }
-
+    /// 保存 API 开奖源采集快照。
     async fn persist_crawl_snapshot(&self, snapshot: ApiDrawSourceCrawlSnapshot) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_api_draw_source_crawl_snapshot(persistence, &snapshot).await?;
@@ -659,7 +691,7 @@ impl ApiDrawSourceRepository {
             .map_err(|_| ApiError::Internal("API 开奖源缓存刷新失败".to_string()))? = store;
         Ok(true)
     }
-
+    /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &ApiDrawSourceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_draw_source_store(persistence, store).await?;
@@ -673,7 +705,7 @@ impl ApiDrawSourceRepository {
 struct ApiDrawSourceStore {
     sources: BTreeMap<String, ApiDrawSourceConfig>,
 }
-
+/// 从数据库加载开奖源配置仓储。
 async fn load_draw_source_store(database: &BusinessDatabase) -> ApiResult<ApiDrawSourceStore> {
     let mut sources = Vec::new();
     for row in sqlx::query(
@@ -736,7 +768,7 @@ fn fill_missing_default_sources(store: &mut ApiDrawSourceStore) -> bool {
 
     changed
 }
-
+/// 保存开奖源配置仓储快照。
 async fn save_draw_source_store(
     database: &BusinessDatabase,
     store: &ApiDrawSourceStore,
@@ -772,7 +804,7 @@ async fn save_draw_source_store(
         .await
         .map_err(|_| ApiError::Internal("开奖源事务提交失败".to_string()))
 }
-
+/// 把单次 API 开奖源抓取快照写入数据库。
 async fn save_api_draw_source_crawl_snapshot(
     database: &BusinessDatabase,
     snapshot: &ApiDrawSourceCrawlSnapshot,
@@ -817,7 +849,7 @@ async fn save_api_draw_source_crawl_snapshot(
 }
 
 impl ApiDrawSourceStore {
-    /// 创建并初始化新实例。
+    /// 初始化内部状态容器。
     fn new(sources: Vec<ApiDrawSourceConfig>) -> Self {
         Self {
             sources: sources
@@ -827,7 +859,7 @@ impl ApiDrawSourceStore {
         }
     }
 
-    /// 返回完整数据列表。
+    /// 按当前仓储快照返回全部开奖源列表。
     fn list(&self) -> Vec<DrawSource> {
         self.sources
             .values()
@@ -892,7 +924,7 @@ impl ApiDrawSourceStore {
             .ok_or_else(|| ApiError::NotFound(format!("draw source `{id}` not found")))
     }
 
-    /// 处理 source_from_request 的具体内部流程。
+    /// 把后台保存请求转换为内部开奖源配置。
     fn source_from_request(
         &self,
         payload: SaveDrawSourceRequest,
@@ -955,7 +987,7 @@ impl ApiDrawSourceStore {
         })
     }
 
-    /// 校验输入参数并返回校验结果。
+    /// 校验开奖源绑定的彩种是否存在且可复用。
     fn validate_lottery_bindings(
         &self,
         source: &ApiDrawSourceConfig,
@@ -990,7 +1022,7 @@ struct ApiDrawSourceConfig {
 }
 
 impl ApiDrawSourceConfig {
-    /// 处理 api68_fc3d 的具体内部流程。
+    /// 返回 API68 福彩3D/排列3 默认开奖源配置。
     fn api68_fc3d() -> Self {
         Self {
             id: API68_FC3D_SOURCE_ID.to_string(),
@@ -1026,7 +1058,7 @@ impl ApiDrawSourceConfig {
         }
     }
 
-    /// 处理 api68_au5 的具体内部流程。
+    /// 返回 API68 澳洲幸运5 默认开奖源配置。
     fn api68_au5() -> Self {
         Self {
             id: API68_AU5_SOURCE_ID.to_string(),
@@ -1050,7 +1082,7 @@ impl ApiDrawSourceConfig {
         }
     }
 
-    /// 处理 kj_txffc 的具体内部流程。
+    /// 返回 KJAPI 腾讯分分彩默认开奖源配置。
     fn kj_txffc() -> Self {
         Self {
             id: KJ_TXFFC_SOURCE_ID.to_string(),
@@ -1086,7 +1118,7 @@ impl ApiDrawSourceConfig {
         }
     }
 
-    /// 处理 url 的具体内部流程。
+    /// 拼接当前开奖源的完整请求地址。
     fn url(&self) -> String {
         match self.provider {
             DrawSourceProvider::Api68 => source_url(&self.endpoint, "lotCode", &self.lot_code),
@@ -1098,7 +1130,7 @@ impl ApiDrawSourceConfig {
         }
     }
 
-    /// 聚合并返回摘要结果。
+    /// 转换为接口可返回的摘要结构。
     fn summary(&self) -> DrawSource {
         DrawSource {
             editable: true,
@@ -1127,27 +1159,27 @@ pub fn platform_draw_source_summaries() -> Vec<DrawSource> {
     }]
 }
 
-/// 处理 default_api68_quanguocai_endpoint 的具体内部流程。
+/// 读取 API68 全国彩默认接口地址。
 fn default_api68_quanguocai_endpoint() -> String {
     DEFAULT_API68_QUANGUOCAI_ENDPOINT.to_string()
 }
 
-/// 处理 default_api68_cqshicai_single_endpoint 的具体内部流程。
+/// 读取 API68 时时彩单彩种默认接口地址。
 fn default_api68_cqshicai_single_endpoint() -> String {
     DEFAULT_API68_CQSHICAI_SINGLE_ENDPOINT.to_string()
 }
 
-/// 处理 default_kj_endpoint 的具体内部流程。
+/// 读取 KJAPI 默认接口地址。
 fn default_kj_endpoint() -> String {
     DEFAULT_KJ_ENDPOINT.to_string()
 }
 
-/// 处理 default_bb_endpoint 的具体内部流程。
+/// 读取 BB 开奖默认接口地址。
 fn default_bb_endpoint() -> String {
     DEFAULT_BB_ENDPOINT.to_string()
 }
 
-/// 处理 default_indonesia_endpoint 的具体内部流程。
+/// 读取印尼开奖默认接口地址。
 fn default_indonesia_endpoint() -> String {
     DEFAULT_INDONESIA_ENDPOINT.to_string()
 }
@@ -1165,7 +1197,7 @@ fn next_crawl_snapshot_id() -> String {
     format!("ADS-{millis}-{suffix:08X}")
 }
 
-/// 处理 normalized_endpoint 的具体内部流程。
+/// 清洗后台保存的开奖源地址并补齐供应商默认值。
 fn normalized_endpoint(endpoint: Option<&str>, provider: &DrawSourceProvider) -> String {
     endpoint
         .map(str::trim)
@@ -1179,7 +1211,7 @@ fn normalized_endpoint(endpoint: Option<&str>, provider: &DrawSourceProvider) ->
         })
 }
 
-/// 处理 default_api_draw_sources 的具体内部流程。
+/// 返回系统内置 API 开奖源配置。
 fn default_api_draw_sources() -> Vec<ApiDrawSourceConfig> {
     let mut sources = vec![
         ApiDrawSourceConfig::api68_fc3d(),
@@ -1296,7 +1328,7 @@ fn extra_api68_draw_sources() -> Vec<ApiDrawSourceConfig> {
     ]
 }
 
-/// 处理 source_url 的具体内部流程。
+/// 按接口地址、查询参数名和彩种编码拼接请求 URL。
 fn source_url(endpoint: &str, query_key: &str, lot_code: &str) -> String {
     if endpoint.contains(&format!("{query_key}=")) {
         return endpoint.to_string();
@@ -1305,7 +1337,7 @@ fn source_url(endpoint: &str, query_key: &str, lot_code: &str) -> String {
     format!("{endpoint}{separator}{query_key}={lot_code}")
 }
 
-/// 处理 reusable_lottery_ids 的具体内部流程。
+/// 清洗并去重开奖源可复用彩种 ID。
 fn reusable_lottery_ids(values: Vec<String>) -> ApiResult<Vec<String>> {
     let mut unique = BTreeSet::new();
     let ids = values
@@ -1324,7 +1356,7 @@ fn reusable_lottery_ids(values: Vec<String>) -> ApiResult<Vec<String>> {
     Ok(ids)
 }
 
-/// 校验输入参数并返回校验结果。
+/// 校验复用彩种列表没有重复且彩种存在。
 fn validate_reusable_lotteries(
     reusable_for_lottery_ids: &[String],
     lotteries: &[LotteryKind],
@@ -1345,6 +1377,7 @@ fn validate_reusable_lotteries(
     Ok(())
 }
 
+/// 解析 API68 开奖响应，按指定期号提取开奖号码。
 pub(crate) fn parse_api68_draw_number(
     response_body: &str,
     expected_issue: &str,
@@ -1381,6 +1414,7 @@ pub(crate) fn parse_api68_draw_number(
     Ok(draw_code.to_string())
 }
 
+/// 解析 API68 开奖响应，提取最近已开奖期号和下一期参考信息。
 pub(crate) fn parse_api68_latest_issue(response_body: &str) -> ApiResult<ApiDrawSourceLatestIssue> {
     let result = parse_api68_result(response_body)?;
     let Some(draw) = result.data.into_iter().find(|draw| {
@@ -1412,6 +1446,7 @@ pub(crate) fn parse_api68_latest_issue(response_body: &str) -> ApiResult<ApiDraw
     })
 }
 
+/// 解析 KJAPI 开奖响应，按指定期号提取开奖号码。
 pub(crate) fn parse_kj_draw_number(response_body: &str, expected_issue: &str) -> ApiResult<String> {
     let expected_issue = expected_issue.trim();
     if expected_issue.is_empty() {
@@ -1436,6 +1471,7 @@ pub(crate) fn parse_kj_draw_number(response_body: &str, expected_issue: &str) ->
     Ok(draw_code.to_string())
 }
 
+/// 解析 KJAPI 开奖响应，提取最近已开奖期号和下一期参考信息。
 pub(crate) fn parse_kj_latest_issue(response_body: &str) -> ApiResult<ApiDrawSourceLatestIssue> {
     let data = parse_kj_data(response_body)?;
     let issue = api68_issue_value(&data.pre_draw_issue)
@@ -1462,6 +1498,7 @@ pub(crate) fn parse_kj_latest_issue(response_body: &str) -> ApiResult<ApiDrawSou
     })
 }
 
+/// 解析 BB 开奖响应，按指定河内5分彩期号提取开奖号码。
 pub(crate) fn parse_bb_draw_number(response_body: &str, expected_issue: &str) -> ApiResult<String> {
     let expected_issue = expected_issue.trim();
     if expected_issue.is_empty() {
@@ -1499,6 +1536,7 @@ pub(crate) fn parse_bb_draw_number(response_body: &str, expected_issue: &str) ->
     )))
 }
 
+/// 解析 BB 开奖响应，提取最近已开奖期号和下一期参考信息。
 pub(crate) fn parse_bb_latest_issue(response_body: &str) -> ApiResult<ApiDrawSourceLatestIssue> {
     let envelope = parse_bb_envelope(response_body)?;
     let Some(item) = envelope.value.into_iter().find(|item| {
@@ -1542,6 +1580,7 @@ pub(crate) fn parse_bb_latest_issue(response_body: &str) -> ApiResult<ApiDrawSou
     })
 }
 
+/// 解析印尼开奖响应，按归一化期号提取开奖号码。
 pub(crate) fn parse_indonesia_draw_number(
     response_body: &str,
     expected_issue: &str,
@@ -1579,6 +1618,7 @@ pub(crate) fn parse_indonesia_draw_number(
     )))
 }
 
+/// 解析印尼开奖响应，提取最近已开奖期号和下一期参考信息。
 pub(crate) fn parse_indonesia_latest_issue(
     response_body: &str,
 ) -> ApiResult<ApiDrawSourceLatestIssue> {
@@ -1685,7 +1725,7 @@ fn normalize_indonesia_issue(value: &str) -> Option<String> {
     Some(format!("{date}{sequence_number:03}"))
 }
 
-/// 处理 api68_issue_value 的具体内部流程。
+/// 从 API68 响应中提取期号字段。
 fn api68_issue_value(value: &Value) -> Option<String> {
     match value {
         Value::String(value) => Some(value.trim().to_string()),
@@ -2074,7 +2114,7 @@ mod tests {
             Some("2026-06-17 03:35:00")
         );
     }
-
+    /// 验证静态 API68 响应可以为默认全国彩返回最新期号。
     #[tokio::test]
     async fn seeded_static_source_returns_latest_issue_for_default_api68_lotteries() {
         let repository = ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE);
@@ -2099,7 +2139,7 @@ mod tests {
         assert_eq!(pl3.issue, "2026143");
         assert_eq!(pl5.issue, "2026143");
     }
-
+    /// 验证福彩3D和排列3使用独立的 API68 默认来源。
     #[tokio::test]
     async fn seeded_api68_source_splits_fc3d_and_pl3() {
         let repository = ApiDrawSourceRepository::api68_seeded();
@@ -2125,7 +2165,7 @@ mod tests {
         );
         assert_eq!(pl3_source.reusable_for_lottery_ids, vec!["pl3".to_string()]);
     }
-
+    /// 验证默认开奖源包含 API68 体彩排列5。
     #[tokio::test]
     async fn seeded_api68_source_includes_pl5() {
         let repository = ApiDrawSourceRepository::api68_seeded();
@@ -2142,7 +2182,7 @@ mod tests {
         );
         assert_eq!(source.reusable_for_lottery_ids, vec!["pl5".to_string()]);
     }
-
+    /// 验证默认开奖源包含 API68 澳洲幸运5。
     #[tokio::test]
     async fn seeded_api68_source_includes_au5() {
         let repository = ApiDrawSourceRepository::api68_seeded();
@@ -2217,7 +2257,7 @@ mod tests {
             );
         }
     }
-
+    /// 验证默认开奖源包含 KJAPI 腾讯分彩。
     #[tokio::test]
     async fn seeded_sources_include_txffc_kjapi_source() {
         let repository = ApiDrawSourceRepository::api68_seeded();
@@ -2235,7 +2275,7 @@ mod tests {
         );
         assert_eq!(source.reusable_for_lottery_ids, vec!["txffc".to_string()]);
     }
-
+    /// 验证默认开奖源包含 BB 河内5分彩。
     #[tokio::test]
     async fn seeded_sources_include_hn5_bb_source() {
         let repository = ApiDrawSourceRepository::api68_seeded();
@@ -2253,7 +2293,7 @@ mod tests {
         );
         assert_eq!(source.reusable_for_lottery_ids, vec!["hn5".to_string()]);
     }
-
+    /// 验证 BB 开奖源可以返回河内5分彩最新期号。
     #[tokio::test]
     async fn seeded_bb_source_returns_latest_issue_for_hn5() {
         let repository = ApiDrawSourceRepository::bb_seeded_with_static_response(BB_SAMPLE);
@@ -2267,7 +2307,7 @@ mod tests {
         assert_eq!(latest.issue, "20260617026");
         assert_eq!(latest.next_issue.as_deref(), Some("20260617027"));
     }
-
+    /// 验证默认开奖源包含印尼5分彩来源。
     #[tokio::test]
     async fn seeded_sources_include_id5_indonesia_source() {
         let repository = ApiDrawSourceRepository::api68_seeded();
@@ -2285,7 +2325,7 @@ mod tests {
         );
         assert_eq!(source.reusable_for_lottery_ids, vec!["id5".to_string()]);
     }
-
+    /// 验证印尼开奖源可以返回印尼5分彩最新期号。
     #[tokio::test]
     async fn seeded_indonesia_source_returns_latest_issue_for_id5() {
         let repository =
@@ -2300,7 +2340,7 @@ mod tests {
         assert_eq!(latest.issue, "20260617042");
         assert_eq!(latest.next_issue.as_deref(), Some("20260617043"));
     }
-
+    /// 验证 KJAPI 可以返回腾讯分分彩最新期号。
     #[tokio::test]
     async fn seeded_kj_source_returns_latest_issue_for_txffc() {
         let repository = ApiDrawSourceRepository::kj_seeded_with_static_response(KJ_SAMPLE);
@@ -2314,7 +2354,7 @@ mod tests {
         assert_eq!(latest.issue, "202606031178");
         assert_eq!(latest.next_issue.as_deref(), Some("202606031179"));
     }
-
+    /// 验证来源创建拒绝重复彩种binding。
     #[tokio::test]
     async fn source_create_rejects_duplicate_lottery_binding() {
         let repository = ApiDrawSourceRepository::api68_seeded();
@@ -2327,7 +2367,7 @@ mod tests {
 
         assert!(error.to_string().contains("already bound"));
     }
-
+    /// 验证来源更新keeps默认pl3bindingindependent。
     #[tokio::test]
     async fn source_update_keeps_default_pl3_binding_independent() {
         let repository = ApiDrawSourceRepository::api68_seeded();
@@ -2350,7 +2390,7 @@ mod tests {
         assert_eq!(updated.reusable_for_lottery_ids, vec!["fc3d".to_string()]);
         assert_eq!(pl3_source.reusable_for_lottery_ids, vec!["pl3".to_string()]);
     }
-
+    /// 验证来源保存拒绝非API彩种。
     #[tokio::test]
     async fn source_save_rejects_non_api_lottery() {
         let repository = ApiDrawSourceRepository::api68_seeded();
@@ -2368,7 +2408,7 @@ mod tests {
         assert!(error.to_string().contains("not api draw mode"));
     }
 
-    /// 处理 draw_source_payload 的具体内部流程。
+    /// 构造测试用开奖源保存请求。
     fn draw_source_payload(id: &str, lottery_ids: &[&str]) -> SaveDrawSourceRequest {
         SaveDrawSourceRequest {
             endpoint: None,

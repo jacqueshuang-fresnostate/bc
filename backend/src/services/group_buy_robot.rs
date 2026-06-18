@@ -36,6 +36,7 @@ use crate::{
     },
 };
 
+/// 系统合买机器人固定用户 ID，资金过滤和删除保护都依赖该值。
 pub const ROBOT_GROUP_BUY_USER_ID: &str = "U90001";
 const ROBOT_GROUP_BUY_USERNAME: &str = "agent_alpha";
 const ROBOT_FILL_PARTICIPANT_SUFFIX: &str = "P-ROBOT-FILL";
@@ -1274,7 +1275,7 @@ mod tests {
             play_rules::expanded_bets_for_rule, robot::RobotRepository,
         },
     };
-
+    /// 验证机器人号码匹配everysupported玩法玩法。
     #[test]
     fn robot_numbers_match_every_supported_play_rule() {
         let robot = robot_test_config();
@@ -1295,7 +1296,7 @@ mod tests {
             );
         }
     }
-
+    /// 验证机器人直选号码vary跨越期号。
     #[test]
     fn robot_direct_numbers_vary_across_issues() {
         let robot = robot_test_config();
@@ -1313,7 +1314,7 @@ mod tests {
             "机器人直选投注内容不能总是固定的 1|2|3"
         );
     }
-
+    /// 验证机器人金额keep剩余参与有效。
     #[test]
     fn robot_amounts_keep_remaining_participation_valid() {
         let lottery = robot_test_lottery();
@@ -1328,7 +1329,7 @@ mod tests {
             "机器人发起金额需要支持多阶段补单"
         );
     }
-
+    /// 验证机器人run自动入账机器人账户when余额is低。
     #[tokio::test]
     async fn robot_run_auto_credits_robot_account_when_balance_is_low() {
         let access = AccessRepository::memory_seeded();
@@ -1397,7 +1398,7 @@ mod tests {
             .await
             .expect("robot account keeps positive balance after auto credit");
     }
-
+    /// 验证机器人run创建计划then补满合买合买带节奏。
     #[tokio::test]
     async fn robot_run_creates_plan_then_fills_group_buy_with_rhythm() {
         let access = AccessRepository::memory_seeded();
@@ -1537,7 +1538,7 @@ mod tests {
         );
         assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 5_000, 5, true).await;
     }
-
+    /// 验证机器人run补满已有非机器人合买合买计划带节奏。
     #[tokio::test]
     async fn robot_run_fills_existing_non_robot_group_buy_plan_with_rhythm() {
         let access = AccessRepository::memory_seeded();
@@ -1683,7 +1684,7 @@ mod tests {
             .any(|order| Some(&order.id) == filled_user_plan.order_id.as_ref()));
         assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 5_000, 5, true).await;
     }
-
+    /// 验证机器人兜底补满封盘用户合买合买之前退款。
     #[tokio::test]
     async fn robot_guard_fills_closed_user_group_buy_before_refund() {
         let access = AccessRepository::memory_seeded();
@@ -1764,7 +1765,7 @@ mod tests {
         assert_eq!(filled_plan.order_id, Some(run.created_orders[0].id.clone()));
         assert_robot_plan_progress(&group_buys, "G-USER-GUARD", 5_000, 5_000, 2, true).await;
     }
-
+    /// 验证机器人run补满自身计划按之前开奖策略。
     #[tokio::test]
     async fn robot_run_fills_own_plan_by_before_draw_strategy() {
         let access = AccessRepository::memory_seeded();
@@ -1842,7 +1843,7 @@ mod tests {
         assert_eq!(fill_run.created_orders.len(), 1);
         assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 5_000, 2, true).await;
     }
-
+    /// 验证机器人run补满用户计划按之前开奖策略。
     #[tokio::test]
     async fn robot_run_fills_user_plan_by_before_draw_strategy() {
         let access = AccessRepository::memory_seeded();
@@ -1941,7 +1942,7 @@ mod tests {
         assert!(filled_user_plan.order_id.is_some());
         assert_robot_plan_progress(&group_buys, "G-USER-BEFORE-DRAW", 5_000, 5_000, 2, true).await;
     }
-
+    /// 断言机器人计划progress满足测试要求。
     async fn assert_robot_plan_progress(
         group_buys: &GroupBuyRepository,
         plan_id: &str,
@@ -1965,7 +1966,7 @@ mod tests {
             assert!(plan.order_id.is_none());
         }
     }
-
+    /// 验证机器人测试彩种。
     fn robot_test_lottery() -> LotteryKind {
         LotteryKind {
             id: "robot-test".to_string(),
@@ -1997,7 +1998,7 @@ mod tests {
             }],
         }
     }
-
+    /// 验证机器人测试配置。
     fn robot_test_config() -> RobotConfigSummary {
         RobotConfigSummary {
             id: "R-BUY-TEST".to_string(),
@@ -2011,7 +2012,7 @@ mod tests {
             deletable: true,
         }
     }
-
+    /// 配置种子合买机器人的补满策略。
     async fn configure_seed_group_buy_robot_strategy(
         robots: &RobotRepository,
         lotteries: &LotteryRepository,
@@ -2030,7 +2031,7 @@ mod tests {
             .await
             .expect("seed group-buy robot can update strategy");
     }
-
+    /// 验证机器人测试期号。
     fn robot_test_issue(issue: &str) -> DrawIssue {
         DrawIssue {
             id: format!("I-{issue}"),
@@ -2047,7 +2048,7 @@ mod tests {
             created_at: "2026-06-05 19:00:00".to_string(),
         }
     }
-
+    /// 验证机器人supported玩法玩法。
     fn robot_supported_play_rules() -> Vec<PlayRuleCode> {
         use PlayRuleCode::*;
         vec![

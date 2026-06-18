@@ -28,7 +28,9 @@ pub enum RealtimeAudience {
 #[derive(Debug, Clone)]
 /// 实时事件消息，包含受众和事件 payload。
 pub struct RealtimeMessage {
+    /// audience字段。
     pub audience: RealtimeAudience,
+    /// payload字段。
     pub payload: Value,
 }
 

@@ -49,7 +49,7 @@ impl SupportRepository {
         })
     }
 
-    /// 返回完整列表。
+    /// 按当前仓储快照返回全部客服会话列表。
     pub async fn list(&self) -> ApiResult<Vec<SupportConversation>> {
         self.inner
             .read()
@@ -73,7 +73,7 @@ impl SupportRepository {
             .list_for_user(user_id))
     }
 
-    /// 按 ID 查询单条记录。
+    /// 按业务标识读取单条记录，未命中时返回未找到错误。
     pub async fn get(&self, id: &str) -> ApiResult<SupportConversation> {
         self.inner
             .read()
@@ -191,7 +191,7 @@ impl SupportRepository {
         self.persist(&snapshot).await?;
         Ok(result)
     }
-
+    /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &SupportStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_support_store(persistence, store).await?;
@@ -417,7 +417,7 @@ impl SupportStore {
         Self { conversations }
     }
 
-    /// 返回完整数据列表。
+    /// 按当前仓储快照返回全部客服会话列表。
     fn list(&self) -> Vec<SupportConversation> {
         sort_support_conversations(self.conversations.values().cloned().collect())
     }
@@ -753,12 +753,12 @@ fn current_time_label() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-/// 处理 message_id 的具体内部流程。
+/// 按会话 ID 和序号生成客服消息 ID。
 fn message_id(conversation_id: &str, index: usize) -> String {
     format!("{conversation_id}-M{index:03}")
 }
 
-/// 返回内置种子或测试数据。
+/// 返回内置客服会话种子数据。
 fn seed_conversations() -> Vec<SupportConversation> {
     vec![
         SupportConversation {
@@ -862,7 +862,7 @@ mod tests {
         domain::user::{UserKind, UserStatus},
         services::access::AccessRepository,
     };
-
+    /// 验证客服会话创建、状态更新和回复流程。
     #[tokio::test]
     async fn support_repository_creates_updates_and_replies() {
         let support = SupportRepository::memory_seeded();
@@ -920,7 +920,7 @@ mod tests {
         assert_eq!(replied.unread_count, 0);
         assert_eq!(replied.user_unread_count, 1);
     }
-
+    /// 验证未读且最近更新的客服会话优先展示。
     #[tokio::test]
     async fn support_repository_lists_unread_recent_conversations_first() {
         let support = SupportRepository::memory_seeded();
@@ -937,7 +937,7 @@ mod tests {
             vec!["CS-10002", "CS-10001"]
         );
     }
-
+    /// 验证未知用户不能创建客服会话。
     #[tokio::test]
     async fn support_repository_rejects_unknown_user() {
         let support = SupportRepository::memory_seeded();
@@ -970,7 +970,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::NotFound(_)));
     }
-
+    /// 验证不能把会话分配给未知管理员。
     #[tokio::test]
     async fn support_repository_rejects_unknown_admin_assignment() {
         let support = SupportRepository::memory_seeded();
@@ -989,7 +989,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::NotFound(_)));
     }
-
+    /// 验证空文本客服回复会被拒绝。
     #[tokio::test]
     async fn support_repository_rejects_empty_reply_content() {
         let support = SupportRepository::memory_seeded();
@@ -1013,7 +1013,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证客服管理员可以发送图片回复。
     #[tokio::test]
     async fn support_repository_allows_admin_image_reply() {
         let support = SupportRepository::memory_seeded();
@@ -1046,7 +1046,7 @@ mod tests {
         assert_eq!(replied.unread_count, 0);
         assert_eq!(replied.user_unread_count, 2);
     }
-
+    /// 验证用户可以继续自己的客服会话。
     #[tokio::test]
     async fn support_repository_allows_user_to_continue_owned_conversation() {
         let support = SupportRepository::memory_seeded();
@@ -1079,7 +1079,7 @@ mod tests {
         assert_eq!(updated.user_unread_count, 0);
         assert_eq!(support.list_for_user("U10001").await.unwrap().len(), 1);
     }
-
+    /// 验证用户可以发送图片客服消息。
     #[tokio::test]
     async fn support_repository_allows_user_image_reply() {
         let support = SupportRepository::memory_seeded();
@@ -1117,7 +1117,7 @@ mod tests {
         assert_eq!(updated.unread_count, 2);
         assert_eq!(updated.user_unread_count, 0);
     }
-
+    /// 验证客服端读取后会标记用户消息已读。
     #[tokio::test]
     async fn support_repository_marks_user_messages_read() {
         let support = SupportRepository::memory_seeded();
@@ -1154,7 +1154,7 @@ mod tests {
         assert_eq!(after_read.user_unread_count, 0);
         assert_eq!(after_read.unread_count, before_read.unread_count);
     }
-
+    /// 验证用户回复会重新打开待处理客服会话。
     #[tokio::test]
     async fn support_repository_reopens_pending_conversation_when_user_replies() {
         let support = SupportRepository::memory_seeded();
@@ -1202,7 +1202,7 @@ mod tests {
         assert_eq!(updated.status, SupportConversationStatus::Open);
         assert_eq!(updated.unread_count, unread_before + 1);
     }
-
+    /// 验证只有已解决客服会话允许删除。
     #[tokio::test]
     async fn support_repository_deletes_only_resolved_conversations() {
         let support = SupportRepository::memory_seeded();
@@ -1240,7 +1240,7 @@ mod tests {
             Err(ApiError::NotFound(_))
         ));
     }
-
+    /// 验证用户不能回复他人的客服会话。
     #[tokio::test]
     async fn support_repository_rejects_user_reply_to_other_conversation() {
         let support = SupportRepository::memory_seeded();

@@ -130,7 +130,7 @@ pub async fn generate_draw_issue_batch(
 
     Ok(created)
 }
-
+/// 规划本轮需要生成的新开奖期号。
 async fn plan_draw_issue_generation(
     draws: &DrawRepository,
     lottery: &LotteryKind,
@@ -257,7 +257,7 @@ fn issue_label_time(
     }
 }
 
-/// 处理 latest_scheduled_at 的具体内部流程。
+/// 查找指定彩种已有期号中的最新开奖时间。
 fn latest_scheduled_at(issues: &[DrawIssue], lottery_id: &str) -> ApiResult<Option<NaiveDateTime>> {
     let mut latest = None;
 
@@ -323,7 +323,7 @@ struct ApiIssueAnchor {
     next_draw_time: Option<NaiveDateTime>,
 }
 
-/// 处理 api_issue_anchor 的具体内部流程。
+/// 根据外部开奖源快照计算下一期生成锚点。
 fn api_issue_anchor(
     lottery_id: &str,
     existing_issues: &[DrawIssue],
@@ -376,7 +376,7 @@ fn api_issue_anchor(
     }))
 }
 
-/// 处理 generation_baseline 的具体内部流程。
+/// 计算生成下一期时使用的时间基线。
 fn generation_baseline(
     lottery: &LotteryKind,
     existing_issues: &[DrawIssue],
@@ -448,13 +448,13 @@ fn generation_baseline(
     Ok(if baseline > now { baseline } else { now })
 }
 
-/// 处理 issue_offset_count 的具体内部流程。
+/// 把期号偏移量转换为安全的有符号计数。
 fn issue_offset_count(issue_offset: u64) -> ApiResult<i64> {
     i64::try_from(issue_offset)
         .map_err(|_| ApiError::Internal("API 开奖源期号偏移超出范围".to_string()))
 }
 
-/// 处理 next_scheduled_at 的具体内部流程。
+/// 根据彩种排期计算下一期开奖时间。
 fn next_scheduled_at(schedule: &DrawSchedule, baseline: NaiveDateTime) -> ApiResult<NaiveDateTime> {
     match schedule {
         DrawSchedule::Periodic { interval_seconds } => {
@@ -587,7 +587,7 @@ fn parse_weekdays(values: &[String]) -> ApiResult<Vec<Weekday>> {
         .collect()
 }
 
-/// 处理 combine_date_time 的具体内部流程。
+/// 合并日期和时间并转换为本地业务时间。
 fn combine_date_time(date: NaiveDate, time: NaiveTime) -> ApiResult<NaiveDateTime> {
     Ok(date.and_time(time))
 }
@@ -977,7 +977,7 @@ impl IssueLabeler {
         })
     }
 
-    /// 处理 for_api_anchor 的具体内部流程。
+    /// 按 API 锚点初始化期号序号生成器。
     fn for_api_anchor(api_anchor: Option<&ApiIssueAnchor>) -> ApiResult<Self> {
         let Some(api_anchor) = api_anchor else {
             return Ok(Self::Pattern {
@@ -993,7 +993,7 @@ impl IssueLabeler {
         Ok(Self::Sequential { next_issue })
     }
 
-    /// 处理 next_issue 的具体内部流程。
+    /// 按当前格式生成下一个期号。
     fn next_issue(&mut self, scheduled_at: NaiveDateTime) -> ApiResult<String> {
         match self {
             Self::Pattern {
@@ -1080,7 +1080,7 @@ mod tests {
             }
         }
     }"#;
-
+    /// 验证周期排期生成nextinterval之后当前时间。
     #[tokio::test]
     async fn periodic_schedule_generates_next_interval_after_now() {
         let draws = DrawRepository::memory();
@@ -1096,7 +1096,7 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
         assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:59");
     }
-
+    /// 验证生成期号时默认使用彩种自身封盘提前秒数。
     #[tokio::test]
     async fn generation_uses_lottery_sale_close_lead_seconds_by_default() {
         let draws = DrawRepository::memory();
@@ -1112,7 +1112,7 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
         assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:45");
     }
-
+    /// 构造请求sale封盘leadsecondsoverrides彩种默认测试请求。
     #[tokio::test]
     async fn request_sale_close_lead_seconds_overrides_lottery_default() {
         let draws = DrawRepository::memory();
@@ -1129,7 +1129,7 @@ mod tests {
 
         assert_eq!(issue.sale_closed_at, "2026-06-02 20:00:55");
     }
-
+    /// 验证 300 秒周期配置 60 秒封盘时会在剩余 60 秒封盘。
     #[tokio::test]
     async fn sale_close_lead_closes_300_second_lottery_with_60_seconds_remaining() {
         let draws = DrawRepository::memory();
@@ -1145,7 +1145,7 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-02 20:05:00");
         assert_eq!(issue.sale_closed_at, "2026-06-02 20:04:00");
     }
-
+    /// 验证时间节点排期对齐toconfigured整点nodes。
     #[tokio::test]
     async fn time_node_schedule_aligns_to_configured_clock_nodes() {
         let draws = DrawRepository::memory();
@@ -1162,7 +1162,7 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-02 00:05:00");
         assert_eq!(issue.sale_closed_at, "2026-06-02 00:04:59");
     }
-
+    /// 验证时间节点零点开奖使用previous开盘节点用于期号文案。
     #[tokio::test]
     async fn time_node_midnight_draw_uses_previous_open_node_for_issue_label() {
         let draws = DrawRepository::memory();
@@ -1181,7 +1181,7 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-02 00:00:00");
         assert_eq!(issue.sale_closed_at, "2026-06-01 23:59:59");
     }
-
+    /// 验证时间节点zero整点开盘优先当前日期期号。
     #[tokio::test]
     async fn time_node_zero_clock_opens_first_current_day_issue() {
         let draws = DrawRepository::memory();
@@ -1200,7 +1200,7 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-02 00:05:00");
         assert_eq!(issue.sale_closed_at, "2026-06-02 00:04:59");
     }
-
+    /// 验证时间节点排期重新对齐之后偏移已有期号。
     #[tokio::test]
     async fn time_node_schedule_realigns_after_offset_existing_issue() {
         let draws = DrawRepository::memory();
@@ -1229,7 +1229,7 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-10 20:20:00");
         assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:59");
     }
-
+    /// 验证平台开奖支持自定义期号格式。
     #[tokio::test]
     async fn platform_schedule_uses_custom_issue_format() {
         let draws = DrawRepository::memory();
@@ -1246,7 +1246,7 @@ mod tests {
         assert_eq!(issue.issue, "2606022001");
         assert_eq!(issue.scheduled_at, "2026-06-02 20:01:00");
     }
-
+    /// 验证平台开奖期号格式支持短序号占位符。
     #[tokio::test]
     async fn platform_schedule_supports_short_sequence_tokens() {
         for (token, expected) in [
@@ -1268,7 +1268,7 @@ mod tests {
             assert_eq!(issue.issue, expected);
         }
     }
-
+    /// 验证平台开奖能从已有期号恢复短序号。
     #[tokio::test]
     async fn platform_schedule_recovers_short_sequence_from_existing_issue() {
         let draws = DrawRepository::memory();
@@ -1297,7 +1297,7 @@ mod tests {
         assert_eq!(issue.issue, "2026060210");
         assert_eq!(issue.scheduled_at, "2026-06-02 20:02:00");
     }
-
+    /// 验证生成下一期时以最新已有期号作为基线。
     #[tokio::test]
     async fn generation_uses_latest_existing_issue_as_baseline() {
         let draws = DrawRepository::memory();
@@ -1315,7 +1315,7 @@ mod tests {
         assert_eq!(first.issue, "202606020001");
         assert_eq!(second.issue, "202606020002");
     }
-
+    /// 验证每日排期过开奖时间后滚动到下一天。
     #[tokio::test]
     async fn daily_schedule_rolls_to_next_day_after_draw_time() {
         let draws = DrawRepository::memory();
@@ -1330,7 +1330,7 @@ mod tests {
         assert_eq!(issue.issue, "202606030001");
         assert_eq!(issue.sale_closed_at, "2026-06-03 21:00:14");
     }
-
+    /// 验证api68每日排期使用最新external期号。
     #[tokio::test]
     async fn api68_daily_schedule_uses_latest_external_issue() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1357,7 +1357,7 @@ mod tests {
         );
         assert_eq!(plans[0].scheduled_at, "2026-06-03 21:00:15");
     }
-
+    /// 验证api68每日排期continues之后已有真实期号。
     #[tokio::test]
     async fn api68_daily_schedule_continues_after_existing_real_issue() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1386,7 +1386,7 @@ mod tests {
         assert_eq!(issue.issue, "2026145");
         assert_eq!(issue.scheduled_at, "2026-06-04 21:00:15");
     }
-
+    /// 验证api68reused来源生成真实期号用于pl3。
     #[tokio::test]
     async fn api68_reused_source_generates_real_issue_for_pl3() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1405,7 +1405,7 @@ mod tests {
 
         assert_eq!(issue.issue, "2026144");
     }
-
+    /// 验证api68au5来源生成eight数字期号。
     #[tokio::test]
     async fn api68_au5_source_generates_eight_digit_issue() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1427,7 +1427,7 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-03 11:23:40");
         assert_eq!(issue.sale_closed_at, "2026-06-03 11:23:39");
     }
-
+    /// 验证api68周期排期重新对齐之后已有local期号。
     #[tokio::test]
     async fn api68_periodic_schedule_realigns_after_existing_local_issue() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1460,7 +1460,7 @@ mod tests {
         assert_eq!(issue.issue, "51320851");
         assert_eq!(issue.scheduled_at, "2026-06-03 11:28:40");
     }
-
+    /// 验证api68周期排期keeps等待期号之后sale封盘时间。
     #[tokio::test]
     async fn api68_periodic_schedule_keeps_waiting_issue_after_sale_close_time() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1481,7 +1481,7 @@ mod tests {
         assert_eq!(issue.issue, "51320850");
         assert_eq!(issue.scheduled_at, "2026-06-03 11:23:40");
     }
-
+    /// 验证api68周期排期skips期号之后开奖时间。
     #[tokio::test]
     async fn api68_periodic_schedule_skips_issue_after_draw_time() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1502,7 +1502,7 @@ mod tests {
         assert_eq!(issue.issue, "51320851");
         assert_eq!(issue.scheduled_at, "2026-06-03 11:28:40");
     }
-
+    /// 验证kjtxffc来源生成providernext期号。
     #[tokio::test]
     async fn kj_txffc_source_generates_provider_next_issue() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1526,7 +1526,7 @@ mod tests {
         assert_eq!(issue.issue, "202606031179");
         assert_eq!(issue.scheduled_at, "2026-06-03 19:39:00");
     }
-
+    /// 验证kjtxffc来源keeps等待providernext期号。
     #[tokio::test]
     async fn kj_txffc_source_keeps_waiting_provider_next_issue() {
         let draws = DrawRepository::memory_with_api_sources(
@@ -1550,7 +1550,7 @@ mod tests {
         assert_eq!(issue.issue, "202606031179");
         assert_eq!(issue.scheduled_at, "2026-06-03 19:39:00");
     }
-
+    /// 验证每周排期会选择下一个匹配星期。
     #[tokio::test]
     async fn weekly_schedule_picks_next_matching_weekday() {
         let draws = DrawRepository::memory();
@@ -1566,7 +1566,7 @@ mod tests {
         assert_eq!(issue.issue, "202606040001");
         assert_eq!(issue.scheduled_at, "2026-06-04 21:00:00");
     }
-
+    /// 验证预览生成不会写入真实开奖期号。
     #[tokio::test]
     async fn preview_generation_does_not_create_draw_issues() {
         let draws = DrawRepository::memory();
@@ -1595,7 +1595,7 @@ mod tests {
             .expect("draw issues can be listed")
             .is_empty());
     }
-
+    /// 验证批量生成可以创建多个周期期号。
     #[tokio::test]
     async fn batch_generation_creates_multiple_periodic_draw_issues() {
         let draws = DrawRepository::memory();
@@ -1620,7 +1620,7 @@ mod tests {
             3
         );
     }
-
+    /// 验证周期生成keepscadencewhen调度器runslate。
     #[tokio::test]
     async fn periodic_generation_keeps_cadence_when_scheduler_runs_late() {
         let draws = DrawRepository::memory();
@@ -1648,7 +1648,7 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-10 20:19:27");
         assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:26");
     }
-
+    /// 验证批量生成以最新已有期号作为基线。
     #[tokio::test]
     async fn batch_generation_uses_latest_existing_issue_as_baseline() {
         let draws = DrawRepository::memory();
@@ -1672,7 +1672,7 @@ mod tests {
             vec!["202606020003", "202606020004"]
         );
     }
-
+    /// 验证每日批量生成可以跨天滚动。
     #[tokio::test]
     async fn daily_batch_generation_rolls_across_days() {
         let draws = DrawRepository::memory();
@@ -1696,7 +1696,7 @@ mod tests {
             vec!["202606030001", "202606040001"]
         );
     }
-
+    /// 验证每周批量生成只选择配置的星期。
     #[tokio::test]
     async fn weekly_batch_generation_picks_configured_weekdays() {
         let draws = DrawRepository::memory();
@@ -1721,7 +1721,7 @@ mod tests {
             vec!["202606040001", "202606090001", "202606110001"]
         );
     }
-
+    /// 验证批量生成数量超出范围时会被拒绝。
     #[tokio::test]
     async fn batch_generation_rejects_count_out_of_range() {
         let draws = DrawRepository::memory();
@@ -1742,12 +1742,12 @@ mod tests {
             .contains("draw issue generation count must be between 1 and 50"));
     }
 
-    /// 处理 request 的具体内部流程。
+    /// 构造测试用期号生成请求。
     fn request(now: &str) -> GenerateDrawIssueRequest {
         request_for("fc3d", now)
     }
 
-    /// 处理 request_for 的具体内部流程。
+    /// 按彩种构造测试用期号生成请求。
     fn request_for(lottery_id: &str, now: &str) -> GenerateDrawIssueRequest {
         GenerateDrawIssueRequest {
             lottery_id: lottery_id.to_string(),
@@ -1756,7 +1756,7 @@ mod tests {
         }
     }
 
-    /// 处理 batch_request 的具体内部流程。
+    /// 构造测试用批量生成期号请求。
     fn batch_request(now: &str, count: u32) -> GenerateDrawIssuesRequest {
         GenerateDrawIssuesRequest {
             lottery_id: "fc3d".to_string(),
@@ -1766,7 +1766,7 @@ mod tests {
         }
     }
 
-    /// 处理 lottery 的具体内部流程。
+    /// 构造测试或种子使用的彩种配置。
     fn lottery(schedule: DrawSchedule) -> LotteryKind {
         LotteryKind {
             id: "fc3d".to_string(),

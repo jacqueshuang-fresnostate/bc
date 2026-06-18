@@ -69,7 +69,7 @@ impl DrawRepository {
         })
     }
 
-    /// 返回完整列表。
+    /// 按当前仓储快照返回全部期号列表。
     pub async fn list(&self) -> ApiResult<Vec<DrawIssue>> {
         self.inner
             .read()
@@ -134,7 +134,7 @@ impl DrawRepository {
             })
     }
 
-    /// 按 ID 查询单条记录。
+    /// 按业务标识读取单条记录，未命中时返回未找到错误。
     pub async fn get(&self, id: &str) -> ApiResult<DrawIssue> {
         self.inner
             .read()
@@ -392,7 +392,7 @@ impl DrawRepository {
 
         Ok(result)
     }
-
+    /// 根据开奖模式解析本次开奖需要使用的号码来源。
     async fn resolve_draw_payload(
         &self,
         id: &str,
@@ -424,7 +424,7 @@ impl DrawRepository {
 
         Ok((DrawIssueResultRequest::default(), false))
     }
-
+    /// 使用预抓取的 API 开奖号码解析当前期号的开奖载荷。
     async fn resolve_prefetched_api_draw_payload(
         &self,
         id: &str,
@@ -455,7 +455,7 @@ impl DrawRepository {
 
         Ok((DrawIssueResultRequest::default(), false))
     }
-
+    /// 读取命中当前期号或订单的控奖号码。
     async fn active_draw_control_number(&self, issue: &DrawIssue) -> ApiResult<Option<String>> {
         self.controls
             .read()
@@ -481,7 +481,7 @@ impl DrawRepository {
             .map_err(|_| ApiError::Internal("开奖控制缓存刷新失败".to_string()))? = controls;
         Ok(true)
     }
-
+    /// 把开奖期号快照同步保存到持久化存储。
     async fn persist_draws(&self, store: &DrawStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_draw_issues(persistence, store).await?;
@@ -489,7 +489,7 @@ impl DrawRepository {
 
         Ok(())
     }
-
+    /// 把单个开奖期号保存到持久化存储。
     async fn persist_draw_issue(&self, issue: &DrawIssue) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             upsert_draw_issue(persistence, issue).await?;
@@ -497,7 +497,7 @@ impl DrawRepository {
 
         Ok(())
     }
-
+    /// 把控奖配置快照同步保存到持久化存储。
     async fn persist_controls(&self, store: &DrawControlStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_draw_controls(persistence, store).await?;
@@ -811,12 +811,12 @@ fn max_sequence<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u64 
 
 /// 开奖期号与开奖控制运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl DrawStore {
-    /// 返回完整数据列表。
+    /// 按当前仓储快照返回全部期号列表。
     fn list(&self) -> Vec<DrawIssue> {
         self.issues.values().rev().cloned().collect()
     }
 
-    /// 处理 list_by_lottery_id 的具体内部流程。
+    /// 按彩种筛选期号列表。
     fn list_by_lottery_id(&self, lottery_id: &str) -> Vec<DrawIssue> {
         self.issues
             .values()
@@ -834,7 +834,7 @@ impl DrawStore {
             .ok_or_else(|| ApiError::NotFound(format!("draw issue `{id}` not found")))
     }
 
-    /// 处理 get_by_lottery_issue 的具体内部流程。
+    /// 按彩种和期号定位开奖期记录。
     fn get_by_lottery_issue(&self, lottery_id: &str, issue: &str) -> ApiResult<DrawIssue> {
         let lottery_id = lottery_id.trim();
         let issue = issue.trim();
@@ -887,7 +887,7 @@ impl DrawStore {
         Ok(issue)
     }
 
-    /// 处理 close 的具体内部流程。
+    /// 将销售中的期号更新为已封盘。
     fn close(&mut self, id: &str) -> ApiResult<DrawIssue> {
         let issue = self
             .issues
@@ -904,7 +904,7 @@ impl DrawStore {
         Ok(issue.clone())
     }
 
-    /// 处理 draw 的具体内部流程。
+    /// 写入开奖号码并把期号流转为已开奖。
     fn draw(
         &mut self,
         id: &str,
@@ -964,7 +964,7 @@ impl DrawStore {
         Ok(issue.clone())
     }
 
-    /// 处理 cancel 的具体内部流程。
+    /// 取消未开奖期号并保留审计状态。
     fn cancel(&mut self, id: &str) -> ApiResult<DrawIssue> {
         let issue = self
             .issues
@@ -1120,12 +1120,12 @@ impl DrawControlStore {
         Ok(self.summary_for(lottery))
     }
 
-    /// 处理 save 的具体内部流程。
+    /// 保存控奖配置到当前仓储快照。
     fn save(&mut self, config: DrawControlConfig) {
         self.controls.insert(config.lottery_id.clone(), config);
     }
 
-    /// 处理 active_draw_number 的具体内部流程。
+    /// 判断控奖配置是否命中当前期号并返回控制号码。
     fn active_draw_number(&self, issue: &DrawIssue) -> Option<String> {
         self.controls.get(&issue.lottery_id).and_then(|config| {
             if config.enabled && config.matches_issue(issue) {
@@ -1136,7 +1136,7 @@ impl DrawControlStore {
         })
     }
 
-    /// 处理 summary_for 的具体内部流程。
+    /// 按彩种组装后台控奖配置摘要。
     fn summary_for(&self, lottery: &LotteryKind) -> LotteryDrawControl {
         let config = self.controls.get(&lottery.id);
         LotteryDrawControl {
@@ -1173,7 +1173,7 @@ impl DrawControlConfig {
     }
 }
 
-/// 校验输入参数并返回校验结果。
+/// 校验新期号创建请求是否满足彩种和时间规则。
 fn validate_create_request(
     lottery: &LotteryKind,
     payload: &CreateDrawIssueRequest,
@@ -1288,7 +1288,7 @@ fn normalize_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> 
     Ok(format_draw_number(&digits))
 }
 
-/// 处理 draw_number_digits 的具体内部流程。
+/// 解析并校验开奖号码位数和数字范围。
 fn draw_number_digits(draw_number: &str, number_type: &LotteryNumberType) -> ApiResult<Vec<u8>> {
     let value = draw_number.trim();
     if value.contains(',') || value.contains('，') {
@@ -1338,7 +1338,7 @@ fn format_draw_number(digits: &[u8]) -> String {
         .join(",")
 }
 
-/// 处理 generated_draw_number 的具体内部流程。
+/// 按号码类型生成平台随机开奖号码。
 fn generated_draw_number(number_type: &LotteryNumberType, lottery_id: &str, issue: &str) -> String {
     let spec = draw_number_spec(number_type);
     let mut seed = 14_695_981_039_346_656_037u64;
@@ -1426,7 +1426,7 @@ fn draw_number_spec(number_type: &LotteryNumberType) -> DrawNumberSpec {
     }
 }
 
-/// 处理 current_timestamp_label 的具体内部流程。
+/// 生成当前本地时间字符串。
 fn current_timestamp_label() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1510,7 +1510,7 @@ mod tests {
     }"#;
 
     #[test]
-    /// 处理 store_creates_and_closes_draw_issue 的具体内部流程。
+    /// 验证期号可以创建并按流程封盘。
     fn store_creates_and_closes_draw_issue() {
         let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
         let mut store = DrawStore::default();
@@ -1529,7 +1529,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 manual_draw_requires_valid_draw_number 的具体内部流程。
+    /// 验证人工计划开奖必须提供合法开奖号码。
     fn manual_draw_requires_valid_draw_number() {
         let lottery = lottery(DrawMode::Manual, LotteryNumberType::FiveDigit);
         let mut store = DrawStore::default();
@@ -1562,7 +1562,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 platform_draw_generates_number_for_number_type 的具体内部流程。
+    /// 验证平台开奖会按号码类型生成正确位数。
     fn platform_draw_generates_number_for_number_type() {
         let lottery = lottery(DrawMode::Platform, LotteryNumberType::FiveDigit);
         let mut store = DrawStore::default();
@@ -1582,7 +1582,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 platform_draw_uses_control_number_when_resolved 的具体内部流程。
+    /// 验证命中控奖配置时优先使用控制号码。
     fn platform_draw_uses_control_number_when_resolved() {
         let lottery = lottery(DrawMode::Platform, LotteryNumberType::FiveDigit);
         let mut store = DrawStore::default();
@@ -1605,7 +1605,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 drawn_issue_cannot_be_cancelled_or_redrawn 的具体内部流程。
+    /// 验证已开奖期号不能取消或重复开奖。
     fn drawn_issue_cannot_be_cancelled_or_redrawn() {
         let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
         let mut store = DrawStore::default();
@@ -1628,7 +1628,7 @@ mod tests {
             .to_string()
             .contains("draw issue cannot be drawn in current status"));
     }
-
+    /// 验证仓储使用api68来源用于API开奖。
     #[tokio::test]
     async fn repository_uses_api68_source_for_api_draw() {
         let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
@@ -1648,7 +1648,7 @@ mod tests {
         assert_eq!(drawn.status, DrawIssueStatus::Drawn);
         assert_eq!(drawn.draw_number.as_deref(), Some("3,7,6"));
     }
-
+    /// 验证仓储control号码overridesAPI来源。
     #[tokio::test]
     async fn repository_control_number_overrides_api_source() {
         let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
@@ -1681,7 +1681,7 @@ mod tests {
         assert_eq!(drawn.status, DrawIssueStatus::Drawn);
         assert_eq!(drawn.draw_number.as_deref(), Some("2,4,7"));
     }
-
+    /// 验证仓储期号scopedcontrol仅匹配target期号。
     #[tokio::test]
     async fn repository_issue_scoped_control_only_matches_target_issue() {
         let lottery = lottery(DrawMode::Platform, LotteryNumberType::ThreeDigit);
@@ -1720,7 +1720,7 @@ mod tests {
         assert_eq!(target_drawn.draw_number.as_deref(), Some("2,4,7"));
         assert_ne!(other_drawn.draw_number.as_deref(), Some("2,4,7"));
     }
-
+    /// 验证仓储顺序scopedcontrol匹配顺序期号。
     #[tokio::test]
     async fn repository_order_scoped_control_matches_order_issue() {
         let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
@@ -1752,7 +1752,7 @@ mod tests {
 
         assert_eq!(drawn.draw_number.as_deref(), Some("2,4,7"));
     }
-
+    /// 验证仓储保存开奖controlvalidates号码type。
     #[tokio::test]
     async fn repository_save_draw_control_validates_number_type() {
         let lottery = lottery(DrawMode::Platform, LotteryNumberType::FiveDigit);
@@ -1776,7 +1776,7 @@ mod tests {
             .to_string()
             .contains("draw number must contain 5 numbers"));
     }
-
+    /// 验证仓储保存开奖control拒绝missingtarget期号。
     #[tokio::test]
     async fn repository_save_draw_control_rejects_missing_target_issue() {
         let lottery = lottery(DrawMode::Platform, LotteryNumberType::ThreeDigit);
@@ -1798,7 +1798,7 @@ mod tests {
 
         assert!(error.to_string().contains("控制期号不能为空"));
     }
-
+    /// 验证仓储保存开奖control拒绝停用彩种control。
     #[tokio::test]
     async fn repository_save_draw_control_rejects_disabled_lottery_control() {
         let mut lottery = lottery(DrawMode::Platform, LotteryNumberType::ThreeDigit);
@@ -1850,7 +1850,7 @@ mod tests {
             .expect_err("pk10 compact format is rejected");
         assert!(compact.to_string().contains("separated by commas"));
     }
-
+    /// 验证仓储reusesapi68来源用于pl3API开奖。
     #[tokio::test]
     async fn repository_reuses_api68_source_for_pl3_api_draw() {
         let mut lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
@@ -1872,7 +1872,7 @@ mod tests {
         assert_eq!(drawn.status, DrawIssueStatus::Drawn);
         assert_eq!(drawn.draw_number.as_deref(), Some("3,7,6"));
     }
-
+    /// 验证仓储拒绝API开奖when来源misses期号。
     #[tokio::test]
     async fn repository_rejects_api_draw_when_source_misses_issue() {
         let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
@@ -1894,7 +1894,7 @@ mod tests {
         assert_eq!(stored.status, DrawIssueStatus::Open);
         assert!(stored.draw_number.is_none());
     }
-
+    /// 验证仓储drawsAPI期号带prefetched号码withoutrefetching来源。
     #[tokio::test]
     async fn repository_draws_api_issue_with_prefetched_number_without_refetching_source() {
         let lottery = lottery(DrawMode::Api, LotteryNumberType::ThreeDigit);
@@ -1918,7 +1918,7 @@ mod tests {
         assert_eq!(drawn.status, DrawIssueStatus::Drawn);
         assert_eq!(drawn.draw_number.as_deref(), Some("1,2,3"));
     }
-
+    /// 验证仓储syncAPI开奖来源生成target和取消stale期号。
     #[tokio::test]
     async fn repository_sync_api_draw_source_generates_target_and_cancels_stale_issue() {
         let lottery = txffc_lottery();
@@ -1945,7 +1945,7 @@ mod tests {
         assert_eq!(result.cancelled_issues.len(), 1);
         assert_eq!(stored_stale.status, DrawIssueStatus::Cancelled);
     }
-
+    /// 验证仓储syncAPI开奖来源keepsstale期号带待处理订单。
     #[tokio::test]
     async fn repository_sync_api_draw_source_keeps_stale_issue_with_pending_orders() {
         let lottery = txffc_lottery();
@@ -1974,12 +1974,12 @@ mod tests {
         assert_eq!(stored_stale.status, DrawIssueStatus::Open);
     }
 
-    /// 处理 create_request 的具体内部流程。
+    /// 构造测试用创建请求。
     fn create_request(issue: &str) -> CreateDrawIssueRequest {
         create_request_for("fc3d", issue)
     }
 
-    /// 处理 create_request_for 的具体内部流程。
+    /// 按指定彩种和期号构造测试请求。
     fn create_request_for(lottery_id: &str, issue: &str) -> CreateDrawIssueRequest {
         CreateDrawIssueRequest {
             lottery_id: lottery_id.to_string(),
@@ -1989,7 +1989,7 @@ mod tests {
         }
     }
 
-    /// 处理 lottery 的具体内部流程。
+    /// 构造测试或种子使用的彩种配置。
     fn lottery(draw_mode: DrawMode, number_type: LotteryNumberType) -> LotteryKind {
         LotteryKind {
             id: "fc3d".to_string(),
@@ -2016,7 +2016,7 @@ mod tests {
             play_configs: Vec::new(),
         }
     }
-
+    /// 构造腾讯分分彩测试期号创建请求。
     fn txffc_create_request(issue: &str) -> CreateDrawIssueRequest {
         CreateDrawIssueRequest {
             lottery_id: "txffc".to_string(),
@@ -2025,7 +2025,7 @@ mod tests {
             sale_closed_at: "2026-06-03 19:29:59".to_string(),
         }
     }
-
+    /// 构造腾讯分分彩测试彩种配置。
     fn txffc_lottery() -> LotteryKind {
         let mut lottery = lottery(DrawMode::Api, LotteryNumberType::FiveDigit);
         lottery.id = "txffc".to_string();

@@ -21,13 +21,17 @@ const DEFAULT_FEATURED_TITLE: &str = "高频极速";
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 手机端首页高频极速推荐区配置。
 pub struct MobileLotteryFeaturedConfig {
+    /// 功能开关。
     pub enabled: bool,
+    /// 展示标题。
     pub title: String,
+    /// 彩种codes字段。
     pub lottery_codes: Vec<String>,
 }
 
 /// 高频极速推荐区默认关闭，避免未配置时自动展示。
 impl Default for MobileLotteryFeaturedConfig {
+    /// 返回默认值。
     fn default() -> Self {
         Self {
             enabled: false,
@@ -664,7 +668,7 @@ mod tests {
         assert_eq!(config.title, "极速开奖");
         assert_eq!(config.lottery_codes, vec!["au5", "txffc", "fc3d"]);
     }
-
+    /// 构造手机端首页测试彩种。
     fn sample_lottery(id: &str, name: &str, category: &str, sale_enabled: bool) -> LotteryKind {
         LotteryKind {
             id: id.to_string(),
@@ -691,7 +695,7 @@ mod tests {
             play_configs: Vec::new(),
         }
     }
-
+    /// 构造手机端首页测试期号。
     fn sample_issue(
         id: &str,
         lottery_id: &str,

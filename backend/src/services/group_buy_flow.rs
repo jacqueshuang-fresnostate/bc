@@ -454,7 +454,7 @@ fn required_text(value: &str, message: &str) -> ApiResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    /// 解析直选singlestake带逗号。
     #[test]
     fn parses_direct_single_stake_with_commas() {
         let selection = parse_group_buy_selection(&PlayRuleCode::ThreeDirect, "1,2,3")
@@ -462,7 +462,7 @@ mod tests {
 
         assert_eq!(selection.positions, vec![vec![1], vec![2], vec![3]]);
     }
-
+    /// 解析胆码拖码号码。
     #[test]
     fn parses_banker_drag_numbers() {
         let selection = parse_group_buy_selection(&PlayRuleCode::ThreeGroupSixBanker, "1|2,3,4")
@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(selection.banker_numbers, vec![1]);
         assert_eq!(selection.drag_numbers, vec![2, 3, 4]);
     }
-
+    /// 解析大小单双号码。
     #[test]
     fn parses_big_small_odd_even_numbers() {
         let selection =

@@ -45,7 +45,7 @@ impl RebateRepository {
         })
     }
 
-    /// 按 ID 查询单条记录。
+    /// 按业务标识读取单条记录，未命中时返回未找到错误。
     pub async fn get(&self) -> ApiResult<InvitePolicySummary> {
         self.inner
             .read()
@@ -69,7 +69,7 @@ impl RebateRepository {
         self.persist(&snapshot).await?;
         Ok(result)
     }
-
+    /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &RebateStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_rebate_store(persistence, store).await?;
@@ -179,7 +179,7 @@ impl RebateStore {
         }
     }
 
-    /// 处理 policy 的具体内部流程。
+    /// 返回当前邀请返利策略摘要。
     fn policy(&self) -> InvitePolicySummary {
         InvitePolicySummary {
             agents_can_invite: self.agents_can_invite,
@@ -220,7 +220,7 @@ fn validate_policy(request: &InvitePolicyUpdateRequest) -> ApiResult<()> {
     Ok(())
 }
 
-/// 处理 supported_rebate_modes 的具体内部流程。
+/// 返回系统支持的返利模式。
 fn supported_rebate_modes() -> Vec<RebateMode> {
     vec![RebateMode::Immediate, RebateMode::RechargeTiered]
 }
@@ -331,7 +331,7 @@ mod tests {
             finance::FinanceRepository, invite::InviteRepository,
         },
     };
-
+    /// 验证返利仓储可以更新邀请返利策略。
     #[tokio::test]
     async fn rebate_repository_updates_invite_policy() {
         let rebates = RebateRepository::memory_seeded();
@@ -352,7 +352,7 @@ mod tests {
         assert_eq!(policy.default_recharge_rebate_basis_points, 520);
         assert_eq!(policy.supported_rebate_modes.len(), 2);
     }
-
+    /// 验证关闭状态邀请记录不能产生返利。
     #[tokio::test]
     async fn rebate_repository_rejects_closed_invite_entries() {
         let rebates = RebateRepository::memory_seeded();
@@ -369,7 +369,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证返利比例不能超过完整充值金额。
     #[tokio::test]
     async fn rebate_repository_rejects_rebate_above_full_amount() {
         let rebates = RebateRepository::memory_seeded();
@@ -386,7 +386,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证充值返利只会给启用代理发放一次。
     #[tokio::test]
     async fn recharge_rebate_is_paid_to_active_agent_once() {
         let access = AccessRepository::memory_seeded();
@@ -413,7 +413,7 @@ mod tests {
         assert_eq!(entry.amount_minor, 350);
         assert_eq!(account.available_balance_minor, 520_350);
     }
-
+    /// 验证禁用邀请记录不会回退到注册代理关系发放返利。
     #[tokio::test]
     async fn recharge_rebate_skips_disabled_invite_record_without_agent_link_fallback() {
         let access = AccessRepository::memory_seeded();
@@ -433,7 +433,7 @@ mod tests {
         assert!(entry.is_none());
         assert_eq!(account.available_balance_minor, 520_000);
     }
-
+    /// 验证没有人工邀请记录时使用注册代理关系返利。
     #[tokio::test]
     async fn recharge_rebate_uses_registered_agent_link_when_no_manual_record_exists() {
         let access = AccessRepository::memory_seeded();
@@ -467,7 +467,7 @@ mod tests {
         assert_eq!(entry.user_id, "U90001");
         assert_eq!(entry.amount_minor, 700);
     }
-
+    /// 验证配置测试数据库时返利策略可持久化。
     #[tokio::test]
     async fn rebate_repository_persists_policy_when_test_database_configured() {
         let Ok(database_url) = std::env::var("BC_TEST_DATABASE_URL") else {
@@ -503,7 +503,7 @@ mod tests {
         assert_eq!(restored.rebate_mode, RebateMode::RechargeTiered);
         assert_eq!(restored.default_recharge_rebate_basis_points, 618);
     }
-
+    /// 构造返利测试充值订单。
     fn recharge_order(user_id: &str, amount_minor: i64) -> RechargeOrderSummary {
         RechargeOrderSummary {
             id: "R000000000001".to_string(),

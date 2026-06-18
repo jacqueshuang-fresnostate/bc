@@ -39,31 +39,47 @@ const DEFAULT_MAX_AMOUNT_MINOR: i64 = 10_000_000;
 #[derive(Clone)]
 /// 充值订单仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct RechargeRepository {
+    /// 充值模块内存快照锁，保存充值订单和运行序号。
     pub(crate) inner: Arc<RwLock<RechargeStore>>,
+    /// 可选数据库持久化句柄；内存模式下为空。
     pub(crate) persistence: Option<BusinessDatabase>,
 }
 
 #[derive(Debug, Clone)]
 /// 充值运行配置，从系统设置读取金额范围、渠道和支付参数。
 pub struct RechargeSettings {
+    /// rainbow启用字段。
     pub rainbow_enabled: bool,
+    /// rainbowgatewayurl字段。
     pub rainbow_gateway_url: String,
+    /// rainbowpid字段。
     pub rainbow_pid: String,
+    /// rainbowkey字段。
     pub rainbow_key: String,
+    /// rainbownotifyurl字段。
     pub rainbow_notify_url: String,
+    /// rainbowreturnurl字段。
     pub rainbow_return_url: String,
+    /// rainbowpaytypes字段。
     pub rainbow_pay_types: Vec<String>,
+    /// customerservice启用字段。
     pub customer_service_enabled: bool,
+    /// customerservicemessage字段。
     pub customer_service_message: String,
+    /// minamountminor字段。
     pub min_amount_minor: i64,
+    /// maxamountminor字段。
     pub max_amount_minor: i64,
 }
 
 #[derive(Debug, Clone)]
 /// 客服直充订单创建后绑定的客服会话信息。
 pub struct RechargeSupportTicket {
+    /// conversationid字段。
     pub conversation_id: String,
+    /// 客服会话主题。
     pub subject: String,
+    /// 消息正文内容。
     pub content: String,
 }
 
@@ -278,7 +294,7 @@ impl RechargeRepository {
         finance.replace_store(finance_store)?;
         Ok(order)
     }
-
+    /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &RechargeStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_recharge_store(persistence, store).await?;
@@ -802,7 +818,7 @@ pub(crate) async fn save_recharge_store_in_transaction(
 
     Ok(())
 }
-
+/// 校验充值金额是否在后台配置范围内。
 fn validate_amount(amount_minor: i64, settings: &RechargeSettings) -> ApiResult<()> {
     if amount_minor < settings.min_amount_minor {
         return Err(ApiError::BadRequest("充值金额低于后台最小限制".to_string()));
@@ -812,7 +828,7 @@ fn validate_amount(amount_minor: i64, settings: &RechargeSettings) -> ApiResult<
     }
     Ok(())
 }
-
+/// 校验彩虹易支付配置是否完整且已启用。
 fn validate_rainbow_settings(settings: &RechargeSettings) -> ApiResult<()> {
     if !settings.rainbow_enabled {
         return Err(ApiError::BadRequest("彩虹易支付未开启".to_string()));
@@ -828,7 +844,7 @@ fn validate_rainbow_settings(settings: &RechargeSettings) -> ApiResult<()> {
     }
     Ok(())
 }
-
+/// 生成彩虹易支付收银台跳转地址。
 fn rainbow_payment_url(
     settings: &RechargeSettings,
     order_id: &str,
@@ -858,7 +874,7 @@ fn rainbow_payment_url(
         .join("&");
     Ok(format!("{base}/submit.php?{query}"))
 }
-
+/// 校验彩虹易支付回调签名。
 fn verify_rainbow_sign(params: &HashMap<String, String>, key: &str) -> ApiResult<()> {
     let provided_sign = params
         .get("sign")
@@ -877,7 +893,7 @@ fn verify_rainbow_sign(params: &HashMap<String, String>, key: &str) -> ApiResult
     }
     Ok(())
 }
-
+/// 按彩虹易支付规则生成 MD5 签名。
 fn rainbow_sign(params: &BTreeMap<String, String>, key: &str) -> String {
     let query = params
         .iter()
@@ -889,7 +905,7 @@ fn rainbow_sign(params: &BTreeMap<String, String>, key: &str) -> String {
         .join("&");
     format!("{:x}", md5::compute(format!("{query}{key}")))
 }
-
+/// 把支付平台元金额字符串转换为分。
 fn money_to_minor(value: &str) -> ApiResult<i64> {
     let value = value.trim();
     let (yuan, cent) = value.split_once('.').unwrap_or((value, "0"));
@@ -906,11 +922,11 @@ fn money_to_minor(value: &str) -> ApiResult<i64> {
         .checked_add(cent_minor)
         .ok_or_else(|| ApiError::BadRequest("支付金额过大".to_string()))
 }
-
+/// 把分金额格式化为支付平台元金额字符串。
 fn minor_to_money(amount_minor: i64) -> String {
     format!("{}.{:02}", amount_minor / 100, amount_minor.abs() % 100)
 }
-
+/// 读取配置 URL，未配置时使用默认路径。
 fn url_or_default(value: &str, fallback: &str) -> String {
     let value = value.trim();
     if value.is_empty() {
@@ -919,25 +935,25 @@ fn url_or_default(value: &str, fallback: &str) -> String {
         value.to_string()
     }
 }
-
+/// 判断配置值是否仍是未配置占位内容。
 fn is_unconfigured_value(value: &str) -> bool {
     let value = value.trim();
     value.is_empty() || matches!(value, "未配置" | "请配置" | "please-configure")
 }
-
+/// 从系统设置读取布尔配置。
 fn bool_setting(map: &HashMap<&str, &str>, key: &str, fallback: bool) -> bool {
     map.get(key)
         .map(|value| matches!(value.trim(), "true" | "1" | "yes" | "on"))
         .unwrap_or(fallback)
 }
-
+/// 从系统设置读取字符串配置。
 fn string_setting(map: &HashMap<&str, &str>, key: &str, fallback: &str) -> String {
     map.get(key)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| fallback.to_string())
 }
-
+/// 从系统设置读取逗号分隔配置。
 fn csv_setting(map: &HashMap<&str, &str>, key: &str) -> Vec<String> {
     map.get(key)
         .map(|value| {
@@ -950,14 +966,14 @@ fn csv_setting(map: &HashMap<&str, &str>, key: &str) -> Vec<String> {
         })
         .unwrap_or_else(|| vec!["alipay".to_string(), "wxpay".to_string()])
 }
-
+/// 从系统设置读取正整数配置。
 fn i64_setting(map: &HashMap<&str, &str>, key: &str, fallback: i64) -> i64 {
     map.get(key)
         .and_then(|value| value.trim().parse::<i64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(fallback)
 }
-
+/// 清洗必填字符串，空值时返回接口错误。
 fn required_trimmed(value: &str, label: &str) -> ApiResult<String> {
     let value = value.trim().to_string();
     if value.is_empty() {
@@ -965,7 +981,7 @@ fn required_trimmed(value: &str, label: &str) -> ApiResult<String> {
     }
     Ok(value)
 }
-
+/// 生成当前本地时间字符串。
 fn current_time_label() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
@@ -977,7 +993,7 @@ mod tests {
         domain::user::{UserKind, UserStatus},
         services::finance::FinanceRepository,
     };
-
+    /// 验证彩虹易支付签名只使用排序后的非空参数。
     #[test]
     fn rainbow_sign_uses_sorted_non_empty_params() {
         let mut params = BTreeMap::new();
@@ -992,7 +1008,7 @@ mod tests {
         assert_eq!(sign.len(), 32);
         assert_eq!(sign, rainbow_sign(&params, "secret"));
     }
-
+    /// 验证客服直充订单创建流程。
     #[test]
     fn recharge_store_creates_customer_service_order() {
         let mut store = RechargeStore::default();
@@ -1029,7 +1045,7 @@ mod tests {
         );
         assert!(response.support_conversation_id.is_some());
     }
-
+    /// 验证彩虹易支付订单会生成支付地址。
     #[test]
     fn recharge_store_creates_rainbow_payment_url() {
         let mut store = RechargeStore::default();
@@ -1065,7 +1081,7 @@ mod tests {
         assert!(payment_url.contains("money=12.34"));
         assert!(payment_url.contains("sign_type=MD5"));
     }
-
+    /// 验证支付类型为空时自动关闭彩虹易支付。
     #[test]
     fn recharge_config_disables_rainbow_when_pay_types_are_empty() {
         let settings = RechargeSettings {
@@ -1092,7 +1108,7 @@ mod tests {
         assert!(!rainbow.enabled);
         assert!(rainbow.pay_types.is_empty());
     }
-
+    /// 验证支付类型为空时拒绝彩虹易支付下单。
     #[test]
     fn recharge_store_rejects_rainbow_when_pay_types_are_empty() {
         let mut store = RechargeStore::default();
@@ -1173,7 +1189,7 @@ mod tests {
             .expect("second order can be created");
         assert_eq!(second.order.id, "R000000000002");
     }
-
+    /// 验证客服直充订单确认入账具备幂等性。
     #[tokio::test]
     async fn recharge_repository_confirms_customer_service_order_once() {
         let repository = RechargeRepository::memory();
@@ -1240,7 +1256,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(account.available_balance_minor, 1200);
     }
-
+    /// 构造充值测试用户。
     fn user() -> UserSummary {
         UserSummary {
             id: "U-RECHARGE".to_string(),

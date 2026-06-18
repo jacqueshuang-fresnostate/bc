@@ -36,22 +36,39 @@ use crate::{
 #[derive(Clone)]
 /// 应用全局状态，集中持有每个业务模块的仓储和实时事件中心。
 pub struct AppState {
+    /// access字段。
     pub access: AccessRepository,
+    /// advertisements字段。
     pub advertisements: AdvertisementRepository,
+    /// agentapplications字段。
     pub agent_applications: AgentApplicationRepository,
+    /// 聊天大厅字段。
     pub chat_hall: ChatHallRepository,
+    /// draws字段。
     pub draws: DrawRepository,
+    /// 资金字段。
     pub finance: FinanceRepository,
+    /// 合买buys字段。
     pub group_buys: GroupBuyRepository,
+    /// invites字段。
     pub invites: InviteRepository,
+    /// 可选彩种列表。
     pub lotteries: LotteryRepository,
+    /// 结算涉及的订单列表。
     pub orders: OrderRepository,
+    /// rebates字段。
     pub rebates: RebateRepository,
+    /// realtime字段。
     pub realtime: RealtimeHub,
+    /// recharges字段。
     pub recharges: RechargeRepository,
+    /// robots字段。
     pub robots: RobotRepository,
+    /// 调度器字段。
     pub scheduler: DrawSchedulerRepository,
+    /// 客服字段。
     pub support: SupportRepository,
+    /// withdrawals字段。
     pub withdrawals: WithdrawalRepository,
 }
 
@@ -59,9 +76,13 @@ pub struct AppState {
 #[serde(rename_all = "camelCase")]
 /// 后台手动刷新内存缓存后的结果摘要，用于提示哪些模块已经重新读取数据库。
 pub struct MemoryCacheReloadResult {
+    /// reloadedmodules字段。
     pub reloaded_modules: Vec<String>,
+    /// 数据库直选modules字段。
     pub database_direct_modules: Vec<String>,
+    /// skippedmodules字段。
     pub skipped_modules: Vec<String>,
+    /// refreshedat字段。
     pub refreshed_at: String,
 }
 
@@ -212,7 +233,7 @@ impl AppState {
     }
 }
 
-/// 处理 default_draw_repository 的具体内部流程。
+/// 构建应用启动时使用的默认开奖仓储，优先走数据库持久化配置。
 fn default_draw_repository() -> DrawRepository {
     DrawRepository::memory_with_api_sources(ApiDrawSourceRepository::api68_seeded())
 }
@@ -268,7 +289,7 @@ pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
     Ok(router_with_state(state))
 }
 
-/// 处理 router_with_state 的具体内部流程。
+/// 装配带共享状态的 Axum 路由树。
 fn router_with_state(state: AppState) -> Router {
     Router::new()
         .nest("/api", routes::router(state.clone()))

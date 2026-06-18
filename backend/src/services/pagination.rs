@@ -67,11 +67,17 @@ impl PageRequest {
 #[derive(Clone, Copy, Debug)]
 /// 已按总数归一化后的分页参数，供 SQL 查询和响应结构共用。
 pub struct ResolvedPage {
+    /// 当前页码，从 1 开始。
     pub page: usize,
+    /// 每页记录数量。
     pub page_size: usize,
+    /// 偏移字段。
     pub offset: usize,
+    /// limit字段。
     pub limit: usize,
+    /// 符合条件的总记录数。
     pub total_count: usize,
+    /// 总页数。
     pub total_pages: usize,
 }
 
@@ -90,10 +96,15 @@ impl ResolvedPage {
 #[derive(Clone, Debug)]
 /// 仓储分页查询结果，包含当前页数据和分页元信息。
 pub struct ListPage<T> {
+    /// 分页数据列表。
     pub items: Vec<T>,
+    /// 当前页码，从 1 开始。
     pub page: usize,
+    /// 每页记录数量。
     pub page_size: usize,
+    /// 符合条件的总记录数。
     pub total_count: usize,
+    /// 总页数。
     pub total_pages: usize,
 }
 

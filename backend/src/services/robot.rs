@@ -49,7 +49,7 @@ impl RobotRepository {
         })
     }
 
-    /// 返回完整列表。
+    /// 按当前仓储快照返回全部机器人配置列表。
     pub async fn list(&self) -> ApiResult<Vec<RobotConfigSummary>> {
         self.inner
             .read()
@@ -57,7 +57,7 @@ impl RobotRepository {
             .map(|store| store.list())
     }
 
-    /// 按 ID 查询单条记录。
+    /// 按业务标识读取单条记录，未命中时返回未找到错误。
     pub async fn get(&self, id: &str) -> ApiResult<RobotConfigSummary> {
         self.inner
             .read()
@@ -129,7 +129,7 @@ impl RobotRepository {
         self.persist(&snapshot).await?;
         Ok(result)
     }
-
+    /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &RobotStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_robot_store(persistence, store).await?;
@@ -316,7 +316,7 @@ impl RobotStore {
         }
     }
 
-    /// 返回完整数据列表。
+    /// 按当前仓储快照返回全部机器人配置列表。
     fn list(&self) -> Vec<RobotConfigSummary> {
         self.robots.values().cloned().collect()
     }
@@ -480,7 +480,7 @@ fn required_trimmed(value: String, label: &str) -> ApiResult<String> {
     Ok(value)
 }
 
-/// 返回内置种子或测试数据。
+/// 返回内置机器人配置，系统机器人不允许删除。
 fn seed_robots() -> Vec<RobotConfigSummary> {
     vec![
         RobotConfigSummary {
@@ -523,7 +523,7 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
 mod tests {
     use super::*;
     use crate::services::lottery::seed_lotteries;
-
+    /// 验证机器人仓储创建和更新机器人。
     #[tokio::test]
     async fn robot_repository_creates_and_updates_robot() {
         let robots = RobotRepository::memory_seeded();
@@ -557,7 +557,7 @@ mod tests {
             .expect("status can be updated");
         assert_eq!(updated.status, RobotStatus::Enabled);
     }
-
+    /// 验证机器人仓储拒绝空彩种ids。
     #[tokio::test]
     async fn robot_repository_rejects_empty_lottery_ids() {
         let robots = RobotRepository::memory_seeded();
@@ -583,7 +583,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
     }
-
+    /// 验证机器人仓储拒绝unknown彩种id。
     #[tokio::test]
     async fn robot_repository_rejects_unknown_lottery_id() {
         let robots = RobotRepository::memory_seeded();
@@ -609,7 +609,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::NotFound(_)));
     }
-
+    /// 验证机器人仓储删除仅deletablerobots。
     #[tokio::test]
     async fn robot_repository_deletes_only_deletable_robots() {
         let robots = RobotRepository::memory_seeded();
@@ -640,7 +640,7 @@ mod tests {
         assert_eq!(deleted.id, "R-DELETE-ME");
         assert!(robots.get("R-DELETE-ME").await.is_err());
     }
-
+    /// 验证机器人仓储拒绝deletingprotected机器人。
     #[tokio::test]
     async fn robot_repository_rejects_deleting_protected_robot() {
         let robots = RobotRepository::memory_seeded();

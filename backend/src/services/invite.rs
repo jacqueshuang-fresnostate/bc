@@ -250,7 +250,7 @@ impl InviteStore {
         Self { records }
     }
 
-    /// 返回完整数据列表。
+    /// 按当前仓储快照返回全部邀请关系列表。
     fn list(&self) -> Vec<InviteRecord> {
         self.records.values().cloned().collect()
     }
@@ -428,7 +428,7 @@ mod tests {
         domain::user::{UserKind, UserStatus, UserSummary},
         services::{access::AccessRepository, rebate::RebateRepository},
     };
-
+    /// 验证邀请仓储可以创建并更新代理邀请关系。
     #[tokio::test]
     async fn invite_repository_creates_and_updates_agent_invite() {
         let invites = InviteRepository::memory_seeded();
@@ -498,7 +498,7 @@ mod tests {
         assert_eq!(updated.status, InviteStatus::Disabled);
         assert!(!updated.rebate_enabled);
     }
-
+    /// 验证普通用户邀请码不能产生邀请关系。
     #[tokio::test]
     async fn invite_repository_rejects_regular_user_invite_code() {
         let invites = InviteRepository::memory_seeded();
@@ -541,7 +541,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(message) if message == "邀请码无效"));
     }
-
+    /// 验证策略关闭时代理也不能新增邀请关系。
     #[tokio::test]
     async fn invite_repository_rejects_agent_inviter_when_policy_disabled() {
         let invites = InviteRepository::memory_seeded();
@@ -580,7 +580,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::Forbidden(_)));
     }
-
+    /// 验证未知被邀请用户会被拒绝。
     #[tokio::test]
     async fn invite_repository_rejects_unknown_invitee() {
         let invites = InviteRepository::memory_seeded();
@@ -611,7 +611,7 @@ mod tests {
 
         assert!(matches!(error, ApiError::NotFound(_)));
     }
-
+    /// 验证同一代理邀请码可以邀请不同用户。
     #[tokio::test]
     async fn invite_repository_allows_agent_code_reuse_for_different_invitees() {
         let invites = InviteRepository::memory_seeded();

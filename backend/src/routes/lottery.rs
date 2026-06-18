@@ -440,7 +440,7 @@ mod tests {
     use crate::domain::lottery::{
         DrawMode, DrawSchedule, GroupBuyConfig, LotteryNumberType, PlayCategory,
     };
-
+    /// 验证最新历史返回单个最新开奖每个销售中彩种。
     #[test]
     fn latest_history_returns_one_latest_draw_per_selling_lottery() {
         let lotteries = vec![
@@ -491,7 +491,7 @@ mod tests {
         assert_eq!(items[0].result_numbers, vec!["4", "5", "6"]);
         assert!(items.iter().all(|item| item.lottery_code != "closed"));
     }
-
+    /// 验证开奖历史支持按分组筛选并分页返回。
     #[test]
     fn draw_history_can_filter_by_group_and_paginate() {
         let lotteries = vec![
@@ -528,7 +528,7 @@ mod tests {
         assert_eq!(page.total_pages, 2);
         assert_eq!(page.items[0].lottery_code, "fc3d");
     }
-
+    /// 验证开奖历史分组只包含销售中的彩种分类。
     #[test]
     fn lottery_history_groups_only_include_selling_categories() {
         let lotteries = vec![
@@ -566,7 +566,7 @@ mod tests {
             }]
         );
     }
-
+    /// 构造彩种测试数据。
     fn test_lottery(id: &str, name: &str, category: &str, sale_enabled: bool) -> LotteryKind {
         LotteryKind {
             id: id.to_string(),
@@ -593,7 +593,7 @@ mod tests {
             play_configs: Vec::new(),
         }
     }
-
+    /// 构造已开奖期号测试数据。
     fn drawn_issue(
         id: &str,
         lottery_id: &str,

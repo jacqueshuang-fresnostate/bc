@@ -13,7 +13,9 @@ pub const DEFAULT_SALE_CLOSE_LEAD_SECONDS: u32 = 1;
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LotteryCategoryConfig {
+    /// 彩种分类编码。
     pub code: String,
+    /// 彩种分类名称。
     pub name: String,
 }
 
@@ -76,9 +78,13 @@ pub enum PlayCategory {
 #[serde(rename_all = "camelCase")]
 /// 彩种合买配置，控制合买开关、单份金额和参与门槛。
 pub struct GroupBuyConfig {
+    /// 功能开关。
     pub enabled: bool,
+    /// 每份最低金额，单位为分。
     pub min_share_amount_minor: i64,
+    /// 发起人最低自购比例。
     pub initiator_min_percent: u8,
+    /// 参与人最低认购金额，单位为分。
     pub participant_min_amount_minor: i64,
 }
 
@@ -86,7 +92,9 @@ pub struct GroupBuyConfig {
 #[serde(rename_all = "camelCase")]
 /// 单个玩法位置选号数量上限；未配置的位置不限制。
 pub struct LotteryPlayPositionSelectLimit {
+    /// 玩法位置键，例如第一位、第二位。
     pub position_key: String,
+    /// 该位置最多可选择的号码数量。
     pub max_select_count: u32,
 }
 
@@ -94,9 +102,13 @@ pub struct LotteryPlayPositionSelectLimit {
 #[serde(rename_all = "camelCase")]
 /// 彩种单玩法赔率配置，覆盖玩法是否启用和赔率基点。
 pub struct LotteryPlayConfig {
+    /// 玩法规则编码。
     pub rule_code: PlayRuleCode,
+    /// 功能开关。
     pub enabled: bool,
+    /// 赔率基点，10000 表示 1 倍。
     pub odds_basis_points: i64,
+    /// 各选号位置的最多选择数量限制。
     #[serde(default)]
     pub position_select_limits: Vec<LotteryPlayPositionSelectLimit>,
 }
@@ -105,13 +117,21 @@ pub struct LotteryPlayConfig {
 #[serde(rename_all = "camelCase")]
 /// 开奖来源配置，描述外部接口、平台来源和复用彩种绑定。
 pub struct DrawSource {
+    /// 开奖源 ID。
     pub id: String,
+    /// 开奖源展示名称。
     pub name: String,
+    /// 该来源对应的开奖模式。
     pub mode: DrawMode,
+    /// API 来源供应商；平台或人工来源为空。
     pub provider: Option<DrawSourceProvider>,
+    /// 第三方接口彩种编码。
     pub lot_code: Option<String>,
+    /// 第三方接口地址；为空时使用数据库默认值。
     pub endpoint: Option<String>,
+    /// 后台是否允许编辑该配置。
     pub editable: bool,
+    /// 允许复用该开奖源的彩种 ID 列表。
     pub reusable_for_lottery_ids: Vec<String>,
 }
 
@@ -129,12 +149,18 @@ pub enum DrawSourceProvider {
 #[serde(rename_all = "camelCase")]
 /// 后台创建或编辑 API 开奖源时提交的配置。
 pub struct SaveDrawSourceRequest {
+    /// 开奖源 ID，编辑时用于定位原配置。
     pub id: String,
+    /// 展示名称。
     pub name: String,
+    /// 外部开奖源供应商。
     pub provider: DrawSourceProvider,
+    /// 第三方开奖源彩种编码。
     pub lot_code: String,
+    /// 第三方开奖源接口地址。
     #[serde(default)]
     pub endpoint: Option<String>,
+    /// 允许复用该开奖源的彩种 ID 列表。
     pub reusable_for_lottery_ids: Vec<String>,
 }
 
@@ -142,13 +168,18 @@ pub struct SaveDrawSourceRequest {
 #[serde(rename_all = "camelCase")]
 /// 彩种完整配置，供后台管理、手机端展示和开奖调度共同使用。
 pub struct LotteryKind {
+    /// 彩种 ID，作为投注、期号和开奖源绑定的主键。
     pub id: String,
+    /// 彩种中文名称。
     pub name: String,
+    /// 彩种分类编码。
     pub category: LotteryCategory,
     /// 彩种 LOGO 地址，未上传时可为空。
     #[serde(default)]
     pub logo_url: String,
+    /// 号码类型，决定开奖号码长度和玩法目录。
     pub number_type: LotteryNumberType,
+    /// 开奖模式。
     pub draw_mode: DrawMode,
     /// API 开奖源延迟秒数；只影响 API 模式到点后多久请求第三方开奖号码。
     #[serde(default)]
@@ -162,10 +193,15 @@ pub struct LotteryKind {
     /// 封盘提前秒数；生成新期号时按开奖时间减去该秒数计算封盘时间。
     #[serde(default = "default_sale_close_lead_seconds")]
     pub sale_close_lead_seconds: u32,
+    /// 开奖排期配置。
     pub schedule: DrawSchedule,
+    /// 彩种是否销售中。
     pub sale_enabled: bool,
+    /// 彩种合买配置。
     pub group_buy: GroupBuyConfig,
+    /// 彩种启用的玩法分类。
     pub play_categories: Vec<PlayCategory>,
+    /// 彩种下各玩法的赔率与位置限制。
     #[serde(default)]
     pub play_configs: Vec<LotteryPlayConfig>,
 }
@@ -192,7 +228,7 @@ mod tests {
     use super::DrawSchedule;
 
     #[test]
-    /// 处理 draw_schedule_uses_camel_case_variant_fields 的具体内部流程。
+    /// 验证开奖排期枚举序列化时保持前端约定的驼峰字段名。
     fn draw_schedule_uses_camel_case_variant_fields() {
         let schedule = DrawSchedule::TimeNode {
             interval_seconds: 300,
@@ -208,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 draw_schedule_accepts_camel_case_variant_fields 的具体内部流程。
+    /// 验证开奖排期枚举可以读取前端提交的驼峰字段名。
     fn draw_schedule_accepts_camel_case_variant_fields() {
         let schedule: DrawSchedule = serde_json::from_value(
             json!({ "timeNode": { "intervalSeconds": 300, "startTime": "00:00:00" } }),

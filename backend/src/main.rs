@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-/// 处理 load_local_env_files 的具体内部流程。
+/// 按项目约定加载根目录和后端目录下的本地环境变量文件。
 fn load_local_env_files() -> Result<Vec<PathBuf>, Box<dyn Error + Send + Sync>> {
     let current_dir = std::env::current_dir()?;
     let original_env_keys = std::env::vars()
@@ -66,7 +66,7 @@ fn load_local_env_files() -> Result<Vec<PathBuf>, Box<dyn Error + Send + Sync>> 
     Ok(loaded_files)
 }
 
-/// 处理 local_env_file_candidates 的具体内部流程。
+/// 计算当前启动目录可读取的本地环境变量文件路径。
 fn local_env_file_candidates(current_dir: &Path) -> Vec<PathBuf> {
     let project_root = if current_dir
         .file_name()
@@ -96,7 +96,7 @@ mod tests {
     use super::local_env_file_candidates;
 
     #[test]
-    /// 处理 env_file_candidates_include_project_and_backend_files 的具体内部流程。
+    /// 验证从项目根目录启动时会同时发现根目录和后端环境文件。
     fn env_file_candidates_include_project_and_backend_files() {
         let candidates = local_env_file_candidates(Path::new("/workspace/bc"));
 
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    /// 处理 env_file_candidates_work_when_started_from_backend_directory 的具体内部流程。
+    /// 验证从 backend 目录启动时仍能发现项目根目录环境文件。
     fn env_file_candidates_work_when_started_from_backend_directory() {
         let candidates = local_env_file_candidates(Path::new("/workspace/bc/backend"));
 

@@ -26,8 +26,11 @@ const SUPPORT_MESSAGE_PREVIEW_MAX_CHARS: usize = 300;
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 客服 Telegram 提醒配置，来源于后台系统设置。
 pub struct SupportTelegramNotificationSettings {
+    /// 功能开关。
     pub enabled: bool,
+    /// bot令牌字段。
     pub bot_token: String,
+    /// 聊天id字段。
     pub chat_id: String,
 }
 
@@ -260,7 +263,7 @@ mod tests {
         assert!(text.contains("主题：充值咨询"));
         assert!(text.contains("内容：充值凭证已经上传，请帮我确认。"));
     }
-
+    /// 构造客服通知测试系统设置。
     fn setting(key: &str, value: &str) -> SystemSetting {
         SystemSetting {
             key: key.to_string(),
@@ -268,7 +271,7 @@ mod tests {
             description: "测试配置".to_string(),
         }
     }
-
+    /// 构造会话测试数据。
     fn test_conversation() -> SupportConversation {
         SupportConversation {
             id: "CS-TEST".to_string(),
@@ -286,7 +289,7 @@ mod tests {
             messages: vec![test_message(SupportMessageAuthor::User)],
         }
     }
-
+    /// 构造消息测试数据。
     fn test_message(author: SupportMessageAuthor) -> SupportMessage {
         SupportMessage {
             id: "CS-TEST-M001".to_string(),

@@ -480,7 +480,7 @@ fn now_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    /// 构造广告保存测试载荷。
     fn save_payload(id: Option<&str>, title: &str, sort_order: i32) -> SaveAdvertisementRequest {
         SaveAdvertisementRequest {
             id: id.map(str::to_string),
@@ -494,7 +494,7 @@ mod tests {
             end_at: None,
         }
     }
-
+    /// 验证广告仓储创建更新和删除广告。
     #[tokio::test]
     async fn advertisement_repository_creates_updates_and_deletes_advertisement() {
         let repository = AdvertisementRepository::memory();
@@ -527,7 +527,7 @@ mod tests {
             .expect("list can be loaded")
             .is_empty());
     }
-
+    /// 验证手机端轮播仅返回启用和启用items。
     #[tokio::test]
     async fn mobile_carousel_only_returns_enabled_and_active_items() {
         let repository = AdvertisementRepository::memory();
@@ -556,7 +556,7 @@ mod tests {
         assert_eq!(advertisements.len(), 1);
         assert_eq!(advertisements[0].id, active.id);
     }
-
+    /// 验证广告仓储拒绝非法时间窗口。
     #[tokio::test]
     async fn advertisement_repository_rejects_invalid_time_window() {
         let repository = AdvertisementRepository::memory();

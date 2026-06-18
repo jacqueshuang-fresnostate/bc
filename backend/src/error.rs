@@ -73,7 +73,7 @@ mod tests {
     use super::ApiError;
 
     #[test]
-    /// 处理 api_error_log_message_uses_chinese_prefixes 的具体内部流程。
+    /// 验证接口错误日志前缀保持中文，避免运维排障看到模板英文。
     fn api_error_log_message_uses_chinese_prefixes() {
         let message = ApiError::BadRequest("邀请码无效".to_string()).log_message();
 

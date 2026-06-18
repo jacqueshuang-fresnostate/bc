@@ -19,20 +19,35 @@ use super::access::AccessSnapshot;
 #[serde(rename_all = "camelCase")]
 /// 后台首页仪表盘聚合数据。
 pub struct DashboardSummary {
+    /// metrics字段。
     pub metrics: Vec<Metric>,
+    /// 模块分组字段。
     pub module_groups: Vec<ModuleGroup>,
+    /// 可选彩种列表。
     pub lotteries: Vec<LotteryKind>,
+    /// 开奖来源字段。
     pub draw_sources: Vec<DrawSource>,
+    /// 最近订单字段。
     pub recent_orders: Vec<OrderSummary>,
+    /// 合买合买plans字段。
     pub group_buy_plans: Vec<GroupBuyPlanSummary>,
+    /// 资金字段。
     pub finance: FinanceOverview,
+    /// financial账户字段。
     pub financial_accounts: Vec<FinancialAccountSummary>,
+    /// robots字段。
     pub robots: Vec<RobotConfigSummary>,
+    /// 用户摘要列表。
     pub users: Vec<UserSummary>,
+    /// 管理员摘要列表。
     pub admins: Vec<AdminSummary>,
+    /// 管理员角色列表。
     pub roles: Vec<AdminRole>,
+    /// 移动端或模块配置集合。
     pub settings: Vec<SystemSetting>,
+    /// 用户注册开关和限制配置。
     pub registration: RegistrationConfig,
+    /// 邀请策略字段。
     pub invite_policy: InvitePolicySummary,
 }
 
@@ -40,9 +55,13 @@ pub struct DashboardSummary {
 #[serde(rename_all = "camelCase")]
 /// 后台首页统计指标卡片。
 pub struct Metric {
+    /// 配置键或选项键。
     pub key: String,
+    /// 前端展示文案。
     pub label: String,
+    /// 配置值或选项值。
     pub value: String,
+    /// trend字段。
     pub trend: String,
 }
 
@@ -50,9 +69,13 @@ pub struct Metric {
 #[serde(rename_all = "camelCase")]
 /// 后台首页功能模块分组。
 pub struct ModuleGroup {
+    /// 配置键或选项键。
     pub key: String,
+    /// 展示标题。
     pub title: String,
+    /// 配置或记录的中文说明。
     pub description: String,
+    /// modules字段。
     pub modules: Vec<AdminModule>,
 }
 
@@ -60,9 +83,13 @@ pub struct ModuleGroup {
 #[serde(rename_all = "camelCase")]
 /// 后台首页单个功能模块入口。
 pub struct AdminModule {
+    /// 配置键或选项键。
     pub key: String,
+    /// 展示名称。
     pub name: String,
+    /// 配置或记录的中文说明。
     pub description: String,
+    /// 业务状态，用于筛选、禁用或流转。
     pub status: ModuleStatus,
 }
 
@@ -196,7 +223,7 @@ fn has_scope(scopes: &[PermissionScope], scope: &PermissionScope) -> bool {
     scopes.contains(scope)
 }
 
-/// 处理 metric_scope 的具体内部流程。
+/// 把系统概览指标键映射为读取权限。
 fn metric_scope(key: &str) -> Option<PermissionScope> {
     match key {
         "users" => Some(PermissionScope::Users),
@@ -207,7 +234,7 @@ fn metric_scope(key: &str) -> Option<PermissionScope> {
     }
 }
 
-/// 处理 module_scope 的具体内部流程。
+/// 把系统概览模块键映射为读取权限。
 fn module_scope(key: &str) -> Option<PermissionScope> {
     match key {
         "users" | "registration" => Some(PermissionScope::Users),
@@ -225,7 +252,7 @@ fn module_scope(key: &str) -> Option<PermissionScope> {
     }
 }
 
-/// 处理 redacted_finance_overview 的具体内部流程。
+/// 返回无权限时展示的脱敏财务概览。
 fn redacted_finance_overview() -> FinanceOverview {
     FinanceOverview {
         total_balance_minor: 0,
@@ -235,7 +262,7 @@ fn redacted_finance_overview() -> FinanceOverview {
     }
 }
 
-/// 处理 redacted_registration_config 的具体内部流程。
+/// 返回无权限时展示的脱敏注册配置。
 fn redacted_registration_config() -> RegistrationConfig {
     RegistrationConfig {
         username_enabled: false,
@@ -244,7 +271,7 @@ fn redacted_registration_config() -> RegistrationConfig {
     }
 }
 
-/// 处理 redacted_invite_policy 的具体内部流程。
+/// 返回无权限时展示的脱敏邀请策略。
 fn redacted_invite_policy() -> InvitePolicySummary {
     InvitePolicySummary {
         agents_can_invite: false,
@@ -255,14 +282,14 @@ fn redacted_invite_policy() -> InvitePolicySummary {
     }
 }
 
-/// 处理 money_label 的具体内部流程。
+/// 把分为单位的金额格式化为后台展示文案。
 fn money_label(amount_minor: i64) -> String {
     let sign = if amount_minor < 0 { "-" } else { "" };
     let abs_amount = amount_minor.checked_abs().unwrap_or(i64::MAX);
     format!("{sign}¥{}.{:02}", abs_amount / 100, abs_amount % 100)
 }
 
-/// 处理 metric 的具体内部流程。
+/// 组装系统概览指标卡片。
 fn metric(
     key: impl Into<String>,
     label: impl Into<String>,
@@ -277,7 +304,7 @@ fn metric(
     }
 }
 
-/// 处理 module_groups 的具体内部流程。
+/// 组装系统概览模块分组。
 fn module_groups() -> Vec<ModuleGroup> {
     vec![
         ModuleGroup {
@@ -438,7 +465,7 @@ fn module_groups() -> Vec<ModuleGroup> {
     ]
 }
 
-/// 处理 module 的具体内部流程。
+/// 组装单个系统概览模块。
 fn module(
     key: impl Into<String>,
     name: impl Into<String>,
@@ -465,7 +492,7 @@ mod tests {
         services::access::{AccessRepository, AccessSnapshot},
         services::lottery::seed_lotteries,
     };
-
+    /// 验证系统概览包含required模块分组。
     #[tokio::test]
     async fn dashboard_includes_required_module_groups() {
         let access = AccessRepository::memory_seeded()
@@ -496,7 +523,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(lottery_modules.contains(&"lottery-console"));
     }
-
+    /// 验证系统概览筛选sensitivefields用于ops权限。
     #[tokio::test]
     async fn dashboard_filters_sensitive_fields_for_ops_scopes() {
         let access = AccessRepository::memory_seeded()
@@ -556,7 +583,7 @@ mod tests {
             0
         );
     }
-
+    /// 验证系统概览keeps完整摘要用于super权限。
     #[tokio::test]
     async fn dashboard_keeps_full_summary_for_super_scopes() {
         let access = AccessRepository::memory_seeded()
