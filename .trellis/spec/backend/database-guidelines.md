@@ -40,6 +40,71 @@ YYYYMMDDHHMMSS_describe_change.sql
 
 如果使用 SQLx 标准模式，每个迁移只需要前向 SQL。若后续选择其他迁移工具，需要先更新本规范。
 
+## 场景：迁移字段注释顺序
+
+### 1. 范围 / 触发条件
+
+- 触发条件：新增或修改数据库表、字段、约束、索引注释，尤其是补全历史迁移的中文注释。
+- 范围：`backend/migrations/*.sql` 中所有 `COMMENT ON COLUMN`、`COMMENT ON TABLE`、`COMMENT ON CONSTRAINT` 和字段创建语句。
+
+### 2. 签名
+
+- 字段创建：`ALTER TABLE <table> ADD COLUMN <column> ...`
+- 字段注释：`COMMENT ON COLUMN <table>.<column> IS '<中文说明>'`
+- 迁移顺序：由文件名前缀 `YYYYMMDDHHMMSS` 决定。
+
+### 3. 契约
+
+`COMMENT ON COLUMN` 只能引用当前迁移或更早迁移已经创建的字段。后续迁移才创建的字段，必须在创建字段的那一条迁移或更晚的迁移中补注释。
+
+全量补注释迁移只能覆盖它之前已存在的表、字段和约束。不要为了统一注释，把未来字段的注释提前放进旧时间戳迁移。
+
+已经发布到可能被数据库执行过的历史迁移原则上不再改语义；如果历史迁移本身会导致空库部署失败，只能做最小修正，并在 TODO/架构说明中记录原因和潜在 SQLx 校验影响。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 注释引用后续才创建的字段 | 新库执行到该迁移会失败，必须移到字段创建迁移或删除提前注释 |
+| 字段创建迁移遗漏注释 | 在同一迁移或后续前向迁移补 `COMMENT ON COLUMN` |
+| 修改已发布历史迁移 | 只允许修复会阻断空库部署的错误，并提醒已有库可能需要处理 SQLx 校验记录 |
+| 新增表字段无中文注释 | 不通过代码审查，需要补齐字段语义 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`20260604202000_add_lottery_logo_url.sql` 创建 `lotteries.logo_url` 后立即写入 `COMMENT ON COLUMN lotteries.logo_url ...`。
+- Base：全量注释迁移只注释它之前已经存在的 `lotteries.name`、`lotteries.number_type` 等字段。
+- Bad：`20260603234000_add_all_column_comments.sql` 注释 `lotteries.logo_url`，但该字段到 `20260604202000` 才创建；空库部署会报 `column "logo_url" of relation "lotteries" does not exist`。
+
+### 6. 必要测试
+
+- 修改迁移后至少检查相关字段注释不再早于字段创建迁移。
+- 后端需要运行 `cargo fmt --manifest-path backend/Cargo.toml --check`。
+- 后端需要运行 `cargo check --manifest-path backend/Cargo.toml`。
+- 如本机有安全的空 PostgreSQL 测试库，需要执行一次完整 migrations 回放。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+-- 文件时间早于字段创建迁移
+COMMENT ON COLUMN lotteries.logo_url IS '彩种LOGO图片链接';
+```
+
+这个写法会让新库在字段尚未创建时执行注释，部署直接失败。
+
+#### Correct
+
+```sql
+ALTER TABLE lotteries
+ADD COLUMN logo_url TEXT NOT NULL DEFAULT '';
+
+COMMENT ON COLUMN lotteries.logo_url IS '彩种 LOGO 链接地址';
+```
+
+字段和注释放在同一迁移中，任意空库按时间顺序执行都能成功。
+
 ## 彩种表约定
 
 - `lotteries.issue_format` 保存平台开奖期号生成格式，默认 `{date}{seq4}`，即 `yyyyMMdd` 加 4 位每日递增序号；模板也支持 `{seq1}`、`{seq2}`、`{seq3}`、`{seq4}` 四种每日递增序号变量。

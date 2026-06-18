@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-18 12:22 HKT 部署迁移 logo_url 注释顺序修复
+
+- 完成任务：修复新环境部署时 SQLx 执行 `20260603234000_add_all_column_comments.sql` 报 `column "logo_url" of relation "lotteries" does not exist` 的问题。
+- 解决问题：早期全量字段注释迁移时间早于 `lotteries.logo_url` 字段创建迁移，却提前执行 `COMMENT ON COLUMN lotteries.logo_url`，导致空库按顺序回放迁移时中断。
+- 实施内容：移除 `20260603234000_add_all_column_comments.sql` 中对后续字段 `lotteries.logo_url` 的提前注释，保留 `20260604202000_add_lottery_logo_url.sql` 在创建字段后负责注释；同步更新架构设计和数据库规范，明确字段注释不得早于字段创建迁移。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml` 和 `git diff --check` 均通过；静态复核确认 `20260603234000_add_all_column_comments.sql` 不再提前执行 `COMMENT ON COLUMN lotteries.logo_url`。
+
 ## 2026-06-17 00:40 HKT 合买机器人流单前兜底补满
 
 - 完成任务：为合买机器人增加封盘流单前兜底补满能力。

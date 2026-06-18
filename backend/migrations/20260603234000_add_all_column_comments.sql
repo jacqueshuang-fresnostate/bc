@@ -1,7 +1,8 @@
 COMMENT ON TABLE lotteries IS '彩种配置表，保存每个彩种的基础参数、玩法与调度能力';
 COMMENT ON COLUMN lotteries.id IS '彩种唯一标识符';
 COMMENT ON COLUMN lotteries.name IS '彩种展示名称';
-COMMENT ON COLUMN lotteries.logo_url IS '彩种LOGO图片链接';
+-- logo_url 在 20260604202000_add_lottery_logo_url.sql 中才创建并注释；
+-- 这里不能提前引用，否则新库执行到本迁移时会因为列不存在而失败。
 COMMENT ON COLUMN lotteries.number_type IS '开奖号码位数类型，支持 threeDigit/fiveDigit';
 COMMENT ON COLUMN lotteries.draw_mode IS '开奖模式：platform（平台开奖）、api（采集开奖）、manual（手工开奖）';
 COMMENT ON COLUMN lotteries.schedule IS '开奖号码生成与开奖时序配置（JSON）';
