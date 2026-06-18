@@ -4058,3 +4058,10 @@
 - 实施内容：新增 `api_draw_source_snapshots` 数据表和中文字段注释；统一 API68、KJAPI、BB 开奖、印尼开奖的请求-解析-快照保存流程，成功、HTTP 异常和解析失败都会保存快照；后端注册 IP 解析支持 `Forwarded` 头和带端口地址；访问控制仓储清洗 `source=client` 或未知来源的地区字段；手机端注册页移除浏览器语言/时区定位上报；架构说明和 Trellis 规范同步更新。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_api -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml registration_location -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml registration_ip_parser_handles_proxy_headers -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml` 均通过（350 个测试成功）；手机端 `pnpm build`、`pnpm test` 和 `git diff --check` 均通过，手机端测试脚本当前显示 0 个测试用例。
 - 外部库备注：尝试使用指定 PostgreSQL 启动后端烟测，迁移阶段未输出错误，但测试库当前启用的开奖调度在启动早期反复写入历史并报“开奖调度历史数据保存失败”，未等到监听日志；该问题属于既有调度历史保存链路，未作为本次 API 快照和注册来源修正的通过项。
+
+## 2026-06-18 07:36 HKT 澳洲幸运5开奖源初始化地址统一
+
+- 完成任务：按确认结果把澳洲幸运5 `api68-au5` 默认开奖源统一为 `https://api.api68.com/CQShiCai/getBaseCQShiCai.do`。
+- 解决问题：早期 SQL 迁移会在空库中先插入 `getBaseCQShiCaiList.do`，而当前代码和后台预设使用 `getBaseCQShiCai.do`；新机器部署时可能出现数据库初始化地址和当前系统预设不一致。
+- 实施内容：新增前向迁移 `20260618114500_update_au5_draw_source_endpoint.sql`，通过 `id=api68-au5`、`provider=api68`、`lot_code=10010` 精准更新 endpoint，并只把旧默认名称规整为“API68 澳洲幸运5”；同步更新架构说明。
+- 验证结果：`git diff --check` 通过。
