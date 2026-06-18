@@ -14,6 +14,7 @@ import { limitPositionValues, randomLimitPositionValues, randomSubsetValues } fr
 import { useDynamicBetEngine } from '../dynamic/useDynamicBetEngine'
 import type { DynamicBetPlay } from '../dynamic/types'
 import BetRoundInfoCard from './BetRoundInfoCard.vue'
+import BetPageSkeleton from './BetPageSkeleton.vue'
 import DynamicInputRenderer from './DynamicInputRenderer.vue'
 import DynamicPlayTabs from './DynamicPlayTabs.vue'
 import MobilePageShell from './MobilePageShell.vue'
@@ -58,6 +59,7 @@ const playSubmitMeta = computed(() => Object.fromEntries((config.value?.plays ||
 const latestNumbers = computed(() => config.value?.latest_draw?.result_numbers || [])
 const latestIssue = computed(() => config.value?.latest_draw?.issue || '')
 const multipleInputValue = ref('1')
+const showPageSkeleton = computed(() => loading.value && (!config.value || config.value.lottery.code !== lotteryCode.value))
 function formatBetCutoffCountdown(diff: number) {
   if (diff <= 0) return '开奖中'
   const hours = Math.floor(diff / 3600000)
@@ -464,111 +466,116 @@ onBeforeUnmount(() => {
     <MobileTopBar :title="config?.lottery.name || lotteryCode" :balance="balance" @back="router.back()" />
 
     <main class="bet-page-main mx-auto max-w-md space-y-3 px-4 pt-4" :class="{ 'bet-page-main--group-buy': groupBuyMode }">
-      <BetRoundInfoCard :issue="config?.round.issue || ''" :status="roundDisplayStatus" :countdown-text="countdownText" :latest-issue="latestIssue" :latest-numbers="latestNumbers" />
+      <BetPageSkeleton v-if="showPageSkeleton" />
 
-      <button
-        class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#f1dedb] bg-[#fffdfc] px-4 py-3 text-left shadow-sm shadow-red-900/5 transition active:scale-[0.99] active:bg-[#fff7f5]"
-        type="button"
-        @click="showPlayPopup = true"
-      >
-        <span class="min-w-0 flex-1">
-          <span class="block text-[11px] font-bold tracking-wider text-[#8e706d]">选择玩法</span>
-          <strong class="mt-0.5 flex min-w-0 items-center gap-2 font-headline text-lg font-extrabold text-[#1a1c1c]">
-            <span class="truncate">{{ selectedPlay ? (selectedPlay.full_name || selectedPlay.name) : '请选择玩法' }}</span>
-            <span v-if="selectedPlay?.odds" class="shrink-0 rounded-full bg-[#fff4dc] px-2 py-0.5 text-[11px] font-bold text-[#735c00]">赔率 {{ selectedPlay.odds }}</span>
-            <span v-if="selectedPlay" class="shrink-0 rounded-full bg-[#fff4dc] px-2 py-0.5 text-[11px] font-bold text-[#735c00]">单注 ¥{{ Number(engine.effectiveUnitAmount.value || 0).toFixed(2) }}</span>
-          </strong>
-          <small v-if="selectedPlay?.simple_description" class="mt-0.5 block truncate text-xs font-bold text-[#8c0a15]">{{ selectedPlay.simple_description }}</small>
-        </span>
-        <span class="flex shrink-0 items-center gap-1.5">
-          <span class="rounded-full bg-[#ffdad7] px-2.5 py-1 text-xs font-bold text-[#8c0a15]">切换</span>
-        </span>
-      </button>
+      <template v-else>
+        <BetRoundInfoCard :issue="config?.round.issue || ''" :status="roundDisplayStatus" :countdown-text="countdownText" :latest-issue="latestIssue" :latest-numbers="latestNumbers" />
 
-      <DynamicInputRenderer
-        :play="selectedPlay"
-        :numbers="engine.textNumbers.value"
-        :selections="engine.selections.value"
-        @update:numbers="engine.textNumbers.value = $event"
-        @toggle-position="engine.togglePositionNumber"
-        @select-all-position="selectAllPosition"
-        @select-preset-position="selectPresetPosition"
-        @clear-position="clearPosition"
-        @toggle-option="engine.toggleOptionValue"
-      />
+        <button
+          class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#f1dedb] bg-[#fffdfc] px-4 py-3 text-left shadow-sm shadow-red-900/5 transition active:scale-[0.99] active:bg-[#fff7f5]"
+          type="button"
+          @click="showPlayPopup = true"
+        >
+          <span class="min-w-0 flex-1">
+            <span class="block text-[11px] font-bold tracking-wider text-[#8e706d]">选择玩法</span>
+            <strong class="mt-0.5 flex min-w-0 items-center gap-2 font-headline text-lg font-extrabold text-[#1a1c1c]">
+              <span class="truncate">{{ selectedPlay ? (selectedPlay.full_name || selectedPlay.name) : '请选择玩法' }}</span>
+              <span v-if="selectedPlay?.odds" class="shrink-0 rounded-full bg-[#fff4dc] px-2 py-0.5 text-[11px] font-bold text-[#735c00]">赔率 {{ selectedPlay.odds }}</span>
+              <span v-if="selectedPlay" class="shrink-0 rounded-full bg-[#fff4dc] px-2 py-0.5 text-[11px] font-bold text-[#735c00]">单注 ¥{{ Number(engine.effectiveUnitAmount.value || 0).toFixed(2) }}</span>
+            </strong>
+            <small v-if="selectedPlay?.simple_description" class="mt-0.5 block truncate text-xs font-bold text-[#8c0a15]">{{ selectedPlay.simple_description }}</small>
+          </span>
+          <span class="flex shrink-0 items-center gap-1.5">
+            <span class="rounded-full bg-[#ffdad7] px-2.5 py-1 text-xs font-bold text-[#8c0a15]">切换</span>
+          </span>
+        </button>
 
-      <section class="rounded-[28px] bg-white p-5 shadow-sm shadow-red-900/5">
-        <div class="flex items-start justify-between gap-4">
-          <div class="min-w-0">
-            <div class="text-xs font-bold tracking-wider text-[#5a403e]">投注倍数</div>
-            <p class="mt-1 text-xs font-bold text-[#8e706d]">允许 {{ engine.minMultiple.value }}-{{ multipleSliderMax }} 倍</p>
-          </div>
-          <div class="flex shrink-0 items-center rounded-[20px] border border-[#f1dedb] bg-[#fffdfc] p-1 shadow-inner shadow-red-900/5" role="group" aria-label="投注倍数">
-            <button class="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#f8f1ef] text-xl font-black text-[#8c0a15] transition active:scale-95 disabled:cursor-not-allowed disabled:text-[#b8aaa8] disabled:opacity-55" type="button" :disabled="!canDecreaseMultiple" aria-label="减少倍数" @click="adjustMultiple(-1)">-</button>
-            <input
-              :value="multipleInputValue"
-              class="mx-1 h-9 w-16 rounded-2xl bg-transparent text-center font-headline text-2xl font-extrabold leading-none text-[#1a1c1c] outline-none"
-              type="text"
-              inputmode="numeric"
-              pattern="[0-9]*"
-              aria-label="投注倍数"
-              @input="updateMultipleInput"
-              @blur="normalizeMultipleInput"
-              @keyup.enter="normalizeMultipleInput"
-            />
-            <span class="mr-1 text-sm font-extrabold text-[#5a403e]">倍</span>
-            <button class="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#8c0a15] text-xl font-black !text-white shadow-sm shadow-red-900/15 transition active:scale-95 disabled:cursor-not-allowed disabled:bg-[#d8d1cf] disabled:!text-white/80 disabled:shadow-none" type="button" :disabled="!canIncreaseMultiple" aria-label="增加倍数" @click="adjustMultiple(1)">
-              <span class="!text-white">+</span>
-            </button>
-          </div>
-        </div>
-        <van-slider v-model="engine.multiple.value" class="mt-5" :min="engine.minMultiple.value" :max="multipleSliderMax" :step="1" active-color="#af2829" inactive-color="#eeeeee" />
-      </section>
+        <DynamicInputRenderer
+          :play="selectedPlay"
+          :numbers="engine.textNumbers.value"
+          :selections="engine.selections.value"
+          @update:numbers="engine.textNumbers.value = $event"
+          @toggle-position="engine.togglePositionNumber"
+          @select-all-position="selectAllPosition"
+          @select-preset-position="selectPresetPosition"
+          @clear-position="clearPosition"
+          @toggle-option="engine.toggleOptionValue"
+        />
 
-      <section
-        v-if="groupBuyAvailable"
-        class="group-buy-bet-mode overflow-hidden rounded-[30px] border bg-white p-5 shadow-sm transition-all duration-300"
-        :class="groupBuyMode ? 'group-buy-bet-mode--active border-[#f6c9a6] shadow-[0_18px_42px_rgba(140,10,21,0.13)]' : 'border-[#f1dedb] shadow-red-900/5'"
-      >
-        <div class="flex items-center justify-between gap-4">
-          <div class="min-w-0">
-            <div class="text-xs font-bold tracking-wider text-[#8e706d]">投注模式</div>
-            <strong class="mt-1 block font-headline text-xl font-extrabold text-[#1a1c1c]">合买</strong>
-            <p class="mt-1 text-xs font-bold text-[#8e706d]">开启后按份公开合买，不需要设置保底。</p>
-          </div>
-          <van-switch v-model="groupBuyMode" active-color="#8c0a15" inactive-color="#d8d1cf" />
-        </div>
-        <div v-if="groupBuyMode" class="mt-5 space-y-4">
-          <div class="rounded-[26px] bg-[#8c0a15] p-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.22)]">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <p class="text-xs font-bold text-white/70">合买模式已开启</p>
-              </div>
-              <span class="shrink-0 rounded-full bg-white/15 px-3 py-1 text-xs font-extrabold text-white">固定每份 ¥{{ groupBuyFixedShareAmount }}</span>
+        <section class="rounded-[28px] bg-white p-5 shadow-sm shadow-red-900/5">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <div class="text-xs font-bold tracking-wider text-[#5a403e]">投注倍数</div>
+              <p class="mt-1 text-xs font-bold text-[#8e706d]">允许 {{ engine.minMultiple.value }}-{{ multipleSliderMax }} 倍</p>
             </div>
-            <div class="mt-4 grid grid-cols-3 gap-2">
-              <div class="rounded-2xl bg-white/12 p-3">
-                <span class="block text-[11px] font-bold text-white/65">方案总额</span>
-                <strong class="mt-1 block font-headline text-lg font-extrabold">¥{{ groupBuyTotalAmountText }}</strong>
-              </div>
-              <div class="rounded-2xl bg-white/12 p-3">
-                <span class="block text-[11px] font-bold text-white/65">可分份数</span>
-                <strong class="mt-1 block font-headline text-lg font-extrabold">{{ groupBuyDerivedShareCount || 0 }}份</strong>
-              </div>
-              <div class="rounded-2xl bg-white/12 p-3">
-                <span class="block text-[11px] font-bold text-white/65">固定每份</span>
-                <strong class="mt-1 block font-headline text-lg font-extrabold">¥{{ groupBuyFixedShareAmount }}</strong>
-              </div>
+            <div class="flex shrink-0 items-center rounded-[20px] border border-[#f1dedb] bg-[#fffdfc] p-1 shadow-inner shadow-red-900/5" role="group" aria-label="投注倍数">
+              <button class="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#f8f1ef] text-xl font-black text-[#8c0a15] transition active:scale-95 disabled:cursor-not-allowed disabled:text-[#b8aaa8] disabled:opacity-55" type="button" :disabled="!canDecreaseMultiple" aria-label="减少倍数" @click="adjustMultiple(-1)">-</button>
+              <input
+                :value="multipleInputValue"
+                class="mx-1 h-9 w-16 rounded-2xl bg-transparent text-center font-headline text-2xl font-extrabold leading-none text-[#1a1c1c] outline-none"
+                type="text"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                aria-label="投注倍数"
+                @input="updateMultipleInput"
+                @blur="normalizeMultipleInput"
+                @keyup.enter="normalizeMultipleInput"
+              />
+              <span class="mr-1 text-sm font-extrabold text-[#5a403e]">倍</span>
+              <button class="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#8c0a15] text-xl font-black !text-white shadow-sm shadow-red-900/15 transition active:scale-95 disabled:cursor-not-allowed disabled:bg-[#d8d1cf] disabled:!text-white/80 disabled:shadow-none" type="button" :disabled="!canIncreaseMultiple" aria-label="增加倍数" @click="adjustMultiple(1)">
+                <span class="!text-white">+</span>
+              </button>
             </div>
           </div>
-          <div v-if="groupBuyDerivedShareCount <= 0" class="rounded-2xl bg-[#fff4dc] px-4 py-3 text-xs font-bold text-[#8c0a15]">总金额必须能按每份金额整除</div>
-        </div>
-      </section>
+          <van-slider v-model="engine.multiple.value" class="mt-5" :min="engine.minMultiple.value" :max="multipleSliderMax" :step="1" active-color="#af2829" inactive-color="#eeeeee" />
+        </section>
 
-      <div v-if="loading" class="text-center text-sm text-[#5a403e]">加载中...</div>
+        <section
+          v-if="groupBuyAvailable"
+          class="group-buy-bet-mode overflow-hidden rounded-[30px] border bg-white p-5 shadow-sm transition-all duration-300"
+          :class="groupBuyMode ? 'group-buy-bet-mode--active border-[#f6c9a6] shadow-[0_18px_42px_rgba(140,10,21,0.13)]' : 'border-[#f1dedb] shadow-red-900/5'"
+        >
+          <div class="flex items-center justify-between gap-4">
+            <div class="min-w-0">
+              <div class="text-xs font-bold tracking-wider text-[#8e706d]">投注模式</div>
+              <strong class="mt-1 block font-headline text-xl font-extrabold text-[#1a1c1c]">合买</strong>
+              <p class="mt-1 text-xs font-bold text-[#8e706d]">开启后按份公开合买，不需要设置保底。</p>
+            </div>
+            <van-switch v-model="groupBuyMode" active-color="#8c0a15" inactive-color="#d8d1cf" />
+          </div>
+          <div v-if="groupBuyMode" class="mt-5 space-y-4">
+            <div class="rounded-[26px] bg-[#8c0a15] p-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.22)]">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <p class="text-xs font-bold text-white/70">合买模式已开启</p>
+                </div>
+                <span class="shrink-0 rounded-full bg-white/15 px-3 py-1 text-xs font-extrabold text-white">固定每份 ¥{{ groupBuyFixedShareAmount }}</span>
+              </div>
+              <div class="mt-4 grid grid-cols-3 gap-2">
+                <div class="rounded-2xl bg-white/12 p-3">
+                  <span class="block text-[11px] font-bold text-white/65">方案总额</span>
+                  <strong class="mt-1 block font-headline text-lg font-extrabold">¥{{ groupBuyTotalAmountText }}</strong>
+                </div>
+                <div class="rounded-2xl bg-white/12 p-3">
+                  <span class="block text-[11px] font-bold text-white/65">可分份数</span>
+                  <strong class="mt-1 block font-headline text-lg font-extrabold">{{ groupBuyDerivedShareCount || 0 }}份</strong>
+                </div>
+                <div class="rounded-2xl bg-white/12 p-3">
+                  <span class="block text-[11px] font-bold text-white/65">固定每份</span>
+                  <strong class="mt-1 block font-headline text-lg font-extrabold">¥{{ groupBuyFixedShareAmount }}</strong>
+                </div>
+              </div>
+            </div>
+            <div v-if="groupBuyDerivedShareCount <= 0" class="rounded-2xl bg-[#fff4dc] px-4 py-3 text-xs font-bold text-[#8c0a15]">总金额必须能按每份金额整除</div>
+          </div>
+        </section>
+
+        <div v-if="loading" class="text-center text-sm font-bold text-[#5a403e]">正在刷新玩法...</div>
+      </template>
     </main>
 
     <UnifiedBetBottomBar
+      v-if="!showPageSkeleton"
       :selected-count="engine.cartTotalCount.value + engine.draftBetCount.value"
       :total-amount="engine.cartTotalAmount.value + engine.draftAmount.value"
       :can-submit="canSubmitCurrentOrder && !submittingOrder"
