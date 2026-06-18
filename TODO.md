@@ -4072,3 +4072,10 @@
 - 解决问题：后端仍残留部分字段无注释、私有方法缺少用途说明，以及“具体内部流程”“说明 xxx 的业务用途”等模板化注释，维护时难以快速判断业务边界。
 - 实施内容：为 `backend/src/domain` 全部公开字段补充中文字段含义；为 `backend/src/services`、`backend/src/routes`、`app/error/response/main` 中函数和方法补充中文用途说明；重点清洗开奖源解析、开奖调度、资金、充值、客服、彩种、用户访问控制、合买机器人等关键链路注释；同步更新架构说明。
 - 验证结果：后端注释扫描确认函数、公开字段、公开常量均已有中文注释，模板化占位注释为 0；`cargo fmt --manifest-path backend/Cargo.toml` 和 `cargo check --manifest-path backend/Cargo.toml` 均通过，后续继续执行测试编译验证。
+
+## 2026-06-18 10:27 HKT API 开奖源采集快照后台可视化
+
+- 完成任务：给已经落库的 API 开奖源采集快照补上后台查看和一键清除入口。
+- 解决问题：此前 `api_draw_source_snapshots` 已经保存第三方期号、开奖号码和原始响应，但后台“开奖期号与开奖源”页面没有任何入口查看，运营无法确认 API 抓取到的数据是否和本地期号、调度结果一致；采集快照持续增长后也缺少后台维护清理入口。
+- 实施内容：后端新增 `GET /api/admin/draw-source-snapshots`，支持按彩种、开奖源、采集用途、成功状态和期号筛选，并使用数据库分页倒序读取；新增 `DELETE /api/admin/draw-source-snapshots/clear`，只清除 API 采集快照审计记录并返回 `deletedCount`；新增采集快照领域分页模型、仓储查询/清理入口和 OpenAPI 文档；管理后台新增“采集快照”分段，列表展示采集摘要并可通过 `SideSheet` 查看 endpoint、错误信息、原始 JSON 和原始文本，同时提供中文确认的一键清除按钮；同步更新架构说明。
+- 验证结果：管理后台 `npm run build` 通过；`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_api -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml`（350 个测试成功）和 `git diff --check` 均通过。

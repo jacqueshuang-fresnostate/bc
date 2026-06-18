@@ -34,6 +34,8 @@ import type {
 } from '../types/auth';
 import type {
   CreateDrawIssueRequest,
+  ApiDrawSourceCrawlSnapshotPage,
+  ApiDrawSourceCrawlSnapshotQuery,
   DrawAutomationRun,
   DrawAutomationRunRequest,
   DrawIssue,
@@ -932,6 +934,46 @@ export function syncLotteryDrawSource(id: string) {
 
 export function fetchDrawSources(signal?: AbortSignal) {
   return requestJson<DrawSource[]>('/api/admin/draw-sources', { signal });
+}
+
+export function fetchApiDrawSourceSnapshots(
+  signal?: AbortSignal,
+  query?: ApiDrawSourceCrawlSnapshotQuery,
+) {
+  const params = new URLSearchParams();
+  if (query?.lotteryId) {
+    params.set('lotteryId', query.lotteryId);
+  }
+  if (query?.sourceId) {
+    params.set('sourceId', query.sourceId);
+  }
+  if (query?.requestKind) {
+    params.set('requestKind', query.requestKind);
+  }
+  if (typeof query?.success === 'boolean') {
+    params.set('success', String(query.success));
+  }
+  if (query?.issue) {
+    params.set('issue', query.issue);
+  }
+  if (query?.page && query.page > 0) {
+    params.set('page', String(query.page));
+  }
+  if (query?.pageSize && query.pageSize > 0) {
+    params.set('pageSize', String(query.pageSize));
+  }
+
+  const path = params.toString()
+    ? `/api/admin/draw-source-snapshots?${params.toString()}`
+    : '/api/admin/draw-source-snapshots';
+
+  return requestJson<ApiDrawSourceCrawlSnapshotPage>(path, { signal });
+}
+
+export function clearApiDrawSourceSnapshotRecords() {
+  return requestJson<ClearRecordsResult>('/api/admin/draw-source-snapshots/clear', {
+    method: 'DELETE',
+  });
 }
 
 export function createDrawSource(payload: SaveDrawSourceRequest) {

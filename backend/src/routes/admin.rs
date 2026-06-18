@@ -30,11 +30,11 @@ use crate::{
         },
         auth::{AdminAuthSession, AdminLoginRequest, AdminLogoutResponse, CurrentAdminProfile},
         draw::{
-            CreateDrawIssueRequest, DrawAutomationRun, DrawAutomationRunRequest,
-            DrawControlTargetScope, DrawIssue, DrawIssueGenerationPreview, DrawIssuePage,
-            DrawIssueResultRequest, DrawIssueStatus, DrawSourceSyncResult,
-            GenerateDrawIssueRequest, GenerateDrawIssuesRequest, LotteryDrawControl,
-            SaveLotteryDrawControlRequest,
+            ApiDrawSourceCrawlSnapshotPage, CreateDrawIssueRequest, DrawAutomationRun,
+            DrawAutomationRunRequest, DrawControlTargetScope, DrawIssue,
+            DrawIssueGenerationPreview, DrawIssuePage, DrawIssueResultRequest, DrawIssueStatus,
+            DrawSourceSyncResult, GenerateDrawIssueRequest, GenerateDrawIssuesRequest,
+            LotteryDrawControl, SaveLotteryDrawControlRequest,
         },
         finance::{
             AdminFinancialAccountSummary, FinanceOverview, FinancePage, FinancialAccountSummary,
@@ -80,6 +80,7 @@ use crate::{
         dashboard::{
             dashboard_summary_for_scopes, dashboard_summary_with_orders, DashboardSummary,
         },
+        draw_api::ApiDrawSourceCrawlSnapshotQuery,
         draw_generation::{
             generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
         },
@@ -240,6 +241,14 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/draw-sources",
             get(list_draw_sources).post(create_draw_source),
+        )
+        .route(
+            "/draw-source-snapshots",
+            get(list_api_draw_source_snapshots),
+        )
+        .route(
+            "/draw-source-snapshots/clear",
+            delete(clear_api_draw_source_snapshots),
         )
         .route(
             "/draw-sources/{id}",
@@ -578,6 +587,77 @@ async fn list_draw_sources(
     let sources = state.draws.draw_sources().await?;
 
     Ok(Json(ApiEnvelope::success(sources)))
+}
+
+/// 分页返回 API 开奖源采集快照，方便运营对比第三方期号、开奖号码和原始响应。
+async fn list_api_draw_source_snapshots(
+    State(state): State<AppState>,
+    Query(query): Query<ApiDrawSourceSnapshotListQuery>,
+) -> ApiResult<Json<ApiEnvelope<ApiDrawSourceCrawlSnapshotPage>>> {
+    let request_kind = optional_query_text(query.request_kind.as_deref());
+    if let Some(request_kind) = request_kind {
+        if !matches!(request_kind, "latestIssue" | "drawNumber") {
+            return Err(ApiError::BadRequest(
+                "采集用途只能是 latestIssue 或 drawNumber".to_string(),
+            ));
+        }
+    }
+
+    let page = state
+        .draws
+        .list_api_draw_source_crawl_snapshots(ApiDrawSourceCrawlSnapshotQuery {
+            lottery_id: optional_query_text(query.lottery_id.as_deref()),
+            source_id: optional_query_text(query.source_id.as_deref()),
+            request_kind,
+            success: query.success,
+            issue: optional_query_text(query.issue.as_deref()),
+            page: PageRequest::new(query.page, query.page_size),
+        })
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(ApiDrawSourceCrawlSnapshotPage {
+        items: page.items,
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
+    })))
+}
+
+/// 一键清除 API 开奖源采集快照审计记录。
+async fn clear_api_draw_source_snapshots(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
+    let deleted_count = state.draws.clear_api_draw_source_crawl_snapshots().await?;
+
+    Ok(Json(ApiEnvelope::success(ClearRecordsResult {
+        deleted_count,
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// API 开奖源采集快照列表筛选和分页查询参数。
+struct ApiDrawSourceSnapshotListQuery {
+    /// 彩种 ID。
+    lottery_id: Option<String>,
+    /// 开奖源 ID。
+    source_id: Option<String>,
+    /// 采集用途。
+    request_kind: Option<String>,
+    /// 是否采集成功。
+    success: Option<bool>,
+    /// 期号关键字。
+    issue: Option<String>,
+    /// 页码。
+    page: Option<usize>,
+    /// 每页条数。
+    page_size: Option<usize>,
+}
+
+/// 归一化后台列表查询文本，空字符串视为未筛选。
+fn optional_query_text(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 /// 创建新的外部 API 开奖源。

@@ -1,9 +1,20 @@
-import { Input, Banner, Button, Card, Select, SideSheet, Spin, Tag } from '@douyinfe/semi-ui';
+import {
+  Input,
+  Banner,
+  Button,
+  Card,
+  Select,
+  SideSheet,
+  Spin,
+  Tag,
+  Toast,
+} from '@douyinfe/semi-ui';
 import {
   Activity,
   CalendarPlus,
   Clock3,
   Edit3,
+  Eye,
   History,
   ListPlus,
   Lock,
@@ -24,6 +35,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { MetricCard } from '../components/MetricCard';
+import { PageControls } from '../components/PageControls';
 import { useDrawScheduler } from '../hooks/useDrawScheduler';
 import { useDraws } from '../hooks/useDraws';
 import { useLotteries } from '../hooks/useLotteries';
@@ -35,6 +47,8 @@ import type {
   SaveDrawSourceRequest,
 } from '../types/dashboard';
 import type {
+  ApiDrawSourceCrawlSnapshot,
+  ApiDrawSourceSnapshotRequestKind,
   CreateDrawIssueRequest,
   DrawAutomationRun,
   DrawIssue,
@@ -51,12 +65,13 @@ import {
   drawNumberInputMeta,
   lotteryNumberTypeText as numberTypeText,
 } from '../utils/lotteries';
+import { formatDateTime } from '../utils/format';
 
 interface DrawManagementPageProps {
   onDashboardRefresh: () => void;
 }
 
-type DrawManagementSection = 'automation' | 'issues' | 'sources';
+type DrawManagementSection = 'automation' | 'issues' | 'snapshots' | 'sources';
 
 interface DrawIssueFormState {
   drawNumber: string;
@@ -174,6 +189,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     cancel,
     close,
     create,
+    clearSnapshots,
     createSource,
     deleteSource,
     draw,
@@ -185,9 +201,18 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     loading: drawsLoading,
     previewGeneration,
     refresh: refreshDraws,
+    refreshSnapshots,
+    refreshSnapshotsWithFilter,
     refreshWithFilter,
     issuePage,
     runAutomation,
+    snapshotError,
+    snapshotLoading,
+    snapshotPage,
+    snapshotPageSize,
+    snapshots,
+    snapshotTotalCount,
+    snapshotTotalPages,
     totalCount: issueTotalCount,
     totalPages: issueTotalPages,
     saving,
@@ -229,6 +254,18 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   const [issueLotteryFilter, setIssueLotteryFilter] = useState('');
   const [issueCurrentPage, setIssueCurrentPage] = useState(1);
   const [issueCurrentPageSize, setIssueCurrentPageSize] = useState(20);
+  const [snapshotLotteryFilter, setSnapshotLotteryFilter] = useState('');
+  const [snapshotSourceFilter, setSnapshotSourceFilter] = useState('');
+  const [snapshotRequestKindFilter, setSnapshotRequestKindFilter] =
+    useState<ApiDrawSourceSnapshotRequestKind | 'all'>('all');
+  const [snapshotSuccessFilter, setSnapshotSuccessFilter] =
+    useState<'all' | 'failed' | 'success'>('all');
+  const [snapshotIssueFilter, setSnapshotIssueFilter] = useState('');
+  const [snapshotCurrentPage, setSnapshotCurrentPage] = useState(1);
+  const [snapshotCurrentPageSize, setSnapshotCurrentPageSize] = useState(20);
+  const [selectedSnapshot, setSelectedSnapshot] =
+    useState<ApiDrawSourceCrawlSnapshot | null>(null);
+  const [snapshotDetailVisible, setSnapshotDetailVisible] = useState(false);
 
   const selectedLottery = useMemo(
     () => lotteries.find((lottery) => lottery.id === form.lotteryId) ?? lotteries[0] ?? null,
@@ -273,6 +310,51 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   }, [issueCurrentPage, issueCurrentPageSize, issueLotteryFilter, refreshWithFilter]);
 
   useEffect(() => {
+    if (
+      snapshotLotteryFilter &&
+      !lotteries.some((lottery) => lottery.id === snapshotLotteryFilter)
+    ) {
+      handleSnapshotLotteryFilterChange('');
+    }
+  }, [lotteries, snapshotLotteryFilter]);
+
+  useEffect(() => {
+    if (
+      snapshotSourceFilter &&
+      !drawSources.some((source) => source.id === snapshotSourceFilter)
+    ) {
+      handleSnapshotSourceFilterChange('');
+    }
+  }, [drawSources, snapshotSourceFilter]);
+
+  useEffect(() => {
+    refreshSnapshotsWithFilter({
+      issue: snapshotIssueFilter.trim() || undefined,
+      lotteryId: snapshotLotteryFilter || undefined,
+      page: snapshotCurrentPage,
+      pageSize: snapshotCurrentPageSize,
+      requestKind:
+        snapshotRequestKindFilter === 'all'
+          ? undefined
+          : snapshotRequestKindFilter,
+      sourceId: snapshotSourceFilter || undefined,
+      success:
+        snapshotSuccessFilter === 'all'
+          ? undefined
+          : snapshotSuccessFilter === 'success',
+    });
+  }, [
+    refreshSnapshotsWithFilter,
+    snapshotCurrentPage,
+    snapshotCurrentPageSize,
+    snapshotIssueFilter,
+    snapshotLotteryFilter,
+    snapshotRequestKindFilter,
+    snapshotSourceFilter,
+    snapshotSuccessFilter,
+  ]);
+
+  useEffect(() => {
     if (schedulerStatus) {
       setSchedulerConfigForm(configFormFromStatus(schedulerStatus));
     }
@@ -294,6 +376,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     setDrawIssueSheetVisible(false);
     setSourceSheetVisible(false);
     setSchedulerSheetVisible(false);
+    setSnapshotDetailVisible(false);
   }, [section]);
 
   const overview = useMemo(
@@ -312,6 +395,18 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
         })),
     [lotteries],
   );
+  const snapshotSourceOptions = useMemo(
+    () =>
+      drawSources
+        .filter((source) => source.mode === 'api')
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+        .map((source) => ({
+          value: source.id,
+          label: source.name,
+        })),
+    [drawSources],
+  );
 
   const handleIssueLotteryFilterChange = (lotteryId: string) => {
     setIssueLotteryFilter(lotteryId);
@@ -328,8 +423,73 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     setIssueCurrentPageSize(nextPageSize);
   };
 
+  const handleSnapshotLotteryFilterChange = (lotteryId: string) => {
+    setSnapshotLotteryFilter(lotteryId);
+    setSnapshotCurrentPage(1);
+  };
+
+  const handleSnapshotSourceFilterChange = (sourceId: string) => {
+    setSnapshotSourceFilter(sourceId);
+    setSnapshotCurrentPage(1);
+  };
+
+  const handleSnapshotRequestKindChange = (
+    requestKind: ApiDrawSourceSnapshotRequestKind | 'all',
+  ) => {
+    setSnapshotRequestKindFilter(requestKind);
+    setSnapshotCurrentPage(1);
+  };
+
+  const handleSnapshotSuccessFilterChange = (
+    successFilter: 'all' | 'failed' | 'success',
+  ) => {
+    setSnapshotSuccessFilter(successFilter);
+    setSnapshotCurrentPage(1);
+  };
+
+  const handleSnapshotIssueFilterChange = (issue: string) => {
+    setSnapshotIssueFilter(issue);
+    setSnapshotCurrentPage(1);
+  };
+
+  const handleSnapshotPageChange = (nextPage: number) => {
+    const safeNextPage = Math.max(1, Math.min(nextPage, snapshotTotalPages || 1));
+    setSnapshotCurrentPage(safeNextPage);
+  };
+
+  const handleSnapshotPageSizeChange = (nextPageSize: number) => {
+    setSnapshotCurrentPage(1);
+    setSnapshotCurrentPageSize(nextPageSize);
+  };
+
+  const openSnapshotDetail = (snapshot: ApiDrawSourceCrawlSnapshot) => {
+    setSelectedSnapshot(snapshot);
+    setSnapshotDetailVisible(true);
+  };
+
+  const clearSnapshotRecords = async () => {
+    if (
+      !window.confirm(
+        '确定一键清除全部 API 开奖源采集快照吗？该操作只删除第三方接口抓取审计记录，不会影响开奖源配置、开奖期号、调度或开奖结果。',
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const result = await clearSnapshots();
+      setSelectedSnapshot(null);
+      setSnapshotDetailVisible(false);
+      setSnapshotCurrentPage(1);
+      Toast.success(`已清除 ${result.deletedCount} 条 API 采集快照`);
+    } catch {
+      Toast.error('API 采集快照清除失败，请查看接口错误提示');
+    }
+  };
+
   const refreshAll = () => {
     refreshDraws();
+    refreshSnapshots();
     refreshLotteries();
     refreshScheduler();
   };
@@ -504,7 +664,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   };
 
   const loading = drawsLoading || lotteriesLoading;
-  const error = drawError ?? lotteryError ?? schedulerError;
+  const error = drawError ?? lotteryError ?? schedulerError ?? snapshotError;
   const generationCountValue = parseGenerationCount(generationCount);
   const generationActionDisabled =
     !selectedLottery || saving || !automationNow.trim() || !generationCountValue;
@@ -586,6 +746,35 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
         />
       ) : null}
 
+      {section === 'snapshots' ? (
+        <ApiSnapshotSection
+          issueFilter={snapshotIssueFilter}
+          loading={snapshotLoading}
+          lotteryFilter={snapshotLotteryFilter}
+          lotteryFilterOptions={issueFilterOptions}
+          onClearSnapshots={() => void clearSnapshotRecords()}
+          page={snapshotPage}
+          pageSize={snapshotPageSize || snapshotCurrentPageSize}
+          requestKindFilter={snapshotRequestKindFilter}
+          saving={saving}
+          snapshots={snapshots}
+          sourceFilter={snapshotSourceFilter}
+          sourceFilterOptions={snapshotSourceOptions}
+          successFilter={snapshotSuccessFilter}
+          totalCount={snapshotTotalCount}
+          totalPages={snapshotTotalPages}
+          lotteries={lotteries}
+          onIssueFilterChange={handleSnapshotIssueFilterChange}
+          onLotteryFilterChange={handleSnapshotLotteryFilterChange}
+          onOpenDetail={openSnapshotDetail}
+          onPageChange={handleSnapshotPageChange}
+          onPageSizeChange={handleSnapshotPageSizeChange}
+          onRequestKindFilterChange={handleSnapshotRequestKindChange}
+          onSourceFilterChange={handleSnapshotSourceFilterChange}
+          onSuccessFilterChange={handleSnapshotSuccessFilterChange}
+        />
+      ) : null}
+
       {section === 'automation' ? (
         <AutomationManagementSection
           automationNow={automationNow}
@@ -660,6 +849,12 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
         onClose={() => setSchedulerSheetVisible(false)}
         onSubmit={() => void saveSchedulerConfig()}
       />
+
+      <ApiSnapshotDetailSideSheet
+        snapshot={selectedSnapshot}
+        visible={snapshotDetailVisible}
+        onClose={() => setSnapshotDetailVisible(false)}
+      />
     </div>
   );
 }
@@ -671,6 +866,7 @@ const DRAW_MANAGEMENT_SECTIONS: Array<{
 }> = [
   { key: 'issues', label: '期号管理', summary: '创建、封盘、开奖和取消' },
   { key: 'sources', label: '开奖源配置', summary: 'API 来源和彩种复用' },
+  { key: 'snapshots', label: '采集快照', summary: 'API 原始响应比对' },
   { key: 'automation', label: '自动任务与调度', summary: '补期、开奖、结算和历史' },
 ];
 
@@ -998,6 +1194,255 @@ function SourceManagementSection({
         ))}
       </div>
     </section>
+  );
+}
+
+function ApiSnapshotSection({
+  issueFilter,
+  loading,
+  lotteries,
+  lotteryFilter,
+  lotteryFilterOptions,
+  onClearSnapshots,
+  onIssueFilterChange,
+  onLotteryFilterChange,
+  onOpenDetail,
+  onPageChange,
+  onPageSizeChange,
+  onRequestKindFilterChange,
+  onSourceFilterChange,
+  onSuccessFilterChange,
+  page,
+  pageSize,
+  requestKindFilter,
+  saving,
+  snapshots,
+  sourceFilter,
+  sourceFilterOptions,
+  successFilter,
+  totalCount,
+  totalPages,
+}: {
+  issueFilter: string;
+  loading: boolean;
+  lotteries: LotteryKind[];
+  lotteryFilter: string;
+  lotteryFilterOptions: Array<{ value: string; label: string }>;
+  onClearSnapshots: () => void;
+  onIssueFilterChange: (value: string) => void;
+  onLotteryFilterChange: (value: string) => void;
+  onOpenDetail: (snapshot: ApiDrawSourceCrawlSnapshot) => void;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+  onRequestKindFilterChange: (value: ApiDrawSourceSnapshotRequestKind | 'all') => void;
+  onSourceFilterChange: (value: string) => void;
+  onSuccessFilterChange: (value: 'all' | 'failed' | 'success') => void;
+  page: number;
+  pageSize: number;
+  requestKindFilter: ApiDrawSourceSnapshotRequestKind | 'all';
+  saving: boolean;
+  snapshots: ApiDrawSourceCrawlSnapshot[];
+  sourceFilter: string;
+  sourceFilterOptions: Array<{ value: string; label: string }>;
+  successFilter: 'all' | 'failed' | 'success';
+  totalCount: number;
+  totalPages: number;
+}) {
+  return (
+    <Card className="rounded-md border border-line">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-ink">API 采集快照</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            查看第三方开奖源每次读取的期号、开奖号码、成功状态和原始响应。
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            disabled={loading || saving || totalCount === 0}
+            icon={<Trash2 size={15} />}
+            loading={saving}
+            type="danger"
+            onClick={onClearSnapshots}
+          >
+            一键清除
+          </Button>
+          <PageControls
+            loading={loading}
+            page={page}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            totalPages={totalPages}
+            onPageChange={onPageChange}
+            onPageSizeChange={onPageSizeChange}
+          />
+        </div>
+      </div>
+
+      <div className="mb-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+        <Select
+          className="form-input"
+          value={lotteryFilter}
+          onChange={(value) => onLotteryFilterChange(String(value ?? ''))}
+        >
+          <Select.Option value="">全部彩种</Select.Option>
+          {lotteryFilterOptions.map((option) => (
+            <Select.Option key={option.value} value={option.value}>
+              {option.label}
+            </Select.Option>
+          ))}
+        </Select>
+        <Select
+          className="form-input"
+          value={sourceFilter}
+          onChange={(value) => onSourceFilterChange(String(value ?? ''))}
+        >
+          <Select.Option value="">全部来源</Select.Option>
+          {sourceFilterOptions.map((option) => (
+            <Select.Option key={option.value} value={option.value}>
+              {option.label}
+            </Select.Option>
+          ))}
+        </Select>
+        <Select
+          className="form-input"
+          value={requestKindFilter}
+          onChange={(value) =>
+            onRequestKindFilterChange(
+              (value ?? 'all') as ApiDrawSourceSnapshotRequestKind | 'all',
+            )
+          }
+        >
+          <Select.Option value="all">全部用途</Select.Option>
+          <Select.Option value="latestIssue">最新期号</Select.Option>
+          <Select.Option value="drawNumber">开奖号码</Select.Option>
+        </Select>
+        <Select
+          className="form-input"
+          value={successFilter}
+          onChange={(value) =>
+            onSuccessFilterChange((value ?? 'all') as 'all' | 'failed' | 'success')
+          }
+        >
+          <Select.Option value="all">全部结果</Select.Option>
+          <Select.Option value="success">成功</Select.Option>
+          <Select.Option value="failed">失败</Select.Option>
+        </Select>
+        <Input
+          className="form-input"
+          placeholder="按期号筛选"
+          prefix={<Search size={14} />}
+          value={issueFilter}
+          onChange={(value) => onIssueFilterChange(value)}
+        />
+      </div>
+
+      {loading ? (
+        <div className="grid min-h-[300px] place-items-center">
+          <Spin tip="正在加载 API 采集快照" />
+        </div>
+      ) : snapshots.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1180px] text-left text-sm">
+            <thead className="border-b border-line text-xs text-slate-500">
+              <tr>
+                <th className="py-2 pr-4 font-medium">采集时间</th>
+                <th className="py-2 pr-4 font-medium">彩种</th>
+                <th className="py-2 pr-4 font-medium">开奖源</th>
+                <th className="py-2 pr-4 font-medium">用途</th>
+                <th className="py-2 pr-4 font-medium">期号对比</th>
+                <th className="py-2 pr-4 font-medium">开奖号码</th>
+                <th className="py-2 pr-4 font-medium">结果</th>
+                <th className="py-2 pr-4 font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snapshots.map((snapshot) => (
+                <tr key={snapshot.id} className="border-b border-slate-100">
+                  <td className="py-3 pr-4 align-top text-slate-600">
+                    <div className="font-medium text-ink">
+                      {formatDateTime(snapshot.crawledAt)}
+                    </div>
+                    <div className="mt-1 font-mono text-xs text-slate-400">
+                      {snapshot.id}
+                    </div>
+                  </td>
+                  <td className="py-3 pr-4 align-top">
+                    <div className="font-medium text-ink">
+                      {lotteryName(snapshot.lotteryId, lotteries)}
+                    </div>
+                    <div className="mt-1 font-mono text-xs text-slate-400">
+                      {snapshot.lotteryId}
+                    </div>
+                  </td>
+                  <td className="py-3 pr-4 align-top">
+                    <div className="font-medium text-ink">{snapshot.sourceName}</div>
+                    <div className="mt-1 flex flex-wrap gap-1 text-xs text-slate-400">
+                      <span className="font-mono">{snapshot.sourceId}</span>
+                      <span>{snapshotProviderText(snapshot.provider)}</span>
+                    </div>
+                  </td>
+                  <td className="py-3 pr-4 align-top">
+                    <Tag color={snapshot.requestKind === 'drawNumber' ? 'purple' : 'cyan'}>
+                      {snapshotRequestKindText(snapshot.requestKind)}
+                    </Tag>
+                    {snapshot.requestedIssue ? (
+                      <div className="mt-1 font-mono text-xs text-slate-500">
+                        请求 {snapshot.requestedIssue}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="py-3 pr-4 align-top text-slate-600">
+                    <div>最新：{snapshot.latestIssue ?? '-'}</div>
+                    <div className="mt-1">下一期：{snapshot.nextIssue ?? '-'}</div>
+                    {snapshot.latestDrawTime || snapshot.nextDrawTime ? (
+                      <div className="mt-1 text-xs text-slate-400">
+                        {snapshot.latestDrawTime ?? '-'} / {snapshot.nextDrawTime ?? '-'}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="py-3 pr-4 align-top">
+                    {snapshot.drawNumber ? (
+                      <span className="font-mono text-base font-semibold text-ink">
+                        {snapshot.drawNumber}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">-</span>
+                    )}
+                  </td>
+                  <td className="py-3 pr-4 align-top">
+                    <Tag color={snapshot.success ? 'green' : 'red'}>
+                      {snapshot.success ? '成功' : '失败'}
+                    </Tag>
+                    <div className="mt-1 text-xs text-slate-400">
+                      HTTP {snapshot.httpStatus ?? '-'}
+                    </div>
+                    {snapshot.errorMessage ? (
+                      <div className="mt-1 max-w-[220px] truncate text-xs text-red-500">
+                        {snapshot.errorMessage}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="py-3 pr-4 align-top">
+                    <Button
+                      icon={<Eye size={14} />}
+                      size="small"
+                      onClick={() => onOpenDetail(snapshot)}
+                    >
+                      查看详情
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+          暂无 API 采集快照。只有启用数据库并实际请求 API 开奖源后才会产生记录。
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -1553,6 +1998,90 @@ function SchedulerConfigSideSheet({
   );
 }
 
+function ApiSnapshotDetailSideSheet({
+  onClose,
+  snapshot,
+  visible,
+}: {
+  onClose: () => void;
+  snapshot: ApiDrawSourceCrawlSnapshot | null;
+  visible: boolean;
+}) {
+  const rawJsonText = snapshot?.rawResponse
+    ? JSON.stringify(snapshot.rawResponse, null, 2)
+    : '';
+
+  return (
+    <SideSheet
+      aria-label="API 采集快照详情"
+      title="API 采集快照详情"
+      visible={visible}
+      width={720}
+      onCancel={onClose}
+    >
+      {snapshot ? (
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <SnapshotDetailItem label="采集时间" value={formatDateTime(snapshot.crawledAt)} />
+            <SnapshotDetailItem label="采集结果" value={snapshot.success ? '成功' : '失败'} />
+            <SnapshotDetailItem label="彩种 ID" value={snapshot.lotteryId} />
+            <SnapshotDetailItem label="开奖源" value={`${snapshot.sourceName}（${snapshot.sourceId}）`} />
+            <SnapshotDetailItem label="供应商" value={snapshotProviderText(snapshot.provider)} />
+            <SnapshotDetailItem label="用途" value={snapshotRequestKindText(snapshot.requestKind)} />
+            <SnapshotDetailItem label="请求期号" value={snapshot.requestedIssue ?? '-'} />
+            <SnapshotDetailItem label="开奖号码" value={snapshot.drawNumber ?? '-'} />
+            <SnapshotDetailItem label="最新期号" value={snapshot.latestIssue ?? '-'} />
+            <SnapshotDetailItem label="下一期期号" value={snapshot.nextIssue ?? '-'} />
+            <SnapshotDetailItem label="最新开奖时间" value={snapshot.latestDrawTime ?? '-'} />
+            <SnapshotDetailItem label="下一期开奖时间" value={snapshot.nextDrawTime ?? '-'} />
+            <SnapshotDetailItem label="HTTP 状态" value={String(snapshot.httpStatus ?? '-')} />
+            <SnapshotDetailItem label="开奖源编码" value={snapshot.lotCode || '-'} />
+          </div>
+
+          <Field label="请求地址">
+            <div className="break-all rounded border border-line bg-slate-50 p-3 font-mono text-xs text-slate-600">
+              {snapshot.endpoint}
+            </div>
+          </Field>
+
+          {snapshot.errorMessage ? (
+            <Field label="错误信息">
+              <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-600">
+                {snapshot.errorMessage}
+              </div>
+            </Field>
+          ) : null}
+
+          <Field label="原始 JSON">
+            <pre className="max-h-72 overflow-auto rounded border border-line bg-slate-950 p-3 text-xs text-slate-100">
+              {rawJsonText || '无可解析 JSON'}
+            </pre>
+          </Field>
+
+          <Field label="原始文本">
+            <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded border border-line bg-slate-50 p-3 text-xs text-slate-600">
+              {snapshot.rawResponseText || '无原始文本'}
+            </pre>
+          </Field>
+        </div>
+      ) : (
+        <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+          请选择一条采集快照。
+        </div>
+      )}
+    </SideSheet>
+  );
+}
+
+function SnapshotDetailItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-line bg-slate-50 px-3 py-2">
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className="mt-1 break-all text-sm font-medium text-ink">{value}</div>
+    </div>
+  );
+}
+
 interface FieldProps {
   children: ReactNode;
   label: string;
@@ -2049,6 +2578,23 @@ function drawSourceProviderText(provider: DrawSourceProvider) {
     indonesiaLottery: '印尼开奖',
   };
   return labels[provider];
+}
+
+function snapshotProviderText(provider: string) {
+  if (provider === 'api68' || provider === 'kjApi' || provider === 'bbKaijiang' || provider === 'indonesiaLottery') {
+    return drawSourceProviderText(provider as DrawSourceProvider);
+  }
+  return provider || '-';
+}
+
+function snapshotRequestKindText(requestKind: string) {
+  if (requestKind === 'latestIssue') {
+    return '最新期号';
+  }
+  if (requestKind === 'drawNumber') {
+    return '开奖号码';
+  }
+  return requestKind || '-';
 }
 
 function statusText(status: DrawIssueStatus) {

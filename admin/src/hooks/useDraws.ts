@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   cancelDrawIssue,
+  clearApiDrawSourceSnapshotRecords,
   createDrawSource,
   closeDrawIssue,
   createDrawIssue,
   deleteDrawSource,
   drawIssueResult,
+  fetchApiDrawSourceSnapshots,
   fetchDrawIssues,
   fetchDrawSources,
   generateDrawIssueBatch,
@@ -16,6 +18,8 @@ import {
 } from '../api/client';
 import type { DrawSource, SaveDrawSourceRequest } from '../types/dashboard';
 import type {
+  ApiDrawSourceCrawlSnapshot,
+  ApiDrawSourceCrawlSnapshotQuery,
   CreateDrawIssueRequest,
   DrawAutomationRunRequest,
   DrawIssue,
@@ -34,18 +38,57 @@ export function useDraws() {
   const [pageSize, setPageSize] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+  const [snapshots, setSnapshots] = useState<ApiDrawSourceCrawlSnapshot[]>([]);
+  const [snapshotQuery, setSnapshotQuery] =
+    useState<ApiDrawSourceCrawlSnapshotQuery>({ page: 1, pageSize: 20 });
+  const [snapshotPage, setSnapshotPage] = useState(1);
+  const [snapshotPageSize, setSnapshotPageSize] = useState(20);
+  const [snapshotTotalCount, setSnapshotTotalCount] = useState(0);
+  const [snapshotTotalPages, setSnapshotTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [snapshotLoading, setSnapshotLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [snapshotRefreshToken, setSnapshotRefreshToken] = useState(0);
 
   const refresh = useCallback(() => {
     setRefreshToken((current) => current + 1);
+    setSnapshotRefreshToken((current) => current + 1);
   }, []);
 
   const refreshWithFilter = useCallback((nextQuery?: DrawIssueQuery) => {
     setQuery((current) => ({ ...current, ...(nextQuery ?? {}) }));
     setRefreshToken((current) => current + 1);
+  }, []);
+
+  const refreshSnapshots = useCallback(() => {
+    setSnapshotRefreshToken((current) => current + 1);
+  }, []);
+
+  const refreshSnapshotsWithFilter = useCallback(
+    (nextQuery?: ApiDrawSourceCrawlSnapshotQuery) => {
+      setSnapshotQuery((current) => ({ ...current, ...(nextQuery ?? {}) }));
+      setSnapshotRefreshToken((current) => current + 1);
+    },
+    [],
+  );
+
+  const clearSnapshots = useCallback(async () => {
+    setSaving(true);
+    setSnapshotError(null);
+    try {
+      const result = await clearApiDrawSourceSnapshotRecords();
+      setSnapshotQuery((current) => ({ ...current, page: 1 }));
+      setSnapshotRefreshToken((current) => current + 1);
+      return result;
+    } catch (requestError) {
+      setSnapshotError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -81,6 +124,36 @@ export function useDraws() {
       controller.abort();
     };
   }, [query, refreshToken]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    setSnapshotLoading(true);
+    setSnapshotError(null);
+
+    fetchApiDrawSourceSnapshots(controller.signal, snapshotQuery)
+      .then((snapshotPage) => {
+        setSnapshotPage(snapshotPage.page);
+        setSnapshotPageSize(snapshotPage.pageSize);
+        setSnapshotTotalCount(snapshotPage.totalCount);
+        setSnapshotTotalPages(snapshotPage.totalPages);
+        setSnapshots(snapshotPage.items);
+      })
+      .catch((requestError: unknown) => {
+        if (!controller.signal.aborted) {
+          setSnapshotError(errorMessage(requestError));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setSnapshotLoading(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [snapshotQuery, snapshotRefreshToken]);
 
   const create = useCallback(async (payload: CreateDrawIssueRequest) => {
     setSaving(true);
@@ -269,6 +342,7 @@ export function useDraws() {
 
   return {
     cancel,
+    clearSnapshots,
     close,
     create,
     createSource,
@@ -282,9 +356,18 @@ export function useDraws() {
     loading,
     previewGeneration,
     refresh,
+    refreshSnapshots,
+    refreshSnapshotsWithFilter,
     refreshWithFilter,
     issuePage,
     pageSize,
+    snapshotError,
+    snapshotLoading,
+    snapshotPage,
+    snapshotPageSize,
+    snapshotTotalCount,
+    snapshotTotalPages,
+    snapshots,
     totalCount,
     totalPages,
     runAutomation,

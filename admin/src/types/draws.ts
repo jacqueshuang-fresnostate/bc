@@ -1,4 +1,4 @@
-import type { DrawMode, LotteryNumberType } from './dashboard';
+import type { DrawMode, DrawSourceProvider, LotteryNumberType } from './dashboard';
 import type { LedgerEntry } from './finance';
 import type { SettlementRun } from './settlements';
 
@@ -45,6 +45,49 @@ export interface ApiDrawSourceIssueSnapshot {
   latestDrawTime: string | null;
   nextIssue: string | null;
   nextDrawTime: string | null;
+}
+
+export type ApiDrawSourceSnapshotRequestKind = 'latestIssue' | 'drawNumber';
+
+export interface ApiDrawSourceCrawlSnapshot {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  provider: DrawSourceProvider | string;
+  lotteryId: string;
+  requestKind: ApiDrawSourceSnapshotRequestKind | string;
+  requestedIssue: string | null;
+  latestIssue: string | null;
+  latestDrawTime: string | null;
+  nextIssue: string | null;
+  nextDrawTime: string | null;
+  drawNumber: string | null;
+  endpoint: string;
+  lotCode: string;
+  httpStatus: number | null;
+  success: boolean;
+  errorMessage: string | null;
+  rawResponse: unknown | null;
+  rawResponseText: string;
+  crawledAt: string;
+}
+
+export interface ApiDrawSourceCrawlSnapshotPage {
+  items: ApiDrawSourceCrawlSnapshot[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface ApiDrawSourceCrawlSnapshotQuery {
+  lotteryId?: string;
+  sourceId?: string;
+  requestKind?: ApiDrawSourceSnapshotRequestKind;
+  success?: boolean;
+  issue?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 export interface DrawSourceSyncResult {

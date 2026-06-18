@@ -9,11 +9,11 @@ use std::{
 use rand_core::{OsRng, RngCore};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use sqlx::Row;
+use sqlx::{postgres::PgRow, Row};
 
 use crate::{
     domain::{
-        draw::DrawIssue,
+        draw::{ApiDrawSourceCrawlSnapshotSummary, DrawIssue},
         lottery::{DrawMode, DrawSource, DrawSourceProvider, LotteryKind, SaveDrawSourceRequest},
     },
     error::{ApiError, ApiResult},
@@ -22,6 +22,7 @@ use crate::{
 use super::business_database::{
     enum_from_string, enum_to_string, from_json, to_json, BusinessDatabase,
 };
+use super::pagination::{ListPage, PageRequest};
 
 /// API68 福彩3D 默认开奖源 ID。
 pub const API68_FC3D_SOURCE_ID: &str = "api68-fc3d";
@@ -166,6 +167,23 @@ struct ApiDrawSourceCrawlSnapshot {
     error_message: Option<String>,
     raw_response: Option<Value>,
     raw_response_text: String,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+/// API 开奖源采集快照列表查询条件，负责把后台筛选下推到数据库。
+pub struct ApiDrawSourceCrawlSnapshotQuery<'a> {
+    /// 彩种 ID 筛选。
+    pub lottery_id: Option<&'a str>,
+    /// 开奖源 ID 筛选。
+    pub source_id: Option<&'a str>,
+    /// 采集用途筛选。
+    pub request_kind: Option<&'a str>,
+    /// 成功状态筛选。
+    pub success: Option<bool>,
+    /// 期号筛选，会匹配请求期号、最新期号和下一期期号。
+    pub issue: Option<&'a str>,
+    /// 分页参数。
+    pub page: PageRequest,
 }
 
 #[derive(Clone)]
@@ -679,6 +697,27 @@ impl ApiDrawSourceRepository {
         Ok(())
     }
 
+    /// 分页读取 API 开奖源采集快照；内存模式不落库，因此返回空列表。
+    pub async fn list_crawl_snapshots(
+        &self,
+        query: ApiDrawSourceCrawlSnapshotQuery<'_>,
+    ) -> ApiResult<ListPage<ApiDrawSourceCrawlSnapshotSummary>> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(ListPage::from_all(Vec::new(), query.page));
+        };
+
+        query_api_draw_source_crawl_snapshot_page(persistence, query).await
+    }
+
+    /// 清除数据库中全部 API 开奖源采集快照；内存模式没有快照表，直接返回 0。
+    pub async fn clear_crawl_snapshots(&self) -> ApiResult<usize> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(0);
+        };
+
+        clear_api_draw_source_crawl_snapshots(persistence).await
+    }
+
     /// 从数据库重新加载 API 开奖源配置，供后台缓存维护和手动改库后校准使用。
     pub async fn reload_from_database(&self) -> ApiResult<bool> {
         let Some(persistence) = &self.persistence else {
@@ -846,6 +885,157 @@ async fn save_api_draw_source_crawl_snapshot(
     })?;
 
     Ok(())
+}
+
+/// 数据库模式下分页查询 API 开奖源采集快照，供后台按彩种、来源、用途和期号比对。
+async fn query_api_draw_source_crawl_snapshot_page(
+    database: &BusinessDatabase,
+    query: ApiDrawSourceCrawlSnapshotQuery<'_>,
+) -> ApiResult<ListPage<ApiDrawSourceCrawlSnapshotSummary>> {
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM api_draw_source_snapshots
+         WHERE ($1::text IS NULL OR lottery_id = $1)
+           AND ($2::text IS NULL OR source_id = $2)
+           AND ($3::text IS NULL OR request_kind = $3)
+           AND ($4::boolean IS NULL OR success = $4)
+           AND (
+               $5::text IS NULL
+               OR requested_issue = $5
+               OR latest_issue = $5
+               OR next_issue = $5
+           )",
+    )
+    .bind(query.lottery_id)
+    .bind(query.source_id)
+    .bind(query.request_kind)
+    .bind(query.success)
+    .bind(query.issue)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("API 开奖源采集快照总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("API 开奖源采集快照总数无效".to_string()))?;
+    let resolved = query.page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT id, source_id, source_name, provider, lottery_id, request_kind,
+                requested_issue, latest_issue, latest_draw_time, next_issue, next_draw_time,
+                draw_number, endpoint, lot_code, http_status, success, error_message,
+                raw_response, raw_response_text,
+                to_char(crawled_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI:SS')
+                    AS crawled_at
+         FROM api_draw_source_snapshots
+         WHERE ($1::text IS NULL OR lottery_id = $1)
+           AND ($2::text IS NULL OR source_id = $2)
+           AND ($3::text IS NULL OR request_kind = $3)
+           AND ($4::boolean IS NULL OR success = $4)
+           AND (
+               $5::text IS NULL
+               OR requested_issue = $5
+               OR latest_issue = $5
+               OR next_issue = $5
+           )
+         ORDER BY api_draw_source_snapshots.crawled_at DESC, id DESC
+         LIMIT $6 OFFSET $7",
+    )
+    .bind(query.lottery_id)
+    .bind(query.source_id)
+    .bind(query.request_kind)
+    .bind(query.success)
+    .bind(query.issue)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(api_draw_source_crawl_snapshot_from_row)
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
+/// 将数据库行转换成后台采集快照摘要，统一处理 JSON 和时间字段解码。
+fn api_draw_source_crawl_snapshot_from_row(
+    row: PgRow,
+) -> ApiResult<ApiDrawSourceCrawlSnapshotSummary> {
+    Ok(ApiDrawSourceCrawlSnapshotSummary {
+        id: row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        source_id: row
+            .try_get("source_id")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        source_name: row
+            .try_get("source_name")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        provider: row
+            .try_get("provider")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        lottery_id: row
+            .try_get("lottery_id")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        request_kind: row
+            .try_get("request_kind")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        requested_issue: row
+            .try_get("requested_issue")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        latest_issue: row
+            .try_get("latest_issue")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        latest_draw_time: row
+            .try_get("latest_draw_time")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        next_issue: row
+            .try_get("next_issue")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        next_draw_time: row
+            .try_get("next_draw_time")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        draw_number: row
+            .try_get("draw_number")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        endpoint: row
+            .try_get("endpoint")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        lot_code: row
+            .try_get("lot_code")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        http_status: row
+            .try_get("http_status")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        success: row
+            .try_get("success")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        error_message: row
+            .try_get("error_message")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        raw_response: row
+            .try_get("raw_response")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        raw_response_text: row
+            .try_get("raw_response_text")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+        crawled_at: row
+            .try_get("crawled_at")
+            .map_err(|_| ApiError::Internal("API 开奖源采集快照数据读取失败".to_string()))?,
+    })
+}
+
+/// 清空 API 开奖源采集快照表，只删除审计数据，不影响开奖源配置和开奖期号。
+async fn clear_api_draw_source_crawl_snapshots(database: &BusinessDatabase) -> ApiResult<usize> {
+    let result = sqlx::query("DELETE FROM api_draw_source_snapshots")
+        .execute(database.pool())
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "API 开奖源采集快照清理失败");
+            ApiError::Internal(format!("API 开奖源采集快照清理失败：{error}"))
+        })?;
+
+    usize::try_from(result.rows_affected())
+        .map_err(|_| ApiError::Internal("API 开奖源采集快照清理数量无效".to_string()))
 }
 
 impl ApiDrawSourceStore {

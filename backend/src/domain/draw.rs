@@ -94,6 +94,68 @@ pub struct ApiDrawSourceIssueSnapshot {
     pub next_draw_time: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+/// API 开奖源单次采集快照摘要，供后台审计第三方期号、开奖号码和原始响应。
+pub struct ApiDrawSourceCrawlSnapshotSummary {
+    /// 采集快照编号。
+    pub id: String,
+    /// 开奖源配置编号。
+    pub source_id: String,
+    /// 开奖源采集时的名称快照。
+    pub source_name: String,
+    /// 开奖源供应商类型。
+    pub provider: String,
+    /// 本系统彩种 ID。
+    pub lottery_id: String,
+    /// 采集用途，`latestIssue` 表示最新期号，`drawNumber` 表示按期号取开奖号码。
+    pub request_kind: String,
+    /// 按期号取开奖号码时请求的期号。
+    pub requested_issue: Option<String>,
+    /// 第三方接口解析出的最新已开奖期号。
+    pub latest_issue: Option<String>,
+    /// 第三方接口解析出的最新已开奖时间。
+    pub latest_draw_time: Option<String>,
+    /// 第三方接口解析出的下一期期号。
+    pub next_issue: Option<String>,
+    /// 第三方接口解析出的下一期开奖时间。
+    pub next_draw_time: Option<String>,
+    /// 第三方接口解析出的开奖号码，统一用英文逗号分隔。
+    pub draw_number: Option<String>,
+    /// 本次实际请求的接口地址。
+    pub endpoint: String,
+    /// 本次使用的开奖源编码。
+    pub lot_code: String,
+    /// 第三方接口 HTTP 状态码。
+    pub http_status: Option<i32>,
+    /// 本次请求和解析是否成功。
+    pub success: bool,
+    /// 失败时保存的错误信息。
+    pub error_message: Option<String>,
+    /// 可解析为 JSON 的原始响应。
+    pub raw_response: Option<serde_json::Value>,
+    /// 原始响应文本，非 JSON 响应也会保存。
+    pub raw_response_text: String,
+    /// 快照写入数据库的时间。
+    pub crawled_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+/// API 开奖源采集快照分页响应，供后台开奖源比对页面使用。
+pub struct ApiDrawSourceCrawlSnapshotPage {
+    /// 分页数据列表。
+    pub items: Vec<ApiDrawSourceCrawlSnapshotSummary>,
+    /// 符合筛选条件的总记录数。
+    pub total_count: usize,
+    /// 当前页码，从 1 开始。
+    pub page: usize,
+    /// 每页记录数量。
+    pub page_size: usize,
+    /// 总页数。
+    pub total_pages: usize,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 /// 后台手动同步 API 开奖源后的本地校准结果。

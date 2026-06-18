@@ -12,9 +12,10 @@ use sqlx::{postgres::PgRow, Row};
 use crate::{
     domain::{
         draw::{
-            ApiDrawSourceIssueSnapshot, CreateDrawIssueRequest, DrawControlTargetScope, DrawIssue,
-            DrawIssueGenerationPreview, DrawIssueResultRequest, DrawIssueStatus,
-            DrawSourceSyncResult, LotteryDrawControl, SaveLotteryDrawControlRequest,
+            ApiDrawSourceCrawlSnapshotSummary, ApiDrawSourceIssueSnapshot, CreateDrawIssueRequest,
+            DrawControlTargetScope, DrawIssue, DrawIssueGenerationPreview, DrawIssueResultRequest,
+            DrawIssueStatus, DrawSourceSyncResult, LotteryDrawControl,
+            SaveLotteryDrawControlRequest,
         },
         lottery::{DrawMode, DrawSource, LotteryKind, LotteryNumberType, SaveDrawSourceRequest},
     },
@@ -23,7 +24,9 @@ use crate::{
 
 use super::{
     business_database::{enum_from_string, enum_to_string, BusinessDatabase},
-    draw_api::{ApiDrawSourceLatestIssue, ApiDrawSourceRepository},
+    draw_api::{
+        ApiDrawSourceCrawlSnapshotQuery, ApiDrawSourceLatestIssue, ApiDrawSourceRepository,
+    },
     draw_generation::plan_api_draw_source_target,
     pagination::{ListPage, PageRequest},
 };
@@ -239,6 +242,19 @@ impl DrawRepository {
         let mut sources = self.api_sources.list().await?;
         sources.extend(super::draw_api::platform_draw_source_summaries());
         Ok(sources)
+    }
+
+    /// 分页读取 API 开奖源采集快照，供后台排查第三方期号与本地期号差异。
+    pub async fn list_api_draw_source_crawl_snapshots(
+        &self,
+        query: ApiDrawSourceCrawlSnapshotQuery<'_>,
+    ) -> ApiResult<ListPage<ApiDrawSourceCrawlSnapshotSummary>> {
+        self.api_sources.list_crawl_snapshots(query).await
+    }
+
+    /// 清除 API 开奖源采集快照审计记录，不修改开奖源配置或本地开奖期号。
+    pub async fn clear_api_draw_source_crawl_snapshots(&self) -> ApiResult<usize> {
+        self.api_sources.clear_crawl_snapshots().await
     }
 
     /// 按彩种列表返回开奖控制配置。
