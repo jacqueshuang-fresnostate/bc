@@ -55,7 +55,7 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.1.0
         CFBundleVersion: "0.1.0"
-        CFBundleDisplayName: 鼎鸿
+        CFBundleDisplayName: 盛源
     entitlements:
       path: hongfu-mobile_iOS/hongfu-mobile_iOS.entitlements
     scheme:

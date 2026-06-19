@@ -7,8 +7,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'https://ad.16888888.live', changeOrigin: true },
-      '/ws': { target: 'https://ad.16888888.live', ws: true },
+      '/api': { target: 'https://ad.1666666.site', changeOrigin: true },
+      '/ws': { target: 'https://ad.1666666.site', ws: true },
     },
   },
 })
