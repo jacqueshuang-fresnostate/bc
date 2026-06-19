@@ -7,6 +7,7 @@ import { useBrandingStore } from '../stores/branding'
 import { showDialog, showToast } from 'vant'
 import { errorMessage, uploadUserAvatar } from '../api/user'
 import CachedAvatarImage from '../components/mobile/CachedAvatarImage.vue'
+import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
 import WalletBentoCard from '../components/mobile/WalletBentoCard.vue'
 import SettingsListGroup from '../components/mobile/SettingsListGroup.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
@@ -144,7 +145,7 @@ async function logout() {
   <div class="account-dashboard min-h-screen bg-background pb-28 text-on-surface font-body">
     <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="flex items-center gap-3">
-        <img
+        <CachedRemoteImage
           :alt="`${branding.site_name} 标志`"
           class="h-8 w-8 rounded-full border border-red-900/10 object-cover shadow-sm"
           :src="branding.logo_url"

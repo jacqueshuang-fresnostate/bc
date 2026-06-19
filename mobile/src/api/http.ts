@@ -2,7 +2,7 @@ import axios from 'axios'
 import router from '../router'
 import { useAuthStore } from '../stores/auth'
 
-const PACKAGED_API_BASE = 'https://bc.hippo-web3.cc.cd'
+const PACKAGED_API_BASE = 'https://ad.16888888.live'
 
 function normalizeApiBase(value: unknown) {
   return String(value ?? '').trim().replace(/\/+$/, '')

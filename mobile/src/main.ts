@@ -23,6 +23,7 @@ async function bootstrap() {
   const auth = useAuthStore(pinia)
   const branding = useBrandingStore(pinia)
   await auth.loadTokens()
+  await branding.loadPackagedBranding()
 
   app.use(router)
 
@@ -34,7 +35,8 @@ async function bootstrap() {
   components.forEach(c => app.use(c))
 
   app.mount('#app')
-  void branding.loadBranding()
+  // 打包 App 先使用包内品牌资源首屏兜底，再静默读取后台最新平台名称、Logo 和简介。
+  void branding.loadBranding({ force: true })
   void checkAppUpdateOnce()
   preloadMobileRoutes()
 }

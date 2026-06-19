@@ -3742,7 +3742,7 @@ if !session.scopes.contains(&required_scope) {
 
 用户登录 token 必须和管理员登录 token 使用同一安全策略：返回给客户端的是 `bcst_` 前缀 opaque Bearer token，不能包含用户 ID、用户名、邮箱、时间戳或计数器；内存会话索引和数据库 `user_sessions.token` 只能保存 `sha256:` 摘要。上线迁移清理旧明文会话后，用户端历史登录态需要重新登录。
 
-用户注册来源审计字段 `registrationLocation` 只允许后端服务端识别到的请求 IP 作为默认事实来源；手机端不得再用浏览器语言、系统国家或时区推断注册地。客户端只有在真实定位来源可用并标记为 `gps` 时才允许上报粗粒度地区字段；否则注册请求不传 `registrationLocation`，由后端从 `x-forwarded-for`、`Forwarded`、`x-real-ip`、`cf-connecting-ip` 或 `x-client-ip` 中提取 IP。后端读取到 `source=client` 或未知来源时必须清空国家、省份和城市字段，避免把语言/时区误展示成 IP 定位结果。
+用户注册来源审计字段 `registrationLocation` 只允许后端服务端识别到的请求 IP 作为默认事实来源；手机端不得再用浏览器语言、系统国家或时区推断注册地。客户端只有在真实定位来源可用并标记为 `gps` 时才允许上报粗粒度地区字段；否则注册请求不传 `registrationLocation`，由后端从 `cf-connecting-ip`、`true-client-ip`、`x-forwarded-for`、`Forwarded`、`x-real-ip` 或 `x-client-ip` 中提取 IP，且 Cloudflare 专用头优先级最高。Cloudflare 开启 IP Geolocation 并传入 `CF-IPCountry` 时，后端可以保留国家或地区字段；后端读取到 `source=client` 或未知来源时必须清空国家、省份和城市字段，避免把语言/时区误展示成 IP 定位结果。
 
 ### 4. 校验与错误矩阵
 
@@ -5238,8 +5238,8 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 ### 1. 范围 / 触发条件
 
 - 触发条件：常驻开奖调度一轮内存在多个 API 彩种或多个 API 期号需要读取开奖源。
-- 范围：`run_draw_automation`、API 最新期号读取、API 开奖号码读取、串行开奖结算链路。
-- 并发只允许发生在外部 API 读取阶段，不能扩大到资金和订单写入阶段。
+- 范围：`run_draw_automation`、API 最新期号读取、API 开奖号码读取、开奖号码写入、串行开奖结算链路。
+- 并发只允许发生在外部 API 读取和单期开奖号码写入阶段，不能扩大到资金和订单结算写入阶段。
 
 ### 2. 契约
 
@@ -5247,7 +5247,9 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 - API 最新期号读取结果用于旧期号距离判断；读取失败时保持保守行为，不执行距离跳过，继续尝试读取开奖号码。
 - 对未被旧期规则跳过、且没有后台控奖号码的 API 期号，并发读取 API 开奖号码。
 - API 开奖号码读取失败只跳过对应期号，并写入 `skippedIssues`，不得中断其它候选期号。
-- 开奖期状态写入、订单结算、派奖入账、合买状态更新必须按候选期号原顺序串行执行。
+- 开奖期开奖号码写入可以使用有限并发执行，但返回结果必须按候选期号原顺序汇总。
+- 订单结算、派奖入账、合买状态更新必须按候选期号原顺序通过 `OrderRepository::settle_with_payouts` 串行事务提交。
+- 调度器慢阶段应在单个期号完成开奖和结算后立即推送 `lottery.draw_result`，不能等整批候选期号全部完成后才统一推送。
 - 后台控奖号码优先级必须高于并发预取的 API 开奖号码。
 - API 彩种可通过 `LotteryKind.apiDrawDelaySeconds` 配置开奖源延迟秒数；该延迟只影响“是否进入 API 开奖请求候选”，不能改变 `scheduledAt`、`saleClosedAt` 或移动端倒计时。
 - 未到 `scheduledAt + apiDrawDelaySeconds` 时，调度器仍可正常封盘，但不得请求第三方 API，也不得把“等待延迟到点”写成跳过明细。
@@ -5262,12 +5264,13 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 | 后台控奖号码已启用 | 不预取 API 开奖号码，开奖时使用控奖号码 |
 | API 彩种配置延迟且尚未到延迟后时间 | 只做封盘等到期动作，不进入 API 最新期号或开奖号码预取 |
 | 非 API 彩种 | 不进入 API 预取流程 |
+| 多个期号同时写入开奖号码 | 最多按调度实现的并发上限执行写号，后续结算仍按原顺序串行 |
 
 ### 4. 必要测试
 
 - 后端需要覆盖 API 旧期跳过、API 缺失当前期跳过、已预取号码可完成 API 开奖。
 - 后端需要覆盖配置开奖源延迟时“先封盘不开奖、延迟到点后再请求 API 并开奖”。
-- 后端完整测试必须继续通过，确保并发读取没有破坏资金、订单和派奖串行一致性。
+- 后端完整测试必须继续通过，确保并发读取和并发写号没有破坏资金、订单和派奖串行一致性。
 
 ---
 

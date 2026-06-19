@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useRoute } from 'vue-router'
 import { useBrandingStore } from '../stores/branding'
 import CachedAvatarImage from '../components/mobile/CachedAvatarImage.vue'
+import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import { fetchGroupBuyDetail } from '../features/group-buy/api'
 import { useGroupBuyHall } from '../features/group-buy/composables/useGroupBuyHall'
@@ -180,7 +181,7 @@ onMounted(async () => {
     <header v-if="activeTab === 'hall'" class="group-buy-brand-header mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <h1 class="sr-only">合买大厅</h1>
       <div class="flex items-center gap-3">
-        <img
+        <CachedRemoteImage
           :alt="`${branding.site_name} 标志`"
           class="h-8 w-8 rounded-full border border-red-900/10 object-cover shadow-sm"
           :src="branding.logo_url"

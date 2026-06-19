@@ -1,6 +1,9 @@
 //! 开奖自动化服务，统一编排手动/自动开奖执行链路
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use chrono::{Duration, NaiveDateTime};
 
@@ -10,6 +13,7 @@ use crate::{
             DrawAutomationRun, DrawAutomationRunRequest, DrawAutomationSkippedIssue, DrawIssue,
             DrawIssueResultRequest, DrawIssueStatus,
         },
+        finance::LedgerEntry,
         lottery::DrawMode,
     },
     error::{ApiError, ApiResult},
@@ -18,8 +22,10 @@ use crate::{
         finance::FinanceRepository, group_buy::GroupBuyRepository, order::OrderRepository,
     },
 };
+use tokio::sync::Semaphore;
 
 const API_DRAW_RETRY_MAX_LATEST_ISSUE_DISTANCE: u64 = 5;
+const DRAW_ISSUE_CONCURRENCY_LIMIT: usize = 8;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 #[derive(Clone)]
@@ -38,6 +44,32 @@ struct LotteryAutomationConfig {
     sale_enabled: bool,
     api_draw_delay_seconds: u32,
     draw_control_enabled: bool,
+}
+
+#[derive(Clone)]
+/// 单个期号开奖、结算和派奖完成后的进度通知，供调度器实时推送开奖结果。
+pub struct DrawIssueSettlementProgress {
+    /// 已写入开奖结果的开奖期。
+    pub drawn_issue: DrawIssue,
+    /// 本期结算产生的资金流水。
+    pub ledger_entries: Vec<LedgerEntry>,
+}
+
+/// 自动开奖慢阶段的进度回调；必须保持轻量，耗时操作应由调用方自行异步派发。
+pub type DrawIssueSettlementProgressCallback =
+    Arc<dyn Fn(DrawIssueSettlementProgress) + Send + Sync>;
+
+struct DrawExecutionJob {
+    order: usize,
+    issue: DrawIssue,
+    api_draw_number: Option<String>,
+    allow_control_number: bool,
+}
+
+struct DrawExecutionOutcome {
+    order: usize,
+    source_issue: DrawIssue,
+    result: ApiResult<DrawIssue>,
 }
 
 /// 触发自动化开奖一轮任务并返回执行结果。
@@ -129,6 +161,20 @@ pub async fn draw_due_issues(
     group_buys: &GroupBuyRepository,
     payload: DrawAutomationRunRequest,
 ) -> ApiResult<DrawAutomationRun> {
+    draw_due_issues_with_progress(draws, lotteries, orders, finance, group_buys, payload, None)
+        .await
+}
+
+/// 处理到期开奖并在每个期号完成结算后回调进度，避免整批开奖完成前客户端一直等待。
+pub async fn draw_due_issues_with_progress(
+    draws: &DrawRepository,
+    lotteries: &crate::services::lottery::LotteryRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    payload: DrawAutomationRunRequest,
+    progress_callback: Option<DrawIssueSettlementProgressCallback>,
+) -> ApiResult<DrawAutomationRun> {
     let now = normalize_automation_now(&payload)?;
     let mut run = empty_draw_automation_run(&now);
     let lottery_configs = lottery_automation_configs(lotteries).await?;
@@ -177,7 +223,8 @@ pub async fn draw_due_issues(
     }
     let api_draw_number_cache = prefetch_api_draw_numbers(draws, api_draw_prefetch_issues).await;
 
-    for issue in executable_issues {
+    let mut draw_jobs = Vec::new();
+    for (order, issue) in executable_issues.into_iter().enumerate() {
         let api_draw_number = match api_draw_number_cache.get(&issue.id) {
             Some(ApiDrawNumberLookup::Ready(draw_number)) => draw_number.clone(),
             Some(ApiDrawNumberLookup::Failed(reason)) => {
@@ -187,19 +234,18 @@ pub async fn draw_due_issues(
             None => None,
         };
 
-        let draw_result = if issue.draw_mode == DrawMode::Api {
-            draws
-                .draw_with_prefetched_api_number_with_control_policy(
-                    &issue.id,
-                    api_draw_number,
-                    lottery_draw_control_enabled(&issue, &lottery_configs),
-                )
-                .await
-        } else {
-            draws
-                .draw(&issue.id, DrawIssueResultRequest::default())
-                .await
-        };
+        draw_jobs.push(DrawExecutionJob {
+            order,
+            allow_control_number: lottery_draw_control_enabled(&issue, &lottery_configs),
+            issue,
+            api_draw_number,
+        });
+    }
+
+    let draw_outcomes = execute_draw_jobs_concurrently(draws, draw_jobs).await?;
+    for outcome in draw_outcomes {
+        let issue = outcome.source_issue;
+        let draw_result = outcome.result;
         let drawn = match draw_result {
             Ok(drawn) => drawn,
             Err(error) => {
@@ -215,17 +261,16 @@ pub async fn draw_due_issues(
                 continue;
             }
         };
-        let settlement = orders.settle_draw_issue(&drawn).await?;
-        let order_ids = settlement
-            .orders
-            .iter()
-            .map(|order| order.order_id.clone())
-            .collect::<Vec<_>>();
-        let group_buy_plans = group_buys.plans_for_order_ids(&order_ids).await?;
-        let entries = finance
-            .credit_settlement_with_group_buys(&settlement, &group_buy_plans)
+        let (settlement, entries) = orders
+            .settle_with_payouts(finance, group_buys, &drawn)
             .await?;
-        group_buys.mark_settled_by_order_ids(&order_ids).await?;
+
+        if let Some(callback) = &progress_callback {
+            callback(DrawIssueSettlementProgress {
+                drawn_issue: drawn.clone(),
+                ledger_entries: entries.clone(),
+            });
+        }
 
         run.drawn_issues.push(drawn);
         run.settlement_runs.push(settlement);
@@ -233,6 +278,74 @@ pub async fn draw_due_issues(
     }
 
     Ok(run)
+}
+
+/// 并发写入本轮已满足开奖条件的期号结果；结算阶段仍由调用方按顺序提交，避免资金快照竞争。
+async fn execute_draw_jobs_concurrently(
+    draws: &DrawRepository,
+    jobs: Vec<DrawExecutionJob>,
+) -> ApiResult<Vec<DrawExecutionOutcome>> {
+    let semaphore = Arc::new(Semaphore::new(DRAW_ISSUE_CONCURRENCY_LIMIT));
+    let mut handles = Vec::new();
+
+    for job in jobs {
+        let permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| ApiError::Internal("自动开奖并发执行许可获取失败".to_string()))?;
+        let draws = draws.clone();
+        let fallback_issue = job.issue.clone();
+        handles.push((
+            fallback_issue,
+            tokio::spawn(async move {
+                let _permit = permit;
+                let issue = job.issue;
+                let result = if issue.draw_mode == DrawMode::Api {
+                    draws
+                        .draw_with_prefetched_api_number_with_control_policy(
+                            &issue.id,
+                            job.api_draw_number,
+                            job.allow_control_number,
+                        )
+                        .await
+                } else {
+                    draws
+                        .draw(&issue.id, DrawIssueResultRequest::default())
+                        .await
+                };
+                DrawExecutionOutcome {
+                    order: job.order,
+                    source_issue: issue,
+                    result,
+                }
+            }),
+        ));
+    }
+
+    let mut outcomes = Vec::new();
+    for (issue, handle) in handles {
+        match handle.await {
+            Ok(outcome) => outcomes.push(outcome),
+            Err(error) => {
+                tracing::warn!(
+                    draw_issue_id = %issue.id,
+                    lottery_id = %issue.lottery_id,
+                    issue = %issue.issue,
+                    error = %error,
+                    "自动开奖并发写入期号任务执行失败"
+                );
+                outcomes.push(DrawExecutionOutcome {
+                    order: usize::MAX,
+                    source_issue: issue,
+                    result: Err(ApiError::Internal("自动开奖并发任务执行失败".to_string())),
+                });
+            }
+        }
+    }
+    outcomes.sort_by_key(|outcome| outcome.order);
+
+    Ok(outcomes)
 }
 /// 规范化自动开奖请求中的当前时间参数。
 fn normalize_automation_now(payload: &DrawAutomationRunRequest) -> ApiResult<String> {

@@ -374,20 +374,6 @@ impl OrderRepository {
             .get_settlement(id)
     }
 
-    /// 对某期进行结算并返回执行结果。
-    pub async fn settle_draw_issue(&self, draw_issue: &DrawIssue) -> ApiResult<SettlementRun> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?;
-            let result = store.settle_draw_issue(draw_issue)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
-    }
-
     /// 在同一个业务事务中完成订单结算、派奖入账和合买计划结算状态回写。
     pub async fn settle_with_payouts(
         &self,

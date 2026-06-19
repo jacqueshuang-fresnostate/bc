@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { LotteryCard } from '../../api/lottery'
+import CachedRemoteImage from '../mobile/CachedRemoteImage.vue'
 import CountdownBadge from './CountdownBadge.vue'
 
 const props = defineProps<{
@@ -80,8 +81,10 @@ function statusClass() {
   <div v-if="variant === 'featured'" class="featured-lottery-card col-span-2 flex flex-col gap-2.5 overflow-hidden rounded-xl border border-primary/10 bg-surface-container-lowest p-3 shadow-sm shadow-red-900/5">
     <div class="flex items-start justify-between gap-2.5">
       <div class="flex min-w-0 items-center gap-2.5">
-        <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-8 w-8 flex-shrink-0 rounded-lg object-cover shadow-sm" @error="logoLoadFailed = true" />
-        <div v-else class="lottery-card-icon-fallback flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">★</div>
+        <CachedRemoteImage v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-7 w-7 flex-shrink-0 rounded-lg object-cover shadow-sm" @error="logoLoadFailed = true">
+          <div class="lottery-card-icon-fallback flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">★</div>
+        </CachedRemoteImage>
+        <div v-else class="lottery-card-icon-fallback flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">★</div>
         <div class="min-w-0">
           <h4 class="truncate font-headline text-base font-extrabold leading-tight">{{ lottery.name }}</h4>
           <div class="mt-0.5 flex flex-wrap items-center gap-1.5">
@@ -113,8 +116,10 @@ function statusClass() {
   <button v-else-if="variant === 'secondary'" class="secondary-lottery-card flex min-h-[6.45rem] w-full flex-col justify-between rounded-xl border border-primary/5 bg-surface-container-lowest p-2.5 text-left shadow-sm shadow-red-900/5 active:scale-[0.99]" @click="emit('open', lottery)">
     <div class="flex items-start justify-between gap-2">
       <div class="flex min-w-0 items-start gap-2">
-        <img v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-6 w-6 flex-shrink-0 rounded-md object-cover" @error="logoLoadFailed = true" />
-        <div v-else class="lottery-card-icon-fallback flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-primary/10 text-xs text-primary">★</div>
+        <CachedRemoteImage v-if="showImage" :src="logoUrl" :alt="`${lottery.name} 标志`" class="h-5 w-5 flex-shrink-0 rounded-md object-cover" @error="logoLoadFailed = true">
+          <div class="lottery-card-icon-fallback flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-primary/10 text-xs text-primary">★</div>
+        </CachedRemoteImage>
+        <div v-else class="lottery-card-icon-fallback flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-primary/10 text-xs text-primary">★</div>
         <div class="min-w-0">
           <span class="block truncate text-sm font-extrabold leading-tight">{{ lottery.name }}</span>
           <span :class="['lottery-state-pill mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1', statusClass()]">{{ statusLabel() }}</span>
@@ -149,13 +154,15 @@ function statusClass() {
         <span class="group-lottery-card__issue">{{ issueText }}</span>
       </div>
       <div class="group-lottery-card__logo-shell">
-        <img
+        <CachedRemoteImage
           v-if="showImage"
           :src="logoUrl"
           :alt="`${lottery.name} 标志`"
           class="group-lottery-card__logo"
           @error="logoLoadFailed = true"
-        />
+        >
+          <div class="group-lottery-card__fallback">{{ variant === 'regional' ? '◇' : '★' }}</div>
+        </CachedRemoteImage>
         <div v-else class="group-lottery-card__fallback">{{ variant === 'regional' ? '◇' : '★' }}</div>
       </div>
       <div class="group-lottery-card__digits" aria-label="最近开奖号码">
@@ -186,11 +193,11 @@ function statusClass() {
 }
 
 .home-result-ball--featured {
-  --home-result-ball-size: 1.875rem;
+  --home-result-ball-size: 1.62rem;
 }
 
 .home-result-ball--secondary {
-  --home-result-ball-size: 1.18rem;
+  --home-result-ball-size: 1.02rem;
 }
 
 .lottery-state-pill,
@@ -308,15 +315,15 @@ function statusClass() {
 
 .group-lottery-card__digit {
   display: inline-flex;
-  flex: 0 0 1.14rem;
-  width: 1.14rem;
-  height: 1.14rem;
+  flex: 0 0 1rem;
+  width: 1rem;
+  height: 1rem;
   align-items: center;
   justify-content: center;
   border-radius: 9999px;
   background: linear-gradient(180deg, #fff9da 0%, #ffd35e 100%);
   color: #8c0a15;
-  font-size: 0.88rem;
+  font-size: 0.76rem;
   font-weight: 900;
   line-height: 1;
   box-shadow:
@@ -327,8 +334,8 @@ function statusClass() {
 .group-lottery-card__logo-shell {
   grid-area: logo;
   display: flex;
-  width: 3.2rem;
-  height: 3.2rem;
+  width: 2.82rem;
+  height: 2.82rem;
   align-self: end;
   align-items: center;
   justify-content: center;
@@ -363,11 +370,11 @@ function statusClass() {
 
 @media (max-width: 374px) {
   .home-result-ball--featured {
-    --home-result-ball-size: 1.75rem;
+    --home-result-ball-size: 1.52rem;
   }
 
   .home-result-ball--secondary {
-    --home-result-ball-size: 1.08rem;
+    --home-result-ball-size: 0.96rem;
   }
 
   .group-lottery-card {
@@ -376,9 +383,9 @@ function statusClass() {
   }
 
   .group-lottery-card__logo-shell {
-    width: 3.2rem;
-    height: 3.2rem;
-    flex-basis: 3.2rem;
+    width: 2.68rem;
+    height: 2.68rem;
+    flex-basis: 2.68rem;
     border-radius: 0.62rem;
   }
 
@@ -387,10 +394,10 @@ function statusClass() {
   }
 
   .group-lottery-card__digit {
-    flex-basis: 1.04rem;
-    width: 1.04rem;
-    height: 1.04rem;
-    font-size: 0.88rem;
+    flex-basis: 0.94rem;
+    width: 0.94rem;
+    height: 0.94rem;
+    font-size: 0.72rem;
   }
 }
 </style>

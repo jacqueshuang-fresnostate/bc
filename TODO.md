@@ -18,6 +18,69 @@
 - 解决问题：下注页首次进入或切换彩种时，玩法配置、当前期号和最近开奖需要等待接口返回，页面此前容易短暂显示空白或只有加载文字，用户感知不够稳定。
 - 实施内容：新增 `BetPageSkeleton.vue`，按下注页真实结构模拟期号卡片、玩法选择、选号区域、倍数区域和底部投注栏；`DynamicBetPage.vue` 在首次加载或路由彩种与当前配置不一致时展示骨架屏，并隐藏真实底部投注栏，普通静默刷新仍保留已渲染内容，只显示“正在刷新玩法...”。
 
+## 2026-06-19 05:12 HKT 手机端首页开奖卡片小球与图片缩小
+
+- 完成任务：收小手机端首页开奖卡片里的彩种 Logo 和开奖号码球。
+- 解决问题：首页开奖卡片此前 Logo 和号码球视觉占比偏大，普通分类卡片显得较重，一屏展示彩种数量和轻盈感不够。
+- 实施内容：`HomeDrawCard.vue` 中高频精选大卡 Logo 从 `h-8 w-8` 调整为 `h-7 w-7`，二级卡 Logo 从 `h-6 w-6` 调整为 `h-5 w-5`；精选大卡号码球、二级卡号码球、普通分类卡 `group-lottery-card__digit` 和 `group-lottery-card__logo-shell` 同步缩小，小屏媒体查询也同步收敛；架构说明补充首页卡片尺寸口径。
+
+## 2026-06-19 03:37 HKT iOS 真机验证与无签名 IPA 重打包
+
+- 完成任务：使用已连接的 iPad 对手机端 iOS 包进行真机安装启动验证，并在验证通过后重新生成无签名 IPA。
+- 解决问题：此前只完成包内结构和品牌资源静态校验，仍需要确认真实 iOS 设备上不会点击后闪退，并确认主屏图标已经切换为后台配置的 Logo。
+- 实施内容：同步 `mobile/dist`、`mobile-branding.json`、本地 `app-logo.png` 和 iOS `AppIcon.appiconset` 到临时真机测试工程；使用已有 `arm64/release/libapp.a` 跳过卡住的 Tauri Rust 构建脚本，构建 release 真机 App；通过 `xcrun devicectl` 安装并启动 `com.hongfu.app`；从设备生成 App 图标到 `mobile/src-tauri/gen/apple/build/device-test/hongfu-ios-app-icon.png`；验证通过后重新执行 `pnpm tauri:build:ios-unsigned` 生成最终无签名 IPA。
+- 验证结果：设备 `iPad mini (6th generation)` 安装成功，应用列表显示“鼎鸿 / com.hongfu.app / 0.1.0”；启动后 `HongFu`、`WebKit.WebContent`、`WebKit.Networking` 和 `WebKit.GPU` 进程仍在，未生成新的 `HongFu` 或“鼎鸿”崩溃报告；设备生成的 App 图标不是占位图，内容为后台 Logo；最终 IPA 路径为 `mobile/src-tauri/gen/apple/build/DingHong-display-HongFu-internal-unsigned.ipa`，大小 6.8M，解包确认 `Payload/HongFu.app/HongFu`、`CFBundleDisplayName=鼎鸿`、`assets/mobile-branding.json` 和 `assets/app-logo.png` 均正确；`git diff --check` 通过。
+
+## 2026-06-19 03:24 HKT 手机端 IPA 品牌资源同步与远程图片缓存
+
+- 完成任务：让无签名 IPA 打包时同步后台手机端 Logo，并把手机端常见远程图片接入本地缓存。
+- 解决问题：iOS IPA 企业签名后桌面图标和 App 内首屏品牌仍可能使用旧资源；同时首页彩种 Logo、全部彩种页 Logo 和 Banner 都是图床网络地址，进入页面时会反复请求同一批图片。
+- 实施内容：新增 `mobile/scripts/sync-branding-assets.mjs`，从后台 `GET /api/user/mobile/site-config` 下载 Logo，生成 `app-logo.png`、`logo.svg`、`mobile-branding.json`，并重写临时 iOS `AppIcon.appiconset`；无签名 IPA 脚本默认执行品牌同步；`branding` store 启动时先读取包内 `mobile-branding.json`，再静默刷新后台配置；新增 `CachedRemoteImage` 通用组件，首页彩种卡片、全部彩种页、开奖记录卡片、平台页头 Logo 和首页 Banner 改为使用缓存图片。
+- 验证结果：`cd mobile && pnpm build` 通过；品牌同步脚本可生成包内品牌资源和 iOS 多尺寸图标；`cd mobile && pnpm tauri:build:ios-unsigned -- --output src-tauri/gen/apple/build/DingHong-display-HongFu-internal-unsigned.ipa` 通过，生成 6.8M 无签名 IPA；解包确认 `Payload/HongFu.app/HongFu`、`CFBundleDisplayName=鼎鸿`、`CFBundleExecutable=HongFu`，并确认 `assets/mobile-branding.json` 指向包内 `/app-logo.png`；`bash -n mobile/scripts/build-unsigned-ipa.sh`、`node --check mobile/scripts/sync-branding-assets.mjs`、`git diff --check` 均通过。
+
+## 2026-06-19 03:10 HKT 开奖调度慢阶段并发与逐期推送优化
+
+- 完成任务：优化平台开奖和 API 开奖同时较多时的调度慢阶段处理。
+- 解决问题：调度慢阶段此前按期号串行写入开奖号码、结算订单、派奖入账，并且等整批慢阶段全部完成后才统一推送开奖结果；当同时开启很多平台开奖彩种时，前面的彩种即使已经处理完成，手机端也可能长时间停留在“开奖中”。
+- 实施内容：自动开奖阶段先收集到期候选，再使用最多 8 个并发任务写入开奖号码；订单、资金和合买结算改为走 `OrderRepository::settle_with_payouts` 统一事务入口，避免拆分保存造成半边状态；调度器慢阶段新增单期结算进度回调，每个期号完成开奖和结算后立即推送 `lottery.draw_result` 和余额变化，不再等待整批彩种全部结束。
+- 并发边界：只并发“开奖号码写入”这种可独立执行的阶段；订单状态、资金流水、派奖和合买结算仍按顺序通过同一个跨仓储事务提交，避免并发快照覆盖。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml automation_ -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler_ -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml` 均通过（354 个测试成功）。
+
+## 2026-06-19 02:55 HKT 清空手机端默认品牌文案
+
+- 完成任务：调整手机端默认品牌配置，未读取到后台配置前不再显示“鸿福”。
+- 解决问题：手机端打包 App 启动时会先渲染本地 `DEFAULT_BRANDING`，此前默认名称为“鸿福”，在后台动态平台名称和 Logo 尚未返回前会短暂显示错误品牌。
+- 实施内容：将 `DEFAULT_BRANDING.site_name`、`slogan` 和 `footer_text` 改为空字符串；默认 Logo 改为透明 1 像素占位图，避免空 `src` 触发破图或请求当前页面；同步清空 `mobile/index.html` 的静态标题，避免 JS 接管前短暂显示“鸿福”；提现方式页顶部标题改为读取动态品牌配置，后台 `site-config` 加载成功后仍按接口返回的平台名称、Logo 和介绍覆盖默认值。
+- 验证结果：`cd mobile && pnpm tauri:build:ios-unsigned --output src-tauri/gen/apple/build/DingHong-display-HongFu-internal-unsigned.ipa` 通过；解包确认 `Payload/HongFu.app/HongFu`、`CFBundleDisplayName=鼎鸿`、`CFBundleExecutable=HongFu`，并确认 App 内前端资源已无默认“鸿福”“开启您的幸运之门”“传承现代美学”残留；`git diff --check` 通过。
+
+## 2026-06-19 02:48 HKT 修正手机端动态品牌和广告刷新链路
+
+- 完成任务：加强手机端启动和首页进入时的动态品牌、Logo、介绍和广告配置刷新。
+- 解决问题：打包 App 内平台名称、Logo、广告标题依赖后端配置，但此前品牌配置只在启动后普通加载一次，首页再次进入不会强制刷新；如果后台刚更新配置或 App 命中旧缓存，容易继续显示默认 Logo 或旧标题。排查同时确认当前打包域名 `https://ad.16888888.live` 的 `/api/user/mobile/site-config` 已返回 `platformName=鼎鸿` 和图床 Logo，但 `/api/user/mobile/advertisements` 返回空数组，因此该域名下手机端轮播广告当前没有可展示数据。
+- 实施内容：`branding` Pinia store 增加强制刷新、加载状态、更新时间和“未配置”过滤；App 启动时使用 `force` 读取后台品牌配置；首页挂载时同步强刷品牌配置和手机端广告列表；同步修正架构说明中打包默认后端域名，并补充动态配置依赖当前 `API_BASE` 的前端规范。
+- 验证结果：已通过 `curl https://ad.16888888.live/api/user/mobile/site-config` 验证动态平台名和 Logo 可达；`curl https://ad.16888888.live/api/user/mobile/advertisements` 当前返回空数组，后续需要在同一后台域名下新增并启用手机端轮播广告后再验证首页广告展示。
+
+## 2026-06-19 02:30 HKT 确认 iOS 企业签名前后内部名校验规则
+
+- 完成任务：确认无签名 IPA 的正确结构，并记录企业签名后的校验要求。
+- 解决问题：用户使用 `DingHong-display-HongFu-internal-unsigned.ipa` 企业签名后仍闪退；真机崩溃日志显示签名后的应用路径再次变为 `/鼎鸿.app/鼎鸿`，并在 `wry::wkwebview::platform_webview_version` 初始化阶段触发 `CFRelease() called with NULL`，说明签名后的内部 `.app` 目录和可执行文件名被改成中文。
+- 实施内容：保留“桌面显示名=鼎鸿、内部名=HongFu”的无签名 IPA 生成方式；同步更新架构说明和前端质量规范，明确签名前后都必须校验包结构为 `Payload/HongFu.app/HongFu`，不能让企业签名平台改成 `Payload/鼎鸿.app/鼎鸿`。
+- 验证结果：确认 `DingHong-display-HongFu-internal-unsigned.ipa` 的签名前结构是正确方向；后续企业签名后的 IPA 需要重新解包校验内部 `.app` 目录、`CFBundleExecutable` 和实际可执行文件名是否仍为 `HongFu`。
+
+## 2026-06-18 15:26 HKT Cloudflare 注册来源识别修正
+
+- 完成任务：修正 Cloudflare 代理域名下用户注册 IP 和注册地区识别规则。
+- 解决问题：Cloudflare 代理后普通 `x-forwarded-for` 可能不再是最可靠的真实用户 IP，后端此前也没有读取 `CF-IPCountry`，导致后台注册来源只显示 IPv6 或无法展示国家/地区。
+- 实施内容：注册接口优先读取 `cf-connecting-ip` 和 `true-client-ip`，再读取普通反代头；新增 `CF-IPCountry` 国家或地区识别，常见国家地区代码转为中文；Nginx 反代明确透传 Cloudflare 真实 IP 与国家头；同步更新架构说明和后端接口契约。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml` 已执行；`cargo test --manifest-path backend/Cargo.toml registration_ip_parser -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml registration_client_info -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml access_repository_keeps_server_ip_country_registration_location -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml` 和 `git diff --check` 均通过。
+
+## 2026-06-18 15:12 HKT 手机端无签名 IPA 打包脚本
+
+- 完成任务：新增 macOS 无签名 IPA 打包脚本，并在手机端 `package.json` 增加快捷命令。
+- 解决问题：直接执行 `pnpm tauri:build:ios` 会因为未配置 Apple Developer Team 在 Xcode 签名阶段失败，临时手动命令又太长，不方便重复生成无签名 IPA。
+- 实施内容：新增 `mobile/scripts/build-unsigned-ipa.sh`，脚本会构建手机端前端资源、复制临时 iOS 工程、同步 `mobile/dist` 到 iOS `assets`、在临时工程中跳过 Tauri iOS Rust 构建脚本与 Xcode 签名，并封装 `Payload/*.app` 为无签名 IPA；新增 `pnpm tauri:build:ios-unsigned` 快捷命令。
+- 验证结果：`bash -n mobile/scripts/build-unsigned-ipa.sh` 通过；`bash mobile/scripts/build-unsigned-ipa.sh --skip-web-build` 和 `cd mobile && pnpm tauri:build:ios-unsigned -- --skip-web-build` 均成功生成 `/Users/huangkunhuang/Public/程序工程目录/复合工程/bc/mobile/src-tauri/gen/apple/build/鼎鸿-unsigned.ipa`，包内 `CFBundleName` 为“鼎鸿”、`CFBundleIdentifier` 为 `com.hongfu.app`。
+
 ## 2026-06-18 12:22 HKT 部署迁移 logo_url 注释顺序修复
 
 - 完成任务：修复新环境部署时 SQLx 执行 `20260603234000_add_all_column_comments.sql` 报 `column "logo_url" of relation "lotteries" does not exist` 的问题。
@@ -4111,3 +4174,10 @@
 - 解决问题：`mobile/src-tauri/icons/icon.png` 文件名是 PNG，但图像内容缺少 RGBA alpha 通道，Tauri 编译期读取图标时报 `icon ... is not RGBA`，导致宏展开失败。
 - 实施内容：保留现有图标画面内容，将图标重新编码为真正的 RGBA PNG，避免 Tauri 编译期图标解析失败。
 - 验证结果：`cd mobile/src-tauri && cargo check` 通过，`generate_context!()` 不再 panic。
+
+## 2026-06-19 01:12 HKT 修复 iOS 真机启动闪退
+
+- 完成任务：修复 Tauri iOS 真机安装后点击 App 立即闪退的问题。
+- 解决问题：iPad 崩溃报告显示主线程在 `wry::wkwebview::platform_webview_version` 初始化 WKWebView 时触发 `CFRelease() called with NULL`，崩溃路径中 `.app` 和可执行文件名均为中文“鼎鸿”；iOS 26.5 下该组合会在 Wry 查询 WebKit 版本阶段触发原生崩溃。
+- 实施内容：将 Tauri 内部 `productName`、iOS `PRODUCT_NAME` 和可执行文件名统一改为英文 `HongFu`，并通过 `CFBundleDisplayName=鼎鸿` 保留桌面显示名；同步更新 iOS 架构说明，明确后续原生产物名必须使用英文内部名。
+- 验证结果：使用已连接 iPad 真机构建并安装成功，产物路径变为 `HongFu.app/HongFu`，设备进程列表显示 `HongFu` 和 WebKit 子进程持续运行，未再生成新的“鼎鸿/HongFu”崩溃报告。

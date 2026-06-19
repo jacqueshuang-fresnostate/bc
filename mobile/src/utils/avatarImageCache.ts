@@ -1,6 +1,6 @@
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_PERSISTENT_DATA_URL_LENGTH = 900_000
-const MAX_PERSISTED_ITEMS = 80
+const MAX_PERSISTED_ITEMS = 240
 const STORAGE_PREFIX = 'bc_avatar_image_cache:'
 const STORAGE_INDEX_KEY = `${STORAGE_PREFIX}index`
 
@@ -18,7 +18,7 @@ type CachedAvatarRecord = {
 const memoryCache = new Map<string, string>()
 const pendingCache = new Map<string, Promise<string>>()
 
-export async function cachedAvatarImageUrl(value: string | null | undefined) {
+export async function cachedRemoteImageUrl(value: string | null | undefined) {
   const sourceUrl = normalizeImageUrl(value)
   if (!sourceUrl) return ''
 
@@ -37,6 +37,10 @@ export async function cachedAvatarImageUrl(value: string | null | undefined) {
   const task = resolveAvatarImageUrl(sourceUrl).finally(() => pendingCache.delete(sourceUrl))
   pendingCache.set(sourceUrl, task)
   return task
+}
+
+export async function cachedAvatarImageUrl(value: string | null | undefined) {
+  return cachedRemoteImageUrl(value)
 }
 
 async function resolveAvatarImageUrl(sourceUrl: string) {

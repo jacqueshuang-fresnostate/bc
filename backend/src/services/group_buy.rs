@@ -221,15 +221,6 @@ impl GroupBuyRepository {
             .await
     }
 
-    /// 根据结算订单 ID 把对应合买计划标记为已结算。
-    pub async fn mark_settled_by_order_ids(
-        &self,
-        order_ids: &[String],
-    ) -> ApiResult<Vec<GroupBuyPlan>> {
-        self.mutate_and_persist(|store| Ok(store.mark_settled_by_order_ids(order_ids)))
-            .await
-    }
-
     /// 封盘时取消未满单的合买计划，返回需要退款的计划。
     pub async fn cancel_unfilled_for_issue(
         &self,

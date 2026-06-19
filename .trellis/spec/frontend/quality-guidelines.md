@@ -32,6 +32,9 @@
 - 手机端 Tauri APK 相关变更需要同时跑 Web 构建、`src-tauri` Rust 检查和 `tauri android build --apk --ci`，并确认 APK 包含当前工程路径生成的多 ABI 原生库。
 - 手机端脚本约定：`pnpm tauri:build:app` 必须产出已签名的 Android release APK，以保持正常发布体积并支持本地安装验证；release 构建不启用 R8/ProGuard 混淆裁剪，避免 Tauri Android 桥接或插件代码被误裁导致启动闪退；需要调试大包时使用 `pnpm tauri:build:apk:debug`；macOS `.app` 必须使用 `pnpm tauri:build:desktop-app`。
 - 手机端 Tauri iOS 模拟器构建使用 `pnpm tauri:build:ios-sim`；首次构建前需要执行 `pnpm tauri:ios:init`，并确保本机已安装 iOS Rust targets、Xcode iOS Simulator runtime 和 `xcodegen`。如果 Xcode/SwiftPM 因 `safe.bareRepository is 'explicit'` 无法读取 SwiftPM bare repo 缓存，构建前临时设置 `git config --global safe.bareRepository all`，构建后恢复原值；真机/IPA 构建还必须配置 Apple Developer Team、签名证书和 provisioning profile。
+- 手机端 Tauri iOS 的 `productName`、Xcode `PRODUCT_NAME` 和可执行文件名必须使用英文内部名，中文桌面显示名通过 `CFBundleDisplayName=鼎鸿` 配置；不要让 `.app` 目录或可执行文件名直接使用中文，避免 iOS/WKWebView 初始化阶段原生崩溃。企业签名后需要解包确认仍是 `Payload/HongFu.app/HongFu`，如果签名平台改成 `Payload/鼎鸿.app/鼎鸿`，该包会继续闪退。
+- 手机端打包版动态品牌、Logo、介绍和轮播广告都依赖当前 `API_BASE` 指向的后端；发布包必须确认 `GET /api/user/mobile/site-config` 和 `GET /api/user/mobile/advertisements` 命中同一个后台配置库。品牌配置在启动和首页进入时要支持强制刷新，避免后台更新后继续显示默认 Logo 或旧标题。
+- 手机端无签名 IPA 打包需要同步后台 `site-config` 的 Logo 到 `mobile/dist/app-logo.png`、`mobile/dist/logo.svg`、`mobile/dist/mobile-branding.json` 和临时 iOS `AppIcon.appiconset`；首屏先读取包内 `mobile-branding.json`，再静默刷新后台配置。平台 Logo、首页 Banner、彩种 Logo 等图床图片必须优先使用通用远程图片缓存组件，避免 Tauri App 内反复请求同一张网络图片。
 
 ## 场景：手机端 Tauri APK 启动配置
 

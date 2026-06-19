@@ -13,12 +13,15 @@ import {
   type WithdrawalMethodType,
 } from '../api/user'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import { useBrandingStore } from '../stores/branding'
 import { useMobileUserDataStore } from '../stores/mobileUserData'
 
 type MethodType = WithdrawalMethodType
 
 const router = useRouter()
+const brandingStore = useBrandingStore()
 const userDataStore = useMobileUserDataStore()
+const { branding } = storeToRefs(brandingStore)
 const {
   withdrawalMethods: methods,
   loadingWithdrawalMethods: loading,
@@ -201,7 +204,10 @@ async function setDefault(item: WithdrawalMethod | null) {
   }
 }
 
-onMounted(loadMethods)
+onMounted(() => {
+  void brandingStore.loadBranding({ silent: true })
+  void loadMethods()
+})
 </script>
 
 <template>
@@ -211,7 +217,7 @@ onMounted(loadMethods)
         <button class="text-primary transition-opacity duration-200 active:scale-95 active:opacity-80" aria-label="返回" @click="router.back()">
           <LucideIcon name="arrow_back" class="h-5 w-5" />
         </button>
-        <div class="font-headline font-bold tracking-tight text-xl font-black text-primary tracking-tighter">鸿福</div>
+        <div class="font-headline text-xl font-black tracking-tight text-primary">{{ branding.site_name }}</div>
         <button class="text-primary transition-opacity duration-200 active:scale-95 active:opacity-80" aria-label="客服" @click="router.push('/support')">
           <LucideIcon name="support_agent" class="h-5 w-5" />
         </button>

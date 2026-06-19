@@ -539,7 +539,10 @@ async fn register_user(
     headers: HeaderMap,
     Json(mut payload): Json<UserRegisterRequest>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
-    attach_registration_ip(&mut payload, registration_ip_from_headers(&headers));
+    attach_registration_client_info(
+        &mut payload,
+        registration_client_info_from_headers(&headers),
+    );
     let user = state.access.register_user(payload).await?;
     let account = state.finance.account_or_create(&user.id).await?;
     let user = user_with_account_balance(user, Some(&account));
@@ -547,11 +550,37 @@ async fn register_user(
     Ok(Json(ApiEnvelope::success(user)))
 }
 
-/// 给注册请求补入服务端可见的请求 IP，客户端定位失败时也不阻断注册。
-fn attach_registration_ip(payload: &mut UserRegisterRequest, registered_ip: Option<String>) {
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+/// 注册请求的服务端来源信息，只从请求头提取，不信任客户端请求体里的推断地区。
+struct RegistrationClientInfo {
+    /// 服务端从代理链路识别到的客户端 IP。
+    registered_ip: Option<String>,
+    /// Cloudflare IP Geolocation 提供的国家或地区。
+    cloudflare_country: Option<String>,
+}
+
+/// 给注册请求补入服务端可见的请求 IP 和可信代理地区，客户端定位失败时也不阻断注册。
+fn attach_registration_client_info(
+    payload: &mut UserRegisterRequest,
+    client_info: RegistrationClientInfo,
+) {
     let mut location = payload.registration_location.take().unwrap_or_default();
-    if let Some(ip) = registered_ip {
+    let has_gps_location = matches!(
+        location.source.trim().to_ascii_lowercase().as_str(),
+        "gps" | "geo" | "geolocation"
+    );
+    if let Some(ip) = client_info.registered_ip {
         location.registered_ip = ip;
+        if !has_gps_location {
+            if let Some(country) = client_info.cloudflare_country {
+                location.country = country;
+            } else {
+                location.country.clear();
+            }
+            location.region.clear();
+            location.city.clear();
+            location.source = "ip".to_string();
+        }
         if location.source.trim().is_empty() || location.source == "unknown" {
             location.source = "ip".to_string();
         }
@@ -562,19 +591,67 @@ fn attach_registration_ip(payload: &mut UserRegisterRequest, registered_ip: Opti
     payload.registration_location = Some(location);
 }
 
-/// 从常见反向代理请求头里提取第一个客户端 IP，用于注册来源审计。
+/// 从常见反向代理请求头里提取客户端 IP 和可信地区，用于注册来源审计。
+fn registration_client_info_from_headers(headers: &HeaderMap) -> RegistrationClientInfo {
+    let registered_ip = registration_ip_from_headers(headers);
+    let cloudflare_country = registered_ip
+        .as_ref()
+        .and_then(|_| registration_cloudflare_country_from_headers(headers));
+
+    RegistrationClientInfo {
+        registered_ip,
+        cloudflare_country,
+    }
+}
+
+/// 从常见反向代理请求头里提取第一个客户端 IP，Cloudflare 专用头优先级最高。
 fn registration_ip_from_headers(headers: &HeaderMap) -> Option<String> {
     [
+        "cf-connecting-ip",
+        "true-client-ip",
         "x-forwarded-for",
         "forwarded",
         "x-real-ip",
-        "cf-connecting-ip",
         "x-client-ip",
     ]
     .iter()
     .filter_map(|name| headers.get(*name))
     .filter_map(|value| value.to_str().ok())
     .find_map(first_registration_ip)
+}
+
+/// 读取 Cloudflare IP Geolocation 的国家或地区头，过滤未知、匿名网络等占位值。
+fn registration_cloudflare_country_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("cf-ipcountry")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().to_ascii_uppercase())
+        .filter(|value| !value.is_empty())
+        .filter(|value| value != "XX" && value != "T1")
+        .map(|value| registration_country_label(&value))
+}
+
+/// 把常见国家或地区代码转为后台可读中文，未知代码保留原值便于排障。
+fn registration_country_label(code: &str) -> String {
+    match code {
+        "CN" => "中国",
+        "HK" => "中国香港",
+        "MO" => "中国澳门",
+        "TW" => "中国台湾",
+        "SG" => "新加坡",
+        "MY" => "马来西亚",
+        "TH" => "泰国",
+        "VN" => "越南",
+        "ID" => "印度尼西亚",
+        "PH" => "菲律宾",
+        "JP" => "日本",
+        "KR" => "韩国",
+        "US" => "美国",
+        "CA" => "加拿大",
+        "AU" => "澳大利亚",
+        _ => code,
+    }
+    .to_string()
 }
 
 /// 解析单个 IP 请求头值，兼容逗号链路、Forwarded 风格和 IPv4 端口。
@@ -3133,6 +3210,94 @@ mod tests {
             first_registration_ip("for=\"[2001:db8::1]\";proto=https"),
             Some("2001:db8::1".to_string())
         );
+    }
+
+    #[test]
+    /// 验证 Cloudflare 请求头优先于普通代理链路，并保留 IPv6 真实客户端地址。
+    fn registration_ip_parser_prefers_cloudflare_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "198.51.100.8, 10.0.0.2".parse().unwrap());
+        headers.insert(
+            "cf-connecting-ip",
+            "2409:8950:5353:80:c46d:c9ff:fec7:4f38".parse().unwrap(),
+        );
+        headers.insert("cf-ipcountry", "CN".parse().unwrap());
+
+        let client_info = registration_client_info_from_headers(&headers);
+
+        assert_eq!(
+            client_info.registered_ip,
+            Some("2409:8950:5353:80:c46d:c9ff:fec7:4f38".to_string())
+        );
+        assert_eq!(client_info.cloudflare_country, Some("中国".to_string()));
+    }
+
+    #[test]
+    /// 验证代理头写入 IP 时会清掉客户端伪造地区，只保留服务端可信地区。
+    fn registration_client_info_discards_client_location_without_cloudflare_country() {
+        let mut payload = UserRegisterRequest {
+            username: Some("proxy_user".to_string()),
+            email: None,
+            contact_qq: None,
+            password: "password123".to_string(),
+            invite_code: None,
+            registration_location: Some(crate::domain::user::UserRegistrationLocation {
+                registered_ip: "1.1.1.1".to_string(),
+                country: "客户端国家".to_string(),
+                region: "客户端区域".to_string(),
+                city: "客户端城市".to_string(),
+                source: "client".to_string(),
+            }),
+        };
+
+        attach_registration_client_info(
+            &mut payload,
+            RegistrationClientInfo {
+                registered_ip: Some("203.0.113.20".to_string()),
+                cloudflare_country: None,
+            },
+        );
+
+        let location = payload.registration_location.expect("location attached");
+        assert_eq!(location.registered_ip, "203.0.113.20");
+        assert_eq!(location.country, "");
+        assert_eq!(location.region, "");
+        assert_eq!(location.city, "");
+        assert_eq!(location.source, "ip");
+    }
+
+    #[test]
+    /// 验证真实 GPS 来源不会被 Cloudflare 国家头覆盖。
+    fn registration_client_info_keeps_gps_location_when_cloudflare_country_exists() {
+        let mut payload = UserRegisterRequest {
+            username: Some("gps_user".to_string()),
+            email: None,
+            contact_qq: None,
+            password: "password123".to_string(),
+            invite_code: None,
+            registration_location: Some(crate::domain::user::UserRegistrationLocation {
+                registered_ip: String::new(),
+                country: "中国".to_string(),
+                region: "广东".to_string(),
+                city: "深圳".to_string(),
+                source: "gps".to_string(),
+            }),
+        };
+
+        attach_registration_client_info(
+            &mut payload,
+            RegistrationClientInfo {
+                registered_ip: Some("203.0.113.30".to_string()),
+                cloudflare_country: Some("美国".to_string()),
+            },
+        );
+
+        let location = payload.registration_location.expect("location attached");
+        assert_eq!(location.registered_ip, "203.0.113.30");
+        assert_eq!(location.country, "中国");
+        assert_eq!(location.region, "广东");
+        assert_eq!(location.city, "深圳");
+        assert_eq!(location.source, "gps");
     }
 
     #[test]

@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { fetchLotteryGroups } from '../api/lottery'
+import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import { useBrandingStore } from '../stores/branding'
 import { useMobileUserDataStore } from '../stores/mobileUserData'
@@ -133,7 +134,7 @@ onMounted(() => {
   <div class="all-lottery-page min-h-screen bg-surface pb-28 text-on-surface font-body">
     <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="flex items-center gap-3">
-        <img
+        <CachedRemoteImage
           :alt="`${branding.site_name} 标志`"
           class="h-8 w-8 rounded-full border border-red-900/10 object-cover shadow-sm"
           :src="branding.logo_url"
@@ -184,7 +185,7 @@ onMounted(() => {
               <div class="relative z-10 flex items-start justify-between gap-4">
                 <div class="flex min-w-0 gap-4">
                   <div class="flex h-14 w-14 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-primary to-primary-container text-on-primary shadow-lg shadow-primary/20">
-                    <img v-if="showLotteryLogo(lottery)" :src="logoUrl(lottery)" :alt="`${lottery.name} 标志`" class="h-full w-full object-cover" @error="markLogoFailed(lottery)" />
+                    <CachedRemoteImage v-if="showLotteryLogo(lottery)" :src="logoUrl(lottery)" :alt="`${lottery.name} 标志`" class="h-full w-full object-cover" @error="markLogoFailed(lottery)" />
                     <LucideIcon v-else :name="iconForLottery(lottery)" class="h-6 w-6" />
                   </div>
                   <div class="min-w-0 pt-1">
@@ -217,7 +218,7 @@ onMounted(() => {
               @click="openLottery(lottery)"
             >
               <span class="mx-auto mb-3 flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-surface-container-low text-primary">
-                <img v-if="showLotteryLogo(lottery)" :src="logoUrl(lottery)" :alt="`${lottery.name} 标志`" class="h-full w-full object-cover" @error="markLogoFailed(lottery)" />
+                <CachedRemoteImage v-if="showLotteryLogo(lottery)" :src="logoUrl(lottery)" :alt="`${lottery.name} 标志`" class="h-full w-full object-cover" @error="markLogoFailed(lottery)" />
                 <LucideIcon v-else :name="iconForLottery(lottery)" class="h-6 w-6" />
               </span>
               <span class="block truncate font-headline text-sm font-bold">{{ lottery.name }}</span>
@@ -242,7 +243,7 @@ onMounted(() => {
             >
               <span class="flex min-w-0 items-center gap-4">
                 <span class="flex h-12 w-12 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/5 text-primary">
-                  <img v-if="showLotteryLogo(lottery)" :src="logoUrl(lottery)" :alt="`${lottery.name} 标志`" class="h-full w-full object-cover" @error="markLogoFailed(lottery)" />
+                  <CachedRemoteImage v-if="showLotteryLogo(lottery)" :src="logoUrl(lottery)" :alt="`${lottery.name} 标志`" class="h-full w-full object-cover" @error="markLogoFailed(lottery)" />
                   <LucideIcon v-else :name="iconForLottery(lottery)" class="h-5 w-5" />
                 </span>
                 <span class="min-w-0">
@@ -275,7 +276,7 @@ onMounted(() => {
                   @click="openLottery(lottery)"
                 >
                   <span class="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/5 text-primary">
-                    <img v-if="showLotteryLogo(lottery)" :src="logoUrl(lottery)" :alt="`${lottery.name} 标志`" class="h-full w-full object-cover" @error="markLogoFailed(lottery)" />
+                    <CachedRemoteImage v-if="showLotteryLogo(lottery)" :src="logoUrl(lottery)" :alt="`${lottery.name} 标志`" class="h-full w-full object-cover" @error="markLogoFailed(lottery)" />
                     <LucideIcon v-else :name="iconForLottery(lottery)" class="h-4 w-4" />
                   </span>
                   <span class="min-w-0">

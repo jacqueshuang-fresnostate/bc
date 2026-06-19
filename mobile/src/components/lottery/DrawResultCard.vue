@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { formatOpenedAt, lotteryLogoUrl } from '../../utils/lotteryFormat'
+import CachedRemoteImage from '../mobile/CachedRemoteImage.vue'
 import ResultBalls from './ResultBalls.vue'
 
 defineProps<{ item: any }>()
@@ -16,12 +17,14 @@ const emit = defineEmits<{ open: [any] }>()
   >
     <div class="draw-card__head">
       <div class="draw-card__lottery">
-        <img
+        <CachedRemoteImage
           v-if="lotteryLogoUrl(item)"
           class="draw-card__lottery-icon"
           :src="lotteryLogoUrl(item)"
           :alt="`${item.lottery_name || item.lottery_code} 标志`"
-        />
+        >
+          <span class="draw-card__lottery-fallback" aria-hidden="true">彩</span>
+        </CachedRemoteImage>
         <span v-else class="draw-card__lottery-fallback" aria-hidden="true">彩</span>
         <div>
           <h3>{{ item.lottery_name || item.lottery_code }}</h3>

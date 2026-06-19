@@ -287,24 +287,6 @@ impl FinanceRepository {
         Ok(result)
     }
 
-    /// 将结算金额回写给用户；合买订单按参与份额分账。
-    pub async fn credit_settlement_with_group_buys(
-        &self,
-        settlement: &SettlementRun,
-        group_buy_plans: &[GroupBuyPlan],
-    ) -> ApiResult<Vec<LedgerEntry>> {
-        let (result, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let result = store.credit_settlement_with_group_buys(settlement, group_buy_plans)?;
-            (result, store.clone())
-        };
-        self.persist(&snapshot).await?;
-        Ok(result)
-    }
-
     /// 按充值订单给上级代理发放返利；同一个充值单重复触发只会发放一次。
     pub async fn credit_recharge_rebate(
         &self,

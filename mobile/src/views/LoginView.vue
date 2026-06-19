@@ -6,8 +6,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useBrandingStore } from '../stores/branding'
 import { showToast } from 'vant'
-import LoginPageSkeleton from '../components/mobile/LoginPageSkeleton.vue'
 import { errorMessage, fetchRegisterOptions, loginUser, registerUser } from '../api/user'
+import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
+import LoginPageSkeleton from '../components/mobile/LoginPageSkeleton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,9 +21,9 @@ const regType = ref<'username' | 'email'>('username')
 const usernameRegEnabled = ref(true)
 const emailRegEnabled = ref(false)
 const inviteRequired = ref(false)
+const showPassword = ref(false)
 const registerOptionsLoading = ref(true)
 const showPageSkeleton = computed(() => registerOptionsLoading.value || !brandingLoaded.value)
-const showPassword = ref(false)
 
 function getRedirectPath() {
   const redirect = route.query.redirect
@@ -128,7 +129,7 @@ async function doRegister() {
         <div class="auth-brand text-center">
           <div class="inline-block relative">
             <div class="absolute inset-0 bg-primary/10 blur-3xl rounded-full"></div>
-            <img
+            <CachedRemoteImage
               :alt="`${branding.site_name} 标志`"
               class="auth-logo relative mx-auto rounded-full border-2 border-primary-fixed object-cover shadow-xl"
               :src="branding.logo_url"

@@ -6,6 +6,7 @@ import { showNotify } from 'vant'
 import type { HomepageBanner, HomepageGroup, LotteryCard } from '../api/lottery'
 import HomeDrawCard from '../components/lottery/HomeDrawCard.vue'
 import WinningTicker from '../components/lottery/WinningTicker.vue'
+import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
 import { useHomepageDrawUpdates } from '../composables/useHomepageDrawUpdates'
 import type { LotteryDrawMessage } from '../composables/useHomepageDrawUpdates'
 import { useBrandingStore } from '../stores/branding'
@@ -166,8 +167,8 @@ async function loadHomepage(options: { silent?: boolean; force?: boolean } = {})
   }
 }
 
-async function loadMobileAdvertisements() {
-  await homepageStore.loadMobileAdvertisements()
+async function loadMobileAdvertisements(options: { force?: boolean } = {}) {
+  await homepageStore.loadMobileAdvertisements(options)
 }
 
 onMounted(async () => {
@@ -178,9 +179,10 @@ onMounted(async () => {
     void refreshHomepageAfterDrawTime()
   }, 1000)
   await Promise.all([
+    brandingStore.loadBranding({ force: true, silent: true }),
     userDataStore.loadProfile(),
     loadHomepage(),
-    loadMobileAdvertisements(),
+    loadMobileAdvertisements({ force: true }),
   ])
 })
 
@@ -220,7 +222,7 @@ watch(visibleGroups, (groups) => {
     <div class="home-top-blush" aria-hidden="true"></div>
     <header class="home-dashboard-header mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between border-b px-6 backdrop-blur-md">
       <div class="flex items-center gap-3">
-        <img
+        <CachedRemoteImage
           :alt="`${branding.site_name} 标志`"
           class="h-8 w-8 rounded-full border border-red-900/10 object-cover shadow-sm"
           :src="branding.logo_url"
@@ -251,7 +253,7 @@ watch(visibleGroups, (groups) => {
             class="hero-banner-slide relative h-full w-full shrink-0 text-left"
             @click="openBanner(banner)"
           >
-            <img
+            <CachedRemoteImage
               v-if="heroBannerHasImageFor(banner)"
               :src="heroBannerImageUrl(banner)"
               class="hero-banner-media absolute inset-0 h-full w-full object-cover"

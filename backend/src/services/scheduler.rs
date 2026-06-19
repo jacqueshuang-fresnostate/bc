@@ -25,8 +25,9 @@ use crate::{
     services::{
         access::AccessRepository,
         automation::{
-            close_due_draw_issues, draw_due_issues, merge_draw_automation_runs,
-            refund_closed_unfilled_group_buys,
+            close_due_draw_issues, draw_due_issues_with_progress, merge_draw_automation_runs,
+            refund_closed_unfilled_group_buys, DrawIssueSettlementProgress,
+            DrawIssueSettlementProgressCallback,
         },
         business_database::{
             enum_from_string, enum_to_string, from_json, to_json, BusinessDatabase,
@@ -896,11 +897,28 @@ async fn publish_scheduler_completion_events(
     for issue in &run.automation_run.drawn_issues {
         realtime.publish_public(draw_result_event(issue));
     }
-    for entry in &run.automation_run.ledger_entries {
+    publish_ledger_balance_events(
+        realtime,
+        finance,
+        &run.automation_run.ledger_entries,
+        "settlement",
+    )
+    .await;
+    publish_scheduler_robot_events(realtime, finance, &run.robot_run).await;
+}
+
+/// 按资金流水推送用户余额变化，供派奖、流单退款和机器人扣款复用。
+async fn publish_ledger_balance_events(
+    realtime: &RealtimeHub,
+    finance: &FinanceRepository,
+    ledger_entries: &[crate::domain::finance::LedgerEntry],
+    reason: &str,
+) {
+    for entry in ledger_entries {
         match finance.account_or_create(&entry.user_id).await {
             Ok(account) => realtime.publish_user(
                 &entry.user_id,
-                balance_changed_event(&account, "settlement", entry.reference_id.as_deref()),
+                balance_changed_event(&account, reason, entry.reference_id.as_deref()),
             ),
             Err(error) => tracing::warn!(
                 user_id = %entry.user_id,
@@ -909,7 +927,15 @@ async fn publish_scheduler_completion_events(
             ),
         }
     }
-    for entry in &run.robot_run.ledger_entries {
+}
+
+/// 推送合买机器人相关的余额和订单变化。
+async fn publish_scheduler_robot_events(
+    realtime: &RealtimeHub,
+    finance: &FinanceRepository,
+    robot_run: &GroupBuyRobotRun,
+) {
+    for entry in &robot_run.ledger_entries {
         match finance.account_or_create(&entry.user_id).await {
             Ok(account) => realtime.publish_user(
                 &entry.user_id,
@@ -922,9 +948,31 @@ async fn publish_scheduler_completion_events(
             ),
         }
     }
-    for order in &run.robot_run.created_orders {
+    for order in &robot_run.created_orders {
         realtime.publish_user(&order.user_id, order_changed_event(order, "created"));
     }
+}
+
+/// 构造单期结算进度回调，使每个期号开奖完成后立刻向手机端和后台推送结果。
+fn draw_settlement_progress_callback(
+    realtime: &RealtimeHub,
+    finance: &FinanceRepository,
+) -> DrawIssueSettlementProgressCallback {
+    let realtime = realtime.clone();
+    let finance = finance.clone();
+    Arc::new(move |progress: DrawIssueSettlementProgress| {
+        realtime.publish_public(draw_result_event(&progress.drawn_issue));
+        if progress.ledger_entries.is_empty() {
+            return;
+        }
+
+        let realtime = realtime.clone();
+        let finance = finance.clone();
+        let ledger_entries = progress.ledger_entries;
+        tokio::spawn(async move {
+            publish_ledger_balance_events(&realtime, &finance, &ledger_entries, "settlement").await;
+        });
+    })
 }
 
 /// 执行一次完整开奖调度流程。
@@ -1125,15 +1173,22 @@ async fn run_draw_scheduler_slow_once_with_realtime(
     )
     .await?;
     let refund_phase_ms = refund_phase_started.elapsed().as_millis();
+    if let Some(realtime) = realtime {
+        publish_ledger_balance_events(realtime, finance, &refund_run.ledger_entries, "settlement")
+            .await;
+    }
 
     let draw_phase_started = Instant::now();
-    let draw_run = draw_due_issues(
+    let draw_progress_callback =
+        realtime.map(|realtime| draw_settlement_progress_callback(realtime, finance));
+    let draw_run = draw_due_issues_with_progress(
         draws,
         lotteries,
         orders,
         finance,
         group_buys,
         DrawAutomationRunRequest { now: now.clone() },
+        draw_progress_callback,
     )
     .await?;
     let draw_phase_ms = draw_phase_started.elapsed().as_millis();
@@ -1148,7 +1203,7 @@ async fn run_draw_scheduler_slow_once_with_realtime(
     };
 
     if let Some(realtime) = realtime {
-        publish_scheduler_completion_events(realtime, finance, &run).await;
+        publish_scheduler_robot_events(realtime, finance, &run.robot_run).await;
     }
 
     tracing::info!(

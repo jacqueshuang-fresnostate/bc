@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import DrawResultCard from '../components/lottery/DrawResultCard.vue'
 import LotteryGroupFilter from '../components/lottery/LotteryGroupFilter.vue'
 import SelectedLotteryHistorySheet from '../components/lottery/SelectedLotteryHistorySheet.vue'
+import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import BetOrderCard from '../components/orders/BetOrderCard.vue'
 import OrderDetailSheet from '../components/orders/OrderDetailSheet.vue'
@@ -136,7 +137,7 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
       class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md"
     >
       <div class="flex items-center gap-3">
-        <img
+        <CachedRemoteImage
           :alt="`${branding.site_name} 标志`"
           class="h-8 w-8 rounded-full border border-red-900/10 object-cover shadow-sm"
           :src="branding.logo_url"
