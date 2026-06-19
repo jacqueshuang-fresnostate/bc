@@ -14,8 +14,9 @@ usage() {
 参数：
   --output <路径>      指定输出 IPA 路径，默认输出到 mobile/src-tauri/gen/apple/build/<应用名>-unsigned.ipa
   --skip-web-build     跳过 pnpm build，直接使用 mobile/dist
+  --api-base <地址>    指定 App 打包后请求的后端地址，会写入 Vite 构建产物
   --branding-api-base <地址>
-                       指定用于同步打包 Logo 和 iOS 图标的后端地址
+                       指定用于同步打包 Logo 和 iOS 图标的后端地址；未指定时复用 --api-base
   --skip-branding-sync 跳过后台品牌资源同步
   --keep-temp          保留临时 iOS 工程，方便排查构建问题
   -h, --help           显示帮助
@@ -49,7 +50,16 @@ REPO_ROOT="$(cd "$MOBILE_DIR/.." && pwd)"
 IOS_DIR="$MOBILE_DIR/src-tauri/gen/apple"
 DIST_DIR="$MOBILE_DIR/dist"
 OUT_DIR="$IOS_DIR/build"
-BRANDING_API_BASE="${VITE_API_BASE_URL:-${VITE_API_BASE:-https://ad.1666666.site}}"
+DEFAULT_API_BASE="https://ad.1666666.site"
+APP_API_BASE="${VITE_API_BASE_URL:-${VITE_API_BASE:-}}"
+APP_API_BASE_EXPLICIT=0
+if [ "$APP_API_BASE" != "" ]; then
+  APP_API_BASE_EXPLICIT=1
+else
+  APP_API_BASE="$DEFAULT_API_BASE"
+fi
+BRANDING_API_BASE=""
+BRANDING_API_BASE_EXPLICIT=0
 OUTPUT_IPA=""
 SKIP_WEB_BUILD=0
 SKIP_BRANDING_SYNC=0
@@ -66,9 +76,22 @@ while [ "$#" -gt 0 ]; do
       SKIP_WEB_BUILD=1
       shift
       ;;
+    --api-base)
+      [ "${2:-}" != "" ] || fail "--api-base 需要跟一个后端地址。"
+      APP_API_BASE="$2"
+      APP_API_BASE_EXPLICIT=1
+      if [ "$BRANDING_API_BASE_EXPLICIT" -eq 0 ]; then
+        BRANDING_API_BASE="$2"
+      fi
+      shift 2
+      ;;
     --branding-api-base)
       [ "${2:-}" != "" ] || fail "--branding-api-base 需要跟一个后端地址。"
       BRANDING_API_BASE="$2"
+      BRANDING_API_BASE_EXPLICIT=1
+      if [ "$APP_API_BASE_EXPLICIT" -eq 0 ]; then
+        APP_API_BASE="$2"
+      fi
       shift 2
       ;;
     --skip-branding-sync)
@@ -98,12 +121,19 @@ require_command xcodebuild
 require_command rsync
 require_command perl
 require_command zip
+require_command unzip
 require_command curl
 require_command node
 require_command sips
 
 [ -d "$IOS_DIR" ] || fail "未找到 iOS 工程目录：$IOS_DIR。请先执行 pnpm tauri:ios:init。"
 [ -f "$IOS_DIR/hongfu-mobile.xcodeproj/project.pbxproj" ] || fail "未找到 Xcode 工程文件，请先初始化 iOS 工程。"
+APP_API_BASE="$(printf '%s' "$APP_API_BASE" | sed 's:/*$::')"
+BRANDING_API_BASE="$(printf '%s' "$BRANDING_API_BASE" | sed 's:/*$::')"
+[ "$APP_API_BASE" != "" ] || fail "缺少 App 后端地址，请通过 --api-base、--branding-api-base 或 VITE_API_BASE_URL 指定。"
+if [ "$BRANDING_API_BASE" = "" ]; then
+  BRANDING_API_BASE="$APP_API_BASE"
+fi
 
 LIBAPP="$IOS_DIR/Externals/arm64/release/libapp.a"
 if [ ! -f "$LIBAPP" ]; then
@@ -122,8 +152,8 @@ EOF
 fi
 
 if [ "$SKIP_WEB_BUILD" -eq 0 ]; then
-  log "开始构建手机端前端资源..."
-  (cd "$MOBILE_DIR" && pnpm build)
+  log "开始构建手机端前端资源，后端地址：$APP_API_BASE"
+  (cd "$MOBILE_DIR" && VITE_API_BASE_URL="$APP_API_BASE" VITE_API_BASE="$APP_API_BASE" pnpm build)
 else
   warn "已跳过前端构建，将直接使用现有 mobile/dist。"
 fi
@@ -225,6 +255,12 @@ mkdir -p "$TMP_DIR/Payload"
 cp -R "$APP_PATH" "$TMP_DIR/Payload/"
 rm -f "$OUTPUT_IPA"
 (cd "$TMP_DIR" && zip -qry "$OUTPUT_IPA" Payload)
+
+PACKAGED_BRANDING="$(unzip -p "$OUTPUT_IPA" 'Payload/*.app/assets/mobile-branding.json' 2>/dev/null || true)"
+if [ "$PACKAGED_BRANDING" != "" ]; then
+  log "包内品牌配置："
+  printf '%s\n' "$PACKAGED_BRANDING"
+fi
 
 log "无签名 IPA 已生成："
 printf '%s\n' "$OUTPUT_IPA"

@@ -2,11 +2,16 @@ import axios from 'axios'
 import router from '../router'
 import { useAuthStore } from '../stores/auth'
 
-const PACKAGED_API_BASE = 'https://ad.1666666.site'
+const DEFAULT_PACKAGED_API_BASE = 'https://ad.1666666.site'
 
 function normalizeApiBase(value: unknown) {
   return String(value ?? '').trim().replace(/\/+$/, '')
 }
+
+const CONFIGURED_API_BASE = normalizeApiBase(import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE)
+const PACKAGED_API_BASE = normalizeApiBase(
+  CONFIGURED_API_BASE || DEFAULT_PACKAGED_API_BASE,
+)
 
 function isTauriLocalOrigin() {
   const { hostname, protocol } = window.location
@@ -17,11 +22,10 @@ function isTauriLocalOrigin() {
 }
 
 function resolveApiBase() {
-  const configured = normalizeApiBase(import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE)
-  if (configured) return configured
+  if (CONFIGURED_API_BASE) return CONFIGURED_API_BASE
 
   // Tauri Android 会用 http://tauri.localhost 承载本地页面；
-  // 这个来源不能走相对 /api，否则请求会打到本地 WebView 资源服务。
+  // 打包时必须通过 VITE_API_BASE_URL 写入真实后端，避免请求本地 WebView 资源服务。
   if (isTauriLocalOrigin()) return PACKAGED_API_BASE
 
   return window.location.protocol.startsWith('http') ? '' : PACKAGED_API_BASE

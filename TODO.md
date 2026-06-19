@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-20 03:10 HKT IPA 打包运行时域名与品牌同步统一
+
+- 完成任务：修正无签名 IPA 打包时品牌同步地址和 App 运行时 API 地址可能不一致的问题。
+- 解决问题：`--branding-api-base` 过去只用于下载后台 Logo 和写入包内 `mobile-branding.json`，没有同步传给 Vite 构建；App 启动后会再次请求运行时 `/api/user/mobile/site-config`，如果运行时 API 地址不是当前平台后台，就可能把包内“盛源”覆盖成其它平台名。本次确认当前域名 `https://ad.1666666.site/api/user/mobile/site-config` 返回 `platformName=盛源`，域名本身不是旧域名。
+- 实施内容：`mobile/src/api/http.ts` 保留当前平台默认打包后端 `https://ad.1666666.site`，并继续支持 `VITE_API_BASE_URL` / `VITE_API_BASE` 覆盖；`build-unsigned-ipa.sh` 新增 `--api-base` 参数并在前端构建时写入 `VITE_API_BASE_URL`，`--branding-api-base` 默认复用同一地址；脚本生成 IPA 后会打印包内 `assets/mobile-branding.json`，便于签名前确认 IPA 内平台名、Logo 和简介。
+- 验证结果：已通过 `bash -n mobile/scripts/build-unsigned-ipa.sh`、`node --check mobile/scripts/sync-branding-assets.mjs`、`VITE_API_BASE_URL=https://ad.1666666.site pnpm build` 和 `git diff --check`；联网执行品牌同步后确认后台返回并写入 `platformName=盛源`，`mobile/dist/mobile-branding.json` 当前平台名为“盛源”。
+
 ## 2026-06-19 12:08 HKT 用户冻结强制退出登录
 
 - 完成任务：补齐用户被后台停用或锁定后的强制下线闭环。
