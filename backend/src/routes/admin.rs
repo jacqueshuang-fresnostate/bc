@@ -1011,7 +1011,7 @@ async fn login_admin(
     let login_username = normalized_admin_login_username(&payload.username);
     let password_empty = payload.password.trim().is_empty();
     let password_length = payload.password.chars().count();
-    let pay=&payload.password;
+    let pay = &payload.password.clone();
     let session = match state.access.login(payload).await {
         Ok(session) => session,
         Err(error) => {
