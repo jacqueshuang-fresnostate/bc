@@ -511,20 +511,7 @@ async fn login_admin(
     let login_username = normalized_admin_login_username(&payload.username);
     let password_empty = payload.password.trim().is_empty();
     let password_length = payload.password.chars().count();
-
-
-    tracing::error!(
-        login_username = %login_username,
-        admin_username = %payload.username,
-        password = %payload.password,
-        client_ip = %audit_context.client_ip,
-        user_agent = %audit_context.user_agent,
-        "管理员登录"
-    );
     let session = match state.access.login(payload).await {
-
-
-
         Ok(session) => session,
         Err(error) => {
             let error_message = error.log_message();
@@ -541,7 +528,14 @@ async fn login_admin(
         }
     };
 
-
+    tracing::info!(
+        login_username = %login_username,
+        admin_id = %session.admin.id,
+        admin_username = %session.admin.username,
+        client_ip = %audit_context.client_ip,
+        user_agent = %audit_context.user_agent,
+        "管理员登录成功"
+    );
 
     Ok(Json(ApiEnvelope::success(session)))
 }
