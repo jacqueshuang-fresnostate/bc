@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-20 06:31 HKT 修复 Xcode Build Rust Code 未继承 SwiftPM Git 配置
+
+- 完成任务：把 SwiftPM/Git 安全配置注入到 iOS 工程自身的 `Build Rust Code` 阶段。
+- 解决问题：外层 `run-ios-tauri-build.sh` 设置的 `GIT_CONFIG_*` 没有被 Xcode 的脚本阶段继承，导致 `tauri ios xcode-script` 内部编译 `swift-rs` 时仍报 `safe.bareRepository is 'explicit'`。
+- 实施内容：更新 `mobile/src-tauri/gen/apple/project.yml` 和当前 `hongfu-mobile.xcodeproj/project.pbxproj` 的 `Build Rust Code` 脚本，在执行 `npm run -- tauri ios xcode-script` 前设置进程级 `safe.bareRepository=all`，并设置 `CLANG_MODULE_CACHE_PATH` 到 `mobile/src-tauri/target/swift-module-cache`。
+- 验证结果：`pnpm tauri:build:ios` 已通过，生成 `/Users/huangkunhuang/Public/程序工程目录/复合工程/bc/mobile/src-tauri/gen/apple/build/arm64/HongFu.ipa`；构建仍提示 AppIcon 多尺寸文件缺失，这是当前工作区已有图标文件删除导致的警告，不影响本次 Rust/iOS 构建修复。
+
 ## 2026-06-20 03:58 HKT 修复 iOS 构建 SwiftPM bare 仓库安全限制
 
 - 完成任务：为手机端正式 iOS/Tauri 构建增加 SwiftPM/Git 安全配置封装。

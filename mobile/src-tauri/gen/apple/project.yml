@@ -83,7 +83,15 @@ targets:
       - sdk: UIKit.framework
       - sdk: WebKit.framework
     preBuildScripts:
-      - script: npm run -- tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}
+      - script: |
+          EXISTING_GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-0}"
+          export "GIT_CONFIG_KEY_${EXISTING_GIT_CONFIG_COUNT}=safe.bareRepository"
+          export "GIT_CONFIG_VALUE_${EXISTING_GIT_CONFIG_COUNT}=all"
+          export GIT_CONFIG_COUNT="$((EXISTING_GIT_CONFIG_COUNT + 1))"
+          TAURI_ROOT="$(cd "${PROJECT_DIR}/../.." && pwd)"
+          export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$TAURI_ROOT/target/swift-module-cache}"
+          mkdir -p "$CLANG_MODULE_CACHE_PATH"
+          npm run -- tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}
         name: Build Rust Code
         basedOnDependencyAnalysis: false
         outputFiles:
