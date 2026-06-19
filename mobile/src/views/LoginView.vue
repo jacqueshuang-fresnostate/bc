@@ -1,24 +1,27 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { Eye, EyeOff } from 'lucide-vue-next'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useBrandingStore } from '../stores/branding'
 import { showToast } from 'vant'
+import LoginPageSkeleton from '../components/mobile/LoginPageSkeleton.vue'
 import { errorMessage, fetchRegisterOptions, loginUser, registerUser } from '../api/user'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const brandingStore = useBrandingStore()
-const { branding } = storeToRefs(brandingStore)
+const { branding, loaded: brandingLoaded } = storeToRefs(brandingStore)
 
 const mode = ref<'login' | 'register'>('login')
 const regType = ref<'username' | 'email'>('username')
 const usernameRegEnabled = ref(true)
 const emailRegEnabled = ref(false)
 const inviteRequired = ref(false)
+const registerOptionsLoading = ref(true)
+const showPageSkeleton = computed(() => registerOptionsLoading.value || !brandingLoaded.value)
 const showPassword = ref(false)
 
 function getRedirectPath() {
@@ -37,7 +40,11 @@ onMounted(async () => {
     emailRegEnabled.value = options.emailEnabled
     inviteRequired.value = options.agentInviteRequired
     if (!options.usernameEnabled && options.emailEnabled) regType.value = 'email'
-  } catch {}
+  } catch {
+    // 注册入口配置读取失败时保留默认用户名注册，保证登录页仍可使用。
+  } finally {
+    registerOptionsLoading.value = false
+  }
 })
 
 const account = ref('')
@@ -115,7 +122,9 @@ async function doRegister() {
     </div>
 
     <main class="auth-main relative z-10 flex min-h-0 flex-1 items-center justify-center px-5 py-4">
-      <div class="w-full max-w-sm">
+      <LoginPageSkeleton v-if="showPageSkeleton" />
+
+      <div v-else class="w-full max-w-sm">
         <div class="auth-brand text-center">
           <div class="inline-block relative">
             <div class="absolute inset-0 bg-primary/10 blur-3xl rounded-full"></div>
