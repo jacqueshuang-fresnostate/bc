@@ -37,6 +37,7 @@ COMMENT ON TABLE admin_roles IS '管理员角色表';
 COMMENT ON COLUMN admin_roles.id IS '角色唯一 ID';
 COMMENT ON COLUMN admin_roles.name IS '角色名称';
 COMMENT ON COLUMN admin_roles.scopes IS '角色权限范围（JSON）';
+COMMENT ON COLUMN admin_roles.permissions IS '角色细粒度操作权限点（JSON）';
 COMMENT ON COLUMN admin_roles.created_at IS '创建时间';
 COMMENT ON COLUMN admin_roles.updated_at IS '更新时间';
 

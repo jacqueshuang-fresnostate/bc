@@ -1,4 +1,4 @@
-import type { AdminRole, AdminSummary, PermissionScope } from './dashboard';
+import type { AdminRole, AdminSummary, PermissionKey, PermissionScope } from './dashboard';
 
 export interface AdminLoginRequest {
   password: string;
@@ -7,6 +7,7 @@ export interface AdminLoginRequest {
 
 export interface CurrentAdminProfile {
   admin: AdminSummary;
+  permissions: PermissionKey[];
   role: AdminRole;
   scopes: PermissionScope[];
 }

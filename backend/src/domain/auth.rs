@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    permission::{AdminRole, PermissionScope},
+    permission::{effective_permission_keys, AdminRole, PermissionScope},
     user::AdminSummary,
 };
 
@@ -29,6 +29,8 @@ pub struct AdminAuthSession {
     pub role: AdminRole,
     /// 角色拥有的权限范围列表。
     pub scopes: Vec<PermissionScope>,
+    /// 角色拥有的有效细粒度权限点，包含旧模块权限自动展开的权限。
+    pub permissions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -41,6 +43,8 @@ pub struct CurrentAdminProfile {
     pub role: AdminRole,
     /// 角色拥有的权限范围列表。
     pub scopes: Vec<PermissionScope>,
+    /// 角色拥有的有效细粒度权限点，包含旧模块权限自动展开的权限。
+    pub permissions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -57,8 +61,14 @@ impl AdminAuthSession {
     pub fn profile(&self) -> CurrentAdminProfile {
         CurrentAdminProfile {
             admin: self.admin.clone(),
+            permissions: self.permissions.clone(),
             role: self.role.clone(),
             scopes: self.scopes.clone(),
         }
     }
+}
+
+/// 根据角色生成管理员登录会话使用的有效权限点。
+pub fn session_permissions_for_role(role: &AdminRole) -> Vec<String> {
+    effective_permission_keys(&role.scopes, &role.permissions)
 }

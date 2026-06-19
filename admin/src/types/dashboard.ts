@@ -208,9 +208,12 @@ export type PermissionScope =
   | 'robots'
   | 'rebates';
 
+export type PermissionKey = string;
+
 export interface AdminRole {
   id: string;
   name: string;
+  permissions?: PermissionKey[];
   scopes: PermissionScope[];
 }
 

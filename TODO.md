@@ -4202,3 +4202,10 @@
 - 解决问题：iPad 崩溃报告显示主线程在 `wry::wkwebview::platform_webview_version` 初始化 WKWebView 时触发 `CFRelease() called with NULL`，崩溃路径中 `.app` 和可执行文件名均为中文“鼎鸿”；iOS 26.5 下该组合会在 Wry 查询 WebKit 版本阶段触发原生崩溃。
 - 实施内容：将 Tauri 内部 `productName`、iOS `PRODUCT_NAME` 和可执行文件名统一改为英文 `HongFu`，并通过 `CFBundleDisplayName=鼎鸿` 保留桌面显示名；同步更新 iOS 架构说明，明确后续原生产物名必须使用英文内部名。
 - 验证结果：使用已连接 iPad 真机构建并安装成功，产物路径变为 `HongFu.app/HongFu`，设备进程列表显示 `HongFu` 和 WebKit 子进程持续运行，未再生成新的“鼎鸿/HongFu”崩溃报告。
+
+## 2026-06-19 13:46 HKT 后台角色权限细粒度重设计
+
+- 完成任务：将后台角色权限从单一模块范围升级为“模块权限 + 细粒度操作权限点”的双层模型。
+- 解决问题：此前管理员只要拥有财务、彩种、系统设置等模块权限，就能执行调账、清空记录、控制开奖、上传安装包、刷新缓存等高风险动作，缺少按钮级/接口级权限边界。
+- 实施内容：后端 `AdminRole` 新增 `permissions` 字段和权限点定义；登录会话返回有效权限点；后台路由鉴权优先按方法和路径校验细粒度权限，旧角色在 `permissions` 为空时继续按 `scopes` 兼容展开；数据库迁移为 `admin_roles` 添加 `permissions` JSONB 字段和中文注释；管理端角色维护 SideSheet 新增操作权限点分组勾选和高风险标识。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml permission -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml required_permission -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml`、管理端 `npm run build` 和 `git diff --check` 均通过；后端全量测试 361 个成功，管理端构建仅保留既有大 chunk 提示。

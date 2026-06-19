@@ -5,7 +5,7 @@ use axum::{
     extract::{Multipart, Path, Query, Request, State},
     http::{
         header::{self, AUTHORIZATION},
-        HeaderMap, HeaderValue,
+        HeaderMap, HeaderValue, Method,
     },
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -343,7 +343,11 @@ async fn open_admin_realtime_socket(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ApiError::Unauthorized("后台实时连接 token 不能为空".to_string()))?;
     let session = state.access.session_from_token(token).await?;
-    if !session.scopes.contains(&PermissionScope::CustomerService) {
+    if !session
+        .permissions
+        .iter()
+        .any(|permission| permission == "support.read")
+    {
         return Err(ApiError::Forbidden("后台实时客服权限不足".to_string()));
     }
 
@@ -409,7 +413,19 @@ async fn require_admin_auth(
 ) -> ApiResult<Response> {
     let token = bearer_token(&request)?;
     let session = state.access.session_from_token(token).await?;
-    if let Some(required_scope) = required_scope_for_path(request.uri().path()) {
+    if let Some(required_permission) =
+        required_permission_for_request(request.method(), request.uri().path())
+    {
+        if !session
+            .permissions
+            .iter()
+            .any(|permission| permission == required_permission)
+        {
+            return Err(ApiError::Forbidden(format!(
+                "需要后台权限点：{required_permission}"
+            )));
+        }
+    } else if let Some(required_scope) = required_scope_for_path(request.uri().path()) {
         if !session.scopes.contains(&required_scope) {
             return Err(ApiError::Forbidden(format!(
                 "permission `{required_scope:?}` is required"
@@ -419,6 +435,484 @@ async fn require_admin_auth(
 
     request.extensions_mut().insert(session);
     Ok(next.run(request).await)
+}
+
+/// 根据后台请求方法和路径匹配所需的细粒度权限点。
+fn required_permission_for_request(method: &Method, path: &str) -> Option<&'static str> {
+    let path = normalized_admin_path(path);
+
+    if path.starts_with("auth/") || path == "dashboard" {
+        return None;
+    }
+
+    if method == Method::GET && path == "finance-overview" {
+        return Some("finance.read");
+    }
+    if path == "financial-accounts" || path == "ledger-entries" {
+        return match method.clone() {
+            Method::GET => Some("finance.read"),
+            _ => None,
+        };
+    }
+    if path == "ledger-entries/clear" {
+        return match method.clone() {
+            Method::DELETE => Some("finance.ledger.clear"),
+            _ => None,
+        };
+    }
+    if path == "recharge-orders" {
+        return match method.clone() {
+            Method::GET => Some("finance.read"),
+            _ => None,
+        };
+    }
+    if path == "recharge-orders/export" {
+        return match method.clone() {
+            Method::GET => Some("recharge.export"),
+            _ => None,
+        };
+    }
+    if path == "recharge-orders/clear" {
+        return match method.clone() {
+            Method::DELETE => Some("recharge.clear"),
+            _ => None,
+        };
+    }
+    if path.starts_with("recharge-orders/") && path.ends_with("/confirm") {
+        return match method.clone() {
+            Method::POST => Some("recharge.confirm"),
+            _ => None,
+        };
+    }
+    if path == "withdrawal-orders" {
+        return match method.clone() {
+            Method::GET => Some("finance.read"),
+            _ => None,
+        };
+    }
+    if path == "withdrawal-orders/clear" {
+        return match method.clone() {
+            Method::DELETE => Some("withdrawal.clear"),
+            _ => None,
+        };
+    }
+    if path.starts_with("withdrawal-orders/")
+        && (path.ends_with("/approve") || path.ends_with("/reject"))
+    {
+        return match method.clone() {
+            Method::POST => Some("withdrawal.review"),
+            _ => None,
+        };
+    }
+    if path == "financial-adjustments" {
+        return match method.clone() {
+            Method::POST => Some("finance.adjust.create"),
+            _ => None,
+        };
+    }
+    if path == "group-buy/plans" {
+        return match method.clone() {
+            Method::GET => Some("group.buy.read"),
+            Method::POST => Some("group.buy.manage"),
+            _ => None,
+        };
+    }
+    if path == "group-buy/plans/clear" {
+        return match method.clone() {
+            Method::DELETE => Some("group.buy.clear"),
+            _ => None,
+        };
+    }
+    if path == "group-buy/plans/by-issue" {
+        return match method.clone() {
+            Method::GET => Some("group.buy.read"),
+            _ => None,
+        };
+    }
+    if path.starts_with("group-buy/plans/") {
+        return match method.clone() {
+            Method::GET => Some("group.buy.read"),
+            Method::PUT | Method::POST => Some("group.buy.manage"),
+            _ => None,
+        };
+    }
+    if path == "invitations" {
+        return match method.clone() {
+            Method::GET => Some("rebate.read"),
+            Method::POST => Some("invite.manage"),
+            _ => None,
+        };
+    }
+    if path.starts_with("invitations/") {
+        return match method.clone() {
+            Method::GET => Some("rebate.read"),
+            Method::PUT => Some("invite.manage"),
+            _ => None,
+        };
+    }
+    if path == "support/conversations" {
+        return match method.clone() {
+            Method::GET => Some("support.read"),
+            Method::POST => Some("support.manage"),
+            _ => None,
+        };
+    }
+    if path.starts_with("support/conversations/") && path.ends_with("/messages") {
+        return match method.clone() {
+            Method::POST => Some("support.reply"),
+            _ => None,
+        };
+    }
+    if path.starts_with("support/conversations/") {
+        return match method.clone() {
+            Method::GET => Some("support.read"),
+            Method::PUT | Method::DELETE => Some("support.manage"),
+            _ => None,
+        };
+    }
+    if path == "users" {
+        return match method.clone() {
+            Method::GET => Some("user.read"),
+            Method::POST => Some("user.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("users/") && path.ends_with("/password") {
+        return match method.clone() {
+            Method::PATCH => Some("user.password.reset"),
+            _ => None,
+        };
+    }
+    if path.starts_with("users/") && path.ends_with("/status") {
+        return match method.clone() {
+            Method::PATCH => Some("user.status"),
+            _ => None,
+        };
+    }
+    if path.starts_with("users/") {
+        return match method.clone() {
+            Method::GET => Some("user.read"),
+            Method::PUT => Some("user.write"),
+            Method::DELETE => Some("user.delete"),
+            _ => None,
+        };
+    }
+    if path == "admins" {
+        return match method.clone() {
+            Method::GET => Some("admin.read"),
+            Method::POST => Some("admin.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("admins/") && path.ends_with("/password") {
+        return match method.clone() {
+            Method::PATCH => Some("admin.password.reset"),
+            _ => None,
+        };
+    }
+    if path.starts_with("admins/") && path.ends_with("/status") {
+        return match method.clone() {
+            Method::PATCH => Some("admin.status"),
+            _ => None,
+        };
+    }
+    if path.starts_with("admins/") {
+        return match method.clone() {
+            Method::GET => Some("admin.read"),
+            Method::PUT => Some("admin.write"),
+            _ => None,
+        };
+    }
+    if path == "roles" {
+        return match method.clone() {
+            Method::GET => Some("role.read"),
+            Method::POST => Some("role.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("roles/") {
+        return match method.clone() {
+            Method::GET => Some("role.read"),
+            Method::PUT => Some("role.write"),
+            Method::DELETE => Some("role.delete"),
+            _ => None,
+        };
+    }
+    if path == "system-settings" {
+        return match method.clone() {
+            Method::GET => Some("system.read"),
+            _ => None,
+        };
+    }
+    if path == "system-settings/cache/reload" {
+        return match method.clone() {
+            Method::POST => Some("system.cache.reload"),
+            _ => None,
+        };
+    }
+    if path == "system-settings/chat-hall/messages/clear" {
+        return match method.clone() {
+            Method::DELETE => Some("system.chat.clear"),
+            _ => None,
+        };
+    }
+    if path.starts_with("system-settings/") {
+        return match method.clone() {
+            Method::PATCH => Some("system.write"),
+            _ => None,
+        };
+    }
+    if path == "image-bed/upload" || path == "app-packages/upload" {
+        return match method.clone() {
+            Method::POST => Some("system.upload"),
+            _ => None,
+        };
+    }
+    if path == "advertisements" {
+        return match method.clone() {
+            Method::GET => Some("system.read"),
+            Method::POST => Some("advertisement.manage"),
+            _ => None,
+        };
+    }
+    if path.starts_with("advertisements/") {
+        return match method.clone() {
+            Method::GET => Some("system.read"),
+            Method::PUT | Method::DELETE => Some("advertisement.manage"),
+            _ => None,
+        };
+    }
+    if path == "registration" {
+        return match method.clone() {
+            Method::GET => Some("user.read"),
+            Method::PUT => Some("user.write"),
+            _ => None,
+        };
+    }
+    if path == "invite-policy" {
+        return match method.clone() {
+            Method::GET => Some("rebate.read"),
+            Method::PUT => Some("invite.manage"),
+            _ => None,
+        };
+    }
+    if path == "rebate-statistics"
+        || (path.starts_with("rebate-statistics/") && path.ends_with("/records"))
+        || path == "agent-applications"
+    {
+        return match method.clone() {
+            Method::GET => Some("rebate.read"),
+            _ => None,
+        };
+    }
+    if path.starts_with("rebate-statistics/") && path.ends_with("/withdrawals") {
+        return match method.clone() {
+            Method::POST => Some("rebate.withdraw"),
+            _ => None,
+        };
+    }
+    if path.starts_with("agent-applications/") && path.ends_with("/review") {
+        return match method.clone() {
+            Method::POST => Some("agent.review"),
+            _ => None,
+        };
+    }
+    if path == "robots" {
+        return match method.clone() {
+            Method::GET => Some("robot.read"),
+            Method::POST => Some("robot.write"),
+            _ => None,
+        };
+    }
+    if path == "robots/run" {
+        return match method.clone() {
+            Method::POST => Some("robot.run"),
+            _ => None,
+        };
+    }
+    if path.starts_with("robots/") && path.ends_with("/status") {
+        return match method.clone() {
+            Method::PATCH => Some("robot.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("robots/") {
+        return match method.clone() {
+            Method::GET => Some("robot.read"),
+            Method::PUT => Some("robot.write"),
+            Method::DELETE => Some("robot.delete"),
+            _ => None,
+        };
+    }
+    if path == "draw-sources" {
+        return match method.clone() {
+            Method::GET => Some("lottery.read"),
+            Method::POST => Some("lottery.source.manage"),
+            _ => None,
+        };
+    }
+    if path == "draw-source-snapshots" {
+        return match method.clone() {
+            Method::GET => Some("lottery.read"),
+            _ => None,
+        };
+    }
+    if path == "draw-source-snapshots/clear" {
+        return match method.clone() {
+            Method::DELETE => Some("lottery.source.manage"),
+            _ => None,
+        };
+    }
+    if path.starts_with("draw-sources/") {
+        return match method.clone() {
+            Method::PUT | Method::DELETE => Some("lottery.source.manage"),
+            _ => None,
+        };
+    }
+    if path == "draw-controls" {
+        return match method.clone() {
+            Method::GET => Some("lottery.read"),
+            _ => None,
+        };
+    }
+    if path.starts_with("draw-controls/") {
+        return match method.clone() {
+            Method::GET => Some("lottery.read"),
+            Method::PUT => Some("lottery.draw.control"),
+            _ => None,
+        };
+    }
+    if path == "draw-issues" {
+        return match method.clone() {
+            Method::GET => Some("lottery.read"),
+            Method::POST => Some("lottery.issue.write"),
+            _ => None,
+        };
+    }
+    if path == "draw-issues/generate-next"
+        || path == "draw-issues/preview-generation"
+        || path == "draw-issues/generate-batch"
+    {
+        return match method.clone() {
+            Method::POST => Some("lottery.issue.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("draw-issues/") && path.ends_with("/draw") {
+        return match method.clone() {
+            Method::PATCH => Some("lottery.draw.control"),
+            _ => None,
+        };
+    }
+    if path.starts_with("draw-issues/") && (path.ends_with("/close") || path.ends_with("/cancel")) {
+        return match method.clone() {
+            Method::PATCH => Some("lottery.issue.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("draw-issues/") {
+        return match method.clone() {
+            Method::GET => Some("lottery.read"),
+            _ => None,
+        };
+    }
+    if path == "draw-scheduler/status" {
+        return match method.clone() {
+            Method::GET => Some("lottery.read"),
+            _ => None,
+        };
+    }
+    if path == "draw-scheduler/config" {
+        return match method.clone() {
+            Method::PUT => Some("lottery.issue.write"),
+            _ => None,
+        };
+    }
+    if path == "draw-automation/run" {
+        return match method.clone() {
+            Method::POST => Some("lottery.issue.write"),
+            _ => None,
+        };
+    }
+    if path == "settlements" || path.starts_with("settlements/") {
+        return match method.clone() {
+            Method::GET => Some("order.read"),
+            Method::POST => Some("settlement.run"),
+            _ => None,
+        };
+    }
+    if path == "play-rules" || path == "play-rules/evaluate" {
+        return match method.clone() {
+            Method::GET | Method::POST => Some("lottery.read"),
+            _ => None,
+        };
+    }
+    if path == "orders" {
+        return match method.clone() {
+            Method::GET => Some("order.read"),
+            Method::POST => Some("order.write"),
+            _ => None,
+        };
+    }
+    if path == "orders/clear" {
+        return match method.clone() {
+            Method::DELETE => Some("order.clear"),
+            _ => None,
+        };
+    }
+    if path.starts_with("orders/") && path.ends_with("/cancel") {
+        return match method.clone() {
+            Method::PATCH => Some("order.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("orders/") {
+        return match method.clone() {
+            Method::GET => Some("order.read"),
+            _ => None,
+        };
+    }
+    if path == "lotteries" {
+        return match method.clone() {
+            Method::GET => Some("lottery.read"),
+            Method::POST => Some("lottery.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("lotteries/") && path.ends_with("/sale") {
+        return match method.clone() {
+            Method::PATCH => Some("lottery.sale.toggle"),
+            _ => None,
+        };
+    }
+    if path.starts_with("lotteries/") && path.ends_with("/sync-draw-source") {
+        return match method.clone() {
+            Method::POST => Some("lottery.source.sync"),
+            _ => None,
+        };
+    }
+    if path.starts_with("lotteries/") {
+        return match method.clone() {
+            Method::GET => Some("lottery.read"),
+            Method::PUT | Method::DELETE => Some("lottery.write"),
+            _ => None,
+        };
+    }
+    if path == "lottery-categories" {
+        return match method.clone() {
+            Method::GET => Some("lottery.read"),
+            Method::POST => Some("lottery.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("lottery-categories/") {
+        return match method.clone() {
+            Method::PUT | Method::DELETE => Some("lottery.write"),
+            _ => None,
+        };
+    }
+
+    None
 }
 
 /// 从 Authorization 请求头提取 Bearer token。
@@ -439,8 +933,7 @@ fn bearer_token(request: &Request) -> ApiResult<&str> {
 
 /// 根据后台请求路径匹配所需的权限范围。
 fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
-    let path = path.trim_start_matches('/');
-    let path = path.strip_prefix("admin/").unwrap_or(path);
+    let path = normalized_admin_path(path);
 
     if path.starts_with("auth/") || path == "dashboard" {
         return None;
@@ -499,6 +992,13 @@ fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
     }
 
     None
+}
+
+/// 标准化后台路由路径，兼容嵌套在 /api/admin 或 /admin 下的部署路径。
+fn normalized_admin_path(path: &str) -> &str {
+    let path = path.trim_start_matches('/');
+    let path = path.strip_prefix("api/admin/").unwrap_or(path);
+    path.strip_prefix("admin/").unwrap_or(path)
 }
 
 /// 后台管理员登录接口，返回管理员会话和权限范围。
@@ -3934,12 +4434,13 @@ mod tests {
         agent_rebate_records_from_data, agent_rebate_summary_from_data,
         align_draw_issue_plan_after_sale_on, filter_users_by_status, finance_overview_for_query,
         first_admin_audit_ip, normalize_admin_draw_control_target, page_items,
-        required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
-        should_include_robot_initiated_group_buy_plan, should_include_user_scoped_record,
-        should_match_user_filter, sort_agent_rebate_records_by_time_desc,
-        sort_financial_accounts_by_latest_user_desc, sort_ledger_entries_by_time_desc,
-        sort_recharge_orders_by_time_desc, sort_users, sort_withdrawal_orders_by_time_desc,
-        username_map_from_users, FinancePageQuery, UserListQuery,
+        required_permission_for_request, required_scope_for_path,
+        should_align_draw_issue_plan_after_sale_on, should_include_robot_initiated_group_buy_plan,
+        should_include_user_scoped_record, should_match_user_filter,
+        sort_agent_rebate_records_by_time_desc, sort_financial_accounts_by_latest_user_desc,
+        sort_ledger_entries_by_time_desc, sort_recharge_orders_by_time_desc, sort_users,
+        sort_withdrawal_orders_by_time_desc, username_map_from_users, FinancePageQuery,
+        UserListQuery,
     };
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
@@ -3980,7 +4481,7 @@ mod tests {
             withdrawal::WithdrawalRepository,
         },
     };
-    use axum::http::{header, HeaderMap};
+    use axum::http::{header, HeaderMap, Method};
     use std::collections::BTreeMap;
 
     #[test]
@@ -4011,6 +4512,10 @@ mod tests {
         assert_eq!(required_scope_for_path("/dashboard"), None);
         assert_eq!(
             required_scope_for_path("/users"),
+            Some(PermissionScope::Users)
+        );
+        assert_eq!(
+            required_scope_for_path("/api/admin/users"),
             Some(PermissionScope::Users)
         );
         assert_eq!(
@@ -4056,6 +4561,34 @@ mod tests {
         assert_eq!(
             required_scope_for_path("/rebate-statistics/U90001/records"),
             Some(PermissionScope::Rebates)
+        );
+    }
+
+    #[test]
+    /// 验证高风险后台接口会映射到细粒度操作权限点。
+    fn required_permission_maps_sensitive_admin_paths() {
+        assert_eq!(
+            required_permission_for_request(&Method::DELETE, "/ledger-entries/clear"),
+            Some("finance.ledger.clear")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::POST, "/financial-adjustments"),
+            Some("finance.adjust.create")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::PATCH, "/users/U10001/password"),
+            Some("user.password.reset")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::PUT, "/draw-controls/au5"),
+            Some("lottery.draw.control")
+        );
+        assert_eq!(
+            required_permission_for_request(
+                &Method::DELETE,
+                "/api/admin/system-settings/chat-hall/messages/clear",
+            ),
+            Some("system.chat.clear")
         );
     }
 

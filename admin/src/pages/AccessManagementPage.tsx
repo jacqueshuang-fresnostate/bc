@@ -49,6 +49,7 @@ import type {
 import type {
   AdminRole,
   AdminSummary,
+  PermissionKey,
   LotteryKind,
   PermissionScope,
   RegistrationConfig,
@@ -106,6 +107,7 @@ interface AdminFormState {
 interface RoleFormState {
   id: string;
   name: string;
+  permissions: PermissionKey[];
   scopes: PermissionScope[];
 }
 
@@ -202,6 +204,78 @@ const PERMISSION_SCOPE_OPTIONS: Array<{ label: string; value: PermissionScope }>
   { label: '机器人', value: 'robots' },
   { label: '返利', value: 'rebates' },
 ];
+
+interface PermissionDefinition {
+  group: string;
+  key: PermissionKey;
+  label: string;
+  scope: PermissionScope;
+  sensitive: boolean;
+}
+
+const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
+  { group: '用户管理', key: 'user.read', label: '查看用户', scope: 'users', sensitive: false },
+  { group: '用户管理', key: 'user.write', label: '新增或编辑用户', scope: 'users', sensitive: false },
+  { group: '用户管理', key: 'user.status', label: '启停或锁定用户', scope: 'users', sensitive: true },
+  { group: '用户管理', key: 'user.password.reset', label: '重置用户密码', scope: 'users', sensitive: true },
+  { group: '用户管理', key: 'user.delete', label: '删除用户', scope: 'users', sensitive: true },
+  { group: '管理员管理', key: 'admin.read', label: '查看管理员', scope: 'admins', sensitive: false },
+  { group: '管理员管理', key: 'admin.write', label: '新增或编辑管理员', scope: 'admins', sensitive: true },
+  { group: '管理员管理', key: 'admin.status', label: '启停或锁定管理员', scope: 'admins', sensitive: true },
+  { group: '管理员管理', key: 'admin.password.reset', label: '重置管理员密码', scope: 'admins', sensitive: true },
+  { group: '角色权限', key: 'role.read', label: '查看角色', scope: 'roles', sensitive: false },
+  { group: '角色权限', key: 'role.write', label: '新增或编辑角色', scope: 'roles', sensitive: true },
+  { group: '角色权限', key: 'role.delete', label: '删除角色', scope: 'roles', sensitive: true },
+  { group: '财务管理', key: 'finance.read', label: '查看财务', scope: 'finance', sensitive: false },
+  { group: '财务管理', key: 'finance.adjust.create', label: '手动调账', scope: 'finance', sensitive: true },
+  { group: '财务管理', key: 'finance.ledger.clear', label: '清除资金流水', scope: 'finance', sensitive: true },
+  { group: '充值订单', key: 'recharge.confirm', label: '确认充值', scope: 'finance', sensitive: true },
+  { group: '充值订单', key: 'recharge.export', label: '导出充值记录', scope: 'finance', sensitive: true },
+  { group: '充值订单', key: 'recharge.clear', label: '清除充值记录', scope: 'finance', sensitive: true },
+  { group: '提现管理', key: 'withdrawal.review', label: '审核提现', scope: 'finance', sensitive: true },
+  { group: '提现管理', key: 'withdrawal.clear', label: '清除提现记录', scope: 'finance', sensitive: true },
+  { group: '订单管理', key: 'order.read', label: '查看订单', scope: 'orders', sensitive: false },
+  { group: '订单管理', key: 'order.write', label: '创建或处理订单', scope: 'orders', sensitive: true },
+  { group: '订单管理', key: 'order.clear', label: '清除投注记录', scope: 'orders', sensitive: true },
+  { group: '计奖派奖', key: 'settlement.run', label: '计奖派奖', scope: 'orders', sensitive: true },
+  { group: '在线客服', key: 'support.read', label: '查看客服会话', scope: 'customerService', sensitive: false },
+  { group: '在线客服', key: 'support.reply', label: '回复客服消息', scope: 'customerService', sensitive: false },
+  { group: '在线客服', key: 'support.manage', label: '管理客服会话', scope: 'customerService', sensitive: true },
+  { group: '彩种管理', key: 'lottery.read', label: '查看彩种', scope: 'lotteries', sensitive: false },
+  { group: '彩种管理', key: 'lottery.write', label: '新增或编辑彩种', scope: 'lotteries', sensitive: true },
+  { group: '彩种管理', key: 'lottery.sale.toggle', label: '切换销售状态', scope: 'lotteries', sensitive: true },
+  { group: '彩种控制台', key: 'lottery.draw.control', label: '控制开奖号码', scope: 'lotteries', sensitive: true },
+  { group: '期号管理', key: 'lottery.issue.write', label: '维护期号', scope: 'lotteries', sensitive: true },
+  { group: '开奖源', key: 'lottery.source.manage', label: '维护开奖源', scope: 'lotteries', sensitive: true },
+  { group: '开奖源', key: 'lottery.source.sync', label: '同步开奖源', scope: 'lotteries', sensitive: true },
+  { group: '玩法规则', key: 'play.rule.manage', label: '玩法配置', scope: 'lotteries', sensitive: true },
+  { group: '合买管理', key: 'group.buy.read', label: '查看合买', scope: 'lotteries', sensitive: false },
+  { group: '合买管理', key: 'group.buy.manage', label: '维护合买', scope: 'lotteries', sensitive: true },
+  { group: '合买管理', key: 'group.buy.clear', label: '清除合买记录', scope: 'lotteries', sensitive: true },
+  { group: '机器人配置', key: 'robot.read', label: '查看机器人', scope: 'robots', sensitive: false },
+  { group: '机器人配置', key: 'robot.write', label: '维护机器人', scope: 'robots', sensitive: true },
+  { group: '机器人配置', key: 'robot.run', label: '执行机器人', scope: 'robots', sensitive: true },
+  { group: '机器人配置', key: 'robot.delete', label: '删除机器人', scope: 'robots', sensitive: true },
+  { group: '邀请返利', key: 'rebate.read', label: '查看邀请返利', scope: 'rebates', sensitive: false },
+  { group: '邀请返利', key: 'rebate.withdraw', label: '处理返利提现', scope: 'rebates', sensitive: true },
+  { group: '代理管理', key: 'agent.review', label: '审核代理申请', scope: 'rebates', sensitive: true },
+  { group: '邀请管理', key: 'invite.manage', label: '维护邀请配置', scope: 'rebates', sensitive: true },
+  { group: '系统设置', key: 'system.read', label: '查看系统设置', scope: 'systemSettings', sensitive: false },
+  { group: '系统设置', key: 'system.write', label: '修改系统设置', scope: 'systemSettings', sensitive: true },
+  { group: '系统设置', key: 'system.cache.reload', label: '刷新系统缓存', scope: 'systemSettings', sensitive: true },
+  { group: '系统设置', key: 'system.chat.clear', label: '清空聊天大厅', scope: 'systemSettings', sensitive: true },
+  { group: '系统设置', key: 'system.upload', label: '上传系统文件', scope: 'systemSettings', sensitive: true },
+  { group: '广告管理', key: 'advertisement.manage', label: '维护广告', scope: 'systemSettings', sensitive: true },
+];
+
+const PERMISSION_GROUPS = Array.from(
+  PERMISSION_DEFINITIONS.reduce((groups, definition) => {
+    const items = groups.get(definition.group) ?? [];
+    items.push(definition);
+    groups.set(definition.group, items);
+    return groups;
+  }, new Map<string, PermissionDefinition[]>()),
+).map(([group, items]) => ({ group, items }));
 
 const USER_SORT_OPTIONS: Array<{ label: string; value: UserListSortBy }> = [
   { label: '用户 ID', value: 'id' },
@@ -1247,48 +1321,65 @@ function RoleSection({
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left text-sm">
+          <table className="w-full min-w-[920px] text-left text-sm">
             <thead className="border-b border-line text-xs text-slate-500">
               <tr>
                 <th className="py-2 pr-4 font-medium">角色</th>
                 <th className="py-2 pr-4 font-medium">权限范围</th>
+                <th className="py-2 pr-4 font-medium">操作权限</th>
                 <th className="py-2 pr-4 font-medium">操作</th>
               </tr>
             </thead>
             <tbody>
-              {roles.map((role) => (
-                <tr
-                  key={role.id}
-                  className={`border-b border-slate-100 ${
-                    editingId === role.id ? 'bg-teal-50/60' : ''
-                  }`}
-                >
-                  <td className="py-3 pr-4">
-                    <button
-                      className="text-left font-semibold text-accent"
-                      type="button"
-                      onClick={() => onEdit(role)}
-                    >
-                      {role.name}
-                    </button>
-                    <div className="mt-1 text-xs text-slate-400">{role.id}</div>
-                  </td>
-                  <td className="py-3 pr-4">
-                    <div className="flex flex-wrap gap-2">
-                      {role.scopes.map((scope) => (
-                        <Tag key={scope} color="grey">
-                          {permissionScopeText(scope)}
-                        </Tag>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="py-3 pr-4">
-                    <Button size="small" onClick={() => onEdit(role)}>
-                      编辑
-                    </Button>
-                  </td>
-                </tr>
-              ))}
+              {roles.map((role) => {
+                const permissions = effectiveRolePermissions(role);
+                const sensitiveCount = permissions.filter((permission) =>
+                  permissionDefinition(permission)?.sensitive,
+                ).length;
+                return (
+                  <tr
+                    key={role.id}
+                    className={`border-b border-slate-100 ${
+                      editingId === role.id ? 'bg-teal-50/60' : ''
+                    }`}
+                  >
+                    <td className="py-3 pr-4">
+                      <button
+                        className="text-left font-semibold text-accent"
+                        type="button"
+                        onClick={() => onEdit(role)}
+                      >
+                        {role.name}
+                      </button>
+                      <div className="mt-1 text-xs text-slate-400">{role.id}</div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <div className="flex flex-wrap gap-2">
+                        {role.scopes.map((scope) => (
+                          <Tag key={scope} color="grey">
+                            {permissionScopeText(scope)}
+                          </Tag>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                        <Tag color="blue">{permissions.length} 个权限点</Tag>
+                        {sensitiveCount > 0 ? (
+                          <Tag color="red">{sensitiveCount} 个高风险</Tag>
+                        ) : (
+                          <Tag color="green">无高风险</Tag>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <Button size="small" onClick={() => onEdit(role)}>
+                        编辑
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1298,7 +1389,7 @@ function RoleSection({
         aria-label="角色维护"
         title="角色维护"
         visible={sheetVisible}
-        width={480}
+        width={760}
         onCancel={() => onClose()}
       >
         <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
@@ -1317,7 +1408,7 @@ function RoleSection({
             />
           </Field>
           <div className="space-y-2">
-            <div className="text-sm font-medium text-slate-600">权限范围</div>
+            <div className="text-sm font-medium text-slate-600">模块权限</div>
             <div className="grid grid-cols-2 gap-2">
               {PERMISSION_SCOPE_OPTIONS.map((scope) => (
                 <label
@@ -1336,9 +1427,67 @@ function RoleSection({
               ))}
             </div>
           </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-medium text-slate-600">操作权限点</div>
+                <p className="mt-1 text-xs text-slate-400">
+                  旧角色未配置权限点时会兼容模块权限；保存后将按这里的权限点精确控制。
+                </p>
+              </div>
+              <Tag color={form.permissions.length > 0 ? 'blue' : 'red'}>
+                已选 {form.permissions.length}
+              </Tag>
+            </div>
+            <div className="max-h-[48vh] space-y-3 overflow-y-auto rounded border border-slate-100 bg-slate-50/70 p-3">
+              {PERMISSION_GROUPS.map((group) => (
+                <div key={group.group} className="rounded bg-white p-3 shadow-sm">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-ink">{group.group}</span>
+                    <Button
+                      size="small"
+                      theme="borderless"
+                      type="tertiary"
+                      onClick={() =>
+                        togglePermissionGroup(onSetForm, group.items, true)
+                      }
+                    >
+                      全选
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                    {group.items.map((permission) => (
+                      <label
+                        key={permission.key}
+                        className="flex min-h-10 items-center justify-between gap-2 rounded border border-slate-100 bg-white px-2 py-2 text-sm text-slate-600"
+                      >
+                        <span className="flex items-center gap-2">
+                          <input
+                            checked={form.permissions.includes(permission.key)}
+                            type="checkbox"
+                            onChange={(event) =>
+                              togglePermission(
+                                onSetForm,
+                                permission,
+                                event.target.checked,
+                              )
+                            }
+                          />
+                          {permission.label}
+                        </span>
+                        {permission.sensitive ? (
+                          <Tag color="red">高风险</Tag>
+                        ) : null}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
           <div className="flex flex-wrap gap-2">
             <Button
-              disabled={saving || form.scopes.length === 0}
+              disabled={saving || form.scopes.length === 0 || form.permissions.length === 0}
               icon={<Save size={16} />}
               theme="solid"
               onClick={onSubmit}
@@ -2864,6 +3013,7 @@ function emptyRoleForm(): RoleFormState {
   return {
     id: 'role-new',
     name: '新角色',
+    permissions: ['user.read'],
     scopes: ['users'],
   };
 }
@@ -2872,6 +3022,7 @@ function roleFormFromSummary(role: AdminRole): RoleFormState {
   return {
     id: role.id,
     name: role.name,
+    permissions: effectiveRolePermissions(role),
     scopes: role.scopes,
   };
 }
@@ -2880,7 +3031,8 @@ function rolePayload(form: RoleFormState): AdminRole {
   return {
     id: form.id.trim(),
     name: form.name.trim(),
-    scopes: form.scopes,
+    permissions: Array.from(new Set(form.permissions)),
+    scopes: Array.from(new Set(form.scopes)),
   };
 }
 
@@ -2889,12 +3041,85 @@ function toggleScope(
   scope: PermissionScope,
   checked: boolean,
 ) {
+  setForm((current) => {
+    const hasScopePermission = current.permissions.some(
+      (permission) => permissionDefinition(permission)?.scope === scope,
+    );
+    return {
+      ...current,
+      permissions: checked
+        ? hasScopePermission
+          ? current.permissions
+          : Array.from(new Set([...current.permissions, ...defaultPermissionsForScope(scope)]))
+        : current.permissions.filter(
+            (permission) => permissionDefinition(permission)?.scope !== scope,
+          ),
+      scopes: checked
+        ? Array.from(new Set([...current.scopes, scope]))
+        : current.scopes.filter((item) => item !== scope),
+    };
+  });
+}
+
+function togglePermission(
+  setForm: Dispatch<SetStateAction<RoleFormState>>,
+  permission: PermissionDefinition,
+  checked: boolean,
+) {
   setForm((current) => ({
     ...current,
+    permissions: checked
+      ? Array.from(new Set([...current.permissions, permission.key]))
+      : current.permissions.filter((item) => item !== permission.key),
     scopes: checked
-      ? Array.from(new Set([...current.scopes, scope]))
-      : current.scopes.filter((item) => item !== scope),
+      ? Array.from(new Set([...current.scopes, permission.scope]))
+      : current.scopes,
   }));
+}
+
+function togglePermissionGroup(
+  setForm: Dispatch<SetStateAction<RoleFormState>>,
+  permissions: PermissionDefinition[],
+  checked: boolean,
+) {
+  setForm((current) => {
+    const permissionKeys = permissions.map((permission) => permission.key);
+    const scopes = permissions.map((permission) => permission.scope);
+    return {
+      ...current,
+      permissions: checked
+        ? Array.from(new Set([...current.permissions, ...permissionKeys]))
+        : current.permissions.filter((permission) => !permissionKeys.includes(permission)),
+      scopes: checked
+        ? Array.from(new Set([...current.scopes, ...scopes]))
+        : current.scopes,
+    };
+  });
+}
+
+function effectiveRolePermissions(role: AdminRole) {
+  if (role.permissions && role.permissions.length > 0) {
+    return role.permissions.filter((permission) => Boolean(permissionDefinition(permission)));
+  }
+  return permissionsForScopes(role.scopes);
+}
+
+function permissionsForScopes(scopes: PermissionScope[]) {
+  const scopeSet = new Set(scopes);
+  return PERMISSION_DEFINITIONS
+    .filter((permission) => scopeSet.has(permission.scope))
+    .map((permission) => permission.key);
+}
+
+function defaultPermissionsForScope(scope: PermissionScope) {
+  return PERMISSION_DEFINITIONS
+    .filter((permission) => permission.scope === scope && !permission.sensitive)
+    .slice(0, 1)
+    .map((permission) => permission.key);
+}
+
+function permissionDefinition(permissionKey: PermissionKey) {
+  return PERMISSION_DEFINITIONS.find((permission) => permission.key === permissionKey);
 }
 
 function setFormValue<T, K extends keyof T>(

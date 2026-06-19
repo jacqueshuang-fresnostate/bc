@@ -1,7 +1,7 @@
 //! 权限与账号服务，提供用户、管理员、角色和系统设置的状态管理
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     net::IpAddr,
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
@@ -20,8 +20,11 @@ use sqlx::Row;
 
 use crate::{
     domain::{
-        auth::{AdminAuthSession, AdminLoginRequest},
-        permission::{AdminRole, PermissionScope, SystemSetting, UpdateSystemSettingRequest},
+        auth::{session_permissions_for_role, AdminAuthSession, AdminLoginRequest},
+        permission::{
+            admin_permission_definitions, is_known_permission_key, AdminRole, PermissionScope,
+            SystemSetting, UpdateSystemSettingRequest,
+        },
         user::{
             AdminPasswordResetRequest, AdminSaveRequest, AdminSummary, RegistrationConfig,
             UserAuthSession, UserAvatarRequest, UserBindEmailRequest, UserChangePasswordRequest,
@@ -765,10 +768,14 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
     }
 
     let mut roles = BTreeMap::new();
-    for row in sqlx::query("SELECT id, name, scopes FROM admin_roles ORDER BY id ASC")
-        .fetch_all(pool)
-        .await
-        .map_err(|_| ApiError::Internal("角色数据读取失败".to_string()))?
+    for row in sqlx::query(
+        "SELECT id, name, scopes, COALESCE(permissions, '[]'::jsonb) AS permissions
+         FROM admin_roles
+         ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::Internal("角色数据读取失败".to_string()))?
     {
         let id: String = row
             .try_get("id")
@@ -782,6 +789,10 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
                     .map_err(|_| ApiError::Internal("角色数据读取失败".to_string()))?,
                 scopes: super::business_database::from_json(
                     row.try_get("scopes")
+                        .map_err(|_| ApiError::Internal("角色数据读取失败".to_string()))?,
+                )?,
+                permissions: super::business_database::from_json(
+                    row.try_get("permissions")
                         .map_err(|_| ApiError::Internal("角色数据读取失败".to_string()))?,
                 )?,
             },
@@ -1136,13 +1147,17 @@ async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> 
     }
 
     for role in store.roles.values() {
-        sqlx::query("INSERT INTO admin_roles (id, name, scopes) VALUES ($1, $2, $3)")
-            .bind(&role.id)
-            .bind(&role.name)
-            .bind(to_json(&role.scopes)?)
-            .execute(&mut *tx)
-            .await
-            .map_err(|_| ApiError::Internal("角色数据保存失败".to_string()))?;
+        sqlx::query(
+            "INSERT INTO admin_roles (id, name, scopes, permissions)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&role.id)
+        .bind(&role.name)
+        .bind(to_json(&role.scopes)?)
+        .bind(to_json(&role.permissions)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("角色数据保存失败".to_string()))?;
     }
 
     for admin in store.admins.values() {
@@ -2157,9 +2172,11 @@ impl AccessStore {
             ));
         }
         let role = self.get_role(&admin.role_id)?;
+        let permissions = session_permissions_for_role(&role);
 
         Ok(AdminAuthSession {
             admin,
+            permissions,
             scopes: role.scopes.clone(),
             role,
             token: token.to_string(),
@@ -2602,14 +2619,31 @@ fn verify_admin_password(password: &str, password_hash: &str) -> ApiResult<bool>
 fn normalize_role(mut role: AdminRole) -> ApiResult<AdminRole> {
     role.id = required_trimmed(role.id, "role id")?;
     role.name = required_trimmed(role.name, "role name")?;
-    if role.scopes.is_empty() {
+    if role.scopes.is_empty() && role.permissions.is_empty() {
         return Err(ApiError::BadRequest(
-            "at least one permission scope is required".to_string(),
+            "至少需要配置一个模块权限或操作权限".to_string(),
         ));
     }
 
     let mut seen = HashSet::new();
     role.scopes.retain(|scope| seen.insert(scope.clone()));
+    let mut seen_permissions = BTreeSet::new();
+    let mut permissions = Vec::new();
+    for permission in role.permissions {
+        let permission = permission.trim().to_string();
+        if permission.is_empty() {
+            continue;
+        }
+        if !is_known_permission_key(&permission) {
+            return Err(ApiError::BadRequest(format!(
+                "未知的后台权限点：{permission}"
+            )));
+        }
+        if seen_permissions.insert(permission.clone()) {
+            permissions.push(permission);
+        }
+    }
+    role.permissions = permissions;
     Ok(role)
 }
 
@@ -2720,6 +2754,10 @@ fn seed_roles() -> Vec<AdminRole> {
                 PermissionScope::Robots,
                 PermissionScope::Rebates,
             ],
+            permissions: admin_permission_definitions()
+                .iter()
+                .map(|definition| definition.key.to_string())
+                .collect(),
         },
         AdminRole {
             id: "role-ops".to_string(),
@@ -2729,6 +2767,7 @@ fn seed_roles() -> Vec<AdminRole> {
                 PermissionScope::Orders,
                 PermissionScope::Lotteries,
             ],
+            permissions: Vec::new(),
         },
     ]
 }
@@ -3241,6 +3280,7 @@ mod tests {
                 id: "role-empty".to_string(),
                 name: "空角色".to_string(),
                 scopes: Vec::new(),
+                permissions: Vec::new(),
             })
             .await
             .expect_err("empty scopes must be rejected");
@@ -3269,6 +3309,7 @@ mod tests {
                     id: "role-ops".to_string(),
                     name: "运营主管".to_string(),
                     scopes: vec![PermissionScope::Users],
+                    permissions: Vec::new(),
                 },
             )
             .await
