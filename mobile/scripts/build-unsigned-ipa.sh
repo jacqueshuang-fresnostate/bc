@@ -17,6 +17,8 @@ usage() {
   --api-base <地址>    指定 App 打包后请求的后端地址，会写入 Vite 构建产物
   --branding-api-base <地址>
                        指定用于同步打包 Logo 和 iOS 图标的后端地址；未指定时复用 --api-base
+  --bundle-id <包名>   指定本次 IPA 使用的 iOS Bundle Identifier，只修改临时构建工程
+  --random-bundle-id   每次打包自动生成新包名，格式为 <当前包名>.build<时间戳>
   --skip-branding-sync 跳过后台品牌资源同步
   --keep-temp          保留临时 iOS 工程，方便排查构建问题
   -h, --help           显示帮助
@@ -24,6 +26,7 @@ usage() {
 说明：
   这个脚本会跳过 Xcode 签名，只生成 Payload/*.app 格式的无签名 IPA。
   无签名 IPA 不能直接安装到普通 iPhone，需要后续重签名或使用签名工具处理。
+  每次变更包名会让 iOS 认为这是一个全新的 App，旧登录态和本地缓存不会继承。
 EOF
 }
 
@@ -42,6 +45,14 @@ fail() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "缺少命令：$1，请先安装或配置后再重试。"
+}
+
+validate_bundle_id() {
+  local value="$1"
+  case "$value" in
+    *..*|.*|*.) return 1 ;;
+  esac
+  printf '%s' "$value" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*$'
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,6 +75,8 @@ OUTPUT_IPA=""
 SKIP_WEB_BUILD=0
 SKIP_BRANDING_SYNC=0
 KEEP_TEMP=0
+BUNDLE_ID_OVERRIDE=""
+RANDOM_BUNDLE_ID=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -93,6 +106,15 @@ while [ "$#" -gt 0 ]; do
         APP_API_BASE="$2"
       fi
       shift 2
+      ;;
+    --bundle-id)
+      [ "${2:-}" != "" ] || fail "--bundle-id 需要跟一个 iOS 包名。"
+      BUNDLE_ID_OVERRIDE="$2"
+      shift 2
+      ;;
+    --random-bundle-id)
+      RANDOM_BUNDLE_ID=1
+      shift
       ;;
     --skip-branding-sync)
       SKIP_BRANDING_SYNC=1
@@ -133,6 +155,9 @@ BRANDING_API_BASE="$(printf '%s' "$BRANDING_API_BASE" | sed 's:/*$::')"
 [ "$APP_API_BASE" != "" ] || fail "缺少 App 后端地址，请通过 --api-base、--branding-api-base 或 VITE_API_BASE_URL 指定。"
 if [ "$BRANDING_API_BASE" = "" ]; then
   BRANDING_API_BASE="$APP_API_BASE"
+fi
+if [ "$RANDOM_BUNDLE_ID" -eq 1 ] && [ "$BUNDLE_ID_OVERRIDE" != "" ]; then
+  fail "--bundle-id 和 --random-bundle-id 只能选择一个。"
 fi
 
 LIBAPP="$IOS_DIR/Externals/arm64/release/libapp.a"
@@ -217,6 +242,17 @@ log "同步最新前端资源到 iOS 工程..."
 rm -rf "$TMP_DIR/assets"
 mkdir -p "$TMP_DIR/assets"
 rsync -a --delete "$DIST_DIR/" "$TMP_DIR/assets/"
+
+CURRENT_BUNDLE_ID="$(awk -F' = ' '/PRODUCT_BUNDLE_IDENTIFIER =/ {gsub(/;/, "", $2); print $2; exit}' "$TMP_DIR/hongfu-mobile.xcodeproj/project.pbxproj" || true)"
+[ "$CURRENT_BUNDLE_ID" != "" ] || CURRENT_BUNDLE_ID="com.hongfu.app"
+if [ "$RANDOM_BUNDLE_ID" -eq 1 ]; then
+  BUNDLE_ID_OVERRIDE="${CURRENT_BUNDLE_ID}.build$(date +%Y%m%d%H%M%S)"
+fi
+if [ "$BUNDLE_ID_OVERRIDE" != "" ]; then
+  validate_bundle_id "$BUNDLE_ID_OVERRIDE" || fail "包名格式不合法：$BUNDLE_ID_OVERRIDE。只能使用字母、数字、点和短横线，不能以点开头或结尾。"
+  log "本次 IPA 使用临时包名：$BUNDLE_ID_OVERRIDE"
+  perl -0pi -e "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]+;/PRODUCT_BUNDLE_IDENTIFIER = $BUNDLE_ID_OVERRIDE;/g" "$TMP_DIR/hongfu-mobile.xcodeproj/project.pbxproj"
+fi
 
 log "临时跳过 Tauri iOS Rust 构建脚本和 Xcode 签名..."
 perl -0pi -e 's/shellScript = "npm run -- tauri ios xcode-script[^\n]*?";/shellScript = "echo 使用已有 iOS 原生库生成无签名 IPA";/s' "$TMP_DIR/hongfu-mobile.xcodeproj/project.pbxproj"

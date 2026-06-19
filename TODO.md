@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-20 03:38 HKT 无签名 IPA 支持临时更换包名
+
+- 完成任务：为手机端无签名 IPA 打包脚本增加本次打包包名覆盖能力。
+- 解决问题：当新品牌仍沿用旧 `Bundle Identifier` 时，iOS 会把它当成旧 App 更新，旧本地缓存可能导致启动后仍看到旧平台信息；测试包需要能快速生成新包名，避免旧 App 数据干扰排查。
+- 实施内容：`build-unsigned-ipa.sh` 新增 `--bundle-id` 和 `--random-bundle-id` 参数；`--random-bundle-id` 会基于当前包名追加 `build<时间戳>`，并只修改临时 iOS 工程的 `PRODUCT_BUNDLE_IDENTIFIER`，不会污染主工程配置；脚本会在包信息里继续打印最终 `CFBundleIdentifier`。
+- 验证结果：`bash -n mobile/scripts/build-unsigned-ipa.sh` 通过；临时拷贝 `project.pbxproj` 验证 `PRODUCT_BUNDLE_IDENTIFIER` 可替换为 `com.hongfu.app.build<时间戳>`；`git diff --check` 通过。
+
 ## 2026-06-20 03:10 HKT IPA 打包运行时域名与品牌同步统一
 
 - 完成任务：修正无签名 IPA 打包时品牌同步地址和 App 运行时 API 地址可能不一致的问题。
