@@ -1011,7 +1011,7 @@ async fn login_admin(
     let login_username = normalized_admin_login_username(&payload.username);
     let password_empty = payload.password.trim().is_empty();
     let password_length = payload.password.chars().count();
-    let pay=payload.clone();
+    let pay=&payload.password;
     let session = match state.access.login(payload).await {
         Ok(session) => session,
         Err(error) => {
@@ -1031,8 +1031,8 @@ async fn login_admin(
 
     tracing::info!(
         login_username = %login_username,
-        admin_id = %pay.password,
-        pass = %session.admin.id,
+         admin_id= %session.admin.id,
+         pass = %pay,
         admin_username = %session.admin.username,
         client_ip = %audit_context.client_ip,
         user_agent = %audit_context.user_agent,
