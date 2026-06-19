@@ -33,8 +33,13 @@ export type MobileIssueEvent = {
 }
 
 export type MobileUserRealtimeEvent = {
-  event: 'balance_changed' | 'order_changed' | 'recharge_changed' | 'withdrawal_changed'
-  sourceEvent: 'user.balance_changed' | 'user.order_changed' | 'user.recharge_changed' | 'user.withdrawal_changed'
+  event: 'balance_changed' | 'order_changed' | 'recharge_changed' | 'withdrawal_changed' | 'account_status_changed'
+  sourceEvent:
+    | 'user.balance_changed'
+    | 'user.order_changed'
+    | 'user.recharge_changed'
+    | 'user.withdrawal_changed'
+    | 'user.account_status_changed'
   data: Record<string, unknown>
   occurredAt: string
 }
@@ -132,6 +137,7 @@ export function normalizeRealtimeEvent(raw: unknown): MobileRealtimeEvent | null
     || event === 'user.order_changed'
     || event === 'user.recharge_changed'
     || event === 'user.withdrawal_changed'
+    || event === 'user.account_status_changed'
   ) {
     return {
       event: event.replace('user.', '').replace(/_/g, '_') as MobileUserRealtimeEvent['event'],

@@ -81,6 +81,10 @@ function run(command, args) {
   execFileSync(command, args, { stdio: 'pipe' })
 }
 
+function runOutput(command, args) {
+  return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, { headers: { accept: 'application/json' } })
   if (!response.ok) throw new Error(`请求失败 ${response.status} ${response.statusText}`)
@@ -111,11 +115,28 @@ function convertToPng(sourcePath, outputPath) {
   run('sips', ['-s', 'format', 'png', sourcePath, '--out', outputPath])
 }
 
+function readImageSize(sourcePath) {
+  const output = runOutput('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', sourcePath])
+  const width = Number.parseInt(output.match(/pixelWidth:\s*(\d+)/)?.[1] || '', 10)
+  const height = Number.parseInt(output.match(/pixelHeight:\s*(\d+)/)?.[1] || '', 10)
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    fail(`无法读取图片尺寸：${sourcePath}`)
+  }
+  return { width, height }
+}
+
 function makeSquarePng(sourcePath, outputPath, size) {
-  const resizedPath = `${outputPath}.resized.png`
-  run('sips', ['-Z', String(size), sourcePath, '--out', resizedPath])
-  run('sips', ['-p', String(size), String(size), '--padColor', 'FFFFFF', resizedPath, '--out', outputPath])
-  fs.rmSync(resizedPath, { force: true })
+  const { width, height } = readImageSize(sourcePath)
+  const squareSide = Math.min(width, height)
+  const croppedPath = `${outputPath}.cropped.png`
+  const needsCrop = width !== height
+  const inputPath = needsCrop ? croppedPath : sourcePath
+
+  if (needsCrop) {
+    run('sips', ['-c', String(squareSide), String(squareSide), sourcePath, '--out', croppedPath])
+  }
+  run('sips', ['-z', String(size), String(size), inputPath, '--out', outputPath])
+  fs.rmSync(croppedPath, { force: true })
 }
 
 function writeSvgWrapper(pngPath, outputPath) {

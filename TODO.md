@@ -1,5 +1,26 @@
 # TODO
 
+## 2026-06-19 12:08 HKT 用户冻结强制退出登录
+
+- 完成任务：补齐用户被后台停用或锁定后的强制下线闭环。
+- 解决问题：此前后端会在登录和受保护接口中拒绝非 `active` 用户，但后台切换用户状态时不会清理已有用户会话；手机端也只在 `401` 时退出，导致被冻结用户可能停留在当前页面，直到下一次请求才看到接口失败。
+- 实施内容：用户状态改为停用或锁定时立即清理该用户所有会话 token；后台状态接口向目标用户推送 `user.account_status_changed` 实时事件；手机端收到该事件后提示原因、清空本地 token 并跳转登录页；手机端 HTTP 拦截器识别“用户账号已停用/已锁定/未激活”的 `403` 响应并兜底退出登录。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml access_repository_distinguishes_suspended_and_locked_user_login_errors -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml account_status_changed_event_contains_status_reason -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、`cd mobile && pnpm build` 和 `git diff --check` 均通过。
+
+## 2026-06-19 11:42 HKT IPA 图标上下留白修复
+
+- 完成任务：修正无签名 IPA 打包同步后台 Logo 时 iOS 图标上下出现白边的问题。
+- 解决问题：品牌资源脚本此前使用 `sips -Z` 等比缩放后再白色补齐正方形，遇到横向 Logo 图片时会在 `AppIcon` 和包内 `app-logo.png` 上下产生白色留白。
+- 实施内容：`sync-branding-assets.mjs` 新增图片宽高读取，生成正方图标时先按中心裁剪短边正方形，再缩放到目标尺寸；`dist/app-logo.png` 和 iOS `AppIcon.appiconset` 统一使用铺满图标的裁剪逻辑，不再补白。
+- 验证结果：已使用用户提供的横向图标跑完整品牌同步脚本，生成 `512x512` 的 `app-logo.png` 和 `120x120` 的 iOS 图标；已使用真实后台 Logo 重新生成 iOS `AppIcon.appiconset`，视觉确认没有上下白边；`node --check mobile/scripts/sync-branding-assets.mjs`、`cd mobile && pnpm build` 和 `git diff --check` 均通过。
+
+## 2026-06-19 11:20 HKT BB 开奖源空号码等待处理
+
+- 完成任务：修正 BB 河内 5 分彩开奖源在期号已返回但开奖号码为空时的错误分类和日志级别。
+- 解决问题：BB 开奖源可能返回当前期号 `numero`，但销售中或刚开奖时 `openNumber` 仍为空；旧解析器会把这种正常等待误报为“未找到期号”，并由仓储打出 `ERROR API 开奖源获取开奖号码失败`。
+- 实施内容：`parse_bb_draw_number` 命中目标期号但 `openNumber` 为空时返回“暂未返回开奖号码”的等待错误；开奖源仓储识别该等待错误后改用 `warn` 输出“API 开奖源暂未返回开奖号码”，保留自动开奖跳过并下一轮重试，避免 API 彩种误走默认平台号码。
+- 验证结果：新增 BB 空号码单元测试覆盖“命中期号但等待号码”场景。
+
 ## 2026-06-19 07:18 HKT 手机端登录页首屏骨架屏
 
 - 完成任务：给手机端登录页面新增首屏骨架屏。

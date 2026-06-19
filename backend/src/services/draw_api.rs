@@ -393,13 +393,23 @@ impl ApiDrawSourceRepository {
         };
 
         if let Err(error) = &result {
-            tracing::error!(
-                source_id = %source.id,
-                lottery_id = %issue.lottery_id,
-                issue = %issue.issue,
-                error = %error.log_message(),
-                "API 开奖源获取开奖号码失败"
-            );
+            if is_pending_api_draw_number(error) {
+                tracing::warn!(
+                    source_id = %source.id,
+                    lottery_id = %issue.lottery_id,
+                    issue = %issue.issue,
+                    error = %error.log_message(),
+                    "API 开奖源暂未返回开奖号码"
+                );
+            } else {
+                tracing::error!(
+                    source_id = %source.id,
+                    lottery_id = %issue.lottery_id,
+                    issue = %issue.issue,
+                    error = %error.log_message(),
+                    "API 开奖源获取开奖号码失败"
+                );
+            }
         }
 
         result.map(Some)
@@ -1661,6 +1671,11 @@ pub(crate) fn parse_kj_draw_number(response_body: &str, expected_issue: &str) ->
     Ok(draw_code.to_string())
 }
 
+/// 判断第三方开奖源错误是否只是当前期号尚未开放开奖号码。
+fn is_pending_api_draw_number(error: &ApiError) -> bool {
+    matches!(error, ApiError::NotFound(message) if message.contains("暂未返回开奖号码"))
+}
+
 /// 解析 KJAPI 开奖响应，提取最近已开奖期号和下一期参考信息。
 pub(crate) fn parse_kj_latest_issue(response_body: &str) -> ApiResult<ApiDrawSourceLatestIssue> {
     let data = parse_kj_data(response_body)?;
@@ -1703,15 +1718,18 @@ pub(crate) fn parse_bb_draw_number(response_body: &str, expected_issue: &str) ->
         .map(|draw| draw.numero.trim().to_string())
         .filter(|issue| !issue.is_empty());
 
+    let mut matched_pending_issue = false;
     for item in envelope.value {
         for draw in item.draws() {
             if draw.numero.trim() != expected_issue {
                 continue;
             }
             let Some(draw_number) = draw.open_number.as_deref().map(str::trim) else {
+                matched_pending_issue = true;
                 continue;
             };
             if draw_number.is_empty() {
+                matched_pending_issue = true;
                 continue;
             }
             return Ok(draw_number.to_string());
@@ -1721,6 +1739,12 @@ pub(crate) fn parse_bb_draw_number(response_body: &str, expected_issue: &str) ->
     let detail = returned_issue
         .map(|issue| format!("，当前返回期号 `{issue}`"))
         .unwrap_or_default();
+    if matched_pending_issue {
+        return Err(ApiError::NotFound(format!(
+            "API 开奖源期号 `{expected_issue}` 暂未返回开奖号码{detail}"
+        )));
+    }
+
     Err(ApiError::NotFound(format!(
         "API 开奖源未找到期号 `{expected_issue}` 的开奖号码{detail}"
     )))
@@ -2265,6 +2289,15 @@ mod tests {
             parse_bb_draw_number(BB_SAMPLE, "20260617026").expect("draw number can be parsed");
 
         assert_eq!(draw_number, "5,8,2,6,2");
+    }
+
+    #[test]
+    /// BB 开奖源命中销售中期号但 openNumber 为空时，应提示等待而不是误报期号不存在。
+    fn parse_bb_draw_number_reports_pending_open_number() {
+        let error = parse_bb_draw_number(BB_SAMPLE, "20260617027")
+            .expect_err("pending issue should wait for draw number");
+
+        assert!(error.log_message().contains("暂未返回开奖号码"));
     }
 
     #[test]

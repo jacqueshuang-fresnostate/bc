@@ -1893,6 +1893,9 @@ impl AccessStore {
             .get_mut(id)
             .ok_or_else(|| ApiError::NotFound(format!("user `{id}` not found")))?;
         user.status = status;
+        if user.status != UserStatus::Active {
+            self.user_sessions.retain(|_, user_id| user_id != id);
+        }
         Ok(user.clone())
     }
 
@@ -3645,7 +3648,7 @@ mod tests {
             .expect_err("locked user session cannot be restored");
         assert!(matches!(
             locked_session_error,
-            ApiError::Forbidden(message) if message == "用户账号已锁定"
+            ApiError::Unauthorized(message) if message == "登录已过期，请重新登录"
         ));
     }
     /// 验证只允许邮箱注册时非法邮箱会被拒绝。

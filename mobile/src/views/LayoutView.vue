@@ -3,6 +3,7 @@ import { computed, onMounted, watch } from 'vue'
 import { Home, MessageCircle, Trophy, UserRound, UsersRound } from 'lucide-vue-next'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
+import { showToast } from 'vant'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useAuthStore } from '../stores/auth'
 import { useSupportUnreadStore } from '../stores/supportUnread'
@@ -59,6 +60,16 @@ watch(() => auth.accessToken, (token) => {
 })
 
 watch(lastMessage, (message) => {
+  if (message?.event === 'account_status_changed') {
+    const reason = typeof message.data?.reason === 'string' ? message.data.reason : '账号状态已变更，请重新登录'
+    showToast(reason)
+    void auth.logout().then(() => {
+      if (route.path !== '/login') {
+        void router.replace({ path: '/login' })
+      }
+    })
+    return
+  }
   if (
     message?.event === 'support_message_created'
     || message?.event === 'support_conversation_updated'

@@ -206,6 +206,19 @@ pub fn withdrawal_changed_event(order: &WithdrawalOrderSummary) -> Value {
     )
 }
 
+/// 封装用户账号状态变更事件，用于手机端在账号被停用或锁定时立即退出登录。
+pub fn user_account_status_changed_event(user_id: &str, status: &str, reason: &str) -> Value {
+    realtime_envelope(
+        "user.account_status_changed",
+        "user",
+        json!({
+            "userId": user_id,
+            "status": status,
+            "reason": reason,
+        }),
+    )
+}
+
 /// 封装客服消息新增事件，用于客服直充和在线客服聊天实时刷新。
 pub fn support_message_created_event(
     conversation: &SupportConversation,
@@ -338,6 +351,18 @@ mod tests {
         assert!(!admin_audience_matches(&RealtimeAudience::User(
             "U10001".to_string()
         )));
+    }
+
+    #[test]
+    /// 验证用户账号状态变更事件携带强制下线所需的状态和原因。
+    fn account_status_changed_event_contains_status_reason() {
+        let event = user_account_status_changed_event("U10001", "locked", "用户账号已锁定");
+
+        assert_eq!(event["event"], "user.account_status_changed");
+        assert_eq!(event["scope"], "user");
+        assert_eq!(event["data"]["userId"], "U10001");
+        assert_eq!(event["data"]["status"], "locked");
+        assert_eq!(event["data"]["reason"], "用户账号已锁定");
     }
 
     #[test]

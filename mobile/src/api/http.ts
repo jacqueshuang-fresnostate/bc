@@ -40,7 +40,7 @@ http.interceptors.request.use(config => {
 
 http.interceptors.response.use(res => res, async err => {
   const originalRequest = err.config || {}
-  if (err.response?.status === 401 && !originalRequest._retry) {
+  if (shouldLogoutForAuthError(err) && !originalRequest._retry) {
     const auth = useAuthStore()
     originalRequest._retry = true
     await auth.logout()
@@ -53,3 +53,18 @@ http.interceptors.response.use(res => res, async err => {
 
 export default http
 export { API_BASE }
+
+function shouldLogoutForAuthError(err: unknown) {
+  const status = Number((err as { response?: { status?: number } })?.response?.status || 0)
+  if (status === 401) return true
+  if (status !== 403) return false
+  const message = responseMessage(err)
+  return ['用户账号已停用', '用户账号已锁定', '用户账号未激活'].some(text => message.includes(text))
+}
+
+function responseMessage(err: unknown) {
+  const data = (err as { response?: { data?: unknown } })?.response?.data
+  if (!data || typeof data !== 'object') return ''
+  const message = (data as { message?: unknown }).message
+  return typeof message === 'string' ? message : ''
+}

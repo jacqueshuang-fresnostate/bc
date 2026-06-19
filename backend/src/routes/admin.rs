@@ -98,7 +98,7 @@ use crate::{
             draw_result_event, heartbeat_event, issue_closed_event, issue_opened_event,
             order_changed_event, recharge_changed_event, support_conversation_deleted_event,
             support_conversation_updated_event, support_message_created_event,
-            withdrawal_changed_event,
+            user_account_status_changed_event, withdrawal_changed_event,
         },
         rebate::credit_recharge_rebate_for_order,
         scheduler::DrawSchedulerConfig,
@@ -2098,10 +2098,34 @@ async fn set_user_status(
     Json(payload): Json<UserStatusRequest>,
 ) -> ApiResult<Json<ApiEnvelope<AdminUserSummary>>> {
     let user = state.access.set_user_status(&id, payload.status).await?;
+    publish_user_account_status_change(&state, &user);
     let user = user_with_financial_balance_from_summary(&state, user).await?;
     let user = admin_user_summary(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
+}
+
+/// 用户被停用或锁定后立即通知本人在线端退出登录；启用状态不推送强退事件。
+fn publish_user_account_status_change(state: &AppState, user: &UserSummary) {
+    if user.status == UserStatus::Active {
+        return;
+    }
+
+    let (status, reason) = match user.status {
+        UserStatus::Suspended => ("suspended", "用户账号已停用"),
+        UserStatus::Locked => ("locked", "用户账号已锁定"),
+        UserStatus::Active => ("active", "用户账号已启用"),
+    };
+    state.realtime.publish_user(
+        &user.id,
+        user_account_status_changed_event(&user.id, status, reason),
+    );
+    tracing::info!(
+        user_id = %user.id,
+        username = %user.username,
+        status = %status,
+        "已推送用户账号状态变更强制下线事件"
+    );
 }
 
 /// 后台重置普通用户登录密码。
