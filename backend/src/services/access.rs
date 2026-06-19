@@ -2248,7 +2248,12 @@ fn normalize_registration_location(
             };
         }
     } else {
-        location.country.clear();
+        let server_country = if location.source == "ip" && !location.registered_ip.is_empty() {
+            location.country.trim().to_string()
+        } else {
+            String::new()
+        };
+        location.country = server_country;
         location.region.clear();
         location.city.clear();
         location.source = if location.registered_ip.is_empty() {
@@ -3488,6 +3493,38 @@ mod tests {
 
         assert_eq!(user.registration_location.registered_ip, "8.8.8.8");
         assert_eq!(user.registration_location.country, "");
+        assert_eq!(user.registration_location.region, "");
+        assert_eq!(user.registration_location.city, "");
+        assert_eq!(user.registration_location.source, "ip");
+    }
+    /// 验证服务端从可信代理头写入的 IP 国家字段会保留。
+    #[tokio::test]
+    async fn access_repository_keeps_server_ip_country_registration_location() {
+        let access = AccessRepository::memory_seeded();
+
+        let user = access
+            .register_user(UserRegisterRequest {
+                username: Some("server_ip_country_user".to_string()),
+                email: None,
+                contact_qq: None,
+                password: "locationPass123".to_string(),
+                invite_code: None,
+                registration_location: Some(UserRegistrationLocation {
+                    registered_ip: "2409:8950:5353:80:c46d:c9ff:fec7:4f38".to_string(),
+                    country: "中国".to_string(),
+                    region: "客户端区域".to_string(),
+                    city: "客户端城市".to_string(),
+                    source: "ip".to_string(),
+                }),
+            })
+            .await
+            .expect("user can be registered");
+
+        assert_eq!(
+            user.registration_location.registered_ip,
+            "2409:8950:5353:80:c46d:c9ff:fec7:4f38"
+        );
+        assert_eq!(user.registration_location.country, "中国");
         assert_eq!(user.registration_location.region, "");
         assert_eq!(user.registration_location.city, "");
         assert_eq!(user.registration_location.source, "ip");

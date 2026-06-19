@@ -504,11 +504,138 @@ fn required_scope_for_path(path: &str) -> Option<PermissionScope> {
 /// 后台管理员登录接口，返回管理员会话和权限范围。
 async fn login_admin(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<AdminLoginRequest>,
 ) -> ApiResult<Json<ApiEnvelope<AdminAuthSession>>> {
-    let session = state.access.login(payload).await?;
+    let audit_context = admin_login_audit_context_from_headers(&headers);
+    let login_username = normalized_admin_login_username(&payload.username);
+    let password_empty = payload.password.trim().is_empty();
+    let password_length = payload.password.chars().count();
+    let session = match state.access.login(payload).await {
+        Ok(session) => session,
+        Err(error) => {
+            let error_message = error.log_message();
+            tracing::error!(
+                admin_username = %login_username,
+                client_ip = %audit_context.client_ip,
+                user_agent = %audit_context.user_agent,
+                password_empty,
+                password_length,
+                error = %error_message,
+                "管理员登录失败"
+            );
+            return Err(error);
+        }
+    };
+
+    tracing::info!(
+        login_username = %login_username,
+        admin_id = %session.admin.id,
+        admin_username = %session.admin.username,
+        client_ip = %audit_context.client_ip,
+        user_agent = %audit_context.user_agent,
+        "管理员登录成功"
+    );
 
     Ok(Json(ApiEnvelope::success(session)))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// 管理员登录审计上下文，只保存请求来源信息，不保存密码、Token 或原始请求体。
+struct AdminLoginAuditContext {
+    /// 反向代理链路里识别到的客户端 IP，无法识别时写入“未知”。
+    client_ip: String,
+    /// 管理员浏览器或客户端的 User-Agent，过长时会截断，避免日志被异常头撑大。
+    user_agent: String,
+}
+
+/// 从请求头提取后台登录审计所需来源信息。
+fn admin_login_audit_context_from_headers(headers: &HeaderMap) -> AdminLoginAuditContext {
+    AdminLoginAuditContext {
+        client_ip: admin_audit_client_ip_from_headers(headers)
+            .unwrap_or_else(|| "未知".to_string()),
+        user_agent: admin_audit_user_agent_from_headers(headers)
+            .unwrap_or_else(|| "未知".to_string()),
+    }
+}
+
+/// 标准化登录表单里的账号字段，空账号也要在审计日志里可识别。
+fn normalized_admin_login_username(username: &str) -> String {
+    let username = username.trim();
+    if username.is_empty() {
+        "未填写".to_string()
+    } else {
+        username.to_string()
+    }
+}
+
+/// 从常见代理请求头提取管理员登录来源 IP，Cloudflare 真实 IP 优先。
+fn admin_audit_client_ip_from_headers(headers: &HeaderMap) -> Option<String> {
+    [
+        "cf-connecting-ip",
+        "true-client-ip",
+        "x-forwarded-for",
+        "forwarded",
+        "x-real-ip",
+        "x-client-ip",
+    ]
+    .iter()
+    .filter_map(|name| headers.get(*name))
+    .filter_map(|value| value.to_str().ok())
+    .find_map(first_admin_audit_ip)
+}
+
+/// 读取并限制 User-Agent 长度，避免异常请求头污染日志。
+fn admin_audit_user_agent_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .and_then(admin_audit_header_text)
+}
+
+/// 规范化普通审计请求头文本，最多保留 256 个字符。
+fn admin_audit_header_text(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    Some(value.chars().take(256).collect())
+}
+
+/// 解析单个 IP 请求头值，兼容逗号链路、Forwarded 风格、IPv4 端口和 IPv6 方括号。
+fn first_admin_audit_ip(value: &str) -> Option<String> {
+    value.split(',').find_map(|part| {
+        let trimmed = part.trim();
+        let forwarded_value = trimmed.split(';').find_map(|segment| {
+            segment
+                .trim()
+                .strip_prefix("for=")
+                .or_else(|| segment.trim().strip_prefix("For="))
+        });
+        let candidate = forwarded_value
+            .unwrap_or_else(|| trimmed.split(';').next().unwrap_or(trimmed))
+            .trim_matches('"')
+            .trim();
+        if candidate.is_empty() || candidate.eq_ignore_ascii_case("unknown") {
+            return None;
+        }
+        let candidate = candidate
+            .strip_prefix('[')
+            .and_then(|value| value.split(']').next())
+            .unwrap_or(candidate);
+        let candidate = if candidate.parse::<std::net::IpAddr>().is_ok() {
+            candidate
+        } else if candidate.matches('.').count() == 3 {
+            candidate.split(':').next().unwrap_or(candidate)
+        } else {
+            candidate
+        };
+        candidate
+            .parse::<std::net::IpAddr>()
+            .ok()
+            .map(|ip| ip.to_string())
+    })
 }
 
 /// 返回当前管理员资料，用于后台刷新登录态。
@@ -3779,10 +3906,11 @@ struct SaleStatusRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        admin_user_summary_with_usernames, agent_rebate_records_from_data,
-        agent_rebate_summary_from_data, align_draw_issue_plan_after_sale_on,
-        filter_users_by_status, finance_overview_for_query, normalize_admin_draw_control_target,
-        page_items, required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
+        admin_login_audit_context_from_headers, admin_user_summary_with_usernames,
+        agent_rebate_records_from_data, agent_rebate_summary_from_data,
+        align_draw_issue_plan_after_sale_on, filter_users_by_status, finance_overview_for_query,
+        first_admin_audit_ip, normalize_admin_draw_control_target, page_items,
+        required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
         should_include_robot_initiated_group_buy_plan, should_include_user_scoped_record,
         should_match_user_filter, sort_agent_rebate_records_by_time_desc,
         sort_financial_accounts_by_latest_user_desc, sort_ledger_entries_by_time_desc,
@@ -3828,7 +3956,30 @@ mod tests {
             withdrawal::WithdrawalRepository,
         },
     };
+    use axum::http::{header, HeaderMap};
     use std::collections::BTreeMap;
+
+    #[test]
+    /// 验证管理员登录审计优先使用 Cloudflare 真实 IP 并记录 User-Agent。
+    fn admin_login_audit_context_prefers_cloudflare_ip() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "198.51.100.8, 10.0.0.2".parse().unwrap());
+        headers.insert("cf-connecting-ip", "203.0.113.9".parse().unwrap());
+        headers.insert(header::USER_AGENT, "HongFu Admin Test".parse().unwrap());
+
+        let context = admin_login_audit_context_from_headers(&headers);
+
+        assert_eq!(context.client_ip, "203.0.113.9");
+        assert_eq!(context.user_agent, "HongFu Admin Test");
+    }
+
+    #[test]
+    /// 验证管理员登录审计能解析 Forwarded 请求头里的 IPv6 地址。
+    fn admin_login_audit_ip_parser_handles_forwarded_ipv6() {
+        let ip = first_admin_audit_ip("for=\"[2001:db8::1]:443\";proto=https");
+
+        assert_eq!(ip.as_deref(), Some("2001:db8::1"));
+    }
 
     #[test]
     /// 验证后台路由到权限范围的映射关系。
