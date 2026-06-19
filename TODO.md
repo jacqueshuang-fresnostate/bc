@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-20 03:58 HKT 修复 iOS 构建 SwiftPM bare 仓库安全限制
+
+- 完成任务：为手机端正式 iOS/Tauri 构建增加 SwiftPM/Git 安全配置封装。
+- 解决问题：`pnpm tauri:build:ios` 在编译 `tauri v2.10.3` 的 iOS Swift 依赖时，SwiftPM 会读取 `swift-rs` 的 bare 仓库缓存；当本机 Git 配置为 `safe.bareRepository=explicit` 时，会报 `fatal: cannot use bare repository ... safe.bareRepository is 'explicit'`，导致 `Failed to compile swift package Tauri`。
+- 实施内容：新增 `mobile/scripts/run-ios-tauri-build.sh`，构建时通过进程级 `GIT_CONFIG_COUNT` 注入 `safe.bareRepository=all`，不修改全局 Git 配置；同时设置 `CLANG_MODULE_CACHE_PATH` 到 `mobile/src-tauri/target/swift-module-cache`，降低系统缓存目录权限异常对构建的影响；`tauri:build:ios` 和 `tauri:build:ios-sim` 改为走该封装脚本。
+- 验证结果：`bash -n mobile/scripts/run-ios-tauri-build.sh` 和 `bash -n mobile/scripts/build-unsigned-ipa.sh` 通过；`mobile/package.json` 中 `tauri:build:ios`、`tauri:build:ios-sim` 已指向封装脚本；通过 `GIT_CONFIG_COUNT` 验证子进程可读取 `safe.bareRepository=all`。
+
 ## 2026-06-20 03:38 HKT 无签名 IPA 支持临时更换包名
 
 - 完成任务：为手机端无签名 IPA 打包脚本增加本次打包包名覆盖能力。

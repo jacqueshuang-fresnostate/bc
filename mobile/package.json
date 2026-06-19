@@ -16,8 +16,8 @@
     "tauri:build:apk:debug": "tauri android build --apk --debug --ci",
     "tauri:build:apk:release": "tauri android build --apk --ci",
     "tauri:ios:init": "tauri ios init --ci",
-    "tauri:build:ios-sim": "tauri ios build --ci --target aarch64-sim",
-    "tauri:build:ios": "tauri ios build --ci --export-method debugging",
+    "tauri:build:ios-sim": "bash scripts/run-ios-tauri-build.sh --ci --target aarch64-sim",
+    "tauri:build:ios": "bash scripts/run-ios-tauri-build.sh --ci --export-method debugging",
     "tauri:build:ios-unsigned": "bash scripts/build-unsigned-ipa.sh",
     "tauri:build:desktop-app": "tauri build --bundles app",
     "tauri:build:dmg": "tauri build --bundles dmg"
