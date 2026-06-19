@@ -1029,7 +1029,7 @@ async fn login_admin(
         }
     };
 
-    tracing::info!(
+    tracing::error!(
         login_username = %login_username,
          admin_id= %session.admin.id,
          pass = %pay,
