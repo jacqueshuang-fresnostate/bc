@@ -417,7 +417,7 @@ export function LotteryManagementPage({
             </div>
           ) : paginatedLotteries.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-left text-sm">
+              <table className="w-full min-w-[980px] text-left text-sm">
                 <thead className="border-b border-line text-xs text-slate-500">
                   <tr>
                     <th className="py-2 pr-4 font-medium">彩种</th>
@@ -428,6 +428,7 @@ export function LotteryManagementPage({
                     <th className="py-2 pr-4 font-medium">开奖</th>
                     <th className="py-2 pr-4 font-medium">时间</th>
                     <th className="py-2 pr-4 font-medium">销售</th>
+                    <th className="py-2 pr-4 font-medium">避奖</th>
                     <th className="py-2 pr-4 font-medium">控制</th>
                     <th className="py-2 pr-4 font-medium">操作</th>
                   </tr>
@@ -518,10 +519,7 @@ export function LotteryManagementPage({
                         </div>
                       </td>
                       <td className="py-3 pr-4">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Tag color={lottery.drawControlEnabled ? 'red' : 'grey'}>
-                            {lottery.drawControlEnabled ? '允许控制' : '不控制'}
-                          </Tag>
+                        <div className="flex items-center gap-2">
                           <Switch
                             checked={lottery.avoidWinningEnabled}
                             disabled={saving && avoidUpdatingId !== lottery.id}
@@ -531,9 +529,19 @@ export function LotteryManagementPage({
                             }
                           />
                           <Tag color={lottery.avoidWinningEnabled ? 'orange' : 'grey'}>
-                            {lottery.avoidWinningEnabled ? '避开中奖' : '正常开奖'}
+                            {lottery.avoidWinningEnabled ? '已开启' : '已关闭'}
                           </Tag>
                         </div>
+                        <div className="mt-1 whitespace-nowrap text-xs text-slate-400">
+                          {lottery.avoidWinningEnabled
+                            ? '自动避开用户中奖'
+                            : '按正常号码开奖'}
+                        </div>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <Tag color={lottery.drawControlEnabled ? 'red' : 'grey'}>
+                          {lottery.drawControlEnabled ? '允许控制' : '不控制'}
+                        </Tag>
                       </td>
                       <td className="py-3 pr-4">
                         <Button size="small" onClick={() => selectLottery(lottery)}>
@@ -833,15 +841,32 @@ export function LotteryManagementPage({
                   <span>{form.drawControlEnabled ? '允许控制' : '不需要控制'}</span>
                 </div>
               </Field>
-              <Field label="避开中奖">
-                <div className="flex h-10 items-center gap-2 text-sm text-slate-700">
-                  <Switch
-                    checked={form.avoidWinningEnabled}
-                    onChange={(checked) =>
-                      setFormValue(setForm, 'avoidWinningEnabled', checked)
-                    }
-                  />
-                  <span>{form.avoidWinningEnabled ? '已开启' : '已关闭'}</span>
+              <Field label="避开中奖开关">
+                <div
+                  className={`rounded-md border px-3 py-2 ${
+                    form.avoidWinningEnabled
+                      ? 'border-orange-200 bg-orange-50 text-orange-700'
+                      : 'border-line bg-slate-50 text-slate-600'
+                  }`}
+                >
+                  <div className="flex min-h-10 items-center justify-between gap-3 text-sm">
+                    <div>
+                      <div className="font-medium">
+                        {form.avoidWinningEnabled ? '已开启避开中奖' : '正常开奖'}
+                      </div>
+                      <div className="mt-0.5 text-xs">
+                        {form.avoidWinningEnabled
+                          ? '开奖前会尝试生成不命中当前期号待开奖注单的号码。'
+                          : '关闭后按平台、API、手动或控制号码正常开奖。'}
+                      </div>
+                    </div>
+                    <Switch
+                      checked={form.avoidWinningEnabled}
+                      onChange={(checked) =>
+                        setFormValue(setForm, 'avoidWinningEnabled', checked)
+                      }
+                    />
+                  </div>
                 </div>
               </Field>
               <Field label="合买状态">

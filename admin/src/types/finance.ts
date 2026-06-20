@@ -45,10 +45,15 @@ export interface FinancePageQuery {
   pageSize?: number;
   includeRobotData?: boolean;
   userId?: string;
+  username?: string;
 }
 
 export interface ClearRecordsResult {
   deletedCount: number;
+}
+
+export interface ClearRobotGroupBuyRecordsResult extends ClearRecordsResult {
+  deletedOrderCount: number;
 }
 
 export interface AdminFinancialAccountSummary {

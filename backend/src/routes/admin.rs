@@ -142,12 +142,18 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/group-buy/plans/clear", delete(clear_group_buy_plans))
         .route(
+            "/group-buy/plans/robot-records/clear",
+            delete(clear_robot_group_buy_plans),
+        )
+        .route(
             "/group-buy/plans/by-issue",
             get(list_control_group_buy_plans_by_issue),
         )
         .route(
             "/group-buy/plans/{id}",
-            get(get_group_buy_plan).put(update_group_buy_plan),
+            get(get_group_buy_plan)
+                .put(update_group_buy_plan)
+                .delete(delete_robot_group_buy_plan),
         )
         .route(
             "/group-buy/plans/{id}/participants",
@@ -524,16 +530,29 @@ fn required_permission_for_request(method: &Method, path: &str) -> Option<&'stat
             _ => None,
         };
     }
+    if path == "group-buy/plans/robot-records/clear" {
+        return match method.clone() {
+            Method::DELETE => Some("group.buy.clear"),
+            _ => None,
+        };
+    }
     if path == "group-buy/plans/by-issue" {
         return match method.clone() {
             Method::GET => Some("group.buy.read"),
             _ => None,
         };
     }
+    if path.starts_with("group-buy/plans/") && path.ends_with("/participants") {
+        return match method.clone() {
+            Method::POST => Some("group.buy.manage"),
+            _ => None,
+        };
+    }
     if path.starts_with("group-buy/plans/") {
         return match method.clone() {
             Method::GET => Some("group.buy.read"),
-            Method::PUT | Method::POST => Some("group.buy.manage"),
+            Method::PUT => Some("group.buy.manage"),
+            Method::DELETE => Some("group.buy.clear"),
             _ => None,
         };
     }
@@ -1449,6 +1468,7 @@ async fn list_draw_issues(
         .draws
         .list_page(
             query.lottery_id.as_deref(),
+            query.status,
             PageRequest::new(query.page, query.page_size),
         )
         .await?;
@@ -1467,6 +1487,7 @@ async fn list_draw_issues(
 /// 后台期号列表筛选和分页查询参数。
 struct DrawIssueListQuery {
     lottery_id: Option<String>,
+    status: Option<DrawIssueStatus>,
     page: Option<usize>,
     page_size: Option<usize>,
 }
@@ -1479,6 +1500,7 @@ struct FinancePageQuery {
     page_size: Option<usize>,
     include_robot_data: Option<bool>,
     user_id: Option<String>,
+    username: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1534,6 +1556,14 @@ enum UserListSortDirection {
 /// 后台一键清理记录后的统一返回结构。
 struct ClearRecordsResult {
     deleted_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台一键清理机器人合买记录后的返回结构。
+struct ClearRobotGroupBuyRecordsResult {
+    deleted_count: usize,
+    deleted_order_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1604,6 +1634,14 @@ impl FinancePageQuery {
             .map(str::trim)
             .filter(|user_id| !user_id.is_empty())
     }
+
+    /// 读取可选用户名关键字，空字符串按未设置处理。
+    fn username_filter(&self) -> Option<&str> {
+        self.username
+            .as_deref()
+            .map(str::trim)
+            .filter(|username| !username.is_empty())
+    }
 }
 
 /// 后台用户列表查询参数。
@@ -1615,6 +1653,7 @@ impl UserListQuery {
             page: self.page,
             page_size: self.page_size,
             user_id: None,
+            username: None,
         }
     }
 }
@@ -1628,6 +1667,7 @@ impl AgentApplicationListQuery {
             page: self.page,
             page_size: self.page_size,
             user_id: None,
+            username: None,
         }
     }
 }
@@ -2165,6 +2205,28 @@ async fn clear_group_buy_plans(
     })))
 }
 
+/// 一键清理纯机器人合买计划和关联机器人合买订单，包含未成单、待开奖和已结算记录。
+async fn clear_robot_group_buy_plans(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<ClearRobotGroupBuyRecordsResult>>> {
+    let cleanup = state
+        .orders
+        .remove_robot_group_buy_records(&state.group_buys, ROBOT_GROUP_BUY_USER_ID)
+        .await?;
+    tracing::info!(
+        deleted_plan_count = cleanup.deleted_plan_count,
+        deleted_order_count = cleanup.deleted_order_count,
+        "后台已一键清理机器人合买记录"
+    );
+
+    Ok(Json(ApiEnvelope::success(
+        ClearRobotGroupBuyRecordsResult {
+            deleted_count: cleanup.deleted_plan_count,
+            deleted_order_count: cleanup.deleted_order_count,
+        },
+    )))
+}
+
 /// 返回控奖抽屉当前彩种期号下的合买计划和认购记录，包含未满单、未成单计划。
 async fn list_control_group_buy_plans_by_issue(
     State(state): State<AppState>,
@@ -2186,6 +2248,63 @@ async fn get_group_buy_plan(
     let plan = state.group_buys.get(&id).await?;
 
     Ok(Json(ApiEnvelope::success(plan)))
+}
+
+/// 删除机器人发起且未混入真实用户认购的合买计划，主要用于清理机器人测试单据。
+async fn delete_robot_group_buy_plan(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
+    let plan = state.group_buys.get(&id).await?;
+    ensure_robot_group_buy_plan_can_be_deleted(&state, &plan).await?;
+
+    let (removed_order, deleted) = state
+        .orders
+        .remove_group_buy_order_and_plan_records(&state.group_buys, plan.order_id.as_deref(), &id)
+        .await?;
+    if let Some(removed_order) = removed_order {
+        publish_user_order_changed(&state, &removed_order, "deleted");
+    }
+
+    Ok(Json(ApiEnvelope::success(deleted)))
+}
+
+/// 校验机器人合买计划是否可以直接删除，避免真实用户资金和已结算订单失去审计链路。
+async fn ensure_robot_group_buy_plan_can_be_deleted(
+    state: &AppState,
+    plan: &GroupBuyPlan,
+) -> ApiResult<()> {
+    if !is_group_buy_robot_user_id(&plan.initiator_user_id) {
+        return Err(ApiError::BadRequest(
+            "只能删除机器人发起的合买计划".to_string(),
+        ));
+    }
+    if plan
+        .participants
+        .iter()
+        .any(|participant| !is_group_buy_robot_user_id(&participant.user_id))
+    {
+        return Err(ApiError::BadRequest(
+            "包含真实用户认购的合买计划不能直接删除，请先走取消退款或结算流程".to_string(),
+        ));
+    }
+    if let Some(order_id) = plan.order_id.as_deref() {
+        let order = state.orders.get(order_id).await?;
+        if !is_group_buy_robot_user_id(&order.user_id)
+            || order.order_source != OrderSource::GroupBuy
+        {
+            return Err(ApiError::BadRequest(
+                "关联订单不是机器人合买订单，不能通过机器人清理入口删除".to_string(),
+            ));
+        }
+        if order.status != OrderStatus::PendingDraw {
+            return Err(ApiError::BadRequest(
+                "已开奖或已取消的机器人合买订单不能直接删除".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// 后台创建合买计划。
@@ -3403,19 +3522,21 @@ async fn list_financial_accounts(
     } else {
         Some(ROBOT_GROUP_BUY_USER_ID)
     };
-    let page = state
-        .finance
-        .account_page(
-            query.user_id_filter(),
-            excluded_user_id,
-            PageRequest::new(query.page, query.page_size),
-        )
-        .await?;
     let users = state.access.users().await?;
     let usernames: BTreeMap<String, String> = users
         .into_iter()
         .map(|user| (user.id, user.username))
         .collect();
+    let page = state
+        .finance
+        .account_page(
+            query.user_id_filter(),
+            query.username_filter(),
+            &usernames,
+            excluded_user_id,
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?;
     let accounts = page
         .items
         .into_iter()
@@ -4590,6 +4711,14 @@ mod tests {
             Some("lottery.draw.control")
         );
         assert_eq!(
+            required_permission_for_request(&Method::GET, "/api/admin/group-buy/plans"),
+            Some("group.buy.read")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::DELETE, "/api/admin/group-buy/plans/G-001"),
+            Some("group.buy.clear")
+        );
+        assert_eq!(
             required_permission_for_request(
                 &Method::DELETE,
                 "/api/admin/system-settings/chat-hall/messages/clear",
@@ -4642,6 +4771,7 @@ mod tests {
                 page: Some(2),
                 page_size: Some(2),
                 user_id: None,
+                username: None,
             },
         );
 
@@ -4754,6 +4884,7 @@ mod tests {
                 page: Some(1),
                 page_size: Some(2),
                 user_id: None,
+                username: None,
             },
         );
 
@@ -4782,6 +4913,7 @@ mod tests {
                 page: Some(1),
                 page_size: Some(2),
                 user_id: None,
+                username: None,
             },
         );
         assert_eq!(
@@ -4798,6 +4930,7 @@ mod tests {
             page: Some(1),
             page_size: Some(20),
             user_id: Some("U10001".to_string()),
+            username: None,
         };
         assert!(should_match_user_filter(&user_filter, "U10001"));
         assert!(!should_match_user_filter(&user_filter, "U10002"));

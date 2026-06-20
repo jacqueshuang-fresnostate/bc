@@ -63,6 +63,8 @@ interface ParticipantFormState {
   userId: string;
 }
 
+const ROBOT_GROUP_BUY_USER_ID = 'U90001';
+
 export function GroupBuyManagementPage({
   onDashboardRefresh,
 }: GroupBuyManagementPageProps) {
@@ -75,7 +77,9 @@ export function GroupBuyManagementPage({
   const {
     addParticipant,
     clearRecords,
+    clearRobotRecords,
     create,
+    deleteRobotPlan,
     drawIssues,
     error,
     loadPlan,
@@ -251,6 +255,31 @@ export function GroupBuyManagementPage({
     onDashboardRefresh();
   };
 
+  const deleteRobotPlanRecord = async (plan: GroupBuyPlanSummary) => {
+    if (!isRobotGroupBuyPlan(plan)) {
+      Toast.warning('只能删除机器人发起的合买计划');
+      return;
+    }
+    if (
+      !window.confirm(
+        `确定删除机器人合买计划【${plan.id}】吗？仅机器人发起且没有真实用户认购的待开奖单据会被删除。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteRobotPlan(plan.id);
+      if (detailPlanId === plan.id) {
+        setDetailPlanId('');
+        setDetailSheetVisible(false);
+      }
+      Toast.success('机器人合买计划已删除');
+      onDashboardRefresh();
+    } catch {
+      Toast.error('机器人合买计划删除失败，请查看接口错误提示');
+    }
+  };
+
   const clearGroupBuyPlanRecords = async () => {
     if (
       !window.confirm(
@@ -272,6 +301,30 @@ export function GroupBuyManagementPage({
       );
     } catch {
       Toast.error('合买计划列表清除失败，请查看接口错误提示');
+    }
+  };
+
+  const clearRobotGroupBuyPlanRecords = async () => {
+    if (
+      !window.confirm(
+        '确定一键清理所有机器人合买订单吗？系统会删除纯机器人合买计划，以及这些计划关联的机器人投注订单；未成单、待开奖和已结算机器人记录都会清理，包含真实用户认购的计划会保留。',
+      )
+    ) {
+      return;
+    }
+    try {
+      const result = await clearRobotRecords();
+      setDetailPlanId('');
+      setDetailSheetVisible(false);
+      setPlanPageNumber(1);
+      onDashboardRefresh();
+      Toast.success(
+        result.deletedCount > 0 || result.deletedOrderCount > 0
+          ? `已清理 ${result.deletedCount} 条机器人合买计划，关联机器人订单 ${result.deletedOrderCount} 笔`
+          : '没有可清理的纯机器人合买订单',
+      );
+    } catch {
+      Toast.error('机器人合买订单清理失败，请查看接口错误提示');
     }
   };
 
@@ -313,6 +366,15 @@ export function GroupBuyManagementPage({
             onClick={() => void clearGroupBuyPlanRecords()}
           >
             一键清除合买计划列表
+          </Button>
+          <Button
+            disabled={saving || loading}
+            icon={<Trash2 size={16} />}
+            theme="light"
+            type="danger"
+            onClick={() => void clearRobotGroupBuyPlanRecords()}
+          >
+            清理机器人订单
           </Button>
         </div>
       </section>
@@ -370,6 +432,11 @@ export function GroupBuyManagementPage({
                             <div className="font-semibold text-ink">{plan.id}</div>
                             <div className="mt-1 text-xs text-slate-400">
                               发起人：{plan.initiatorUsername}
+                              {isRobotGroupBuyPlan(plan) ? (
+                                <Tag className="ml-2" color="purple">
+                                  机器人
+                                </Tag>
+                              ) : null}
                             </div>
                           </td>
                           <td className="py-3 pr-4 text-slate-600">
@@ -403,15 +470,29 @@ export function GroupBuyManagementPage({
                             </Tag>
                           </td>
                           <td className="py-3 pr-4">
-                            <Button
-                              disabled={saving}
-                              icon={<Eye size={14} />}
-                              loading={saving && detailPlanId === plan.id}
-                              size="small"
-                              onClick={() => void openDetailSheet(plan.id)}
-                            >
-                              查看详情
-                            </Button>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                disabled={saving}
+                                icon={<Eye size={14} />}
+                                loading={saving && detailPlanId === plan.id}
+                                size="small"
+                                onClick={() => void openDetailSheet(plan.id)}
+                              >
+                                查看详情
+                              </Button>
+                              {includeRobotData && isRobotGroupBuyPlan(plan) ? (
+                                <Button
+                                  disabled={saving}
+                                  icon={<Trash2 size={14} />}
+                                  size="small"
+                                  theme="light"
+                                  type="danger"
+                                  onClick={() => void deleteRobotPlanRecord(plan)}
+                                >
+                                  删除
+                                </Button>
+                              ) : null}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -702,6 +783,19 @@ export function GroupBuyManagementPage({
                       </Field>
                     </div>
                     <div className="mt-4 flex justify-end">
+                      {includeRobotData && isRobotGroupBuyPlan(detailPlan) ? (
+                        <Button
+                          className="mr-2"
+                          disabled={saving}
+                          icon={<Trash2 size={16} />}
+                          loading={saving}
+                          theme="light"
+                          type="danger"
+                          onClick={() => void deleteRobotPlanRecord(detailPlan)}
+                        >
+                          删除机器人计划
+                        </Button>
+                      ) : null}
                       <Button
                         disabled={saving}
                         icon={<Save size={16} />}
@@ -972,6 +1066,10 @@ function progressPercent(plan: GroupBuyPlanSummary) {
     100,
     Math.round((plan.filledAmountMinor / plan.totalAmountMinor) * 100),
   );
+}
+
+function isRobotGroupBuyPlan(plan: GroupBuyPlanSummary) {
+  return plan.initiatorUserId === ROBOT_GROUP_BUY_USER_ID;
 }
 
 function nextParticipantId(plan: GroupBuyPlan) {

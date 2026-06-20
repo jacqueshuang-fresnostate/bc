@@ -906,6 +906,33 @@ impl GroupBuyStore {
         Ok(deleted_count)
     }
 
+    /// 返回可被机器人批量清理入口删除的合买计划，真实用户参与过的计划必须保留。
+    pub(crate) fn robot_cleanup_candidates(&self, robot_user_id: &str) -> Vec<GroupBuyPlan> {
+        let robot_user_id = robot_user_id.trim();
+        sorted_group_buy_plans(self.plans.values())
+            .into_iter()
+            .filter(|plan| {
+                plan.initiator_user_id == robot_user_id
+                    && plan
+                        .participants
+                        .iter()
+                        .all(|participant| participant.user_id == robot_user_id)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// 批量删除指定合买计划，供机器人清理接口与订单仓储同事务保存使用。
+    pub(crate) fn delete_plans_by_ids(&mut self, plan_ids: &BTreeSet<String>) -> Vec<GroupBuyPlan> {
+        let mut deleted = Vec::new();
+        for plan_id in plan_ids {
+            if let Some(plan) = self.plans.remove(plan_id) {
+                deleted.push(plan);
+            }
+        }
+        deleted
+    }
+
     /// 按订单 ID 查找已经成单的合买计划。
     pub(crate) fn plans_for_order_ids(&self, order_ids: &[String]) -> Vec<GroupBuyPlan> {
         self.plans
@@ -1244,6 +1271,13 @@ impl GroupBuyStore {
         self.plans
             .remove(id)
             .map(|_| ())
+            .ok_or_else(|| ApiError::NotFound(format!("group buy plan `{id}` not found")))
+    }
+
+    /// 删除指定合买计划并返回被删除的数据，供后台删除前后展示和审计。
+    pub(crate) fn delete_plan(&mut self, id: &str) -> ApiResult<GroupBuyPlan> {
+        self.plans
+            .remove(id)
             .ok_or_else(|| ApiError::NotFound(format!("group buy plan `{id}` not found")))
     }
 
@@ -1604,6 +1638,52 @@ mod tests {
             1
         );
         assert!(store.list().is_empty());
+    }
+
+    /// 验证机器人批量清理候选只包含发起人和参与人都属于机器人的合买计划。
+    #[test]
+    fn group_buy_store_robot_cleanup_candidates_skip_real_participants() {
+        let mut store = GroupBuyStore::seeded();
+        let base_plan = store
+            .plans
+            .values()
+            .next()
+            .cloned()
+            .expect("seeded plan exists");
+        let mut robot_only_plan = base_plan.clone();
+        robot_only_plan.id = "G-ROBOT-ONLY".to_string();
+        robot_only_plan.participants = robot_only_plan
+            .participants
+            .into_iter()
+            .filter(|participant| participant.user_id == "U90001")
+            .collect();
+        store
+            .plans
+            .insert(robot_only_plan.id.clone(), robot_only_plan);
+
+        let candidates = store.robot_cleanup_candidates("U90001");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].id, "G-ROBOT-ONLY");
+    }
+
+    /// 验证后台删除机器人合买计划时可以拿到被删除的记录，便于页面即时移除和审计。
+    #[test]
+    fn group_buy_store_deletes_plan_and_returns_record() {
+        let mut store = GroupBuyStore::seeded();
+        let plan_id = store
+            .plans
+            .keys()
+            .next()
+            .cloned()
+            .expect("seeded plan exists");
+
+        let deleted = store
+            .delete_plan(&plan_id)
+            .expect("robot plan can be deleted");
+
+        assert_eq!(deleted.id, plan_id);
+        assert!(store.get(&plan_id).is_err());
     }
     /// 验证合买合买仓储拒绝停用彩种。
     #[tokio::test]

@@ -401,7 +401,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/financial-accounts",
         "财务管理",
         "资金账户列表",
-        "分页返回用户资金账户摘要，并包含用户 ID 与用户名；默认过滤机器人账户，可通过 includeRobotData=true 显示。",
+        "分页返回用户资金账户摘要，并包含用户 ID 与用户名；支持 username 按用户名关键字搜索，默认过滤机器人账户，可通过 includeRobotData=true 显示。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -496,6 +496,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Json,
     ),
     doc(
+        "delete",
+        "/admin/group-buy/plans/robot-records/clear",
+        "合买管理",
+        "一键清理机器人合买订单",
+        "删除纯机器人合买计划，以及这些计划关联的机器人合买投注订单；包含未成单、待开奖和已结算记录，真实用户参与过的合买计划会保留。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
         "get",
         "/admin/group-buy/plans/by-issue",
         "合买管理",
@@ -521,6 +530,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "更新合买计划状态和说明；取消时按参与记录退款。",
         AuthMode::Admin,
         RequestBodyKind::Json,
+    ),
+    doc(
+        "delete",
+        "/admin/group-buy/plans/{id}",
+        "合买管理",
+        "删除机器人合买计划",
+        "仅允许删除机器人发起且未混入真实用户认购的待开奖合买计划；关联机器人合买订单会同步移除。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
     ),
     doc(
         "post",
@@ -2033,6 +2051,9 @@ mod tests {
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/approve"]["post"].is_object());
         assert!(document["paths"]["/admin/withdrawal-orders/{id}/reject"]["post"].is_object());
         assert!(document["paths"]["/admin/orders/{id}/group-buy-plan"]["get"].is_object());
+        assert!(
+            document["paths"]["/admin/group-buy/plans/robot-records/clear"]["delete"].is_object()
+        );
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["get"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["put"].is_object());

@@ -76,6 +76,7 @@ export function FinanceManagementPage({
   const [ledgerPage, setLedgerPage] = useState(1);
   const [ledgerPageSize, setLedgerPageSize] = useState(20);
   const [includeRobotData, setIncludeRobotData] = useState(false);
+  const [accountUsernameSearch, setAccountUsernameSearch] = useState('');
   const {
     accounts,
     adjustBalance,
@@ -95,7 +96,12 @@ export function FinanceManagementPage({
     saving,
     withdrawalOrders,
   } = useFinance({
-    accountQuery: { includeRobotData, page: accountPage, pageSize: accountPageSize },
+    accountQuery: {
+      includeRobotData,
+      page: accountPage,
+      pageSize: accountPageSize,
+      username: accountUsernameSearch,
+    },
     includeRobotData,
     ledgerQuery: {
       includeRobotData,
@@ -322,24 +328,35 @@ export function FinanceManagementPage({
         >
           <section className="pt-3">
             <Card className="rounded-md border border-line">
-          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-semibold text-ink">资金账户</h2>
-              <Tag color="cyan">{accounts.totalCount} 个账户</Tag>
-            </div>
-            <PageControls
-              loading={loading}
-              page={accounts.page}
-              pageSize={accountPageSize}
-              totalCount={accounts.totalCount}
-              totalPages={accounts.totalPages}
-              onPageChange={setAccountPage}
-              onPageSizeChange={(nextPageSize) => {
-                setAccountPage(1);
-                setAccountPageSize(nextPageSize);
-              }}
-            />
-          </div>
+              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-ink">资金账户</h2>
+                  <Tag color="cyan">{accounts.totalCount} 个账户</Tag>
+                </div>
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                  <Input
+                    className="form-input min-w-[220px]"
+                    placeholder="按用户名搜索"
+                    value={accountUsernameSearch}
+                    onChange={(value) => {
+                      setAccountUsernameSearch(value);
+                      setAccountPage(1);
+                    }}
+                  />
+                  <PageControls
+                    loading={loading}
+                    page={accounts.page}
+                    pageSize={accountPageSize}
+                    totalCount={accounts.totalCount}
+                    totalPages={accounts.totalPages}
+                    onPageChange={setAccountPage}
+                    onPageSizeChange={(nextPageSize) => {
+                      setAccountPage(1);
+                      setAccountPageSize(nextPageSize);
+                    }}
+                  />
+                </div>
+              </div>
 
           {loading ? (
             <div className="grid min-h-[260px] place-items-center">

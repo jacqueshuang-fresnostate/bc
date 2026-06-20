@@ -97,15 +97,19 @@ impl FinanceRepository {
     pub async fn account_page(
         &self,
         user_id: Option<&str>,
+        username: Option<&str>,
+        usernames_by_user_id: &BTreeMap<String, String>,
         excluded_user_id: Option<&str>,
         page: PageRequest,
     ) -> ApiResult<ListPage<FinancialAccountSummary>> {
         let user_id = normalized_optional_filter(user_id);
+        let username = normalized_optional_filter(username);
         let excluded_user_id = normalized_optional_filter(excluded_user_id);
         if let Some(persistence) = &self.persistence {
             return query_financial_account_page(
                 persistence,
                 user_id.as_deref(),
+                username.as_deref(),
                 excluded_user_id.as_deref(),
                 page,
             )
@@ -122,6 +126,9 @@ impl FinanceRepository {
                 user_id
                     .as_deref()
                     .map_or(true, |target| account.user_id == target)
+                    && username.as_deref().map_or(true, |target| {
+                        username_matches_account(usernames_by_user_id, &account.user_id, target)
+                    })
                     && excluded_user_id
                         .as_deref()
                         .map_or(true, |excluded| account.user_id != excluded)
@@ -405,6 +412,22 @@ fn normalized_optional_filter(value: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// 判断资金账户关联用户名是否命中后台关键字搜索；未知用户不命中过滤。
+fn username_matches_account(
+    usernames_by_user_id: &BTreeMap<String, String>,
+    user_id: &str,
+    keyword: &str,
+) -> bool {
+    let keyword = keyword.trim().to_lowercase();
+    if keyword.is_empty() {
+        return true;
+    }
+    usernames_by_user_id
+        .get(user_id)
+        .map(|username| username.to_lowercase().contains(&keyword))
+        .unwrap_or(false)
+}
+
 /// 从用户编号中提取数字序号，用于“最新用户优先”排序。
 fn user_id_sequence_for_sort(user_id: &str) -> Option<u64> {
     user_id.trim().strip_prefix('U')?.parse().ok()
@@ -561,16 +584,20 @@ fn ledger_entry_from_row(row: PgRow) -> ApiResult<LedgerEntry> {
 async fn query_financial_account_page(
     database: &BusinessDatabase,
     user_id: Option<&str>,
+    username: Option<&str>,
     excluded_user_id: Option<&str>,
     page: PageRequest,
 ) -> ApiResult<ListPage<FinancialAccountSummary>> {
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
-         FROM financial_accounts
-         WHERE ($1::text IS NULL OR user_id = $1)
-           AND ($2::text IS NULL OR user_id <> $2)",
+         FROM financial_accounts AS account
+         LEFT JOIN users AS app_user ON app_user.id = account.user_id
+         WHERE ($1::text IS NULL OR account.user_id = $1)
+           AND ($2::text IS NULL OR app_user.username ILIKE '%' || $2 || '%')
+           AND ($3::text IS NULL OR account.user_id <> $3)",
     )
     .bind(user_id)
+    .bind(username)
     .bind(excluded_user_id)
     .fetch_one(database.pool())
     .await
@@ -580,15 +607,18 @@ async fn query_financial_account_page(
     let resolved = page.resolve(total_count);
     let rows = sqlx::query(
         "SELECT user_id, available_balance_minor, frozen_balance_minor
-         FROM financial_accounts
-         WHERE ($1::text IS NULL OR user_id = $1)
-           AND ($2::text IS NULL OR user_id <> $2)
+         FROM financial_accounts AS account
+         LEFT JOIN users AS app_user ON app_user.id = account.user_id
+         WHERE ($1::text IS NULL OR account.user_id = $1)
+           AND ($2::text IS NULL OR app_user.username ILIKE '%' || $2 || '%')
+           AND ($3::text IS NULL OR account.user_id <> $3)
          ORDER BY
-           CASE WHEN user_id ~ '^U[0-9]+$' THEN substring(user_id from 2)::bigint ELSE 0 END DESC,
-           user_id DESC
-         LIMIT $3 OFFSET $4",
+           CASE WHEN account.user_id ~ '^U[0-9]+$' THEN substring(account.user_id from 2)::bigint ELSE 0 END DESC,
+           account.user_id DESC
+         LIMIT $4 OFFSET $5",
     )
     .bind(user_id)
+    .bind(username)
     .bind(excluded_user_id)
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
@@ -1704,6 +1734,8 @@ fn current_timestamp_label() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use crate::{
         domain::{
             finance::{LedgerEntry, LedgerEntryKind, ManualBalanceAdjustmentRequest},
@@ -1714,8 +1746,44 @@ mod tests {
             play::{PlayRuleCode, PlaySelection},
             settlement::{OrderSettlement, SettlementRun},
         },
-        services::finance::FinanceStore,
+        services::{
+            finance::{FinanceRepository, FinanceStore},
+            pagination::PageRequest,
+        },
     };
+
+    #[tokio::test]
+    /// 资金账户分页在内存模式下也会按用户名先过滤再分页。
+    async fn repository_account_page_filters_by_username_before_pagination() {
+        let repository = FinanceRepository::memory_seeded();
+        let usernames = BTreeMap::from([
+            ("U10001".to_string(), "alice".to_string()),
+            ("U10002".to_string(), "bob".to_string()),
+            ("U10003".to_string(), "carol".to_string()),
+            ("U10004".to_string(), "alice_vip".to_string()),
+            ("U90001".to_string(), "agent_alpha".to_string()),
+        ]);
+
+        let page = repository
+            .account_page(
+                None,
+                Some("alice"),
+                &usernames,
+                None,
+                PageRequest::new(Some(1), Some(10)),
+            )
+            .await
+            .expect("account page can filter by username");
+
+        assert_eq!(page.total_count, 2);
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|account| account.user_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["U10004", "U10001"]
+        );
+    }
 
     #[test]
     /// 验证下单扣款会生成对应资金流水。

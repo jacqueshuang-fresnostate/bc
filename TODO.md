@@ -1,5 +1,47 @@
 # TODO
 
+## 2026-06-21 00:11 HKT 合买管理一键清理机器人订单
+
+- 完成任务：后台合买管理新增“清理机器人订单”入口，可一键清理纯机器人合买计划和关联机器人合买投注订单。
+- 解决问题：此前普通“一键清除合买计划列表”只清理已取消或已结算计划，单条删除又只允许待开奖机器人计划；机器人产生的未成单、未满单、已满单和已结算记录无法一次性清理干净。
+- 实施内容：新增 `DELETE /api/admin/group-buy/plans/robot-records/clear`，复用 `group.buy.clear` 权限；后端只清理“发起人和所有参与人都是机器人”的合买计划，真实用户参与过的计划自动保留；关联的机器人合买订单会同步删除，已结算订单会从计奖派奖批次中移除并重算剩余批次汇总；后台 API client、hook 和合买管理顶部按钮同步接入，成功提示展示删除计划数和订单数。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、新增机器人清理相关后端针对性测试、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、管理后台 `tsc --noEmit -p tsconfig.json`、`vite build --mode development` 和 `git diff --check` 均通过；`vite` 仍提示既有大 chunk 警告，不影响本次功能。
+
+## 2026-06-21 00:00 HKT 彩种避奖开关可见性优化
+
+- 完成任务：后台彩种管理列表新增独立“避奖”列，并把新增/编辑彩种 SideSheet 里的“避开中奖”改成醒目的独立开关配置块。
+- 解决问题：避开中奖能力已经接入后端和数据库，但列表入口此前混在“控制”列里，运营进入彩种管理时不容易发现每个彩种都可以单独开启避奖。
+- 实施内容：彩种列表不再把避奖开关和开奖号码控制状态放在同一列；“避奖”列直接显示 Semi UI `Switch`、开启状态和“自动避开用户中奖/按正常号码开奖”说明；编辑抽屉显示“已开启避开中奖/正常开奖”的状态说明，方便运营确认该彩种是否会自动避开用户中奖。
+- 验证结果：管理后台 `tsc --noEmit -p tsconfig.json`、`vite build --mode development` 和 `git diff --check` 均通过；`vite` 仍提示既有大 chunk 警告，不影响本次彩种管理页面构建。
+
+## 2026-06-20 23:55 HKT 资金账户用户名搜索
+
+- 完成任务：后台财务管理的资金账户列表支持按用户名关键字搜索。
+- 解决问题：此前资金账户只能分页查看或按用户 ID 间接过滤，财务人员知道用户名时无法直接定位账户，需要去用户列表查 ID 后再回到财务页面操作。
+- 实施内容：后端 `GET /api/admin/financial-accounts` 新增 `username` 查询参数；数据库模式下通过 `financial_accounts` 关联 `users.username` 进行 SQL 过滤和分页，内存模式下使用后台用户映射先过滤再分页；后台 `FinancePageQuery`、API client、`useFinance` 和“账户与调账”标签页新增用户名搜索输入框，搜索词变化时重置到第一页；OpenAPI 文案同步标注 `username` 关键字搜索能力。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml repository_account_page_filters_by_username_before_pagination -- --nocapture`、管理后台 `tsc --noEmit -p tsconfig.json` 和 `git diff --check` 均通过。
+
+## 2026-06-20 23:50 HKT 合买机器人并发执行模式
+
+- 完成任务：把合买机器人主执行入口改为按“机器人 + 彩种 + 当前期号”拆分并发任务执行。
+- 解决问题：此前 `run_group_buy_robots` 对机器人和彩种双层串行循环，彩种多或多个机器人启用时，本轮补单、满单和成单容易被单个彩种拖慢；同时直接并发又会带来同一期重复补单、资金快照异步落库覆盖等一致性风险。
+- 实施内容：新增合买机器人任务结构、空结果合并工具和并发上限 `ROBOT_CONCURRENT_JOB_LIMIT=8`；同一“彩种 + 期号”使用互斥锁串行执行，避免多个机器人同时补同一合买计划；不同彩种或不同期号使用 Tokio 任务并发执行；机器人自动授信和合买扣款统一走资金写锁，保证余额与资金流水快照按顺序持久化；执行开始和完成日志使用中文字段记录并发任务数、创建计划数、满单数、订单数和跳过项数。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml robot_run_executes_multiple_lottery_jobs_in_one_round -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture` 均通过。
+
+## 2026-06-20 22:50 HKT 期号状态筛选与机器人合买计划删除
+
+- 完成任务：期号列表支持按状态筛选，合买管理支持删除机器人发起的合买单据。
+- 解决问题：此前期号管理只能按彩种筛选，运营排查销售中、已封盘、已开奖或已取消期号时需要翻页查找；合买管理默认隐藏机器人数据，即使打开显示机器人数据，也只能清理已取消或已结算记录，无法单独删除机器人生成的未结算测试计划。
+- 实施内容：后端 `GET /api/admin/draw-issues` 新增 `status` 查询参数，并把彩种、状态、分页一起下推到开奖期号仓储 SQL；后台期号列表新增“全部状态 / 销售中 / 已封盘 / 已开奖 / 已取消”筛选，切换筛选自动回到第一页；后端 `DELETE /api/admin/group-buy/plans/{id}` 新增机器人合买删除入口，只允许删除机器人发起、参与人也都是机器人账户、且关联订单仍为待开奖的合买计划；后台合买管理在“显示机器人数据”开启后显示机器人计划删除按钮，并复用 `group.buy.clear` 权限点。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、期号筛选/合买删除/订单事务/权限映射等针对性后端测试、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml group_buy -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml order -- --nocapture`、管理后台本地 `tsc` 与 `vite build`、`git diff --check` 均通过；`npm run build` 仍会被本机 npm 配置触发外部 DNS 解析 `fullnode.mainnet.aptoslabs.com` 而中断，因此本轮使用本地二进制完成等价验证。
+
+## 2026-06-20 10:05 HKT Android 安装包包名可覆盖
+
+- 完成任务：让 Android APK 打包和安装测试支持临时指定包名。
+- 解决问题：此前只有无签名 IPA 支持 `--bundle-id` 和随机包名，Android `pnpm tauri:build:app` 固定使用 `com.hongfu.app`，重复安装测试时容易继承旧 App 缓存，无法像 iOS 一样通过换包名隔离测试环境。
+- 实施内容：新增 `mobile/scripts/build-android-apk.sh`，支持 `--package-id`、`--random-package-id`、`--install` 和 `--device`；`mobile/package.json` 的 `tauri:build:app`、`tauri:build:apk`、debug/release 命令统一走该脚本；Android Gradle 通过 `HONGFU_ANDROID_PACKAGE_ID` 覆盖本次 `applicationId`，默认仍为 `com.hongfu.app`；`AndroidManifest` 的 Activity 改为完整类名，避免应用包名变化后相对类名解析异常；Tauri `beforeBuildCommand` 改为 `pnpm build`，避免本机 `npm run build` 触发外部 DNS 异常。
+- 验证结果：`bash -n mobile/scripts/build-android-apk.sh`、脚本 `--help`、`cd mobile && pnpm build`、`cd mobile/src-tauri && cargo check` 均通过；执行 `pnpm tauri:build:apk:debug -- --package-id com.hongfu.testbuild` 已确认脚本解析并输出本次包名，但 Android 原生构建在 `tauri-plugin-clipboard-manager` 的 cargo registry 缓存目录创建 `.tauri/tauri-api` 时因 `File exists` 中断；直接运行 Gradle wrapper 配置检查又被当前沙箱阻止访问 `~/.gradle` 锁文件，后续在本机非沙箱环境清理该插件缓存或重跑即可继续验证 APK 产物。
+
 ## 2026-06-20 09:30 HKT 彩种避开中奖开关
 
 - 完成任务：在彩种管理中新增“避开中奖”开关，并让自动调度开奖和后台手动开奖都遵守该彩种配置。

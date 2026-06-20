@@ -12,13 +12,17 @@ val tauriProperties = Properties().apply {
         propFile.inputStream().use { load(it) }
     }
 }
+val hongfuAndroidPackageId = System.getenv("HONGFU_ANDROID_PACKAGE_ID")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?: "com.hongfu.app"
 
 android {
     compileSdk = 36
     namespace = "com.hongfu.app"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "com.hongfu.app"
+        applicationId = hongfuAndroidPackageId
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

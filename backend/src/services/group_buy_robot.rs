@@ -1,8 +1,12 @@
 //! 合买机器人执行服务，负责按当前彩种、期号和玩法规则自动发起并按节奏补单。
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::NaiveDateTime;
+use tokio::{
+    sync::{Mutex as AsyncMutex, Semaphore},
+    task::JoinHandle,
+};
 
 use crate::services::group_buy_flow::create_order_for_filled_group_buy_before_draw_guard;
 use crate::{
@@ -51,6 +55,17 @@ const ROBOT_FILL_STAGE_TWO_TARGET_PERCENT: i64 = 60;
 const ROBOT_FILL_STAGE_THREE_TARGET_PERCENT: i64 = 80;
 const ROBOT_FILL_FINAL_TARGET_PERCENT: i64 = 100;
 const ROBOT_FILL_STAGE_COUNT: i64 = 5;
+const ROBOT_CONCURRENT_JOB_LIMIT: usize = 8;
+
+type RobotFinanceMutationLock = Arc<AsyncMutex<()>>;
+type RobotIssueMutationLock = Arc<AsyncMutex<()>>;
+
+#[derive(Clone)]
+struct GroupBuyRobotJob {
+    robot: RobotConfigSummary,
+    lottery: LotteryKind,
+    issue: DrawIssue,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RobotFillPolicy {
@@ -62,6 +77,32 @@ enum RobotFillPolicy {
 /// 判断用户 ID 是否为系统合买机器人账户。
 pub fn is_group_buy_robot_user_id(user_id: &str) -> bool {
     user_id.trim() == ROBOT_GROUP_BUY_USER_ID
+}
+
+/// 构造空的合买机器人执行结果，供串行和并发任务统一汇总。
+fn empty_group_buy_robot_run(now: String) -> GroupBuyRobotRun {
+    GroupBuyRobotRun {
+        now,
+        created_plans: Vec::new(),
+        filled_plans: Vec::new(),
+        created_orders: Vec::new(),
+        ledger_entries: Vec::new(),
+        skipped_items: Vec::new(),
+    }
+}
+
+/// 将单个并发任务的执行结果合并到本轮总结果。
+fn append_group_buy_robot_run(target: &mut GroupBuyRobotRun, source: GroupBuyRobotRun) {
+    target.created_plans.extend(source.created_plans);
+    target.filled_plans.extend(source.filled_plans);
+    target.created_orders.extend(source.created_orders);
+    target.ledger_entries.extend(source.ledger_entries);
+    target.skipped_items.extend(source.skipped_items);
+}
+
+/// 生成同一彩种同一期号的并发互斥键，避免多个机器人同时补同一个期号。
+fn group_buy_robot_issue_key(lottery_id: &str, issue: &str) -> String {
+    format!("{lottery_id}:{issue}")
 }
 
 /// 执行全部已启用的合买机器人，并返回本轮创建、满单、成单和跳过明细。
@@ -78,21 +119,17 @@ pub async fn run_group_buy_robots(
     let now = required_now(now)?;
     let now_at = parse_robot_timestamp(&now, "机器人执行时间")?;
     let access = access.snapshot().await?;
-    let robot_user = robot_user(&access.users)?;
+    let users = Arc::new(access.users);
+    let robot_user = robot_user(users.as_ref().as_slice())?.clone();
     let lotteries_by_id = lotteries
         .list()
         .await?
         .into_iter()
         .map(|lottery| (lottery.id.clone(), lottery))
         .collect::<BTreeMap<_, _>>();
-    let mut run = GroupBuyRobotRun {
-        now: now.clone(),
-        created_plans: Vec::new(),
-        filled_plans: Vec::new(),
-        created_orders: Vec::new(),
-        ledger_entries: Vec::new(),
-        skipped_items: Vec::new(),
-    };
+    let mut run = empty_group_buy_robot_run(now.clone());
+    let mut jobs = Vec::new();
+    let mut issue_locks = BTreeMap::<String, RobotIssueMutationLock>::new();
 
     for robot in robots.list().await? {
         if robot.kind != RobotKind::GroupBuy {
@@ -122,44 +159,138 @@ pub async fn run_group_buy_robots(
                 continue;
             };
 
-            if let Err(error) = execute_lottery_robot(
-                &mut run,
-                &robot,
-                lottery,
-                &issue,
-                draws,
-                orders,
-                finance,
-                group_buys,
-                &access.users,
-                robot_user,
-                now_at,
-            )
-            .await
-            {
-                push_skipped(
-                    &mut run,
-                    &robot,
-                    &lottery.id,
-                    Some(issue.issue.clone()),
-                    error.to_string(),
-                );
-            }
-            fill_existing_group_buy_plans(
-                &mut run,
-                &robot,
-                lottery,
-                &issue,
-                draws,
-                orders,
-                finance,
-                group_buys,
-                &access.users,
-                now_at,
-            )
-            .await?;
+            let issue_key = group_buy_robot_issue_key(&lottery.id, &issue.issue);
+            issue_locks
+                .entry(issue_key)
+                .or_insert_with(|| Arc::new(AsyncMutex::new(())));
+            jobs.push(GroupBuyRobotJob {
+                robot: robot.clone(),
+                lottery: lottery.clone(),
+                issue,
+            });
         }
     }
+
+    if jobs.is_empty() {
+        return Ok(run);
+    }
+
+    let job_count = jobs.len();
+    tracing::info!(
+        "并发任务数" = job_count,
+        "并发上限" = ROBOT_CONCURRENT_JOB_LIMIT,
+        "合买机器人并发执行开始"
+    );
+    let semaphore = Arc::new(Semaphore::new(ROBOT_CONCURRENT_JOB_LIMIT));
+    let finance_lock = Arc::new(AsyncMutex::new(()));
+    let mut handles = Vec::<JoinHandle<ApiResult<GroupBuyRobotRun>>>::with_capacity(job_count);
+    for job in jobs {
+        let job_key = group_buy_robot_issue_key(&job.lottery.id, &job.issue.issue);
+        let issue_lock = issue_locks
+            .get(&job_key)
+            .cloned()
+            .ok_or_else(|| ApiError::Internal("合买机器人期号并发锁缺失".to_string()))?;
+        let draws = draws.clone();
+        let orders = orders.clone();
+        let finance = finance.clone();
+        let group_buys = group_buys.clone();
+        let users = Arc::clone(&users);
+        let robot_user = robot_user.clone();
+        let now = now.clone();
+        let semaphore = Arc::clone(&semaphore);
+        let finance_lock = Arc::clone(&finance_lock);
+        handles.push(tokio::spawn(async move {
+            let _permit = semaphore
+                .acquire_owned()
+                .await
+                .map_err(|_| ApiError::Internal("合买机器人并发许可获取失败".to_string()))?;
+            let _issue_guard = issue_lock.lock().await;
+            run_group_buy_robot_job(
+                job,
+                &draws,
+                &orders,
+                &finance,
+                &group_buys,
+                users,
+                robot_user,
+                finance_lock,
+                now_at,
+                now,
+            )
+            .await
+        }));
+    }
+
+    for handle in handles {
+        let job_run = handle.await.map_err(|error| {
+            ApiError::Internal(format!("合买机器人并发任务执行失败：{error}"))
+        })??;
+        append_group_buy_robot_run(&mut run, job_run);
+    }
+    tracing::info!(
+        "并发任务数" = job_count,
+        "创建计划数" = run.created_plans.len(),
+        "满单计划数" = run.filled_plans.len(),
+        "创建订单数" = run.created_orders.len(),
+        "跳过项数" = run.skipped_items.len(),
+        "合买机器人并发执行完成"
+    );
+
+    Ok(run)
+}
+
+/// 执行单个“机器人 + 彩种 + 当前期号”任务，供并发调度器按任务粒度运行。
+async fn run_group_buy_robot_job(
+    job: GroupBuyRobotJob,
+    draws: &DrawRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    users: Arc<Vec<UserSummary>>,
+    robot_user: UserSummary,
+    finance_lock: RobotFinanceMutationLock,
+    now_at: NaiveDateTime,
+    now: String,
+) -> ApiResult<GroupBuyRobotRun> {
+    let mut run = empty_group_buy_robot_run(now);
+    if let Err(error) = execute_lottery_robot(
+        &mut run,
+        &job.robot,
+        &job.lottery,
+        &job.issue,
+        draws,
+        orders,
+        finance,
+        group_buys,
+        users.as_ref().as_slice(),
+        &robot_user,
+        &finance_lock,
+        now_at,
+    )
+    .await
+    {
+        push_skipped(
+            &mut run,
+            &job.robot,
+            &job.lottery.id,
+            Some(job.issue.issue.clone()),
+            error.to_string(),
+        );
+    }
+    fill_existing_group_buy_plans(
+        &mut run,
+        &job.robot,
+        &job.lottery,
+        &job.issue,
+        draws,
+        orders,
+        finance,
+        group_buys,
+        users.as_ref().as_slice(),
+        &finance_lock,
+        now_at,
+    )
+    .await?;
 
     Ok(run)
 }
@@ -207,20 +338,14 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
                 && candidate_issues.contains_key(&(plan.lottery_id.clone(), plan.issue.clone()))
         })
         .collect::<Vec<_>>();
-    let mut run = GroupBuyRobotRun {
-        now: now.clone(),
-        created_plans: Vec::new(),
-        filled_plans: Vec::new(),
-        created_orders: Vec::new(),
-        ledger_entries: Vec::new(),
-        skipped_items: Vec::new(),
-    };
+    let mut run = empty_group_buy_robot_run(now.clone());
     if candidate_plans.is_empty() {
         return Ok(run);
     }
 
     let access = access.snapshot().await?;
     let _robot_user = robot_user(&access.users)?;
+    let finance_lock = Arc::new(AsyncMutex::new(()));
     for mut plan in candidate_plans {
         let Some(issue) = candidate_issues.get(&(plan.lottery_id.clone(), plan.issue.clone()))
         else {
@@ -269,6 +394,7 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
             finance,
             group_buys,
             &access.users,
+            &finance_lock,
             now_at,
             RobotFillPolicy::GuaranteedUserPlan,
             Some(now.as_str()),
@@ -307,6 +433,7 @@ async fn execute_lottery_robot(
     group_buys: &GroupBuyRepository,
     users: &[UserSummary],
     robot_user: &UserSummary,
+    finance_lock: &RobotFinanceMutationLock,
     now_at: NaiveDateTime,
 ) -> ApiResult<()> {
     let plan_id = robot_plan_id(robot, lottery, issue);
@@ -324,8 +451,13 @@ async fn execute_lottery_robot(
                 return Ok(());
             }
             let draft = build_robot_plan_request(robot, lottery, issue, orders, robot_user).await?;
-            if let Some(entry) =
-                ensure_robot_balance(finance, draft.total_amount_minor, "发起合买计划").await?
+            if let Some(entry) = ensure_robot_balance_locked(
+                finance,
+                finance_lock,
+                draft.total_amount_minor,
+                "发起合买计划",
+            )
+            .await?
             {
                 run.ledger_entries.push(entry);
             }
@@ -336,14 +468,15 @@ async fn execute_lottery_robot(
                 .create(draft.clone(), std::slice::from_ref(lottery), users)
                 .await?;
             let participant_id = format!("{}-P001", created.id);
-            match finance
-                .debit_group_buy(
-                    &robot_user.id,
-                    draft.initiator_amount_minor,
-                    &participant_id,
-                    &created.id,
-                )
-                .await
+            match debit_group_buy_locked(
+                finance,
+                finance_lock,
+                &robot_user.id,
+                draft.initiator_amount_minor,
+                &participant_id,
+                &created.id,
+            )
+            .await
             {
                 Ok(entry) => {
                     run.ledger_entries.push(entry);
@@ -379,6 +512,7 @@ async fn execute_lottery_robot(
                 finance,
                 group_buys,
                 users,
+                finance_lock,
                 now_at,
                 robot_plan_fill_policy(robot),
                 None,
@@ -415,6 +549,7 @@ async fn fill_existing_group_buy_plans(
     finance: &FinanceRepository,
     group_buys: &GroupBuyRepository,
     users: &[UserSummary],
+    finance_lock: &RobotFinanceMutationLock,
     now_at: NaiveDateTime,
 ) -> ApiResult<()> {
     let robot_plan_id = robot_plan_id(robot, lottery, issue);
@@ -449,6 +584,7 @@ async fn fill_existing_group_buy_plans(
             finance,
             group_buys,
             users,
+            finance_lock,
             now_at,
             user_plan_fill_policy(robot),
             None,
@@ -480,6 +616,7 @@ async fn fill_robot_plan(
     finance: &FinanceRepository,
     group_buys: &GroupBuyRepository,
     users: &[UserSummary],
+    finance_lock: &RobotFinanceMutationLock,
     now_at: NaiveDateTime,
     policy: RobotFillPolicy,
     before_draw_guard_now: Option<&str>,
@@ -498,7 +635,9 @@ async fn fill_robot_plan(
     let fill_note = decision.note.clone();
 
     let participant_id = next_robot_fill_participant_id(plan);
-    if let Some(entry) = ensure_robot_balance(finance, fill_amount_minor, "合买分阶段补单").await?
+    if let Some(entry) =
+        ensure_robot_balance_locked(finance, finance_lock, fill_amount_minor, "合买分阶段补单")
+            .await?
     {
         run.ledger_entries.push(entry);
     }
@@ -520,14 +659,15 @@ async fn fill_robot_plan(
     *plan = next_plan;
 
     if !matches!(plan.status, GroupBuyPlanStatus::Filled) {
-        match finance
-            .debit_group_buy(
-                ROBOT_GROUP_BUY_USER_ID,
-                fill_amount_minor,
-                &participant_id,
-                &plan.id,
-            )
-            .await
+        match debit_group_buy_locked(
+            finance,
+            finance_lock,
+            ROBOT_GROUP_BUY_USER_ID,
+            fill_amount_minor,
+            &participant_id,
+            &plan.id,
+        )
+        .await
         {
             Ok(entry) => {
                 run.ledger_entries.push(entry);
@@ -579,14 +719,15 @@ async fn fill_robot_plan(
         *plan = attached_plan.clone();
     }
 
-    match finance
-        .debit_group_buy(
-            ROBOT_GROUP_BUY_USER_ID,
-            fill_amount_minor,
-            &participant_id,
-            &plan.id,
-        )
-        .await
+    match debit_group_buy_locked(
+        finance,
+        finance_lock,
+        ROBOT_GROUP_BUY_USER_ID,
+        fill_amount_minor,
+        &participant_id,
+        &plan.id,
+    )
+    .await
     {
         Ok(entry) => run.ledger_entries.push(entry),
         Err(error) => {
@@ -953,6 +1094,32 @@ async fn ensure_robot_balance(
         .await?;
 
     Ok(Some(entry))
+}
+
+/// 在机器人并发执行时串行化自动授信，避免多个资金快照异步落库互相覆盖。
+async fn ensure_robot_balance_locked(
+    finance: &FinanceRepository,
+    finance_lock: &RobotFinanceMutationLock,
+    required_amount_minor: i64,
+    reason: &str,
+) -> ApiResult<Option<LedgerEntry>> {
+    let _guard = finance_lock.lock().await;
+    ensure_robot_balance(finance, required_amount_minor, reason).await
+}
+
+/// 在机器人并发执行时串行化合买扣款，保证余额和资金流水持久化顺序稳定。
+async fn debit_group_buy_locked(
+    finance: &FinanceRepository,
+    finance_lock: &RobotFinanceMutationLock,
+    user_id: &str,
+    amount_minor: i64,
+    participant_id: &str,
+    plan_id: &str,
+) -> ApiResult<LedgerEntry> {
+    let _guard = finance_lock.lock().await;
+    finance
+        .debit_group_buy(user_id, amount_minor, participant_id, plan_id)
+        .await
 }
 
 /// 生成同一机器人、彩种、期号的确定性合买计划 ID。
@@ -1398,6 +1565,69 @@ mod tests {
             .await
             .expect("robot account keeps positive balance after auto credit");
     }
+
+    /// 验证合买机器人一轮可以并发处理同一机器人绑定的多个彩种任务。
+    #[tokio::test]
+    async fn robot_run_executes_multiple_lottery_jobs_in_one_round() {
+        let access = AccessRepository::memory_seeded();
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        let mut enabled_lotteries = Vec::new();
+        for (lottery_id, issue) in [("ssc60", "20260605200500"), ("fc3d", "20260605200501")] {
+            lotteries
+                .set_sale_enabled(lottery_id, true)
+                .await
+                .expect("lottery sale can be enabled");
+            let mut lottery = lotteries.get(lottery_id).await.expect("lottery exists");
+            lottery.group_buy.enabled = true;
+            let lottery = lotteries
+                .update(lottery_id, lottery)
+                .await
+                .expect("lottery can enable group buy");
+            draws
+                .create(
+                    &lottery,
+                    CreateDrawIssueRequest {
+                        lottery_id: lottery.id.clone(),
+                        issue: issue.to_string(),
+                        scheduled_at: "2026-06-05 20:05:00".to_string(),
+                        sale_closed_at: "2026-06-05 20:04:30".to_string(),
+                    },
+                )
+                .await
+                .expect("issue can be created");
+            enabled_lotteries.push(lottery.id);
+        }
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+
+        let run = run_group_buy_robots(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 20:02:00".to_string(),
+        )
+        .await
+        .expect("robot can run multiple lottery jobs");
+
+        enabled_lotteries.sort();
+        let mut created_lottery_ids = run
+            .created_plans
+            .iter()
+            .map(|plan| plan.lottery_id.clone())
+            .collect::<Vec<_>>();
+        created_lottery_ids.sort();
+        assert_eq!(created_lottery_ids, enabled_lotteries);
+        assert_eq!(run.created_orders.len(), 0);
+        assert_eq!(run.ledger_entries.len(), 2);
+    }
+
     /// 验证机器人run创建计划then补满合买合买带节奏。
     #[tokio::test]
     async fn robot_run_creates_plan_then_fills_group_buy_with_rhythm() {

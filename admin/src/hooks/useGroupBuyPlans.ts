@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   addGroupBuyParticipant,
   clearGroupBuyRecords,
+  clearRobotGroupBuyRecords,
   createGroupBuyPlan,
+  deleteRobotGroupBuyPlan,
   fetchDrawIssues,
   fetchGroupBuyPlan,
   fetchGroupBuyPlans,
@@ -160,6 +162,26 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
     [],
   );
 
+  const deleteRobotPlan = useCallback(
+    async (id: string) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const deleted = await deleteRobotGroupBuyPlan(id);
+        setSelectedPlan((current) => (current?.id === id ? null : current));
+        setPlanPage((current) => removePageItem(current, id));
+        refresh();
+        return deleted;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refresh],
+  );
+
   const clearRecords = useCallback(async () => {
     setSaving(true);
     setError(null);
@@ -177,10 +199,29 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
     }
   }, [refresh]);
 
+  const clearRobotRecords = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await clearRobotGroupBuyRecords();
+      setSelectedPlan(null);
+      setPlanPage(emptyPage);
+      refresh();
+      return result;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
   return {
     addParticipant,
     clearRecords,
+    clearRobotRecords,
     create,
+    deleteRobotPlan,
     drawIssues,
     error,
     loadPlan,
@@ -243,6 +284,26 @@ function upsertPageItem<T extends { id: string }>(
   return {
     ...page,
     items,
+    totalCount,
+    totalPages,
+  };
+}
+
+function removePageItem<T extends { id: string }>(
+  page: FinancePage<T>,
+  id: string,
+): FinancePage<T> {
+  const exists = page.items.some((item) => item.id === id);
+  if (!exists) {
+    return page;
+  }
+  const totalCount = Math.max(0, page.totalCount - 1);
+  const totalPages =
+    page.pageSize <= 0 ? page.totalPages : Math.ceil(totalCount / page.pageSize);
+
+  return {
+    ...page,
+    items: page.items.filter((item) => item.id !== id),
     totalCount,
     totalPages,
   };

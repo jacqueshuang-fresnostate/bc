@@ -52,6 +52,7 @@ import type {
 import type {
   AdminFinancialAccountSummary,
   ClearRecordsResult,
+  ClearRobotGroupBuyRecordsResult,
   LedgerEntry,
   ConfirmRechargeOrderRequest,
   FinanceOverview,
@@ -338,6 +339,9 @@ function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery)
   if (pageQuery?.userId?.trim()) {
     params.set('userId', pageQuery.userId.trim());
   }
+  if (pageQuery?.username?.trim()) {
+    params.set('username', pageQuery.username.trim());
+  }
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
 }
@@ -408,6 +412,15 @@ export function updateGroupBuyPlan(id: string, payload: UpdateGroupBuyPlanReques
   );
 }
 
+export function deleteRobotGroupBuyPlan(id: string) {
+  return requestJson<GroupBuyPlan>(
+    `/api/admin/group-buy/plans/${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+    },
+  );
+}
+
 export function addGroupBuyParticipant(
   id: string,
   payload: AddGroupBuyParticipantRequest,
@@ -425,6 +438,15 @@ export function clearGroupBuyRecords() {
   return requestJson<ClearRecordsResult>('/api/admin/group-buy/plans/clear', {
     method: 'DELETE',
   });
+}
+
+export function clearRobotGroupBuyRecords() {
+  return requestJson<ClearRobotGroupBuyRecordsResult>(
+    '/api/admin/group-buy/plans/robot-records/clear',
+    {
+      method: 'DELETE',
+    },
+  );
 }
 
 export function fetchInvitations(signal?: AbortSignal) {
@@ -1000,6 +1022,9 @@ export function fetchDrawIssues(signal?: AbortSignal, query?: DrawIssueQuery) {
   const params = new URLSearchParams();
   if (query?.lotteryId) {
     params.set('lotteryId', query.lotteryId);
+  }
+  if (query?.status) {
+    params.set('status', query.status);
   }
   if (query?.page && query.page > 0) {
     params.set('page', String(query.page));

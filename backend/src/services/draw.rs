@@ -89,10 +89,11 @@ impl DrawRepository {
             .map(|store| store.list_by_lottery_id(lottery_id))
     }
 
-    /// 按条件分页读取开奖期号；数据库模式下把彩种过滤和分页下推到 SQL。
+    /// 按条件分页读取开奖期号；数据库模式下把彩种、状态过滤和分页下推到 SQL。
     pub async fn list_page(
         &self,
         lottery_id: Option<&str>,
+        status: Option<DrawIssueStatus>,
         page: PageRequest,
     ) -> ApiResult<ListPage<DrawIssue>> {
         let lottery_id = lottery_id
@@ -100,16 +101,28 @@ impl DrawRepository {
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
         if let Some(persistence) = &self.persistence {
-            return query_draw_issues_page(persistence, lottery_id.as_deref(), page).await;
+            return query_draw_issues_page(persistence, lottery_id.as_deref(), status, page).await;
         }
 
         let issues = self
             .inner
             .read()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
-            .map(|store| match lottery_id.as_deref() {
-                Some(lottery_id) => store.list_by_lottery_id(lottery_id),
-                None => store.list(),
+            .map(|store| {
+                store
+                    .list()
+                    .into_iter()
+                    .filter(|issue| {
+                        lottery_id
+                            .as_deref()
+                            .map_or(true, |lottery_id| issue.lottery_id == lottery_id)
+                    })
+                    .filter(|issue| {
+                        status
+                            .as_ref()
+                            .map_or(true, |status| issue.status == *status)
+                    })
+                    .collect::<Vec<_>>()
             })?;
         Ok(ListPage::from_all(issues, page))
     }
@@ -650,14 +663,18 @@ fn draw_issue_from_row(row: PgRow) -> ApiResult<DrawIssue> {
 async fn query_draw_issues_page(
     database: &BusinessDatabase,
     lottery_id: Option<&str>,
+    status: Option<DrawIssueStatus>,
     page: PageRequest,
 ) -> ApiResult<ListPage<DrawIssue>> {
+    let status = status.as_ref().map(enum_to_string).transpose()?;
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
          FROM draw_issues
-         WHERE ($1::text IS NULL OR lottery_id = $1)",
+         WHERE ($1::text IS NULL OR lottery_id = $1)
+           AND ($2::text IS NULL OR status = $2)",
     )
     .bind(lottery_id)
+    .bind(status.as_deref())
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("开奖期号分页总数读取失败".to_string()))?;
@@ -669,10 +686,12 @@ async fn query_draw_issues_page(
                 sale_closed_at, status, draw_number, drawn_at, created_at
          FROM draw_issues
          WHERE ($1::text IS NULL OR lottery_id = $1)
+           AND ($2::text IS NULL OR status = $2)
          ORDER BY id DESC
-         LIMIT $2 OFFSET $3",
+         LIMIT $3 OFFSET $4",
     )
     .bind(lottery_id)
+    .bind(status.as_deref())
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
     .fetch_all(database.pool())
@@ -1508,6 +1527,7 @@ mod tests {
         services::{
             draw::{DrawRepository, DrawStore},
             draw_api::ApiDrawSourceRepository,
+            pagination::PageRequest,
         },
     };
 
@@ -1557,6 +1577,38 @@ mod tests {
         assert_eq!(issue.status, DrawIssueStatus::Open);
         assert_eq!(found.id, issue.id);
         assert_eq!(closed.status, DrawIssueStatus::Closed);
+    }
+
+    #[tokio::test]
+    /// 验证期号分页入口可以按状态过滤，后台列表不会只在前端做假筛选。
+    async fn repository_list_page_filters_by_status() {
+        let repository = DrawRepository::memory();
+        let lottery = lottery(DrawMode::Manual, LotteryNumberType::ThreeDigit);
+        let open = repository
+            .create(&lottery, create_request("20260602-open"))
+            .await
+            .expect("open issue can be created");
+        let closed = repository
+            .create(&lottery, create_request("20260602-closed"))
+            .await
+            .expect("closed issue can be created");
+        repository
+            .close(&closed.id)
+            .await
+            .expect("issue can be closed");
+
+        let page = repository
+            .list_page(
+                Some("fc3d"),
+                Some(DrawIssueStatus::Closed),
+                PageRequest::new(Some(1), Some(20)),
+            )
+            .await
+            .expect("filtered page can be loaded");
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, closed.id);
+        assert!(page.items.iter().all(|issue| issue.id != open.id));
     }
 
     #[test]

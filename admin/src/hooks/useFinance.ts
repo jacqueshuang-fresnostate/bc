@@ -105,6 +105,7 @@ export function useFinance({
     accountQuery.pageSize,
     accountQuery.includeRobotData,
     accountQuery.userId,
+    accountQuery.username,
     includeRobotData,
     ledgerQuery.page,
     ledgerQuery.pageSize,

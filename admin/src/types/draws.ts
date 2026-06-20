@@ -13,6 +13,7 @@ export interface CreateDrawIssueRequest {
 
 export interface DrawIssueQuery {
   lotteryId?: string;
+  status?: DrawIssueStatus;
   page?: number;
   pageSize?: number;
 }

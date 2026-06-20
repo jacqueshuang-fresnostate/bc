@@ -1412,7 +1412,11 @@ async fn get_user_bet_page_config(
     }
     let issues = state
         .draws
-        .list_page(Some(&lottery.id), PageRequest::new(Some(1), Some(120)))
+        .list_page(
+            Some(&lottery.id),
+            None,
+            PageRequest::new(Some(1), Some(120)),
+        )
         .await?
         .items;
     let config = build_mobile_bet_page_config(&lottery, issues);

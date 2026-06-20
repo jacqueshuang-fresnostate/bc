@@ -252,6 +252,8 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   const [sourceSheetVisible, setSourceSheetVisible] = useState(false);
   const [schedulerSheetVisible, setSchedulerSheetVisible] = useState(false);
   const [issueLotteryFilter, setIssueLotteryFilter] = useState('');
+  const [issueStatusFilter, setIssueStatusFilter] =
+    useState<DrawIssueStatus | 'all'>('all');
   const [issueCurrentPage, setIssueCurrentPage] = useState(1);
   const [issueCurrentPageSize, setIssueCurrentPageSize] = useState(20);
   const [snapshotLotteryFilter, setSnapshotLotteryFilter] = useState('');
@@ -304,10 +306,17 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   useEffect(() => {
     refreshWithFilter({
       lotteryId: issueLotteryFilter || undefined,
+      status: issueStatusFilter === 'all' ? undefined : issueStatusFilter,
       page: issueCurrentPage,
       pageSize: issueCurrentPageSize,
     });
-  }, [issueCurrentPage, issueCurrentPageSize, issueLotteryFilter, refreshWithFilter]);
+  }, [
+    issueCurrentPage,
+    issueCurrentPageSize,
+    issueLotteryFilter,
+    issueStatusFilter,
+    refreshWithFilter,
+  ]);
 
   useEffect(() => {
     if (
@@ -410,6 +419,11 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
 
   const handleIssueLotteryFilterChange = (lotteryId: string) => {
     setIssueLotteryFilter(lotteryId);
+    setIssueCurrentPage(1);
+  };
+
+  const handleIssueStatusFilterChange = (status: DrawIssueStatus | 'all') => {
+    setIssueStatusFilter(status);
     setIssueCurrentPage(1);
   };
 
@@ -715,12 +729,14 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
       {section === 'issues' ? (
         <IssueManagementSection
           lotteryFilter={issueLotteryFilter}
+          statusFilter={issueStatusFilter}
           lotteryFilterOptions={issueFilterOptions}
           issues={issues}
           loading={loading}
           saving={saving}
           selectedIssue={selectedIssue}
           onIssueLotteryFilterChange={handleIssueLotteryFilterChange}
+          onIssueStatusFilterChange={handleIssueStatusFilterChange}
           onIssuePageChange={handleIssuePageChange}
           onIssuePageSizeChange={handleIssuePageSizeChange}
           page={issuePage}
@@ -904,6 +920,7 @@ function IssueManagementSection({
   pageSize,
   totalCount,
   totalPages,
+  statusFilter,
   onCancelIssue,
   onCloseIssue,
   onCreateIssue,
@@ -911,6 +928,7 @@ function IssueManagementSection({
   onIssuePageSizeChange,
   onOpenDraw,
   onIssueLotteryFilterChange,
+  onIssueStatusFilterChange,
   onSelectIssue,
   saving,
   selectedIssue,
@@ -923,6 +941,7 @@ function IssueManagementSection({
   pageSize: number;
   totalCount: number;
   totalPages: number;
+  statusFilter: DrawIssueStatus | 'all';
   onCancelIssue: (issue: DrawIssue) => void;
   onCloseIssue: (issue: DrawIssue) => void;
   onCreateIssue: () => void;
@@ -930,6 +949,7 @@ function IssueManagementSection({
   onIssuePageSizeChange: (pageSize: number) => void;
   onOpenDraw: (issue: DrawIssue) => void;
   onIssueLotteryFilterChange: (lotteryId: string) => void;
+  onIssueStatusFilterChange: (status: DrawIssueStatus | 'all') => void;
   onSelectIssue: (id: string) => void;
   saving: boolean;
   selectedIssue: DrawIssue | null;
@@ -952,12 +972,25 @@ function IssueManagementSection({
               onIssueLotteryFilterChange(String(value ?? ''))
             }
           >
-            <Select.Option value="">全部玩法</Select.Option>
+            <Select.Option value="">全部彩种</Select.Option>
             {lotteryFilterOptions.map((option) => (
               <Select.Option key={option.value} value={option.value}>
                 {option.label}
               </Select.Option>
             ))}
+          </Select>
+          <Select
+            className="form-input min-w-[140px]"
+            value={statusFilter}
+            onChange={(value) =>
+              onIssueStatusFilterChange((value as DrawIssueStatus | 'all') ?? 'all')
+            }
+          >
+            <Select.Option value="all">全部状态</Select.Option>
+            <Select.Option value="open">销售中</Select.Option>
+            <Select.Option value="closed">已封盘</Select.Option>
+            <Select.Option value="drawn">已开奖</Select.Option>
+            <Select.Option value="cancelled">已取消</Select.Option>
           </Select>
           <label className="text-xs text-slate-500">
             每页

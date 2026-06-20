@@ -13,6 +13,7 @@ use crate::{
     domain::{
         draw::{DrawIssue, DrawIssueStatus},
         finance::LedgerEntry,
+        group_buy::GroupBuyPlan,
         lottery::LotteryKind,
         order::{
             CreateOrderRequest, OrderDetail, OrderQuote, OrderSource, OrderStatus, OrderSummary,
@@ -75,6 +76,15 @@ pub struct OrderRepository {
     pub(crate) inner: Arc<RwLock<OrderStore>>,
     /// 可选数据库持久化句柄；内存模式下为空。
     pub(crate) persistence: Option<BusinessDatabase>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// 后台批量清理机器人合买记录后的统计结果。
+pub struct RobotGroupBuyRecordCleanup {
+    /// 删除的机器人合买计划数量。
+    pub deleted_plan_count: usize,
+    /// 同步删除的机器人合买投注订单数量。
+    pub deleted_order_count: usize,
 }
 
 /// 订单仓储的创建、取消和结算方法实现。
@@ -380,6 +390,86 @@ impl OrderRepository {
         };
         self.persist(&snapshot).await?;
         Ok(result)
+    }
+
+    /// 同一事务内移除待开奖合买订单和对应合买计划，供后台机器人数据清理使用。
+    pub async fn remove_group_buy_order_and_plan_records(
+        &self,
+        group_buys: &GroupBuyRepository,
+        order_id: Option<&str>,
+        plan_id: &str,
+    ) -> ApiResult<(Option<OrderDetail>, GroupBuyPlan)> {
+        let mut order_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .clone();
+        let mut group_buy_store = group_buys
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
+            .clone();
+
+        let removed_order = order_id
+            .map(|order_id| order_store.remove_unfunded(order_id))
+            .transpose()?;
+        let deleted_plan = group_buy_store.delete_plan(plan_id)?;
+
+        persist_order_group_buy_stores(self, group_buys, &order_store, &group_buy_store).await?;
+        self.replace_store(order_store)?;
+        group_buys.replace_store(group_buy_store)?;
+
+        Ok((removed_order, deleted_plan))
+    }
+
+    /// 同一事务内批量移除纯机器人合买计划，以及这些计划关联的机器人合买订单和结算明细。
+    pub async fn remove_robot_group_buy_records(
+        &self,
+        group_buys: &GroupBuyRepository,
+        robot_user_id: &str,
+    ) -> ApiResult<RobotGroupBuyRecordCleanup> {
+        let robot_user_id = robot_user_id.trim();
+        if robot_user_id.is_empty() {
+            return Err(ApiError::BadRequest("机器人用户 ID 不能为空".to_string()));
+        }
+
+        let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
+        let mut order_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .clone();
+        let mut group_buy_store = group_buys
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
+            .clone();
+
+        let candidates = group_buy_store.robot_cleanup_candidates(robot_user_id);
+        if candidates.is_empty() {
+            return Ok(RobotGroupBuyRecordCleanup::default());
+        }
+
+        let plan_ids = candidates
+            .iter()
+            .map(|plan| plan.id.clone())
+            .collect::<BTreeSet<_>>();
+        let order_ids = candidates
+            .iter()
+            .filter_map(|plan| plan.order_id.clone())
+            .collect::<BTreeSet<_>>();
+        let deleted_order_count =
+            order_store.remove_robot_group_buy_orders(&order_ids, robot_user_id)?;
+        let deleted_plan_count = group_buy_store.delete_plans_by_ids(&plan_ids).len();
+
+        persist_order_group_buy_stores(self, group_buys, &order_store, &group_buy_store).await?;
+        self.replace_store(order_store)?;
+        group_buys.replace_store(group_buy_store)?;
+
+        Ok(RobotGroupBuyRecordCleanup {
+            deleted_plan_count,
+            deleted_order_count,
+        })
     }
 
     /// 一键清除投注订单和计奖派奖历史；存在待开奖订单时拒绝清理，避免扣款订单失去结算机会。
@@ -1008,6 +1098,31 @@ async fn persist_order_finance_stores(
     }
 }
 
+/// 在同一个数据库事务中保存订单和合买快照，确保机器人记录清理不会只删除一边。
+async fn persist_order_group_buy_stores(
+    orders: &OrderRepository,
+    group_buys: &GroupBuyRepository,
+    order_store: &OrderStore,
+    group_buy_store: &super::group_buy::GroupBuyStore,
+) -> ApiResult<()> {
+    match (&orders.persistence, &group_buys.persistence) {
+        (Some(database), Some(_)) => {
+            let mut tx = database
+                .pool()
+                .begin()
+                .await
+                .map_err(|_| ApiError::Internal("订单合买事务开启失败".to_string()))?;
+            save_order_store_in_transaction(&mut *tx, order_store).await?;
+            save_group_buy_store_in_transaction(&mut *tx, group_buy_store).await?;
+            tx.commit()
+                .await
+                .map_err(|_| ApiError::Internal("订单合买事务提交失败".to_string()))
+        }
+        (None, None) => Ok(()),
+        _ => Err(ApiError::Internal("订单和合买持久化配置不一致".to_string())),
+    }
+}
+
 /// 在同一个数据库事务中保存订单、资金和合买快照，确保结算派奖状态一致。
 async fn persist_order_finance_group_buy_stores(
     orders: &OrderRepository,
@@ -1145,6 +1260,81 @@ impl OrderStore {
         self.orders
             .remove(id)
             .ok_or_else(|| ApiError::NotFound(format!("order `{id}` not found")))
+    }
+
+    /// 删除机器人合买订单，并同步移除对应结算明细；缺失的历史订单 ID 会被视为已清理。
+    fn remove_robot_group_buy_orders(
+        &mut self,
+        order_ids: &BTreeSet<String>,
+        robot_user_id: &str,
+    ) -> ApiResult<usize> {
+        if order_ids.is_empty() {
+            return Ok(0);
+        }
+
+        for order_id in order_ids {
+            if let Some(order) = self.orders.get(order_id) {
+                if order.user_id != robot_user_id || order.order_source != OrderSource::GroupBuy {
+                    return Err(ApiError::BadRequest(format!(
+                        "订单 `{order_id}` 不是机器人合买订单，不能通过机器人清理入口删除"
+                    )));
+                }
+            }
+        }
+        for run in self.settlement_runs.values() {
+            for settlement in &run.orders {
+                if order_ids.contains(&settlement.order_id) && settlement.user_id != robot_user_id {
+                    return Err(ApiError::BadRequest(format!(
+                        "结算明细 `{}` 不属于机器人账户，不能通过机器人清理入口删除",
+                        settlement.order_id
+                    )));
+                }
+            }
+        }
+
+        let deleted_count = order_ids
+            .iter()
+            .filter(|order_id| self.orders.remove(*order_id).is_some())
+            .count();
+        self.remove_settlement_entries_for_orders(order_ids);
+        Ok(deleted_count)
+    }
+
+    /// 从结算批次中移除指定订单明细，并按剩余明细重算批次汇总。
+    fn remove_settlement_entries_for_orders(&mut self, order_ids: &BTreeSet<String>) {
+        let mut empty_run_ids = Vec::new();
+        for run in self.settlement_runs.values_mut() {
+            let before_count = run.orders.len();
+            run.orders
+                .retain(|settlement| !order_ids.contains(&settlement.order_id));
+            if run.orders.len() == before_count {
+                continue;
+            }
+
+            run.settled_order_count = run.orders.len() as u32;
+            run.winning_order_count = run
+                .orders
+                .iter()
+                .filter(|settlement| settlement.is_winning)
+                .count() as u32;
+            run.total_stake_amount_minor = run
+                .orders
+                .iter()
+                .map(|settlement| settlement.amount_minor)
+                .sum();
+            run.total_payout_minor = run
+                .orders
+                .iter()
+                .map(|settlement| settlement.payout_minor)
+                .sum();
+            if run.orders.is_empty() {
+                empty_run_ids.push(run.id.clone());
+            }
+        }
+
+        for run_id in empty_run_ids {
+            self.settlement_runs.remove(&run_id);
+        }
     }
 
     /// 清除投注订单与对应结算批次，保留订单和结算流水号防止后续 ID 重复。
@@ -1512,10 +1702,13 @@ fn current_timestamp_label() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use crate::{
         domain::{
             draw::{DrawIssue, DrawIssueStatus},
             finance::LedgerEntryKind,
+            group_buy::CreateGroupBuyPlanRequest,
             lottery::{
                 DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
                 LotteryPlayConfig, LotteryPlayPositionSelectLimit, PlayCategory,
@@ -1524,6 +1717,7 @@ mod tests {
             play::{PlayRuleCode, PlaySelection},
         },
         services::{
+            access::AccessRepository,
             finance::FinanceRepository,
             group_buy::GroupBuyRepository,
             order::{OrderRepository, OrderStore},
@@ -1636,6 +1830,73 @@ mod tests {
             .expect("ledger can list")
             .into_iter()
             .all(|entry| entry.kind != LedgerEntryKind::OrderDebit));
+    }
+
+    #[tokio::test]
+    /// 机器人合买清理会通过订单服务事务入口同步移除合买计划。
+    async fn repository_removes_group_buy_plan_records_together() {
+        let orders = OrderRepository::memory();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let plan_id = group_buys
+            .list()
+            .await
+            .expect("group buy plans can list")
+            .first()
+            .expect("seeded plan exists")
+            .id
+            .clone();
+
+        let (removed_order, deleted_plan) = orders
+            .remove_group_buy_order_and_plan_records(&group_buys, None, &plan_id)
+            .await
+            .expect("group buy plan can be removed");
+
+        assert!(removed_order.is_none());
+        assert_eq!(deleted_plan.id, plan_id);
+        assert!(group_buys.get(&plan_id).await.is_err());
+    }
+
+    #[tokio::test]
+    /// 机器人批量清理只删除纯机器人合买计划，混入真实用户认购的计划必须保留。
+    async fn repository_clears_robot_group_buy_records_and_keeps_real_participants() {
+        let orders = OrderRepository::memory();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let lotteries = vec![lottery_with_categories(vec![
+            crate::domain::lottery::PlayCategory::Direct,
+        ])];
+        let robot_plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-ROBOT-CLEAR".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026156".to_string(),
+                    rule_code: "threeDirect".to_string(),
+                    title: "机器人测试合买".to_string(),
+                    numbers: "2|4|7".to_string(),
+                    initiator_user_id: "U90001".to_string(),
+                    total_amount_minor: 100_000,
+                    initiator_amount_minor: 100_000,
+                    note: "纯机器人计划".to_string(),
+                },
+                &lotteries,
+                &access.users,
+            )
+            .await
+            .expect("robot plan can be created");
+
+        let cleanup = orders
+            .remove_robot_group_buy_records(&group_buys, "U90001")
+            .await
+            .expect("robot records can be cleared");
+
+        assert_eq!(cleanup.deleted_plan_count, 1);
+        assert_eq!(cleanup.deleted_order_count, 0);
+        assert!(group_buys.get(&robot_plan.id).await.is_err());
+        assert!(group_buys.get("G202606020001").await.is_ok());
     }
 
     #[tokio::test]
@@ -1936,6 +2197,67 @@ mod tests {
         );
         assert!(store.list().is_empty());
         assert!(store.settlement_runs().is_empty());
+    }
+
+    #[test]
+    /// 机器人合买订单清理会删除已结算机器人订单，并保留真实用户结算明细。
+    fn store_remove_robot_group_buy_orders_recalculates_settlement_run() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let mut store = OrderStore::default();
+        let robot_order = store
+            .create_with_source(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U90001".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026156".to_string(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: PlaySelection {
+                        positions: vec![vec![2], vec![4], vec![7]],
+                        ..PlaySelection::default()
+                    },
+                    unit_amount_minor: 200,
+                },
+                OrderSource::GroupBuy,
+            )
+            .expect("robot group buy order can be created");
+        let real_order = store
+            .create(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10001".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026156".to_string(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: PlaySelection {
+                        positions: vec![vec![2], vec![4], vec![7]],
+                        ..PlaySelection::default()
+                    },
+                    unit_amount_minor: 200,
+                },
+            )
+            .expect("real order can be created");
+        store
+            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")))
+            .expect("drawn issue can be settled");
+
+        let order_ids = [robot_order.id.clone()]
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let deleted_count = store
+            .remove_robot_group_buy_orders(&order_ids, "U90001")
+            .expect("robot group buy order can be removed");
+
+        assert_eq!(deleted_count, 1);
+        assert!(store.get(&robot_order.id).is_err());
+        assert!(store.get(&real_order.id).is_ok());
+        let runs = store.settlement_runs();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].settled_order_count, 1);
+        assert_eq!(runs[0].winning_order_count, 1);
+        assert_eq!(runs[0].total_stake_amount_minor, 200);
+        assert_eq!(runs[0].total_payout_minor, 2000);
+        assert_eq!(runs[0].orders[0].order_id, real_order.id);
     }
 
     #[test]
