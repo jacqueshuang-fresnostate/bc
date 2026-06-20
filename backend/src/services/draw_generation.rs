@@ -682,10 +682,21 @@ fn format_issue(
     value: NaiveDateTime,
     pattern: &str,
     sequence_state: &mut IssueSequenceState,
+    fixed_sequence: Option<u32>,
 ) -> ApiResult<String> {
     let sequence_width = issue_sequence_width(pattern)?;
     let sequence = if let Some(width) = sequence_width {
-        Some(sequence_state.next_sequence(value.date(), width)?)
+        Some(if let Some(sequence) = fixed_sequence {
+            let max_sequence = max_sequence_for_width(width);
+            if sequence == 0 || sequence > max_sequence {
+                return Err(ApiError::Conflict(format!(
+                    "当天平台期号序号已超过 {max_sequence}"
+                )));
+            }
+            sequence
+        } else {
+            sequence_state.next_sequence(value.date(), width)?
+        })
     } else {
         None
     };
@@ -811,6 +822,70 @@ fn max_sequence_for_width(width: usize) -> u32 {
         3 => 999,
         4 => 9_999,
         _ => 0,
+    }
+}
+
+/// 时间节点排期的每日序号配置，用自然时钟节点位置生成 `{seqN}`。
+#[derive(Debug, Clone, Copy)]
+struct TimeNodeSequenceConfig {
+    interval_seconds: u32,
+    start_time: NaiveTime,
+}
+
+impl TimeNodeSequenceConfig {
+    /// 根据彩种排期和期号模板判断是否需要固定节点序号。
+    fn from_schedule(schedule: &DrawSchedule, pattern: &str) -> ApiResult<Option<Self>> {
+        if issue_sequence_width(pattern)?.is_none() {
+            return Ok(None);
+        }
+
+        let DrawSchedule::TimeNode {
+            interval_seconds,
+            start_time,
+        } = schedule
+        else {
+            return Ok(None);
+        };
+        if *interval_seconds == 0 {
+            return Err(ApiError::BadRequest(
+                "time node interval must be greater than zero".to_string(),
+            ));
+        }
+        if 86_400 % *interval_seconds != 0 {
+            return Err(ApiError::BadRequest(
+                "time node interval must divide one day exactly".to_string(),
+            ));
+        }
+
+        Ok(Some(Self {
+            interval_seconds: *interval_seconds,
+            start_time: parse_time(start_time, "time node start time")?,
+        }))
+    }
+
+    /// 计算开盘节点在所属业务日内的序号，00:00 开盘为 1，23:55 开盘为 288。
+    fn sequence_for(&self, label_time: NaiveDateTime) -> ApiResult<u32> {
+        let start_at = combine_date_time(label_time.date(), self.start_time)?;
+        let business_start = if label_time < start_at {
+            start_at
+                .checked_sub_signed(Duration::days(1))
+                .ok_or_else(|| ApiError::BadRequest("time node date is out of range".to_string()))?
+        } else {
+            start_at
+        };
+        let elapsed_seconds = label_time
+            .signed_duration_since(business_start)
+            .num_seconds()
+            .max(0);
+        let step = elapsed_seconds
+            .checked_div(i64::from(self.interval_seconds))
+            .ok_or_else(|| ApiError::BadRequest("time node interval is invalid".to_string()))?;
+
+        u32::try_from(
+            step.checked_add(1)
+                .ok_or_else(|| ApiError::Internal("时间节点期号序号超出范围".to_string()))?,
+        )
+        .map_err(|_| ApiError::Internal("时间节点期号序号超出范围".to_string()))
     }
 }
 
@@ -940,6 +1015,7 @@ enum IssueLabeler {
     Pattern {
         pattern: String,
         sequence_state: IssueSequenceState,
+        time_node_sequence: Option<TimeNodeSequenceConfig>,
     },
     Sequential {
         next_issue: u64,
@@ -970,10 +1046,13 @@ impl IssueLabeler {
             existing_issues,
             &lottery.id,
         )?;
+        let time_node_sequence =
+            TimeNodeSequenceConfig::from_schedule(&lottery.schedule, &pattern)?;
 
         Ok(Self::Pattern {
             pattern,
             sequence_state,
+            time_node_sequence,
         })
     }
 
@@ -983,6 +1062,7 @@ impl IssueLabeler {
             return Ok(Self::Pattern {
                 pattern: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
                 sequence_state: IssueSequenceState::default(),
+                time_node_sequence: None,
             });
         };
         let next_issue = api_anchor
@@ -999,7 +1079,14 @@ impl IssueLabeler {
             Self::Pattern {
                 pattern,
                 sequence_state,
-            } => format_issue(scheduled_at, pattern, sequence_state),
+                time_node_sequence,
+            } => {
+                let fixed_sequence = time_node_sequence
+                    .as_ref()
+                    .map(|config| config.sequence_for(scheduled_at))
+                    .transpose()?;
+                format_issue(scheduled_at, pattern, sequence_state, fixed_sequence)
+            }
             Self::Sequential { next_issue } => {
                 let issue = *next_issue;
                 *next_issue = (*next_issue)
@@ -1200,7 +1287,76 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-02 00:05:00");
         assert_eq!(issue.sale_closed_at, "2026-06-02 00:04:59");
     }
-    /// 验证时间节点排期重新对齐之后偏移已有期号。
+    /// 验证时间节点默认序号按自然节点计算，00:05 开奖是当天第一期。
+    #[tokio::test]
+    async fn time_node_sequence_first_draw_after_midnight_is_first_issue() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::TimeNode {
+            interval_seconds: 300,
+            start_time: "00:00:00".to_string(),
+        });
+        lottery.draw_mode = DrawMode::Platform;
+        lottery.issue_format = "{date}{seq4}".to_string();
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-20 00:00:00"))
+            .await
+            .expect("first current day time node issue can be generated");
+
+        assert_eq!(issue.issue, "202606200001");
+        assert_eq!(issue.scheduled_at, "2026-06-20 00:05:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-20 00:04:59");
+    }
+    /// 验证时间节点跨到次日 00:00 开奖时，仍归属前一天最后一期。
+    #[tokio::test]
+    async fn time_node_sequence_midnight_draw_is_previous_day_last_issue() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::TimeNode {
+            interval_seconds: 300,
+            start_time: "00:00:00".to_string(),
+        });
+        lottery.draw_mode = DrawMode::Platform;
+        lottery.issue_format = "{date}{seq4}".to_string();
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-19 23:55:00"))
+            .await
+            .expect("previous day last time node issue can be generated");
+
+        assert_eq!(issue.issue, "202606190288");
+        assert_eq!(issue.scheduled_at, "2026-06-20 00:00:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-19 23:59:59");
+    }
+    /// 验证历史期号不完整时，时间节点序号仍按时钟位置而不是已有数量递增。
+    #[tokio::test]
+    async fn time_node_sequence_ignores_incomplete_existing_issue_count() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::TimeNode {
+            interval_seconds: 300,
+            start_time: "00:00:00".to_string(),
+        });
+        lottery.draw_mode = DrawMode::Platform;
+        lottery.issue_format = "{date}{seq4}".to_string();
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "202606190263".to_string(),
+                    scheduled_at: "2026-06-19 23:55:00".to_string(),
+                    sale_closed_at: "2026-06-19 23:54:59".to_string(),
+                },
+            )
+            .await
+            .expect("incomplete existing issue can be created");
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-19 23:55:00"))
+            .await
+            .expect("time node issue can ignore incomplete existing count");
+
+        assert_eq!(issue.issue, "202606190288");
+        assert_eq!(issue.scheduled_at, "2026-06-20 00:00:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-19 23:59:59");
+    }
+    /// 验证时间节点排期重新对齐后，序号仍按当天时钟节点位置计算。
     #[tokio::test]
     async fn time_node_schedule_realigns_after_offset_existing_issue() {
         let draws = DrawRepository::memory();
@@ -1225,7 +1381,7 @@ mod tests {
             .await
             .expect("time node schedule can realign");
 
-        assert_eq!(issue.issue, "202606100001");
+        assert_eq!(issue.issue, "202606100244");
         assert_eq!(issue.scheduled_at, "2026-06-10 20:20:00");
         assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:59");
     }

@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-20 07:36 HKT 无签名 IPA 跳过 Rust 构建脚本匹配修复
+
+- 完成任务：修复 `build-unsigned-ipa.sh` 临时跳过 Tauri iOS Rust 构建脚本时无法替换 Xcode `Build Rust Code` 的问题。
+- 解决问题：当前 `project.pbxproj` 的 Rust 构建脚本前面已经注入 `safe.bareRepository=all` 和 `CLANG_MODULE_CACHE_PATH`，旧正则只匹配以 `npm run -- tauri ios xcode-script` 开头的单行脚本，导致无签名 IPA 打包中断并提示“未能替换 Xcode Rust 构建脚本”。
+- 实施内容：把替换规则改为匹配任何包含 `tauri ios xcode-script` 的完整 `shellScript` 字段，并兼容 Xcode 字符串里的转义换行和转义引号；保留替换后残留检测，避免未跳过 Rust 构建时继续打包。
+- 验证结果：基于当前真实 `project.pbxproj` 的临时替换验证已通过，`bash -n mobile/scripts/build-unsigned-ipa.sh` 通过；执行最小化无签名 IPA 脚本时已越过“临时跳过 Tauri iOS Rust 构建脚本”步骤并进入 `xcodebuild`，后续本机失败原因变为 `iOS 26.2 Platform Not Installed` / `CoreSimulatorService` 不可用，属于本机 Xcode 平台运行时环境问题。
+
+## 2026-06-20 07:19 HKT 时间节点周期每日序号按自然节点修正
+
+- 完成任务：修正时间节点周期彩种的 `{seqN}` 每日序号计算规则。
+- 解决问题：300 秒时间节点周期从 `00:00` 开始时，`00:05` 应是当天第 `0001` 期，次日 `00:00` 应是前一天第 `0288` 期；此前序号会从数据库已有历史期号数量恢复，历史不完整时会出现 `202606190264` 这类错误期号。
+- 实施内容：后端 `draw_generation` 增加时间节点自然序号计算器，按开盘节点在业务日内的位置生成 `{seq1}`、`{seq2}`、`{seq3}`、`{seq4}`；普通周期、每日固定、周固定和 API 外部期号顺延不受影响；新增测试覆盖 `00:05=0001`、`次日00:00=前日0288`、历史期号停在 `0263` 时仍生成 `0288`，并更新架构说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml time_node -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml draw_generation -- --nocapture` 和 `cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture` 均通过。
+
 ## 2026-06-20 06:31 HKT 修复 Xcode Build Rust Code 未继承 SwiftPM Git 配置
 
 - 完成任务：把 SwiftPM/Git 安全配置注入到 iOS 工程自身的 `Build Rust Code` 阶段。

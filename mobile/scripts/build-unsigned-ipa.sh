@@ -255,7 +255,7 @@ if [ "$BUNDLE_ID_OVERRIDE" != "" ]; then
 fi
 
 log "临时跳过 Tauri iOS Rust 构建脚本和 Xcode 签名..."
-perl -0pi -e 's/shellScript = "npm run -- tauri ios xcode-script[^\n]*?";/shellScript = "echo 使用已有 iOS 原生库生成无签名 IPA";/s' "$TMP_DIR/hongfu-mobile.xcodeproj/project.pbxproj"
+perl -0pi -e 's/shellScript = "(?:\\.|[^"\\])*tauri ios xcode-script(?:\\.|[^"\\])*";/shellScript = "echo 使用已有 iOS 原生库生成无签名 IPA";/s' "$TMP_DIR/hongfu-mobile.xcodeproj/project.pbxproj"
 if grep -q "tauri ios xcode-script" "$TMP_DIR/hongfu-mobile.xcodeproj/project.pbxproj"; then
   fail "未能替换 Xcode Rust 构建脚本，请检查 project.pbxproj 格式是否变化。"
 fi
