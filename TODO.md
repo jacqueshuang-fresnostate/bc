@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-21 00:32 HKT SQLx 历史迁移校验修复
+
+- 完成任务：修复后端启动时报 `VersionMismatch(20260603152000)` 的迁移校验问题。
+- 解决问题：角色权限细粒度改造时把 `admin_roles.permissions` 字段写回了已发布的 `20260603152000_create_business_tables.sql`，导致已经执行过旧版本迁移的数据库 checksum 与当前代码不一致，Docker 或本地启动都会在 SQLx migration 阶段退出。
+- 实施内容：恢复 `20260603152000_create_business_tables.sql` 中 `admin_roles` 的原始结构；删除 `20260603234000_add_all_column_comments.sql` 中提前引用 `admin_roles.permissions` 的字段注释；保留 `20260619143000_add_admin_role_permissions.sql` 作为唯一创建和注释 `permissions` 字段的前向迁移；同步更新架构说明，明确已发布 migration 不能回写新字段。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml` 和 `git diff --check` 均通过；同时已比对确认 `20260603152000_create_business_tables.sql` 与权限改造前发布版本一致，`permissions` 字段只由 `20260619143000_add_admin_role_permissions.sql` 创建。
+
 ## 2026-06-21 00:11 HKT 合买管理一键清理机器人订单
 
 - 完成任务：后台合买管理新增“清理机器人订单”入口，可一键清理纯机器人合买计划和关联机器人合买投注订单。

@@ -15,7 +15,6 @@ CREATE TABLE admin_roles (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     scopes JSONB NOT NULL,
-    permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
