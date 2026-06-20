@@ -13,6 +13,26 @@ use sqlx::{
 use crate::error::{ApiError, ApiResult};
 
 const BUSINESS_TABLES_MIGRATION_VERSION: i64 = 20260603152000;
+const COLUMN_COMMENTS_MIGRATION_VERSION: i64 = 20260603234000;
+
+struct HistoricalMigrationRepair {
+    version: i64,
+    name: &'static str,
+    reason: &'static str,
+}
+
+const HISTORICAL_MIGRATION_REPAIRS: [HistoricalMigrationRepair; 2] = [
+    HistoricalMigrationRepair {
+        version: BUSINESS_TABLES_MIGRATION_VERSION,
+        name: "业务基础表",
+        reason: "角色细粒度权限字段曾被写回已发布建表迁移",
+    },
+    HistoricalMigrationRepair {
+        version: COLUMN_COMMENTS_MIGRATION_VERSION,
+        name: "全量字段注释",
+        reason: "早期字段注释迁移曾提前引用后续迁移才创建的字段",
+    },
+];
 
 #[derive(Clone)]
 /// 业务数据库封装，保存 PostgreSQL 连接池并统一执行迁移。
@@ -45,31 +65,50 @@ pub(crate) async fn run_business_migrations(
     pool: &PgPool,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let migrator = sqlx::migrate!("./migrations");
-    match migrator.run(pool).await {
-        Ok(()) => Ok(()),
-        Err(MigrateError::VersionMismatch(version))
-            if version == BUSINESS_TABLES_MIGRATION_VERSION =>
-        {
-            repair_business_tables_migration_checksum(pool, &migrator).await?;
-            migrator.run(pool).await?;
-            Ok(())
+    let mut repaired_versions = Vec::new();
+
+    loop {
+        match migrator.run(pool).await {
+            Ok(()) => return Ok(()),
+            Err(MigrateError::VersionMismatch(version)) => {
+                let Some(repair) = historical_migration_repair(version) else {
+                    return Err(Box::new(MigrateError::VersionMismatch(version)));
+                };
+
+                if repaired_versions.contains(&version) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "SQLx 迁移记录修复后仍然校验失败，已停止自动重试",
+                    )
+                    .into());
+                }
+
+                repair_historical_migration_checksum(pool, &migrator, repair).await?;
+                repaired_versions.push(version);
+            }
+            Err(error) => return Err(Box::new(error)),
         }
-        Err(error) => Err(Box::new(error)),
     }
 }
 
-/// 修复曾被误改的业务基础表迁移 checksum，保证旧库和中间版本库都能继续前向迁移。
-async fn repair_business_tables_migration_checksum(
+/// 查找当前版本是否属于允许自动修复的已知历史迁移。
+fn historical_migration_repair(version: i64) -> Option<&'static HistoricalMigrationRepair> {
+    HISTORICAL_MIGRATION_REPAIRS
+        .iter()
+        .find(|repair| repair.version == version)
+}
+
+/// 修复曾被误改的历史迁移 checksum，保证旧库和中间版本库都能继续前向迁移。
+async fn repair_historical_migration_checksum(
     pool: &PgPool,
     migrator: &Migrator,
+    repair: &'static HistoricalMigrationRepair,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let current_checksum = current_migration_checksum(migrator, BUSINESS_TABLES_MIGRATION_VERSION)?;
-    let Some(database_checksum) =
-        applied_migration_checksum(pool, BUSINESS_TABLES_MIGRATION_VERSION).await?
-    else {
+    let current_checksum = current_migration_checksum(migrator, repair.version)?;
+    let Some(database_checksum) = applied_migration_checksum(pool, repair.version).await? else {
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            "无法修复 SQLx 迁移记录：数据库中缺少业务基础表迁移记录",
+            "无法修复 SQLx 迁移记录：数据库中缺少目标迁移记录",
         )
         .into());
     };
@@ -85,8 +124,10 @@ async fn repair_business_tables_migration_checksum(
 
     let permissions_exists = admin_roles_permissions_column_exists(pool).await?;
     tracing::warn!(
-        "检测到历史迁移校验不一致，准备修复 SQLx 迁移记录：版本={}，数据库校验={}，当前校验={}，角色权限字段已存在={}",
-        BUSINESS_TABLES_MIGRATION_VERSION,
+        "检测到已知历史迁移校验不一致，准备修复 SQLx 迁移记录：版本={}，迁移名称={}，修复原因={}，数据库校验={}，当前校验={}，角色权限字段已存在={}",
+        repair.version,
+        repair.name,
+        repair.reason,
         short_checksum_hex(&database_checksum),
         short_checksum_hex(current_checksum),
         permissions_exists
@@ -100,7 +141,7 @@ async fn repair_business_tables_migration_checksum(
         "#,
     )
     .bind(current_checksum)
-    .bind(BUSINESS_TABLES_MIGRATION_VERSION)
+    .bind(repair.version)
     .execute(pool)
     .await?
     .rows_affected();
@@ -114,8 +155,9 @@ async fn repair_business_tables_migration_checksum(
     }
 
     tracing::warn!(
-        "已修复 SQLx 历史迁移记录：版本={}，后续权限字段仍由前向迁移创建或确认存在",
-        BUSINESS_TABLES_MIGRATION_VERSION
+        "已修复 SQLx 历史迁移记录：版本={}，迁移名称={}，后续迁移将继续按顺序执行",
+        repair.version,
+        repair.name
     );
     Ok(())
 }
