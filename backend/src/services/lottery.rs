@@ -18,6 +18,7 @@ use crate::{
     },
     error::{ApiError, ApiResult},
     services::{
+        business_database::run_business_migrations,
         draw_generation::normalize_issue_format_pattern,
         play_rules::{
             number_type_for_rule, play_category_for_rule, play_position_select_limit_targets,
@@ -56,7 +57,7 @@ impl LotteryRepository {
             .connect(database_url)
             .await?;
 
-        sqlx::migrate!("./migrations").run(&pool).await?;
+        run_business_migrations(&pool).await?;
 
         let store = PostgresLotteryStore { pool };
         store.seed_missing_defaults().await?;
