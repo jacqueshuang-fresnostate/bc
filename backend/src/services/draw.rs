@@ -188,21 +188,15 @@ impl DrawRepository {
     }
 
     /// 提交开奖结果并更新开奖期状态。
+    #[allow(dead_code)]
     pub async fn draw(&self, id: &str, payload: DrawIssueResultRequest) -> ApiResult<DrawIssue> {
         let (payload, uses_control_number) = self.resolve_draw_payload(id, payload).await?;
-
-        let result = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
-            store.draw(id, payload, uses_control_number)?
-        };
-        self.persist_draw_issue(&result).await?;
-        Ok(result)
+        self.draw_resolved_payload(id, payload, uses_control_number)
+            .await
     }
 
     /// 使用预取 API 开奖号完成开奖，并允许调用方决定是否可用后台控制号覆盖。
+    #[allow(dead_code)]
     pub async fn draw_with_prefetched_api_number_with_control_policy(
         &self,
         id: &str,
@@ -213,6 +207,17 @@ impl DrawRepository {
             .resolve_prefetched_api_draw_payload(id, api_draw_number, allow_control_number)
             .await?;
 
+        self.draw_resolved_payload(id, payload, uses_control_number)
+            .await
+    }
+
+    /// 使用已解析的开奖载荷写入开奖结果，供开奖策略在落库前调整号码。
+    pub(crate) async fn draw_resolved_payload(
+        &self,
+        id: &str,
+        payload: DrawIssueResultRequest,
+        uses_control_number: bool,
+    ) -> ApiResult<DrawIssue> {
         let result = {
             let mut store = self
                 .inner
@@ -409,7 +414,7 @@ impl DrawRepository {
         Ok(result)
     }
     /// 根据开奖模式解析本次开奖需要使用的号码来源。
-    async fn resolve_draw_payload(
+    pub(crate) async fn resolve_draw_payload(
         &self,
         id: &str,
         payload: DrawIssueResultRequest,
@@ -441,7 +446,7 @@ impl DrawRepository {
         Ok((DrawIssueResultRequest::default(), false))
     }
     /// 使用预抓取的 API 开奖号码解析当前期号的开奖载荷。
-    async fn resolve_prefetched_api_draw_payload(
+    pub(crate) async fn resolve_prefetched_api_draw_payload(
         &self,
         id: &str,
         api_draw_number: Option<String>,
@@ -1271,7 +1276,10 @@ fn required_control_target(value: Option<&str>, label: &str) -> ApiResult<String
 }
 
 /// 标准化输入并返回规范值。
-fn normalize_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> ApiResult<String> {
+pub(crate) fn normalize_draw_number(
+    draw_number: &str,
+    number_type: &LotteryNumberType,
+) -> ApiResult<String> {
     let spec = draw_number_spec(number_type);
     let digits = draw_number_digits(draw_number, number_type)?;
 
@@ -1305,7 +1313,10 @@ fn normalize_draw_number(draw_number: &str, number_type: &LotteryNumberType) -> 
 }
 
 /// 解析并校验开奖号码位数和数字范围。
-fn draw_number_digits(draw_number: &str, number_type: &LotteryNumberType) -> ApiResult<Vec<u8>> {
+pub(crate) fn draw_number_digits(
+    draw_number: &str,
+    number_type: &LotteryNumberType,
+) -> ApiResult<Vec<u8>> {
     let value = draw_number.trim();
     if value.contains(',') || value.contains('，') {
         return value
@@ -1346,7 +1357,7 @@ fn parse_draw_digit(value: &str) -> ApiResult<u8> {
 }
 
 /// 按固定格式转换输出。
-fn format_draw_number(digits: &[u8]) -> String {
+pub(crate) fn format_draw_number(digits: &[u8]) -> String {
     digits
         .iter()
         .map(|digit| digit.to_string())
@@ -1355,7 +1366,11 @@ fn format_draw_number(digits: &[u8]) -> String {
 }
 
 /// 按号码类型生成平台随机开奖号码。
-fn generated_draw_number(number_type: &LotteryNumberType, lottery_id: &str, issue: &str) -> String {
+pub(crate) fn generated_draw_number(
+    number_type: &LotteryNumberType,
+    lottery_id: &str,
+    issue: &str,
+) -> String {
     let spec = draw_number_spec(number_type);
     let mut seed = 14_695_981_039_346_656_037u64;
     for byte in lottery_id.bytes().chain(issue.bytes()) {
@@ -1393,15 +1408,15 @@ fn generated_draw_number(number_type: &LotteryNumberType, lottery_id: &str, issu
 }
 
 #[derive(Debug, Clone, Copy)]
-struct DrawNumberSpec {
-    len: usize,
-    min: u8,
-    max: u8,
-    unique: bool,
+pub(crate) struct DrawNumberSpec {
+    pub(crate) len: usize,
+    pub(crate) min: u8,
+    pub(crate) max: u8,
+    pub(crate) unique: bool,
 }
 
 /// 返回不同彩种号码类型的开奖号码长度、范围和是否去重。
-fn draw_number_spec(number_type: &LotteryNumberType) -> DrawNumberSpec {
+pub(crate) fn draw_number_spec(number_type: &LotteryNumberType) -> DrawNumberSpec {
     match number_type {
         LotteryNumberType::ThreeDigit => DrawNumberSpec {
             len: 3,
@@ -2016,6 +2031,7 @@ mod tests {
             draw_mode,
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
+            avoid_winning_enabled: false,
             issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
             sale_close_lead_seconds: crate::domain::lottery::DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Daily {

@@ -14,12 +14,18 @@ use crate::{
             DrawIssueResultRequest, DrawIssueStatus,
         },
         finance::LedgerEntry,
-        lottery::DrawMode,
+        lottery::{DrawMode, LotteryKind},
     },
     error::{ApiError, ApiResult},
     services::{
-        draw::DrawRepository, draw_generation::parse_api_sequence_issue,
-        finance::FinanceRepository, group_buy::GroupBuyRepository, order::OrderRepository,
+        draw::DrawRepository,
+        draw_avoidance::{
+            draw_prefetched_api_with_avoid_winning_policy, draw_with_avoid_winning_policy,
+        },
+        draw_generation::parse_api_sequence_issue,
+        finance::FinanceRepository,
+        group_buy::GroupBuyRepository,
+        order::OrderRepository,
     },
 };
 use tokio::sync::Semaphore;
@@ -39,8 +45,9 @@ enum ApiDrawNumberLookup {
     Failed(String),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct LotteryAutomationConfig {
+    lottery: LotteryKind,
     sale_enabled: bool,
     api_draw_delay_seconds: u32,
     draw_control_enabled: bool,
@@ -62,6 +69,7 @@ pub type DrawIssueSettlementProgressCallback =
 struct DrawExecutionJob {
     order: usize,
     issue: DrawIssue,
+    lottery: LotteryKind,
     api_draw_number: Option<String>,
     allow_control_number: bool,
 }
@@ -234,15 +242,22 @@ pub async fn draw_due_issues_with_progress(
             None => None,
         };
 
+        let Some(lottery_config) = lottery_configs.get(&issue.lottery_id) else {
+            run.skipped_issues
+                .push(skipped_issue(&issue, "未找到彩种配置，跳过自动开奖"));
+            continue;
+        };
+
         draw_jobs.push(DrawExecutionJob {
             order,
             allow_control_number: lottery_draw_control_enabled(&issue, &lottery_configs),
+            lottery: lottery_config.lottery.clone(),
             issue,
             api_draw_number,
         });
     }
 
-    let draw_outcomes = execute_draw_jobs_concurrently(draws, draw_jobs).await?;
+    let draw_outcomes = execute_draw_jobs_concurrently(draws, orders, draw_jobs).await?;
     for outcome in draw_outcomes {
         let issue = outcome.source_issue;
         let draw_result = outcome.result;
@@ -283,6 +298,7 @@ pub async fn draw_due_issues_with_progress(
 /// 并发写入本轮已满足开奖条件的期号结果；结算阶段仍由调用方按顺序提交，避免资金快照竞争。
 async fn execute_draw_jobs_concurrently(
     draws: &DrawRepository,
+    orders: &OrderRepository,
     jobs: Vec<DrawExecutionJob>,
 ) -> ApiResult<Vec<DrawExecutionOutcome>> {
     let semaphore = Arc::new(Semaphore::new(DRAW_ISSUE_CONCURRENCY_LIMIT));
@@ -295,6 +311,7 @@ async fn execute_draw_jobs_concurrently(
             .await
             .map_err(|_| ApiError::Internal("自动开奖并发执行许可获取失败".to_string()))?;
         let draws = draws.clone();
+        let orders = orders.clone();
         let fallback_issue = job.issue.clone();
         handles.push((
             fallback_issue,
@@ -302,17 +319,24 @@ async fn execute_draw_jobs_concurrently(
                 let _permit = permit;
                 let issue = job.issue;
                 let result = if issue.draw_mode == DrawMode::Api {
-                    draws
-                        .draw_with_prefetched_api_number_with_control_policy(
-                            &issue.id,
-                            job.api_draw_number,
-                            job.allow_control_number,
-                        )
-                        .await
+                    draw_prefetched_api_with_avoid_winning_policy(
+                        &draws,
+                        &orders,
+                        &job.lottery,
+                        &issue.id,
+                        job.api_draw_number,
+                        job.allow_control_number,
+                    )
+                    .await
                 } else {
-                    draws
-                        .draw(&issue.id, DrawIssueResultRequest::default())
-                        .await
+                    draw_with_avoid_winning_policy(
+                        &draws,
+                        &orders,
+                        &job.lottery,
+                        &issue.id,
+                        DrawIssueResultRequest::default(),
+                    )
+                    .await
                 };
                 DrawExecutionOutcome {
                     order: job.order,
@@ -611,12 +635,14 @@ async fn lottery_automation_configs(
     let mut configs = HashMap::new();
 
     for lottery in lotteries.list().await? {
+        let lottery_id = lottery.id.clone();
         configs.insert(
-            lottery.id,
+            lottery_id,
             LotteryAutomationConfig {
                 sale_enabled: lottery.sale_enabled,
                 api_draw_delay_seconds: lottery.api_draw_delay_seconds,
                 draw_control_enabled: lottery.draw_control_enabled,
+                lottery,
             },
         );
     }
@@ -1145,6 +1171,7 @@ mod tests {
             draw_mode,
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
+            avoid_winning_enabled: false,
             issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
             sale_close_lead_seconds: crate::domain::lottery::DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Daily {

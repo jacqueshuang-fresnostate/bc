@@ -58,6 +58,7 @@ interface LotteryFormState {
   category: LotteryCategory;
   drawMode: DrawMode;
   drawControlEnabled: boolean;
+  avoidWinningEnabled: boolean;
   groupBuyEnabled: boolean;
   id: string;
   issueFormat: string;
@@ -120,6 +121,7 @@ export function LotteryManagementPage({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState<LotteryFormState>(() => emptyForm());
   const [saleUpdatingId, setSaleUpdatingId] = useState<string | null>(null);
+  const [avoidUpdatingId, setAvoidUpdatingId] = useState<string | null>(null);
   const [saleFilter, setSaleFilter] = useState<LotterySaleFilter>('all');
   const [lotteryPage, setLotteryPage] = useState(1);
   const [lotteryPageSize, setLotteryPageSize] = useState(10);
@@ -296,6 +298,28 @@ export function LotteryManagementPage({
       onDashboardRefresh();
     } finally {
       setSaleUpdatingId((current) => (current === lottery.id ? null : current));
+    }
+  };
+
+  const toggleAvoidWinning = async (
+    lottery: LotteryKind,
+    avoidWinningEnabled: boolean,
+  ) => {
+    setAvoidUpdatingId(lottery.id);
+    try {
+      await update(lottery.id, {
+        ...lottery,
+        avoidWinningEnabled,
+      });
+      if (selectedId === lottery.id) {
+        setForm((current) => ({
+          ...current,
+          avoidWinningEnabled,
+        }));
+      }
+      onDashboardRefresh();
+    } finally {
+      setAvoidUpdatingId((current) => (current === lottery.id ? null : current));
     }
   };
 
@@ -494,9 +518,22 @@ export function LotteryManagementPage({
                         </div>
                       </td>
                       <td className="py-3 pr-4">
-                        <Tag color={lottery.drawControlEnabled ? 'red' : 'grey'}>
-                          {lottery.drawControlEnabled ? '允许控制' : '不控制'}
-                        </Tag>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Tag color={lottery.drawControlEnabled ? 'red' : 'grey'}>
+                            {lottery.drawControlEnabled ? '允许控制' : '不控制'}
+                          </Tag>
+                          <Switch
+                            checked={lottery.avoidWinningEnabled}
+                            disabled={saving && avoidUpdatingId !== lottery.id}
+                            loading={avoidUpdatingId === lottery.id}
+                            onChange={(checked) =>
+                              void toggleAvoidWinning(lottery, checked)
+                            }
+                          />
+                          <Tag color={lottery.avoidWinningEnabled ? 'orange' : 'grey'}>
+                            {lottery.avoidWinningEnabled ? '避开中奖' : '正常开奖'}
+                          </Tag>
+                        </div>
                       </td>
                       <td className="py-3 pr-4">
                         <Button size="small" onClick={() => selectLottery(lottery)}>
@@ -796,6 +833,17 @@ export function LotteryManagementPage({
                   <span>{form.drawControlEnabled ? '允许控制' : '不需要控制'}</span>
                 </div>
               </Field>
+              <Field label="避开中奖">
+                <div className="flex h-10 items-center gap-2 text-sm text-slate-700">
+                  <Switch
+                    checked={form.avoidWinningEnabled}
+                    onChange={(checked) =>
+                      setFormValue(setForm, 'avoidWinningEnabled', checked)
+                    }
+                  />
+                  <span>{form.avoidWinningEnabled ? '已开启' : '已关闭'}</span>
+                </div>
+              </Field>
               <Field label="合买状态">
                 <label className="flex h-10 items-center gap-2 text-sm">
                   <input
@@ -1026,6 +1074,7 @@ function Field({ children, label }: FieldProps) {
 function emptyForm(): LotteryFormState {
   return {
     apiDrawDelaySeconds: '0',
+    avoidWinningEnabled: false,
     category: 'regional',
     drawMode: 'platform',
     drawControlEnabled: true,
@@ -1058,6 +1107,7 @@ function formFromLottery(lottery: LotteryKind): LotteryFormState {
     logoUrl: lottery.logoUrl,
     drawMode: lottery.drawMode,
     drawControlEnabled: lottery.drawControlEnabled,
+    avoidWinningEnabled: lottery.avoidWinningEnabled ?? false,
     groupBuyEnabled: lottery.groupBuy.enabled,
     id: lottery.id,
     initiatorMinPercent: String(lottery.groupBuy.initiatorMinPercent),
@@ -1092,6 +1142,7 @@ function lotteryFromForm(
     category: form.category,
     drawMode: form.drawMode,
     drawControlEnabled: form.drawControlEnabled,
+    avoidWinningEnabled: form.avoidWinningEnabled,
     groupBuy: {
       enabled: form.groupBuyEnabled,
       initiatorMinPercent: numberField(form.initiatorMinPercent),

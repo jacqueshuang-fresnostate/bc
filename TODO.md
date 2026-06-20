@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-20 09:30 HKT 彩种避开中奖开关
+
+- 完成任务：在彩种管理中新增“避开中奖”开关，并让自动调度开奖和后台手动开奖都遵守该彩种配置。
+- 解决问题：运营需要某些彩种在开启开关后，不管当前期号用户下什么投注，都尽量生成不会命中任何待开奖订单的开奖号码；原系统只有“控制开奖号码”能力，不能按彩种自动避开中奖。
+- 实施内容：`lotteries` 新增 `avoid_winning_enabled` 持久化字段和中文字段注释；`LotteryKind`、彩种仓储 SQL、后台彩种新增/编辑 SideSheet、彩种列表行内开关与标签、OpenAPI 描述同步接入；新增 `draw_avoidance` 服务，在开奖落库前读取当前彩种期号待开奖订单，复用现有玩法计奖规则穷举候选号码，平台/API/手动开奖统一尝试替换为不会中奖的号码；若投注覆盖全部号码空间则跳过开奖并返回中文冲突原因。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_avoidance -- --nocapture`、`admin` 本地 `tsc --noEmit` 和 `vite build --mode development` 均通过；直接执行 `npm run build -- --mode development` 曾被本机 DNS 解析 `fullnode.mainnet.aptoslabs.com` 失败中断，已用本地二进制命令完成等价前端验证。
+
 ## 2026-06-20 07:36 HKT 无签名 IPA 跳过 Rust 构建脚本匹配修复
 
 - 完成任务：修复 `build-unsigned-ipa.sh` 临时跳过 Tauri iOS Rust 构建脚本时无法替换 Xcode `Build Rust Code` 的问题。

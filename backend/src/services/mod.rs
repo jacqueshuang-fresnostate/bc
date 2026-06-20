@@ -9,6 +9,7 @@ pub mod chat_hall;
 pub mod dashboard;
 pub mod draw;
 pub mod draw_api;
+pub mod draw_avoidance;
 pub mod draw_generation;
 pub mod finance;
 pub mod group_buy;

@@ -81,6 +81,7 @@ use crate::{
             dashboard_summary_for_scopes, dashboard_summary_with_orders, DashboardSummary,
         },
         draw_api::ApiDrawSourceCrawlSnapshotQuery,
+        draw_avoidance::draw_with_avoid_winning_policy,
         draw_generation::{
             generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
         },
@@ -1925,7 +1926,10 @@ async fn draw_issue_result(
     Path(id): Path<String>,
     Json(payload): Json<DrawIssueResultRequest>,
 ) -> ApiResult<Json<ApiEnvelope<DrawIssue>>> {
-    let issue = state.draws.draw(&id, payload).await?;
+    let source_issue = state.draws.get(&id).await?;
+    let lottery = state.lotteries.get(&source_issue.lottery_id).await?;
+    let issue =
+        draw_with_avoid_winning_policy(&state.draws, &state.orders, &lottery, &id, payload).await?;
     state.realtime.publish_public(draw_result_event(&issue));
 
     Ok(Json(ApiEnvelope::success(issue)))

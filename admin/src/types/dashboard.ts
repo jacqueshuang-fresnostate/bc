@@ -91,6 +91,7 @@ export interface LotteryKind {
   drawMode: DrawMode;
   apiDrawDelaySeconds: number;
   drawControlEnabled: boolean;
+  avoidWinningEnabled: boolean;
   issueFormat: string;
   saleCloseLeadSeconds: number;
   schedule: DrawSchedule;

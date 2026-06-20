@@ -104,6 +104,52 @@ impl OrderRepository {
             .map(|store| store.list())
     }
 
+    /// 按彩种和期号读取待开奖订单，供开奖前避开中奖策略精准判断当前风险。
+    pub async fn list_pending_for_issue(
+        &self,
+        lottery_id: &str,
+        issue: &str,
+    ) -> ApiResult<Vec<OrderDetail>> {
+        let lottery_id = lottery_id.trim();
+        let issue = issue.trim();
+        if lottery_id.is_empty() || issue.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            let rows = sqlx::query(
+                "SELECT id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+                        stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
+                        draw_number, matched_bets, payout_minor, status, settled_at, created_at
+                 FROM orders
+                 WHERE lottery_id = $1 AND issue = $2 AND status = $3
+                 ORDER BY id ASC",
+            )
+            .bind(lottery_id)
+            .bind(issue)
+            .bind(enum_to_string(&OrderStatus::PendingDraw)?)
+            .fetch_all(persistence.pool())
+            .await
+            .map_err(|_| ApiError::Internal("待开奖订单数据读取失败".to_string()))?;
+
+            return rows.into_iter().map(order_detail_from_row).collect();
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .list()
+                    .into_iter()
+                    .filter(|order| {
+                        order.lottery_id == lottery_id
+                            && order.issue == issue
+                            && order.status == OrderStatus::PendingDraw
+                    })
+                    .collect()
+            })
+    }
+
     /// 分页返回投注订单；数据库模式下把用户过滤、机器人过滤和分页下推到 SQL。
     pub async fn list_page(
         &self,
@@ -2059,6 +2105,7 @@ mod tests {
             draw_mode: DrawMode::Api,
             api_draw_delay_seconds: 0,
             draw_control_enabled: true,
+            avoid_winning_enabled: false,
             issue_format: crate::domain::lottery::DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
             sale_close_lead_seconds: crate::domain::lottery::DEFAULT_SALE_CLOSE_LEAD_SECONDS,
             schedule: DrawSchedule::Daily {

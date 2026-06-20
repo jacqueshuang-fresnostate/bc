@@ -187,6 +187,9 @@ pub struct LotteryKind {
     /// 是否允许后台控制开奖号码；关闭后管理端不展示控制入口，接口也不允许启用控制。
     #[serde(default = "default_draw_control_enabled")]
     pub draw_control_enabled: bool,
+    /// 是否开启自动避开中奖策略；开启后开奖前会尝试生成不命中当前待开奖注单的号码。
+    #[serde(default)]
+    pub avoid_winning_enabled: bool,
     /// 平台开奖期号生成格式；仅平台开奖模式按该模板生成期号。
     #[serde(default = "default_issue_format_pattern")]
     pub issue_format: String,
