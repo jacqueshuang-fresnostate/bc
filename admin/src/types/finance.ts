@@ -83,6 +83,7 @@ export interface ManualBalanceAdjustmentRequest {
 
 export interface ConfirmRechargeOrderRequest {
   providerTradeNo?: string | null;
+  remark?: string | null;
 }
 
 export interface RechargeOrderSummary {
@@ -96,6 +97,7 @@ export interface RechargeOrderSummary {
   providerTradeNo: string | null;
   paymentUrl: string | null;
   supportConversationId: string | null;
+  remark: string;
   createdAt: string;
   paidAt: string | null;
 }

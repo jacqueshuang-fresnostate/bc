@@ -1529,6 +1529,7 @@ struct UserListQuery {
     sort_by: Option<String>,
     sort_direction: Option<String>,
     status: Option<UserStatus>,
+    username: Option<String>,
 }
 
 #[cfg(test)]
@@ -1656,7 +1657,7 @@ impl UserListQuery {
             page: self.page,
             page_size: self.page_size,
             user_id: None,
-            username: None,
+            username: self.username.clone(),
         }
     }
 }
@@ -1813,6 +1814,17 @@ fn filter_users_by_status(users: &mut Vec<UserSummary>, status: Option<&UserStat
     };
 
     users.retain(|user| &user.status == status);
+}
+
+/// 按用户名关键字过滤后台用户列表；大小写不敏感，空关键字不过滤。
+#[cfg(test)]
+fn filter_users_by_username(users: &mut Vec<UserSummary>, username: Option<&str>) {
+    let Some(username) = optional_query_text(username) else {
+        return;
+    };
+    let username = username.to_ascii_lowercase();
+
+    users.retain(|user| user.username.to_ascii_lowercase().contains(&username));
 }
 
 /// 解析用户列表排序字段，默认按用户 ID 排序。
@@ -2667,6 +2679,7 @@ async fn list_users(
         .access
         .user_page(
             query.status.clone(),
+            optional_query_text(query.username.as_deref()),
             query.sort_by.as_deref().unwrap_or_default(),
             query.sort_direction.as_deref().unwrap_or_default(),
             PageRequest::new(query.page, query.page_size),
@@ -3476,7 +3489,7 @@ fn should_include_robot_initiated_group_buy_plan(
 /// 生成充值订单 CSV 文本，带 UTF-8 BOM 方便表格软件直接识别中文。
 fn recharge_orders_csv(orders: &[RechargeOrderSummary]) -> String {
     let mut csv = String::from(
-        "\u{feff}订单ID,用户ID,用户名,充值渠道,支付方式,金额(元),状态,外部交易号,客服会话ID,创建时间,入账时间\n",
+        "\u{feff}订单ID,用户ID,用户名,充值渠道,支付方式,金额(元),状态,外部交易号,客服会话ID,备注,创建时间,入账时间\n",
     );
     for order in orders {
         push_csv_row(
@@ -3491,6 +3504,7 @@ fn recharge_orders_csv(orders: &[RechargeOrderSummary]) -> String {
                 recharge_status_label(&order.status).to_string(),
                 order.provider_trade_no.clone().unwrap_or_default(),
                 order.support_conversation_id.clone().unwrap_or_default(),
+                order.remark.clone(),
                 order.created_at.clone(),
                 order.paid_at.clone().unwrap_or_default(),
             ],
@@ -4617,9 +4631,9 @@ mod tests {
     use super::{
         admin_login_audit_context_from_headers, admin_user_summary_with_usernames,
         agent_rebate_records_from_data, agent_rebate_summary_from_data,
-        align_draw_issue_plan_after_sale_on, filter_users_by_status, finance_overview_for_query,
-        first_admin_audit_ip, normalize_admin_draw_control_target, page_items,
-        required_permission_for_request, required_scope_for_path,
+        align_draw_issue_plan_after_sale_on, filter_users_by_status, filter_users_by_username,
+        finance_overview_for_query, first_admin_audit_ip, normalize_admin_draw_control_target,
+        page_items, required_permission_for_request, required_scope_for_path,
         should_align_draw_issue_plan_after_sale_on, should_include_robot_initiated_group_buy_plan,
         should_include_user_scoped_record, should_match_user_filter,
         sort_agent_rebate_records_by_time_desc, sort_financial_accounts_by_latest_user_desc,
@@ -4854,6 +4868,7 @@ mod tests {
             sort_by: Some("balanceMinor".to_string()),
             sort_direction: Some("desc".to_string()),
             status: None,
+            username: None,
         };
 
         sort_users(&mut users, &query).expect("users can be sorted");
@@ -4880,6 +4895,7 @@ mod tests {
             sort_by: Some("id".to_string()),
             sort_direction: None,
             status: None,
+            username: None,
         };
 
         sort_users(&mut users, &query).expect("users can be sorted with default direction");
@@ -4909,6 +4925,30 @@ mod tests {
         assert_eq!(users.len(), 1);
         assert_eq!(users[0].id, "U10002");
         assert_eq!(users[0].status, UserStatus::Locked);
+    }
+
+    #[test]
+    /// 后台用户列表用户名搜索必须先过滤再分页，避免目标用户落在后续页时查不到。
+    fn user_list_username_filter_runs_before_pagination() {
+        let mut users = vec![
+            test_user("U10001", "alice", 300),
+            test_user("U10002", "agent_alice", 100),
+            test_user("U10003", "bob", 200),
+        ];
+        filter_users_by_username(&mut users, Some("ALI"));
+        let page = page_items(
+            users,
+            FinancePageQuery {
+                include_robot_data: None,
+                page: Some(1),
+                page_size: Some(1),
+                user_id: None,
+                username: Some("ALI".to_string()),
+            },
+        );
+
+        assert_eq!(page.total_count, 2);
+        assert_eq!(page.items[0].username, "alice");
     }
 
     #[test]
@@ -5129,6 +5169,7 @@ mod tests {
             pay_type: None,
             payment_url: None,
             provider_trade_no: None,
+            remark: String::new(),
             status: RechargeOrderStatus::Paid,
             support_conversation_id: None,
             user_id: invitee.id.clone(),
@@ -5453,6 +5494,7 @@ mod tests {
             pay_type: None,
             payment_url: None,
             provider_trade_no: None,
+            remark: String::new(),
             status,
             support_conversation_id: None,
             user_id: user_id.to_string(),

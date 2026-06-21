@@ -685,6 +685,7 @@ let store = load_access_store(&database).await?;
 | `provider_trade_no` | `text` | 第三方交易号 |
 | `payment_url` | `text` | 彩虹易支付跳转地址 |
 | `support_conversation_id` | `text` | 客服直充绑定会话 ID |
+| `remark` | `text not null default ''` | 后台确认入账备注 |
 | `created_at` | `text not null` | 创建时间 |
 | `paid_at` | `text` | 入账时间 |
 

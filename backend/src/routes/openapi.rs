@@ -131,7 +131,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/users",
         "用户管理",
         "用户列表",
-        "分页返回后台用户列表，支持 page、pageSize、sortBy 和 sortDirection 查询排序。",
+        "分页返回后台用户列表，支持 page、pageSize、sortBy、sortDirection、status 和 username 查询。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -437,7 +437,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/recharge-orders/{id}/confirm",
         "财务管理",
         "确认客服直充入账",
-        "后台确认客服直充订单已收款，写入充值流水、增加用户余额，并尝试给符合条件的上级代理发放充值返利。",
+        "后台确认客服直充订单已收款，可填写外部交易号和入账备注，写入充值流水、增加用户余额，并尝试给符合条件的上级代理发放充值返利。",
         AuthMode::Admin,
         RequestBodyKind::Json,
     ),
@@ -1772,6 +1772,8 @@ fn query_parameters(route: &RouteDoc) -> Vec<Value> {
                 "排序方向，可选 asc 或 desc，默认 desc。",
                 "string",
             ),
+            query_parameter("status", "用户状态筛选，可选 active、suspended、locked。", "string"),
+            query_parameter("username", "用户名关键字搜索，大小写不敏感。", "string"),
         ];
     }
 
@@ -2147,5 +2149,11 @@ mod tests {
         assert!(parameters
             .iter()
             .any(|parameter| parameter["name"].as_str() == Some("sortDirection")));
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("status")));
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("username")));
     }
 }

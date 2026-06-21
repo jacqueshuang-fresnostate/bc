@@ -4282,11 +4282,12 @@ if let Some(draw_number) = active_draw_control_number(&issue)? {
 
 ```json
 {
-  "providerTradeNo": "客服收款凭证"
+  "providerTradeNo": "客服收款凭证",
+  "remark": "已核对付款截图，客服确认收款"
 }
 ```
 
-确认成功后订单状态变为 `paid`，并写入 `rechargeCredit` 资金流水。
+确认成功后订单状态变为 `paid`，保存外部交易号和入账备注，并写入 `rechargeCredit` 资金流水。
 
 客服直充实时聊天规则：
 

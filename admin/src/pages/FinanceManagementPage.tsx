@@ -3,12 +3,14 @@ import {
   Banner,
   Button,
   Card,
+  Modal,
   Select,
   SideSheet,
   Spin,
   Switch,
   Tabs,
   Tag,
+  TextArea,
   Toast,
 } from '@douyinfe/semi-ui';
 import {
@@ -37,6 +39,7 @@ import type {
   LedgerEntryKind,
   ManualBalanceAdjustmentRequest,
   RechargeChannel,
+  RechargeOrderSummary,
   RechargeOrderStatus,
   WithdrawalMethodType,
   WithdrawalOrderStatus,
@@ -59,6 +62,11 @@ interface AdjustmentFormState {
   amountYuan: string;
   description: string;
   userId: string;
+}
+
+interface RechargeConfirmFormState {
+  providerTradeNo: string;
+  remark: string;
 }
 
 export function FinanceManagementPage({
@@ -117,6 +125,13 @@ export function FinanceManagementPage({
     description: '后台手动补款',
     userId: 'U10001',
   });
+  const [rechargeConfirmOrder, setRechargeConfirmOrder] =
+    useState<RechargeOrderSummary | null>(null);
+  const [rechargeConfirmForm, setRechargeConfirmForm] =
+    useState<RechargeConfirmFormState>({
+      providerTradeNo: '',
+      remark: '',
+    });
   const [adjustmentSheetVisible, setAdjustmentSheetVisible] = useState(false);
   const [adjustmentAccount, setAdjustmentAccount] =
     useState<AdminFinancialAccountSummary | null>(null);
@@ -153,6 +168,22 @@ export function FinanceManagementPage({
     setAdjustmentAccount(null);
   };
 
+  const openRechargeConfirmModal = (order: RechargeOrderSummary) => {
+    setRechargeConfirmOrder(order);
+    setRechargeConfirmForm({
+      providerTradeNo: order.providerTradeNo ?? '',
+      remark: order.remark ?? '',
+    });
+  };
+
+  const closeRechargeConfirmModal = () => {
+    if (saving) {
+      return;
+    }
+    setRechargeConfirmOrder(null);
+    setRechargeConfirmForm({ providerTradeNo: '', remark: '' });
+  };
+
   const submit = async () => {
     const amountMinor = yuanInputToMinor(form.amountYuan);
     if (amountMinor === null) {
@@ -179,9 +210,18 @@ export function FinanceManagementPage({
     Toast.success('调账已提交');
   };
 
-  const confirmCustomerServiceRecharge = async (id: string) => {
-    await confirmRecharge(id);
+  const submitRechargeConfirmation = async () => {
+    if (!rechargeConfirmOrder) {
+      return;
+    }
+    await confirmRecharge(rechargeConfirmOrder.id, {
+      providerTradeNo: rechargeConfirmForm.providerTradeNo.trim() || null,
+      remark: rechargeConfirmForm.remark.trim() || null,
+    });
+    setRechargeConfirmOrder(null);
+    setRechargeConfirmForm({ providerTradeNo: '', remark: '' });
     onDashboardRefresh();
+    Toast.success('充值订单已确认入账');
   };
 
   const approvePendingWithdrawal = async (id: string) => {
@@ -477,7 +517,7 @@ export function FinanceManagementPage({
           </div>
         ) : rechargeOrders.items.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1160px] text-left text-sm">
+            <table className="w-full min-w-[1280px] text-left text-sm">
               <thead className="border-b border-line text-xs text-slate-500">
                 <tr>
                   <th className="py-2 pr-4 font-medium">订单</th>
@@ -488,6 +528,7 @@ export function FinanceManagementPage({
                   <th className="py-2 pr-4 font-medium">支付方式</th>
                   <th className="py-2 pr-4 font-medium">外部交易号</th>
                   <th className="py-2 pr-4 font-medium">客服会话</th>
+                  <th className="py-2 pr-4 font-medium">备注</th>
                   <th className="py-2 pr-4 font-medium">操作</th>
                 </tr>
               </thead>
@@ -529,6 +570,15 @@ export function FinanceManagementPage({
                     <td className="py-3 pr-4 text-slate-600">
                       {order.supportConversationId ?? '-'}
                     </td>
+                    <td className="py-3 pr-4 text-slate-600">
+                      {order.remark ? (
+                        <div className="max-w-[220px] whitespace-pre-wrap break-words">
+                          {order.remark}
+                        </div>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
                     <td className="py-3 pr-4">
                       {order.channel === 'customerService' &&
                       order.status === 'waitingCustomerService' ? (
@@ -536,7 +586,7 @@ export function FinanceManagementPage({
                           disabled={saving}
                           size="small"
                           theme="solid"
-                          onClick={() => void confirmCustomerServiceRecharge(order.id)}
+                          onClick={() => openRechargeConfirmModal(order)}
                         >
                           确认入账
                         </Button>
@@ -801,6 +851,61 @@ export function FinanceManagementPage({
           </Card>
         </Tabs.TabPane>
       </Tabs>
+
+      <Modal
+        cancelText="取消"
+        closeOnEsc={!saving}
+        confirmLoading={saving}
+        maskClosable={!saving}
+        okText="确认入账"
+        title="确认充值入账"
+        visible={Boolean(rechargeConfirmOrder)}
+        onCancel={closeRechargeConfirmModal}
+        onOk={() => void submitRechargeConfirmation()}
+      >
+        {rechargeConfirmOrder ? (
+          <div className="space-y-4">
+            <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
+              <div className="font-semibold text-ink">
+                {rechargeConfirmOrder.username}（{rechargeConfirmOrder.userId}）
+              </div>
+              <div className="mt-1 text-xs text-slate-400">
+                订单 {rechargeConfirmOrder.id} · 金额{' '}
+                {formatMoney(rechargeConfirmOrder.amountMinor)}
+              </div>
+            </div>
+
+            <Field label="外部交易号（可选）">
+              <Input
+                className="form-input"
+                placeholder="可填写线下收款凭证号或第三方交易号"
+                value={rechargeConfirmForm.providerTradeNo}
+                onChange={(value) =>
+                  setRechargeConfirmForm((current) => ({
+                    ...current,
+                    providerTradeNo: value,
+                  }))
+                }
+              />
+            </Field>
+
+            <Field label="入账备注">
+              <TextArea
+                autosize={{ maxRows: 5, minRows: 3 }}
+                className="form-input"
+                placeholder="例如：已核对付款截图，客服确认收款"
+                value={rechargeConfirmForm.remark}
+                onChange={(value) =>
+                  setRechargeConfirmForm((current) => ({
+                    ...current,
+                    remark: value,
+                  }))
+                }
+              />
+            </Field>
+          </div>
+        ) : null}
+      </Modal>
 
       <SideSheet
         aria-label="手动调账"

@@ -19,6 +19,7 @@ import type {
   FinanceOverview,
   FinancePage,
   FinancePageQuery,
+  ConfirmRechargeOrderRequest,
   LedgerEntry,
   ManualBalanceAdjustmentRequest,
   RechargeOrderSummary,
@@ -137,11 +138,11 @@ export function useFinance({
   );
 
   const confirmRecharge = useCallback(
-    async (id: string) => {
+    async (id: string, payload: ConfirmRechargeOrderRequest = {}) => {
       setSaving(true);
       setError(null);
       try {
-        const order = await confirmRechargeOrder(id);
+        const order = await confirmRechargeOrder(id, payload);
         refresh();
         return order;
       } catch (requestError) {

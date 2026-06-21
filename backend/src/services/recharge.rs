@@ -431,6 +431,7 @@ impl RechargeStore {
                     provider_trade_no: None,
                     payment_url: Some(payment_url.clone()),
                     support_conversation_id: None,
+                    remark: String::new(),
                     created_at: now,
                     paid_at: None,
                 };
@@ -458,6 +459,7 @@ impl RechargeStore {
                     provider_trade_no: None,
                     payment_url: None,
                     support_conversation_id: Some(conversation_id.clone()),
+                    remark: String::new(),
                     created_at: now,
                     paid_at: None,
                 };
@@ -547,9 +549,18 @@ impl RechargeStore {
             .provider_trade_no
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
+        order.remark = normalized_confirm_remark(request.remark);
         order.paid_at = Some(current_time_label());
         Ok(order.clone())
     }
+}
+
+/// 归一化后台确认入账备注，空白备注保存为空字符串。
+fn normalized_confirm_remark(remark: Option<String>) -> String {
+    remark
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
 }
 
 /// 从系统设置构造用户端充值配置。
@@ -626,7 +637,7 @@ async fn load_recharge_store(database: &BusinessDatabase) -> ApiResult<RechargeS
     let mut orders = BTreeMap::new();
     for row in sqlx::query(
         "SELECT id, user_id, username, channel, amount_minor, status, pay_type,
-                provider_trade_no, payment_url, support_conversation_id, created_at, paid_at
+                provider_trade_no, payment_url, support_conversation_id, remark, created_at, paid_at
          FROM recharge_orders
          ORDER BY id ASC",
     )
@@ -687,6 +698,9 @@ fn recharge_order_from_row(row: PgRow) -> ApiResult<RechargeOrderSummary> {
         support_conversation_id: row
             .try_get("support_conversation_id")
             .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
+        remark: row
+            .try_get("remark")
+            .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
         created_at: row
             .try_get("created_at")
             .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
@@ -716,7 +730,7 @@ async fn query_recharge_order_page(
     let resolved = page.resolve(total_count);
     let rows = sqlx::query(
         "SELECT id, user_id, username, channel, amount_minor, status, pay_type,
-                provider_trade_no, payment_url, support_conversation_id, created_at, paid_at
+                provider_trade_no, payment_url, support_conversation_id, remark, created_at, paid_at
          FROM recharge_orders
          WHERE ($1::text IS NULL OR user_id = $1)
          ORDER BY created_at DESC, id DESC
@@ -744,7 +758,7 @@ async fn query_recharge_orders_by_status(
     let status = enum_to_string(&status)?;
     let rows = sqlx::query(
         "SELECT id, user_id, username, channel, amount_minor, status, pay_type,
-                provider_trade_no, payment_url, support_conversation_id, created_at, paid_at
+                provider_trade_no, payment_url, support_conversation_id, remark, created_at, paid_at
          FROM recharge_orders
          WHERE status = $1
          ORDER BY created_at DESC, id DESC",
@@ -788,8 +802,8 @@ pub(crate) async fn save_recharge_store_in_transaction(
         sqlx::query(
             "INSERT INTO recharge_orders
              (id, user_id, username, channel, amount_minor, status, pay_type,
-              provider_trade_no, payment_url, support_conversation_id, created_at, paid_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+              provider_trade_no, payment_url, support_conversation_id, remark, created_at, paid_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(&order.id)
         .bind(&order.user_id)
@@ -801,6 +815,7 @@ pub(crate) async fn save_recharge_store_in_transaction(
         .bind(&order.provider_trade_no)
         .bind(&order.payment_url)
         .bind(&order.support_conversation_id)
+        .bind(&order.remark)
         .bind(&order.created_at)
         .bind(&order.paid_at)
         .execute(&mut *connection)
@@ -1226,6 +1241,7 @@ mod tests {
                 &created.order.id,
                 ConfirmRechargeOrderRequest {
                     provider_trade_no: Some("客服收款凭证".to_string()),
+                    remark: Some("线下已核对收款截图".to_string()),
                 },
                 &finance,
             )
@@ -1236,6 +1252,7 @@ mod tests {
                 &created.order.id,
                 ConfirmRechargeOrderRequest {
                     provider_trade_no: None,
+                    remark: None,
                 },
                 &finance,
             )
@@ -1252,6 +1269,7 @@ mod tests {
             .expect("account can load");
 
         assert_eq!(confirmed.status, RechargeOrderStatus::Paid);
+        assert_eq!(confirmed.remark, "线下已核对收款截图");
         assert_eq!(confirmed_again.status, RechargeOrderStatus::Paid);
         assert_eq!(entries.len(), 1);
         assert_eq!(account.available_balance_minor, 1200);

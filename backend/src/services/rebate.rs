@@ -698,6 +698,7 @@ mod tests {
             provider_trade_no: Some("测试收款".to_string()),
             payment_url: None,
             support_conversation_id: None,
+            remark: String::new(),
             created_at: "2026-06-06 03:00:00".to_string(),
             paid_at: Some("2026-06-06 03:00:00".to_string()),
         }

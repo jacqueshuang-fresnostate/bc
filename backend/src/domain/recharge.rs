@@ -68,6 +68,9 @@ pub struct ConfirmRechargeOrderRequest {
     /// 第三方支付平台交易号。
     #[serde(default)]
     pub provider_trade_no: Option<String>,
+    /// 后台确认入账备注，便于财务核对付款凭证或线下沟通结果。
+    #[serde(default)]
+    pub remark: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -94,6 +97,8 @@ pub struct RechargeOrderSummary {
     pub payment_url: Option<String>,
     /// 关联客服直充会话 ID。
     pub support_conversation_id: Option<String>,
+    /// 后台确认入账备注。
+    pub remark: String,
     /// 创建时间。
     pub created_at: String,
     /// 支付完成时间。

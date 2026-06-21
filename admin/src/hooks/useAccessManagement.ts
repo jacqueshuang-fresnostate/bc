@@ -107,6 +107,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     userQuery.sortBy,
     userQuery.sortDirection,
     userQuery.status,
+    userQuery.username,
   ]);
 
   const saveUser = useCallback(async (payload: UserSummary, existingId?: string) => {

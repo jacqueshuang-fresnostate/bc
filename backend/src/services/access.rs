@@ -154,21 +154,35 @@ impl AccessRepository {
             })
     }
 
-    /// 分页返回用户列表；数据库模式下将状态、排序、余额联查和分页下推到 SQL。
+    /// 分页返回用户列表；数据库模式下将状态、用户名搜索、排序、余额联查和分页下推到 SQL。
     pub async fn user_page(
         &self,
         status: Option<UserStatus>,
+        username: Option<&str>,
         sort_by: &str,
         sort_direction: &str,
         page: PageRequest,
     ) -> ApiResult<ListPage<UserSummary>> {
+        let username = normalized_username_filter(username);
         if let Some(persistence) = &self.persistence {
-            return query_user_page(persistence, status, sort_by, sort_direction, page).await;
+            return query_user_page(
+                persistence,
+                status,
+                username.as_deref(),
+                sort_by,
+                sort_direction,
+                page,
+            )
+            .await;
         }
 
         let mut users = self.users().await?;
         if let Some(status) = status.as_ref() {
             users.retain(|user| &user.status == status);
+        }
+        if let Some(username) = username.as_ref() {
+            let username = username.to_ascii_lowercase();
+            users.retain(|user| user.username.to_ascii_lowercase().contains(&username));
         }
         sort_user_summaries(&mut users, sort_by, sort_direction)?;
         Ok(ListPage::from_all(users, page))
@@ -1139,6 +1153,7 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
 async fn query_user_page(
     database: &BusinessDatabase,
     status: Option<UserStatus>,
+    username: Option<&str>,
     sort_by: &str,
     sort_direction: &str,
     page: PageRequest,
@@ -1148,9 +1163,11 @@ async fn query_user_page(
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
          FROM users u
-         WHERE ($1::text IS NULL OR u.status = $1)",
+         WHERE ($1::text IS NULL OR u.status = $1)
+           AND ($2::text IS NULL OR strpos(lower(u.username), lower($2::text)) > 0)",
     )
     .bind(status.as_deref())
+    .bind(username)
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("用户分页总数读取失败".to_string()))?;
@@ -1170,11 +1187,13 @@ async fn query_user_page(
          FROM users u
          LEFT JOIN financial_accounts account ON account.user_id = u.id
          WHERE ($1::text IS NULL OR u.status = $1)
+           AND ($2::text IS NULL OR strpos(lower(u.username), lower($2::text)) > 0)
          ORDER BY {order_clause}
-         LIMIT $2 OFFSET $3"
+         LIMIT $3 OFFSET $4"
     );
     let rows = sqlx::query(&sql)
         .bind(status.as_deref())
+        .bind(username)
         .bind(resolved.limit_i64()?)
         .bind(resolved.offset_i64()?)
         .fetch_all(database.pool())
@@ -1224,6 +1243,14 @@ fn normalized_user_ids(user_ids: &[String]) -> BTreeSet<String> {
         .filter(|user_id| !user_id.is_empty())
         .map(ToString::to_string)
         .collect()
+}
+
+/// 归一化后台用户列表用户名搜索词，空白输入不参与过滤。
+fn normalized_username_filter(username: Option<&str>) -> Option<String> {
+    username
+        .map(str::trim)
+        .filter(|username| !username.is_empty())
+        .map(ToString::to_string)
 }
 
 /// 将数据库行转换为用户摘要，供启动加载和分页查询复用。
@@ -3355,6 +3382,43 @@ mod tests {
             .await
             .expect("status can be updated");
         assert_eq!(updated.status, UserStatus::Locked);
+    }
+
+    /// 验证后台用户分页入口支持按用户名关键字搜索，且大小写不敏感。
+    #[tokio::test]
+    async fn access_repository_user_page_filters_by_username() {
+        let access = AccessRepository::memory_seeded();
+        access
+            .create_user(UserSummary {
+                id: "U20010".to_string(),
+                username: "Search_Target".to_string(),
+                email: None,
+                avatar_url: String::new(),
+                contact_qq: String::new(),
+                kind: UserKind::Regular,
+                status: UserStatus::Active,
+                balance_minor: 0,
+                agent_id: None,
+                invite_code: String::new(),
+                registration_location: UserRegistrationLocation::default(),
+                created_at: "2026-06-21 14:20:00".to_string(),
+            })
+            .await
+            .expect("search target user can be created");
+
+        let page = access
+            .user_page(
+                None,
+                Some("target"),
+                "id",
+                "desc",
+                PageRequest::new(Some(1), Some(10)),
+            )
+            .await
+            .expect("user page can be filtered by username");
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.items[0].username, "Search_Target");
     }
     /// 验证存在直属邀请下级时不允许删除用户。
     #[tokio::test]

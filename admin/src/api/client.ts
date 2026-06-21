@@ -363,6 +363,9 @@ function userQueryPath(path: string, query?: UserListQuery) {
   if (query?.status) {
     params.set('status', query.status);
   }
+  if (query?.username?.trim()) {
+    params.set('username', query.username.trim());
+  }
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
 }

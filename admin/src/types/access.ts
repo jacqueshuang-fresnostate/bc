@@ -68,6 +68,7 @@ export interface UserListQuery {
   sortBy?: UserListSortBy;
   sortDirection?: UserListSortDirection;
   status?: UserStatus;
+  username?: string;
 }
 
 export type UserPage = FinancePage<AdminUserSummary>;

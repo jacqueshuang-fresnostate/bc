@@ -15,6 +15,7 @@ import {
   CreditCard,
   RefreshCcw,
   Save,
+  Search,
   Settings,
   Smartphone,
   Upload as UploadIcon,
@@ -22,6 +23,7 @@ import {
   Trash2,
   UserPlus,
   Users,
+  X,
 } from 'lucide-react';
 import {
   useEffect,
@@ -317,6 +319,8 @@ export function AccessManagementPage({
     useState<UserListSortDirection>('desc');
   const [userStatusFilter, setUserStatusFilter] =
     useState<UserStatusFilter>('all');
+  const [userUsernameDraft, setUserUsernameDraft] = useState('');
+  const [userUsernameSearch, setUserUsernameSearch] = useState('');
   const userQuery = useMemo(
     () => ({
       page: userPageNumber,
@@ -324,6 +328,7 @@ export function AccessManagementPage({
       sortBy: userSortBy,
       sortDirection: userSortDirection,
       status: userStatusFilter === 'all' ? undefined : userStatusFilter,
+      username: userUsernameSearch || undefined,
     }),
     [
       userPageNumber,
@@ -331,6 +336,7 @@ export function AccessManagementPage({
       userSortBy,
       userSortDirection,
       userStatusFilter,
+      userUsernameSearch,
     ],
   );
   const {
@@ -425,6 +431,15 @@ export function AccessManagementPage({
   const refreshAll = () => {
     refresh();
     onDashboardRefresh();
+  };
+  const applyUserUsernameSearch = () => {
+    setUserUsernameSearch(userUsernameDraft.trim());
+    setUserPageNumber(1);
+  };
+  const clearUserUsernameSearch = () => {
+    setUserUsernameDraft('');
+    setUserUsernameSearch('');
+    setUserPageNumber(1);
   };
   const isSettingsPage = section === 'settings';
 
@@ -563,6 +578,8 @@ export function AccessManagementPage({
           statusFilter={userStatusFilter}
           totalCount={userPage.totalCount}
           totalPages={userPage.totalPages}
+          usernameDraft={userUsernameDraft}
+          usernameSearch={userUsernameSearch}
           users={users}
           onClose={() => setUserSheetVisible(false)}
           onEdit={(user) => {
@@ -596,6 +613,9 @@ export function AccessManagementPage({
             setUserStatusFilter(status);
             setUserPageNumber(1);
           }}
+          onUsernameDraftChange={setUserUsernameDraft}
+          onUsernameSearchApply={applyUserUsernameSearch}
+          onUsernameSearchClear={clearUserUsernameSearch}
           onStatus={(id, status) => {
             void changeUserStatus(id, status).then(onDashboardRefresh);
           }}
@@ -701,6 +721,9 @@ function UserSection({
   onStatus,
   onStatusFilterChange,
   onSubmit,
+  onUsernameDraftChange,
+  onUsernameSearchApply,
+  onUsernameSearchClear,
   page,
   pageSize,
   saving,
@@ -710,6 +733,8 @@ function UserSection({
   statusFilter,
   totalCount,
   totalPages,
+  usernameDraft,
+  usernameSearch,
   users,
 }: {
   editingId: string | null;
@@ -729,6 +754,9 @@ function UserSection({
   onStatus: (id: string, status: UserStatus) => void;
   onStatusFilterChange: (status: UserStatusFilter) => void;
   onSubmit: () => void;
+  onUsernameDraftChange: (value: string) => void;
+  onUsernameSearchApply: () => void;
+  onUsernameSearchClear: () => void;
   page: number;
   pageSize: number;
   saving: boolean;
@@ -738,6 +766,8 @@ function UserSection({
   statusFilter: UserStatusFilter;
   totalCount: number;
   totalPages: number;
+  usernameDraft: string;
+  usernameSearch: string;
   users: AdminUserSummary[];
 }) {
   return (
@@ -804,6 +834,33 @@ function UserSection({
                   </Select.Option>
                 ))}
               </Select>
+              <span className="text-xs font-medium text-slate-500">用户名</span>
+              <Input
+                className="form-input min-w-[180px]"
+                placeholder="输入用户名搜索"
+                prefix={<Search size={14} />}
+                showClear
+                value={usernameDraft}
+                onChange={onUsernameDraftChange}
+                onClear={onUsernameSearchClear}
+                onEnterPress={onUsernameSearchApply}
+              />
+              <Button
+                icon={<Search size={14} />}
+                size="small"
+                theme="solid"
+                onClick={onUsernameSearchApply}
+              >
+                搜索
+              </Button>
+              <Button
+                disabled={!usernameDraft && !usernameSearch}
+                icon={<X size={14} />}
+                size="small"
+                onClick={onUsernameSearchClear}
+              >
+                清空
+              </Button>
             </div>
             <PageControls
               loading={loading}

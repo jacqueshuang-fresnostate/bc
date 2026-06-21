@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-21 14:23 HKT 充值确认入账备注弹窗
+
+- 完成任务：后台财务管理的充值订单确认入账改为弹窗确认，并支持填写入账备注。
+- 解决问题：此前客服直充订单点击“确认入账”会直接入账，财务无法在确认时记录线下收款凭证、客服核对结果或其它备注，后续复核只能依赖外部沟通记录。
+- 实施内容：`POST /api/admin/recharge-orders/{id}/confirm` 请求体新增 `remark`；`recharge_orders` 新增 `remark` 字段并补中文 SQL 注释；充值订单创建默认空备注，客服直充确认入账时保存修剪后的备注；后台充值订单列表新增备注列，确认入账按钮打开 Semi UI `Modal`，可填写外部交易号和入账备注后提交；充值订单 CSV 导出同步包含备注列；架构设计和 Trellis 后端契约同步记录该字段。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml recharge -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml`（379 个测试成功）、管理后台 `npm run build` 和 `git diff --check` 均通过；管理后台构建仍保留既有大 chunk 提示。
+
+## 2026-06-21 14:15 HKT 用户列表用户名搜索
+
+- 完成任务：后台用户列表新增按用户名关键字搜索能力。
+- 解决问题：用户管理页只能按状态和排序查看用户，运营知道用户名时仍需要翻页定位，数据量变大后排查效率低。
+- 实施内容：`GET /api/admin/users` 新增 `username` 查询参数；后端访问仓储在数据库模式下把用户名关键字过滤下推到 SQL，并与状态筛选、排序和分页一起执行，内存模式保持同样的大小写不敏感包含匹配；管理后台用户列表筛选条新增 Semi UI `Input` 搜索框、搜索按钮和清空按钮，搜索或清空时自动回到第一页；OpenAPI 同步补充 `status` 和 `username` 参数说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml username -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml admin_users_documents_pagination_and_sort_query_parameters -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml`（379 个测试成功）、管理后台 `npm run build` 和 `git diff --check` 均通过；管理后台构建仍保留既有大 chunk 提示。
+
 ## 2026-06-21 14:07 HKT 开奖调度补期并发优化
 
 - 完成任务：给开奖调度快阶段增加可配置并发能力，提高彩种较多时的平台/手动补期和 API 补期计划生成效率。
