@@ -1128,6 +1128,8 @@ await createOrder({
 
 `positionSelectLimits` 会从彩种玩法配置透传到手机端下注页。手机端必须按 `positionKey` 限制对应位置的选号数量；数组为空或缺失时表示不限制。后端批量下单仍会复用订单服务再次校验，不能只依赖前端禁用按钮。
 
+用户端批量下单在同一次请求内必须复用彩种配置和期号读取结果。多笔订单属于同一彩种、同一期号时，路由层只能读取一次彩种和一次期号，再把校验后的请求交给订单服务统一报价、事务扣款和创建订单。
+
 下注页配置选择当前期号时，`round.status=selling` 只能用于 `status=open` 且 `saleStopAt` 仍晚于当前时间的期号。若期号仍是 `open` 但已经超过 `saleStopAt`，后端必须把它作为 `round.status=opening` 返回，保留 `issue/scheduledDrawAt/saleStopAt` 供页面展示“开奖中”，并触发手机端开盘轮询。这样可以覆盖调度短暂滞后、WebSocket 丢失或接口刷新落后的边界情况。
 
 用户端批量下单请求不允许传 `userId`，后端必须从登录会话中取当前用户：
@@ -4980,6 +4982,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 - 直属用户 `registeredAt` 固定表示下级账号注册时间，来自用户表 `createdAt`；`createdAt` 继续表示邀请关系创建时间，注册绑定代理但没有邀请记录时可为空，手机端展示注册时间时必须优先使用 `registeredAt`。
 - 直属用户 `availableBalanceMinor` 固定来自资金账户当前可用余额，不能用充值、提现或投注流水推算；没有资金账户时按 `0` 返回。
 - `totalDirectDepositMinor` 和直属用户 `totalDepositMinor` 只统计正向 `rechargeCredit` 资金流水。
+- 直属充值、普通下注和合买认购统计必须按直属用户 ID 集合下推到对应仓储查询，不能在路由层读取全量资金流水、订单或合买计划后再过滤。
 - 直属用户 `totalWithdrawalMinor` 只统计该用户已通过提现订单的正向提现金额，不包含待审核、驳回、取消或异常负数金额。
 - `totalPaidCommissionMinor` 只统计当前代理自己的正向 `rechargeRebateCredit` 资金流水，不能用直属充值金额推算或伪造返利金额。
 - 充值返利的幂等引用只绑定充值单号，不绑定代理 ID；后台调整邀请关系后，同一充值单不能在邀请中心形成第二笔返利。
@@ -5153,7 +5156,7 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 
 ### 2. 签名
 
-- 导出充值记录：`GET /api/admin/recharge-orders/export`
+- 导出充值记录：`GET /api/admin/recharge-orders/export?userId=&status=&createdFrom=&createdTo=`
 - 清除资金流水：`DELETE /api/admin/ledger-entries/clear`
 - 清除充值记录：`DELETE /api/admin/recharge-orders/clear`
 - 清除提现记录：`DELETE /api/admin/withdrawal-orders/clear`
@@ -5172,7 +5175,7 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 
 ### 3. 契约
 
-- `/recharge-orders/export` 必须导出全部充值订单，不受当前页面分页限制。
+- `/recharge-orders/export` 默认导出全部充值订单，不受当前页面分页限制；传入 `userId`、`status`、`createdFrom` 或 `createdTo` 时必须在仓储 SQL 层筛选后导出，避免路由层先读取全量历史再裁剪。
 - `/ledger-entries/clear` 允许清除所有资金流水历史，但不得回滚账户余额、不得删除资金账户、不得重置 `finance_runtime.next_sequence`；后续新流水编号必须继续递增。
 - `/recharge-orders/clear` 允许清除所有充值订单历史，但不得回滚已入账余额或删除充值资金流水。
 - `/withdrawal-orders/clear` 在存在 `Pending` 提现申请时必须返回业务错误，要求管理员先审核或驳回，避免冻结余额失去对应申请。

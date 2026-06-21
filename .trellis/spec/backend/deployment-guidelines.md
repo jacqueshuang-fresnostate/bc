@@ -28,6 +28,7 @@
 - 容器运行日志以 Rust 后端 stdout/stderr 为主；Nginx `access_log` 必须关闭，Nginx `error_log` 不得输出到 Docker stdout/stderr。
 - Nginx 必须把 `/api/` 反向代理到 `127.0.0.1:${BACKEND_PORT}`。
 - Nginx 代理 `/api/` 时必须保留 WebSocket Upgrade 能力，至少包含 `proxy_http_version 1.1`、`Upgrade`、`Connection` 请求头转发，以及覆盖实时心跳间隔的 `proxy_read_timeout`；否则 `GET /api/user/realtime` 会连接失败或无法持续接收开奖推送。
+- Nginx 可以开启 gzip 压缩静态文本资源；哈希静态资源目录 `/assets/` 必须使用长期 immutable 缓存，`/index.html` 与 SPA fallback 必须使用 `no-store`，避免手机端加载旧入口文件和新资源文件不匹配。
 - 入口脚本必须先启动后端并等待 `http://127.0.0.1:${BACKEND_PORT}/api/health` 通过，再启动 Nginx；后端启动失败时容器必须失败退出，不能只留下 Nginx 返回 502。
 - 入口脚本启动 Nginx 后必须持续监控后端进程；后端退出时需要关闭 Nginx 并让容器退出。
 - 非 `/api/` 路径必须使用 SPA fallback 到 `/index.html`。

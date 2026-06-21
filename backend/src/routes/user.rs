@@ -13,7 +13,7 @@ use chrono::{NaiveDateTime, TimeZone};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Duration;
 
 use crate::{
@@ -28,7 +28,7 @@ use crate::{
         CreateChatHallMessageRequest, CreateChatHallRedPacketRequest,
         ShareChatHallGroupBuyPlanRequest,
     },
-    domain::draw::DrawIssueStatus,
+    domain::draw::{DrawIssue, DrawIssueStatus},
     domain::finance::{FinancialAccountSummary, LedgerEntry, LedgerEntryKind},
     domain::group_buy::{
         AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyCreateOptions,
@@ -930,9 +930,9 @@ async fn get_user_invitation_summary(
             .map(|candidate| candidate.user.id.clone())
             .collect::<Vec<_>>();
         let balance_by_user_id = direct_user_available_balances(&state, &direct_user_ids).await?;
-        let recharge_totals = direct_user_recharge_totals(&state).await?;
+        let recharge_totals = direct_user_recharge_totals(&state, &direct_user_ids).await?;
         let withdrawal_totals = direct_user_withdrawal_totals(&state).await?;
-        let mut bet_profiles = direct_user_bet_profiles(&state).await?;
+        let mut bet_profiles = direct_user_bet_profiles(&state, &direct_user_ids).await?;
         let mut direct_users = Vec::with_capacity(candidates.len());
         for candidate in candidates {
             let available_balance_minor = balance_by_user_id
@@ -1254,19 +1254,15 @@ impl DirectUserBetPlayAccumulator {
     }
 }
 
-/// 一次性汇总所有充值入账流水，避免邀请中心按直属用户重复查询。
-async fn direct_user_recharge_totals(state: &AppState) -> ApiResult<BTreeMap<String, i64>> {
-    let entries = state.finance.ledger_entries().await?;
-    let mut totals = BTreeMap::new();
-    for entry in entries.iter().filter(|entry| {
-        matches!(entry.kind, LedgerEntryKind::RechargeCredit) && entry.amount_minor > 0
-    }) {
-        let current = totals.entry(entry.user_id.clone()).or_insert(0_i64);
-        *current = current
-            .checked_add(entry.amount_minor)
-            .ok_or_else(|| ApiError::Internal("直属用户充值汇总金额溢出".to_string()))?;
-    }
-    Ok(totals)
+/// 一次性汇总直属下级充值入账流水，避免代理中心读取无关用户资金流水。
+async fn direct_user_recharge_totals(
+    state: &AppState,
+    direct_user_ids: &[String],
+) -> ApiResult<BTreeMap<String, i64>> {
+    state
+        .finance
+        .recharge_credit_totals_for_user_ids(direct_user_ids)
+        .await
 }
 
 /// 批量读取直属下级可用余额，避免代理中心为每个下级单独查询资金账户。
@@ -1284,15 +1280,20 @@ async fn direct_user_available_balances(
 /// 汇总直属下级投注画像，普通下注按注单统计，合买按参与记录统计。
 async fn direct_user_bet_profiles(
     state: &AppState,
+    direct_user_ids: &[String],
 ) -> ApiResult<BTreeMap<String, DirectUserBetProfile>> {
+    if direct_user_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
     let play_labels = play_rule_label_map()?;
     let mut profiles: BTreeMap<String, DirectUserBetProfile> = BTreeMap::new();
+    let direct_user_id_set = direct_user_ids.iter().cloned().collect::<BTreeSet<_>>();
 
-    for order in state.orders.list().await?.into_iter().filter(|order| {
-        matches!(order.order_source, OrderSource::Direct)
-            && !matches!(order.status, OrderStatus::Cancelled)
-            && order.amount_minor > 0
-    }) {
+    for order in state
+        .orders
+        .list_direct_positive_for_user_ids(direct_user_ids)
+        .await?
+    {
         let rule_code = enum_to_string(&order.rule_code)?;
         let play_name = play_rule_label(&play_labels, &rule_code);
         profiles
@@ -1312,10 +1313,9 @@ async fn direct_user_bet_profiles(
 
     for plan in state
         .group_buys
-        .list_details()
+        .list_active_details_for_participant_user_ids(direct_user_ids)
         .await?
         .into_iter()
-        .filter(|plan| !matches!(plan.status, GroupBuyPlanStatus::Cancelled))
     {
         let plan_order_id = plan.order_id.clone().unwrap_or_else(|| plan.id.clone());
         let lottery_id = plan.lottery_id.clone();
@@ -1323,11 +1323,9 @@ async fn direct_user_bet_profiles(
         let issue = plan.issue.clone();
         let rule_code = plan.rule_code.clone();
         let play_name = play_rule_label(&play_labels, &rule_code);
-        for participant in plan
-            .participants
-            .into_iter()
-            .filter(|participant| participant.amount_minor > 0)
-        {
+        for participant in plan.participants.into_iter().filter(|participant| {
+            direct_user_id_set.contains(&participant.user_id) && participant.amount_minor > 0
+        }) {
             profiles
                 .entry(participant.user_id.clone())
                 .or_default()
@@ -1938,6 +1936,8 @@ async fn create_user_bet_orders(
     }
 
     let mut checked_orders = Vec::with_capacity(payload.orders.len());
+    let mut lottery_cache: BTreeMap<String, LotteryKind> = BTreeMap::new();
+    let mut draw_issue_cache: BTreeMap<(String, String), DrawIssue> = BTreeMap::new();
     for item in payload.orders {
         let order_payload = CreateOrderRequest {
             user_id: session.user.id.clone(),
@@ -1947,11 +1947,29 @@ async fn create_user_bet_orders(
             selection: item.selection,
             unit_amount_minor: item.unit_amount_minor,
         };
-        let lottery = state.lotteries.get(&order_payload.lottery_id).await?;
-        let draw_issue = state
-            .draws
-            .get_by_lottery_issue(&order_payload.lottery_id, &order_payload.issue)
-            .await?;
+        let lottery = match lottery_cache.get(&order_payload.lottery_id) {
+            Some(lottery) => lottery.clone(),
+            None => {
+                let lottery = state.lotteries.get(&order_payload.lottery_id).await?;
+                lottery_cache.insert(order_payload.lottery_id.clone(), lottery.clone());
+                lottery
+            }
+        };
+        let draw_issue_key = (
+            order_payload.lottery_id.clone(),
+            order_payload.issue.clone(),
+        );
+        let draw_issue = match draw_issue_cache.get(&draw_issue_key) {
+            Some(draw_issue) => draw_issue.clone(),
+            None => {
+                let draw_issue = state
+                    .draws
+                    .get_by_lottery_issue(&order_payload.lottery_id, &order_payload.issue)
+                    .await?;
+                draw_issue_cache.insert(draw_issue_key, draw_issue.clone());
+                draw_issue
+            }
+        };
         validate_draw_issue_accepts_order(&draw_issue, &lottery, &order_payload.issue)?;
         let quote = state.orders.quote(&lottery, &order_payload).await?;
         if quote.amount_minor <= 0 {

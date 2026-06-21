@@ -23,7 +23,7 @@ use crate::{
     error::{ApiError, ApiResult},
     services::{
         business_database::BusinessDatabase,
-        finance::{save_finance_store_in_transaction, FinanceRepository},
+        finance::{save_finance_store_incremental_in_transaction, FinanceRepository},
         pagination::{ListPage, PageRequest},
     },
 };
@@ -113,6 +113,55 @@ impl RechargeRepository {
             .read()
             .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))
             .map(|store| store.list())
+    }
+
+    /// 按导出条件返回充值订单；数据库模式下把过滤下推到 SQL，避免无条件导出时只能靠路由层筛选。
+    pub async fn export_orders(
+        &self,
+        user_id: Option<&str>,
+        status: Option<RechargeOrderStatus>,
+        created_from: Option<&str>,
+        created_to: Option<&str>,
+    ) -> ApiResult<Vec<RechargeOrderSummary>> {
+        let user_id = normalized_optional_filter(user_id);
+        let created_from = normalized_optional_filter(created_from);
+        let created_to = normalized_optional_filter(created_to);
+        if let Some(persistence) = &self.persistence {
+            return query_recharge_orders_for_export(
+                persistence,
+                user_id.as_deref(),
+                status,
+                created_from.as_deref(),
+                created_to.as_deref(),
+            )
+            .await;
+        }
+
+        let status_filter = status.as_ref();
+        let mut orders = self
+            .list()
+            .await?
+            .into_iter()
+            .filter(|order| {
+                user_id
+                    .as_deref()
+                    .map_or(true, |target| order.user_id == target)
+                    && status_filter.map_or(true, |target| order.status == *target)
+                    && created_from
+                        .as_deref()
+                        .map_or(true, |from| order.created_at.as_str() >= from)
+                    && created_to
+                        .as_deref()
+                        .map_or(true, |to| order.created_at.as_str() <= to)
+            })
+            .collect::<Vec<_>>();
+        orders.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(orders)
     }
 
     /// 分页返回全部充值订单；数据库模式下直接按时间倒序分页。
@@ -253,16 +302,18 @@ impl RechargeRepository {
             .ok_or_else(|| ApiError::BadRequest("彩虹易支付通知缺少金额".to_string()))?;
         let paid_amount_minor = money_to_minor(money_text)?;
 
-        let mut recharge_store = self
+        let previous_recharge_store = self
             .inner
             .read()
             .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?
             .clone();
-        let mut finance_store = finance
+        let mut recharge_store = previous_recharge_store.clone();
+        let previous_finance_store = finance
             .inner
             .read()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
+        let mut finance_store = previous_finance_store.clone();
 
         let was_paid = recharge_store.is_paid_order(order_id)?;
         let order = recharge_store.mark_paid(order_id, paid_amount_minor, trade_no)?;
@@ -271,7 +322,15 @@ impl RechargeRepository {
             credit_recharge_bonus_for_order(&mut finance_store, &order, settings)?;
         }
 
-        persist_recharge_finance_stores(self, finance, &recharge_store, &finance_store).await?;
+        persist_recharge_finance_stores(
+            self,
+            finance,
+            &previous_recharge_store,
+            &recharge_store,
+            &previous_finance_store,
+            &finance_store,
+        )
+        .await?;
         self.replace_store(recharge_store)?;
         finance.replace_store(finance_store)?;
         Ok(order)
@@ -285,16 +344,18 @@ impl RechargeRepository {
         settings: &RechargeSettings,
         finance: &FinanceRepository,
     ) -> ApiResult<RechargeOrderSummary> {
-        let mut recharge_store = self
+        let previous_recharge_store = self
             .inner
             .read()
             .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?
             .clone();
-        let mut finance_store = finance
+        let mut recharge_store = previous_recharge_store.clone();
+        let previous_finance_store = finance
             .inner
             .read()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
+        let mut finance_store = previous_finance_store.clone();
 
         let was_paid = recharge_store.is_paid_order(order_id)?;
         let order = recharge_store.confirm_customer_service_order(order_id, request)?;
@@ -303,7 +364,15 @@ impl RechargeRepository {
             credit_recharge_bonus_for_order(&mut finance_store, &order, settings)?;
         }
 
-        persist_recharge_finance_stores(self, finance, &recharge_store, &finance_store).await?;
+        persist_recharge_finance_stores(
+            self,
+            finance,
+            &previous_recharge_store,
+            &recharge_store,
+            &previous_finance_store,
+            &finance_store,
+        )
+        .await?;
         self.replace_store(recharge_store)?;
         finance.replace_store(finance_store)?;
         Ok(order)
@@ -340,7 +409,9 @@ impl RechargeRepository {
 async fn persist_recharge_finance_stores(
     recharges: &RechargeRepository,
     finance: &FinanceRepository,
+    previous_recharge_store: &RechargeStore,
     recharge_store: &RechargeStore,
+    previous_finance_store: &super::finance::FinanceStore,
     finance_store: &super::finance::FinanceStore,
 ) -> ApiResult<()> {
     match (&recharges.persistence, &finance.persistence) {
@@ -350,8 +421,18 @@ async fn persist_recharge_finance_stores(
                 .begin()
                 .await
                 .map_err(|_| ApiError::Internal("充值资金事务开启失败".to_string()))?;
-            save_recharge_store_in_transaction(&mut *tx, recharge_store).await?;
-            save_finance_store_in_transaction(&mut *tx, finance_store).await?;
+            save_recharge_store_incremental_in_transaction(
+                &mut *tx,
+                previous_recharge_store,
+                recharge_store,
+            )
+            .await?;
+            save_finance_store_incremental_in_transaction(
+                &mut *tx,
+                previous_finance_store,
+                finance_store,
+            )
+            .await?;
             tx.commit()
                 .await
                 .map_err(|_| ApiError::Internal("充值资金事务提交失败".to_string()))
@@ -815,6 +896,36 @@ async fn query_recharge_order_page(
     Ok(ListPage::new(items, resolved))
 }
 
+/// 数据库模式下按导出条件读取充值订单，供 CSV 导出避免固定全量扫描。
+async fn query_recharge_orders_for_export(
+    database: &BusinessDatabase,
+    user_id: Option<&str>,
+    status: Option<RechargeOrderStatus>,
+    created_from: Option<&str>,
+    created_to: Option<&str>,
+) -> ApiResult<Vec<RechargeOrderSummary>> {
+    let status = status.map(|status| enum_to_string(&status)).transpose()?;
+    let rows = sqlx::query(
+        "SELECT id, user_id, username, channel, amount_minor, status, pay_type,
+                provider_trade_no, payment_url, support_conversation_id, remark, created_at, paid_at
+         FROM recharge_orders
+         WHERE ($1::text IS NULL OR user_id = $1)
+           AND ($2::text IS NULL OR status = $2)
+           AND ($3::text IS NULL OR created_at >= $3)
+           AND ($4::text IS NULL OR created_at <= $4)
+         ORDER BY created_at DESC, id DESC",
+    )
+    .bind(user_id)
+    .bind(status.as_deref())
+    .bind(created_from)
+    .bind(created_to)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("充值订单导出数据读取失败".to_string()))?;
+
+    rows.into_iter().map(recharge_order_from_row).collect()
+}
+
 /// 数据库模式下按状态读取充值订单，供聚合统计只读取必要业务状态。
 async fn query_recharge_orders_by_status(
     database: &BusinessDatabase,
@@ -897,6 +1008,96 @@ pub(crate) async fn save_recharge_store_in_transaction(
         .map_err(|_| ApiError::Internal("充值运行数据保存失败".to_string()))?;
 
     Ok(())
+}
+
+/// 在外层事务中按前后快照差异保存充值订单，避免确认入账时重写全部充值历史。
+pub(crate) async fn save_recharge_store_incremental_in_transaction(
+    connection: &mut PgConnection,
+    previous: &RechargeStore,
+    store: &RechargeStore,
+) -> ApiResult<()> {
+    for order_id in previous
+        .orders
+        .keys()
+        .filter(|order_id| !store.orders.contains_key(*order_id))
+    {
+        sqlx::query("DELETE FROM recharge_orders WHERE id = $1")
+            .bind(order_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(|_| ApiError::Internal("充值订单数据删除失败".to_string()))?;
+    }
+
+    for (order_id, order) in &store.orders {
+        if previous.orders.get(order_id) == Some(order) {
+            continue;
+        }
+        upsert_recharge_order_in_transaction(connection, order).await?;
+    }
+
+    let next_sequence = i64::try_from(store.next_sequence)
+        .map_err(|_| ApiError::Internal("充值序号过大".to_string()))?;
+    sqlx::query(
+        "INSERT INTO recharge_runtime (key, value) VALUES ('next_sequence', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+    )
+    .bind(next_sequence)
+    .execute(&mut *connection)
+    .await
+    .map_err(|_| ApiError::Internal("充值运行数据保存失败".to_string()))?;
+
+    Ok(())
+}
+
+/// 在事务中插入或更新单个充值订单。
+async fn upsert_recharge_order_in_transaction(
+    connection: &mut PgConnection,
+    order: &RechargeOrderSummary,
+) -> ApiResult<()> {
+    sqlx::query(
+        "INSERT INTO recharge_orders
+         (id, user_id, username, channel, amount_minor, status, pay_type,
+          provider_trade_no, payment_url, support_conversation_id, remark, created_at, paid_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ON CONFLICT (id) DO UPDATE SET
+            user_id = EXCLUDED.user_id,
+            username = EXCLUDED.username,
+            channel = EXCLUDED.channel,
+            amount_minor = EXCLUDED.amount_minor,
+            status = EXCLUDED.status,
+            pay_type = EXCLUDED.pay_type,
+            provider_trade_no = EXCLUDED.provider_trade_no,
+            payment_url = EXCLUDED.payment_url,
+            support_conversation_id = EXCLUDED.support_conversation_id,
+            remark = EXCLUDED.remark,
+            created_at = EXCLUDED.created_at,
+            paid_at = EXCLUDED.paid_at",
+    )
+    .bind(&order.id)
+    .bind(&order.user_id)
+    .bind(&order.username)
+    .bind(enum_to_string(&order.channel)?)
+    .bind(order.amount_minor)
+    .bind(enum_to_string(&order.status)?)
+    .bind(&order.pay_type)
+    .bind(&order.provider_trade_no)
+    .bind(&order.payment_url)
+    .bind(&order.support_conversation_id)
+    .bind(&order.remark)
+    .bind(&order.created_at)
+    .bind(&order.paid_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(|_| ApiError::Internal("充值订单数据保存失败".to_string()))?;
+    Ok(())
+}
+
+/// 归一化可选筛选值，空字符串按未设置处理。
+fn normalized_optional_filter(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 /// 校验充值金额是否在后台配置范围内。
 fn validate_amount(amount_minor: i64, settings: &RechargeSettings) -> ApiResult<()> {

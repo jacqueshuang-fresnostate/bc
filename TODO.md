@@ -4405,3 +4405,31 @@
 - 解决问题：此前管理员只要拥有财务、彩种、系统设置等模块权限，就能执行调账、清空记录、控制开奖、上传安装包、刷新缓存等高风险动作，缺少按钮级/接口级权限边界。
 - 实施内容：后端 `AdminRole` 新增 `permissions` 字段和权限点定义；登录会话返回有效权限点；后台路由鉴权优先按方法和路径校验细粒度权限，旧角色在 `permissions` 为空时继续按 `scopes` 兼容展开；数据库迁移为 `admin_roles` 添加 `permissions` JSONB 字段和中文注释；管理端角色维护 SideSheet 新增操作权限点分组勾选和高风险标识。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml permission -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml required_permission -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml`、管理端 `npm run build` 和 `git diff --check` 均通过；后端全量测试 361 个成功，管理端构建仅保留既有大 chunk 提示。
+
+## 2026-06-21 21:11 HKT 查询、下单读取与 Nginx 静态资源优化
+
+- 完成任务：优化代理中心查询、用户批量下单读取和单镜像 Nginx 静态资源策略。
+- 解决问题：代理中心直属充值和投注画像存在路由层全量读取后过滤的路径；用户批量下单同一批订单会重复读取彩种和期号；Nginx 未对哈希静态资源设置长期缓存，也未启用 gzip 压缩。
+- 实施内容：`FinanceRepository` 新增按用户集合聚合正向充值本金的查询，数据库模式使用 `GROUP BY user_id`；`OrderRepository` 和 `GroupBuyRepository` 新增按直属用户集合读取独立下注和合买计划；用户端批量下单请求内缓存彩种和期号；`docker/nginx.conf` 增加 gzip、`/assets/` immutable 缓存、`index.html` no-store 和 `/api/` 代理缓冲关闭；同步更新架构说明和 Trellis 规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml store_sums_recharge_credits_for_user_set -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml user_invitation -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml`、`sh -n docker/entrypoint.sh` 和 `git diff --check` 均通过；本机未安装 `nginx`，因此未执行 `nginx -t`。
+
+## 2026-06-21 21:32 HKT 剩余优化点复查与补充
+
+- 完成任务：继续复查剩余查询、读取和移动端重复请求路径，并补充低风险优化。
+- 解决问题：代理中心查询下推后，数据库还缺少匹配新查询路径的索引；首页每次挂载都强制刷新品牌配置和轮播广告，绕过已有缓存。
+- 实施内容：新增迁移 `20260621212000_add_query_path_indexes.sql`，为投注画像订单查询、合买参与人反查计划和计奖派奖批次倒序分页补充索引及中文注释；手机端首页改为尊重品牌配置 60 秒缓存和广告 5 分钟缓存，不再每次进入首页强制刷新低频配置。
+- 验证结果：`cargo check --manifest-path backend/Cargo.toml`、手机端 `pnpm build` 和 `git diff --check` 均通过；手机端构建仍保持 CSS 内联产物，没有重新生成独立 CSS 文件。
+
+## 2026-06-21 22:06 HKT 订单资金合买跨仓储事务增量持久化
+
+- 完成任务：把订单、资金和合买之间的跨仓储事务写回从全量快照重写优化为前后快照差异持久化。
+- 解决问题：此前投注扣款、取消退款、开奖结算派奖和合买机器人清理虽然已经在同一个 SQLx 事务内保存，但仍会把订单、资金流水、资金账户、合买计划和参与记录整表删除后重插。数据量增长后，这类热路径会让单次下单或开奖结算持有更久数据库锁，并放大内存快照写回成本。
+- 实施内容：`OrderRepository` 跨仓储入口在变更前保留旧快照，事务内调用订单、资金、合买增量保存函数；订单增量保存只删除移除订单、`upsert` 变化订单，并只重建变化结算批次明细；资金增量保存继续锁表但只写账户和流水差异；合买增量保存继续锁表但只写计划和参与人差异；同步更新架构说明和 Trellis 数据库规范，明确启动快照按需瘦身属于后续读模型优化。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml finance -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml repository_ -- --nocapture` 和后端全量 `cargo test --manifest-path backend/Cargo.toml` 均通过；后端全量 386 个测试成功。
+
+## 2026-06-21 22:54 HKT 剩余查询与资金链路优化
+
+- 完成任务：继续优化充值、提现、聊天大厅红包、计奖派奖分页、充值导出、聊天大厅启动恢复和资金流水清理路径。
+- 解决问题：充值确认、提现审核和聊天红包仍会联动资金全量快照保存；聊天红包在数据库保存失败时存在先改内存后落库失败的状态漂移风险；计奖派奖列表仍由路由层全量读取后分页；聊天大厅启动会先读取全量消息再裁剪；充值 CSV 导出缺少筛选能力，数据量大时容易误导出全部历史。
+- 实施内容：充值和提现跨资金事务改为前后快照差异保存；聊天大厅写操作新增串行写锁并改为临时快照提交成功后替换内存，红包扣款和领取入账使用资金增量持久化；计奖派奖列表新增仓储分页 SQL，只加载当前页批次和明细；充值导出支持按用户、状态和创建时间范围过滤；聊天大厅启动只加载最近 200 条消息及相关红包，同时单独读取最大序号；资金流水清除改为数据库直接删除流水，不重写账户；补充充值导出索引和中文索引注释。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet`、手机端 `pnpm --dir mobile build`、管理后台 `pnpm --dir admin build` 和 `git diff --check` 均通过；后端全量 386 个测试成功，管理后台构建仅保留既有大 chunk 提示。

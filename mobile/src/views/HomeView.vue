@@ -180,10 +180,10 @@ onMounted(async () => {
     void refreshHomepageAfterDrawTime()
   }, 1000)
   await Promise.all([
-    brandingStore.loadBranding({ force: true, silent: true }),
+    brandingStore.loadBranding({ silent: true }),
     userDataStore.loadProfile(),
     loadHomepage(),
-    loadMobileAdvertisements({ force: true }),
+    loadMobileAdvertisements(),
   ])
 })
 

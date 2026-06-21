@@ -120,8 +120,37 @@ impl FinanceRepository {
             .recharge_credit_total_minor_for_user(user_id)
     }
 
+    /// 按用户 ID 集合批量汇总真实充值本金，避免邀请中心读取全量资金流水后再过滤。
+    pub async fn recharge_credit_totals_for_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> ApiResult<BTreeMap<String, i64>> {
+        let user_ids = normalized_user_ids(user_ids);
+        if user_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_recharge_credit_totals_for_user_ids(persistence, &user_ids).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .recharge_credit_totals_for_user_ids(&user_ids)
+    }
+
     /// 一键清除资金流水历史；只清除审计列表，不回滚账户余额也不重置流水序号。
     pub async fn clear_ledger_entries(&self) -> ApiResult<usize> {
+        if let Some(persistence) = &self.persistence {
+            let deleted_count = clear_ledger_entries_in_database(persistence).await?;
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            store.clear_ledger_entries();
+            return Ok(deleted_count);
+        }
+
         let (deleted_count, snapshot) = {
             let mut store = self
                 .inner
@@ -590,6 +619,19 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
     Ok(store)
 }
 
+/// 数据库模式下一键清除资金流水审计记录，不重写资金账户余额。
+async fn clear_ledger_entries_in_database(database: &BusinessDatabase) -> ApiResult<usize> {
+    let result = sqlx::query("DELETE FROM ledger_entries")
+        .execute(database.pool())
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "资金流水数据清除失败");
+            ApiError::Internal("资金流水数据清除失败".to_string())
+        })?;
+    usize::try_from(result.rows_affected())
+        .map_err(|_| ApiError::Internal("资金流水清除数量无效".to_string()))
+}
+
 /// 从数据库行恢复资金流水结构，供全量加载和分页查询共用。
 fn ledger_entry_from_row(row: PgRow) -> ApiResult<LedgerEntry> {
     Ok(LedgerEntry {
@@ -839,6 +881,40 @@ async fn query_recharge_credit_total_minor(
     .map_err(|_| ApiError::Internal("用户累计充值金额读取失败".to_string()))
 }
 
+/// 数据库模式下按用户集合聚合充值本金，避免代理中心扫描无关用户资金流水。
+async fn query_recharge_credit_totals_for_user_ids(
+    database: &BusinessDatabase,
+    user_ids: &BTreeSet<String>,
+) -> ApiResult<BTreeMap<String, i64>> {
+    let kind = enum_to_string(&LedgerEntryKind::RechargeCredit)?;
+    let user_ids = user_ids.iter().cloned().collect::<Vec<_>>();
+    let rows = sqlx::query(
+        "SELECT user_id, COALESCE(SUM(amount_minor), 0)::BIGINT AS total_minor
+         FROM ledger_entries
+         WHERE user_id = ANY($1::text[])
+           AND kind = $2
+           AND amount_minor > 0
+         GROUP BY user_id",
+    )
+    .bind(&user_ids)
+    .bind(kind)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("直属用户累计充值金额读取失败".to_string()))?;
+
+    let mut totals = BTreeMap::new();
+    for row in rows {
+        let user_id: String = row
+            .try_get("user_id")
+            .map_err(|_| ApiError::Internal("直属用户累计充值金额读取失败".to_string()))?;
+        let total_minor: i64 = row
+            .try_get("total_minor")
+            .map_err(|_| ApiError::Internal("直属用户累计充值金额读取失败".to_string()))?;
+        totals.insert(user_id, total_minor);
+    }
+    Ok(totals)
+}
+
 /// 把流水类型转换为数据库枚举字符串。
 fn ledger_entry_kind_names(kinds: &[LedgerEntryKind]) -> ApiResult<Vec<String>> {
     kinds.iter().map(enum_to_string).collect()
@@ -945,6 +1021,151 @@ pub(crate) async fn save_finance_store_in_transaction(
             tracing::error!(%error, "资金运行数据保存失败");
             ApiError::Internal("资金运行数据保存失败".to_string())
         })?;
+
+    Ok(())
+}
+
+/// 在外层事务中按前后快照差异保存资金数据，避免派奖或扣款时重写全量资金流水。
+pub(crate) async fn save_finance_store_incremental_in_transaction(
+    connection: &mut PgConnection,
+    previous: &FinanceStore,
+    store: &FinanceStore,
+) -> ApiResult<()> {
+    sqlx::query(
+        "LOCK TABLE ledger_entries, financial_accounts, finance_runtime IN ACCESS EXCLUSIVE MODE",
+    )
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "资金表锁定失败");
+        ApiError::Internal("资金表锁定失败".to_string())
+    })?;
+
+    for user_id in previous
+        .accounts
+        .keys()
+        .filter(|user_id| !store.accounts.contains_key(*user_id))
+    {
+        sqlx::query("DELETE FROM financial_accounts WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, user_id = user_id.as_str(), "资金账户数据删除失败");
+                ApiError::Internal("资金账户数据删除失败".to_string())
+            })?;
+    }
+
+    for (user_id, account) in &store.accounts {
+        if previous.accounts.get(user_id) == Some(account) {
+            continue;
+        }
+        sqlx::query(
+            "INSERT INTO financial_accounts
+             (user_id, available_balance_minor, frozen_balance_minor)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id) DO UPDATE SET
+                available_balance_minor = EXCLUDED.available_balance_minor,
+                frozen_balance_minor = EXCLUDED.frozen_balance_minor,
+                updated_at = now()",
+        )
+        .bind(&account.user_id)
+        .bind(account.available_balance_minor)
+        .bind(account.frozen_balance_minor)
+        .execute(&mut *connection)
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                %error,
+                user_id = account.user_id.as_str(),
+                "资金账户数据保存失败"
+            );
+            ApiError::Internal("资金账户数据保存失败".to_string())
+        })?;
+    }
+
+    let previous_entries = previous
+        .ledger_entries
+        .iter()
+        .map(|entry| (entry.id.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let current_entry_ids = store
+        .ledger_entries
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<BTreeSet<_>>();
+    for entry_id in previous_entries
+        .keys()
+        .filter(|entry_id| !current_entry_ids.contains(**entry_id))
+    {
+        sqlx::query("DELETE FROM ledger_entries WHERE id = $1")
+            .bind(entry_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, entry_id = *entry_id, "资金流水数据删除失败");
+                ApiError::Internal("资金流水数据删除失败".to_string())
+            })?;
+    }
+
+    for entry in &store.ledger_entries {
+        if previous_entries
+            .get(entry.id.as_str())
+            .map(|previous| *previous == entry)
+            .unwrap_or_default()
+        {
+            continue;
+        }
+        let kind = enum_to_string(&entry.kind)?;
+        sqlx::query(
+            "INSERT INTO ledger_entries
+             (id, user_id, kind, amount_minor, balance_after_minor, reference_id, description, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (id) DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                kind = EXCLUDED.kind,
+                amount_minor = EXCLUDED.amount_minor,
+                balance_after_minor = EXCLUDED.balance_after_minor,
+                reference_id = EXCLUDED.reference_id,
+                description = EXCLUDED.description,
+                created_at = EXCLUDED.created_at",
+        )
+        .bind(&entry.id)
+        .bind(&entry.user_id)
+        .bind(&kind)
+        .bind(entry.amount_minor)
+        .bind(entry.balance_after_minor)
+        .bind(&entry.reference_id)
+        .bind(&entry.description)
+        .bind(&entry.created_at)
+        .execute(&mut *connection)
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                %error,
+                entry_id = entry.id.as_str(),
+                user_id = entry.user_id.as_str(),
+                kind = kind.as_str(),
+                reference_id = entry.reference_id.as_deref().unwrap_or("无"),
+                "资金流水数据保存失败"
+            );
+            ApiError::Internal("资金流水数据保存失败".to_string())
+        })?;
+    }
+
+    let next_sequence = i64::try_from(store.next_sequence)
+        .map_err(|_| ApiError::Internal("资金流水序号过大".to_string()))?;
+    sqlx::query(
+        "INSERT INTO finance_runtime (key, value) VALUES ('next_sequence', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+    )
+    .bind(next_sequence)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "资金运行数据保存失败");
+        ApiError::Internal("资金运行数据保存失败".to_string())
+    })?;
 
     Ok(())
 }
@@ -1061,6 +1282,25 @@ impl FinanceStore {
                     .checked_add(entry.amount_minor)
                     .ok_or_else(|| ApiError::Internal("用户累计充值金额溢出".to_string()))
             })
+    }
+
+    /// 按用户集合聚合充值本金，内存模式下只扫描一次资金流水。
+    fn recharge_credit_totals_for_user_ids(
+        &self,
+        user_ids: &BTreeSet<String>,
+    ) -> ApiResult<BTreeMap<String, i64>> {
+        let mut totals = BTreeMap::new();
+        for entry in self.ledger_entries.iter().filter(|entry| {
+            user_ids.contains(&entry.user_id)
+                && matches!(entry.kind, LedgerEntryKind::RechargeCredit)
+                && entry.amount_minor > 0
+        }) {
+            let current = totals.entry(entry.user_id.clone()).or_insert(0_i64);
+            *current = current
+                .checked_add(entry.amount_minor)
+                .ok_or_else(|| ApiError::Internal("直属用户累计充值金额溢出".to_string()))?;
+        }
+        Ok(totals)
     }
 
     /// 校验用户可用余额是否足够扣款。
@@ -2199,6 +2439,38 @@ mod tests {
         assert_eq!(entry.kind, LedgerEntryKind::RechargeCredit);
         assert_eq!(entry.amount_minor, 1_500);
         assert_eq!(account.available_balance_minor, 13_500);
+    }
+
+    #[test]
+    /// 批量汇总充值本金时只统计目标用户的正向充值入账。
+    fn store_sums_recharge_credits_for_user_set() {
+        let mut store = FinanceStore::seeded();
+        store
+            .credit_recharge("U10001", 1_500, "R000000000001")
+            .expect("first recharge can be credited");
+        store
+            .credit_recharge("U10001", 2_000, "R000000000002")
+            .expect("second recharge can be credited");
+        store
+            .credit_recharge("U10002", 800, "R000000000003")
+            .expect("other user recharge can be credited");
+        store
+            .credit_recharge_bonus("U10001", 500, "R000000000001")
+            .expect("bonus is not recharge principal");
+        store
+            .credit_recharge_rebate("U90001", "U10001", 350, "R000000000001")
+            .expect("rebate is not recharge principal");
+
+        let user_ids = ["U10001".to_string(), "U10003".to_string()]
+            .into_iter()
+            .collect();
+        let totals = store
+            .recharge_credit_totals_for_user_ids(&user_ids)
+            .expect("recharge totals can be calculated");
+
+        assert_eq!(totals.get("U10001").copied(), Some(3_500));
+        assert!(!totals.contains_key("U10002"));
+        assert!(!totals.contains_key("U10003"));
     }
 
     #[test]

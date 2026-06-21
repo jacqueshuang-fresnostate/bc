@@ -15,8 +15,9 @@ use axum::{
 use chrono::{Local, NaiveDateTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(test)]
+use std::cmp::Ordering;
 use std::{
-    cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
     time::Duration,
 };
@@ -1684,6 +1685,16 @@ struct RobotDataQuery {
     include_robot_data: Option<bool>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台充值订单 CSV 导出筛选参数，空值时保持导出全部的历史行为。
+struct RechargeExportQuery {
+    user_id: Option<String>,
+    status: Option<RechargeOrderStatus>,
+    created_from: Option<String>,
+    created_to: Option<String>,
+}
+
 /// 后台列表是否包含机器人数据的查询参数。
 impl RobotDataQuery {
     /// 后台查询默认隐藏机器人数据，避免运营统计被系统机器人干扰。
@@ -1740,6 +1751,7 @@ fn parse_admin_list_timestamp_seconds(value: &str) -> Option<i64> {
 }
 
 /// 按时间倒序比较后台财务记录，同秒数据继续按业务编号倒序保证分页稳定。
+#[cfg(test)]
 fn compare_admin_time_desc(
     left_created_at: &str,
     left_id: &str,
@@ -1777,6 +1789,7 @@ fn sort_ledger_entries_by_time_desc(entries: &mut [LedgerEntry]) {
 }
 
 /// 充值订单列表按创建时间倒序展示，最新充值优先进入第一页。
+#[cfg(test)]
 fn sort_recharge_orders_by_time_desc(orders: &mut [RechargeOrderSummary]) {
     orders.sort_by(|left, right| {
         compare_admin_time_desc(&left.created_at, &left.id, &right.created_at, &right.id)
@@ -2014,15 +2027,24 @@ async fn list_settlements(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminSettlementRun>>>> {
-    // 计奖派奖批次会持续增长，后台列表按统一分页信封返回。
     let usernames = admin_usernames(&state).await?;
-    let settlements = state.orders.settlement_runs().await?;
-    let settlements = settlements
+    let page = state
+        .orders
+        .settlement_run_page(PageRequest::new(query.page, query.page_size))
+        .await?;
+    let items = page
+        .items
         .into_iter()
         .map(|settlement| admin_settlement_run_with_usernames(settlement, &usernames))
         .collect::<Vec<_>>();
 
-    Ok(Json(ApiEnvelope::success(page_items(settlements, query))))
+    Ok(Json(ApiEnvelope::success(FinancePage {
+        items,
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
+    })))
 }
 
 /// 返回指定计奖派奖批次详情。
@@ -3684,9 +3706,19 @@ async fn list_recharge_orders(
 }
 
 /// 导出全部充值订单为 CSV 文件，供后台财务留档或离线核对。
-async fn export_recharge_orders(State(state): State<AppState>) -> ApiResult<Response> {
-    let mut orders = state.recharges.list().await?;
-    sort_recharge_orders_by_time_desc(&mut orders);
+async fn export_recharge_orders(
+    State(state): State<AppState>,
+    Query(query): Query<RechargeExportQuery>,
+) -> ApiResult<Response> {
+    let orders = state
+        .recharges
+        .export_orders(
+            query.user_id.as_deref(),
+            query.status,
+            query.created_from.as_deref(),
+            query.created_to.as_deref(),
+        )
+        .await?;
     let csv = recharge_orders_csv(&orders);
     let mut headers = HeaderMap::new();
     headers.insert(

@@ -125,6 +125,26 @@ impl GroupBuyRepository {
             .map(|store| store.list_details_for_user(user_id))
     }
 
+    /// 批量读取指定参与人集合的有效合买计划，供代理投注画像避免扫描全量合买。
+    pub async fn list_active_details_for_participant_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> ApiResult<Vec<GroupBuyPlan>> {
+        let user_ids = normalized_user_ids(user_ids);
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_active_group_buy_details_for_participant_user_ids(persistence, &user_ids)
+                .await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))
+            .map(|store| store.list_active_details_for_participant_user_ids(&user_ids))
+    }
+
     /// 分页返回指定用户参与但尚未形成真实订单的合买计划，供“我的合买”避免扫描全量计划。
     pub async fn list_unformed_details_for_user_page(
         &self,
@@ -639,6 +659,42 @@ async fn query_group_buy_details_for_user(
         .collect())
 }
 
+/// 数据库模式下按参与人集合读取有效合买计划，并批量加载参与记录。
+async fn query_active_group_buy_details_for_participant_user_ids(
+    database: &BusinessDatabase,
+    user_ids: &BTreeSet<String>,
+) -> ApiResult<Vec<GroupBuyPlan>> {
+    let user_ids = user_ids.iter().cloned().collect::<Vec<_>>();
+    let rows = sqlx::query(
+        "SELECT DISTINCT p.id, p.lottery_id, p.lottery_name, p.initiator_user_id, p.initiator_username,
+                p.order_id, p.issue, p.rule_code, p.title, p.numbers,
+                p.total_amount_minor, p.filled_amount_minor, p.min_share_amount_minor,
+                p.participant_min_amount_minor, p.share_count, p.status, p.note, p.created_at, p.updated_at
+         FROM group_buy_plans p
+         INNER JOIN group_buy_participants gp ON gp.plan_id = p.id
+         WHERE gp.user_id = ANY($1::text[])
+           AND gp.amount_minor > 0
+           AND p.status <> $2
+         ORDER BY p.issue DESC, p.created_at DESC, p.id DESC",
+    )
+    .bind(&user_ids)
+    .bind(enum_to_string(&GroupBuyPlanStatus::Cancelled)?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("直属用户合买计划数据读取失败".to_string()))?;
+    let mut plans = rows
+        .into_iter()
+        .map(group_buy_plan_from_row)
+        .map(|result| result.map(|plan| (plan.id.clone(), plan)))
+        .collect::<ApiResult<BTreeMap<_, _>>>()?;
+    attach_participants_to_plans(database, &mut plans, "直属用户合买参与人数据读取失败").await?;
+
+    Ok(sorted_group_buy_plans(plans.values())
+        .into_iter()
+        .cloned()
+        .collect())
+}
+
 /// 数据库模式下分页读取用户参与但未成单的合买计划。
 async fn query_unformed_group_buy_details_for_user_page(
     database: &BusinessDatabase,
@@ -1029,6 +1085,212 @@ pub(crate) async fn save_group_buy_store_in_transaction(
     Ok(())
 }
 
+/// 在外层事务中按前后快照差异保存合买数据，避免认购或结算时重写全量合买记录。
+pub(crate) async fn save_group_buy_store_incremental_in_transaction(
+    connection: &mut PgConnection,
+    previous: &GroupBuyStore,
+    store: &GroupBuyStore,
+) -> ApiResult<()> {
+    sqlx::query("LOCK TABLE group_buy_participants, group_buy_plans IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *connection)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "合买数据表锁定失败");
+            ApiError::Internal("合买数据表锁定失败".to_string())
+        })?;
+
+    for plan_id in previous
+        .plans
+        .keys()
+        .filter(|plan_id| !store.plans.contains_key(*plan_id))
+    {
+        sqlx::query("DELETE FROM group_buy_participants WHERE plan_id = $1")
+            .bind(plan_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, group_buy_plan_id = plan_id.as_str(), "合买参与人数据删除失败");
+                ApiError::Internal("合买参与人数据删除失败".to_string())
+            })?;
+        sqlx::query("DELETE FROM group_buy_plans WHERE id = $1")
+            .bind(plan_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, group_buy_plan_id = plan_id.as_str(), "合买计划数据删除失败");
+                ApiError::Internal("合买计划数据删除失败".to_string())
+            })?;
+    }
+
+    for (plan_id, plan) in &store.plans {
+        if previous.plans.get(plan_id) == Some(plan) {
+            continue;
+        }
+        upsert_group_buy_plan_in_transaction(connection, plan).await?;
+    }
+
+    let previous_participants = group_buy_participants_by_id(previous);
+    let current_participants = group_buy_participants_by_id(store);
+    for participant_id in previous_participants
+        .keys()
+        .filter(|participant_id| !current_participants.contains_key(*participant_id))
+    {
+        sqlx::query("DELETE FROM group_buy_participants WHERE id = $1")
+            .bind(participant_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, participant_id = *participant_id, "合买参与人数据删除失败");
+                ApiError::Internal("合买参与人数据删除失败".to_string())
+            })?;
+    }
+
+    for (participant_id, (plan_id, participant)) in &current_participants {
+        let unchanged = previous_participants
+            .get(participant_id)
+            .map(|(previous_plan_id, previous_participant)| {
+                previous_plan_id == plan_id && previous_participant == participant
+            })
+            .unwrap_or_default();
+        if unchanged {
+            continue;
+        }
+        upsert_group_buy_participant_in_transaction(connection, plan_id, participant).await?;
+    }
+
+    Ok(())
+}
+
+/// 把合买参与人按参与记录 ID 建立索引，便于增量保存判断新增、删除和修改。
+fn group_buy_participants_by_id(
+    store: &GroupBuyStore,
+) -> BTreeMap<&str, (&str, &GroupBuyParticipant)> {
+    store
+        .plans
+        .iter()
+        .flat_map(|(plan_id, plan)| {
+            plan.participants
+                .iter()
+                .map(move |participant| (participant.id.as_str(), (plan_id.as_str(), participant)))
+        })
+        .collect()
+}
+
+/// 在事务中插入或更新单个合买计划。
+async fn upsert_group_buy_plan_in_transaction(
+    connection: &mut PgConnection,
+    plan: &GroupBuyPlan,
+) -> ApiResult<()> {
+    sqlx::query(
+        "INSERT INTO group_buy_plans
+         (id, lottery_id, lottery_name, initiator_user_id, initiator_username,
+          order_id, issue, rule_code, title, numbers,
+          total_amount_minor, filled_amount_minor, min_share_amount_minor,
+          participant_min_amount_minor, share_count, status, note, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+         ON CONFLICT (id) DO UPDATE SET
+            lottery_id = EXCLUDED.lottery_id,
+            lottery_name = EXCLUDED.lottery_name,
+            initiator_user_id = EXCLUDED.initiator_user_id,
+            initiator_username = EXCLUDED.initiator_username,
+            order_id = EXCLUDED.order_id,
+            issue = EXCLUDED.issue,
+            rule_code = EXCLUDED.rule_code,
+            title = EXCLUDED.title,
+            numbers = EXCLUDED.numbers,
+            total_amount_minor = EXCLUDED.total_amount_minor,
+            filled_amount_minor = EXCLUDED.filled_amount_minor,
+            min_share_amount_minor = EXCLUDED.min_share_amount_minor,
+            participant_min_amount_minor = EXCLUDED.participant_min_amount_minor,
+            share_count = EXCLUDED.share_count,
+            status = EXCLUDED.status,
+            note = EXCLUDED.note,
+            created_at = EXCLUDED.created_at,
+            updated_at = EXCLUDED.updated_at",
+    )
+    .bind(&plan.id)
+    .bind(&plan.lottery_id)
+    .bind(&plan.lottery_name)
+    .bind(&plan.initiator_user_id)
+    .bind(&plan.initiator_username)
+    .bind(&plan.order_id)
+    .bind(&plan.issue)
+    .bind(&plan.rule_code)
+    .bind(&plan.title)
+    .bind(&plan.numbers)
+    .bind(plan.total_amount_minor)
+    .bind(plan.filled_amount_minor)
+    .bind(plan.min_share_amount_minor)
+    .bind(plan.participant_min_amount_minor)
+    .bind(
+        i32::try_from(plan.share_count)
+            .map_err(|_| ApiError::Internal("合买计划份数过大".to_string()))?,
+    )
+    .bind(enum_to_string(&plan.status)?)
+    .bind(&plan.note)
+    .bind(&plan.created_at)
+    .bind(&plan.updated_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| {
+        tracing::error!(
+            %error,
+            group_buy_plan_id = plan.id.as_str(),
+            lottery_id = plan.lottery_id.as_str(),
+            issue = plan.issue.as_str(),
+            "合买计划数据保存失败"
+        );
+        ApiError::Internal("合买计划数据保存失败".to_string())
+    })?;
+    Ok(())
+}
+
+/// 在事务中插入或更新单个合买参与人。
+async fn upsert_group_buy_participant_in_transaction(
+    connection: &mut PgConnection,
+    plan_id: &str,
+    participant: &GroupBuyParticipant,
+) -> ApiResult<()> {
+    let share_count = i32::try_from(participant.share_count)
+        .map_err(|_| ApiError::Internal("合买参与人份数过大".to_string()))?;
+    sqlx::query(
+        "INSERT INTO group_buy_participants
+         (id, plan_id, user_id, username, amount_minor, share_count, note, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+            plan_id = EXCLUDED.plan_id,
+            user_id = EXCLUDED.user_id,
+            username = EXCLUDED.username,
+            amount_minor = EXCLUDED.amount_minor,
+            share_count = EXCLUDED.share_count,
+            note = EXCLUDED.note,
+            created_at = EXCLUDED.created_at",
+    )
+    .bind(&participant.id)
+    .bind(plan_id)
+    .bind(&participant.user_id)
+    .bind(&participant.username)
+    .bind(participant.amount_minor)
+    .bind(share_count)
+    .bind(&participant.note)
+    .bind(&participant.created_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| {
+        tracing::error!(
+            %error,
+            group_buy_plan_id = plan_id,
+            participant_id = participant.id.as_str(),
+            user_id = participant.user_id.as_str(),
+            amount_minor = participant.amount_minor,
+            share_count,
+            "合买参与人数据保存失败"
+        );
+        ApiError::Internal("合买参与人数据保存失败".to_string())
+    })?;
+    Ok(())
+}
+
 /// 合买计划和参与记录运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 impl GroupBuyStore {
     /// 构建并返回种子数据。
@@ -1065,6 +1327,23 @@ impl GroupBuyStore {
                 plan.participants
                     .iter()
                     .any(|participant| participant.user_id == user_id)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// 返回指定参与人集合关联的有效合买计划。
+    fn list_active_details_for_participant_user_ids(
+        &self,
+        user_ids: &BTreeSet<String>,
+    ) -> Vec<GroupBuyPlan> {
+        sorted_group_buy_plans(self.plans.values())
+            .into_iter()
+            .filter(|plan| {
+                !matches!(plan.status, GroupBuyPlanStatus::Cancelled)
+                    && plan.participants.iter().any(|participant| {
+                        user_ids.contains(&participant.user_id) && participant.amount_minor > 0
+                    })
             })
             .cloned()
             .collect()
@@ -1524,6 +1803,16 @@ fn sorted_group_buy_plans<'a>(
             .then_with(|| right.id.cmp(&left.id))
     });
     sorted_plans
+}
+
+/// 归一化用户 ID 集合，去重并移除空值。
+fn normalized_user_ids(user_ids: &[String]) -> BTreeSet<String> {
+    user_ids
+        .iter()
+        .map(|user_id| user_id.trim())
+        .filter(|user_id| !user_id.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// 计算合买计划当前最小可认购金额。

@@ -23,6 +23,8 @@
 - 使用类型清晰的 ID，或至少使用命名明确的 `String` ID；避免跨层传递匿名元组。
 - 接口只查询自己需要的字段。
 - 持久化列表接口从第一版开始就需要分页。
+- 新增按用户集合、期号集合、状态集合或时间倒序分页的查询时，需要同步检查并补充匹配索引；不要只把过滤下推到 SQL，却让 PostgreSQL 继续依赖全表扫描。
+- 大表索引必须写中文 `COMMENT ON INDEX`，说明对应的业务查询路径，便于后续清理或重建索引时判断是否仍被使用。
 
 ---
 
@@ -128,7 +130,8 @@ COMMENT ON COLUMN lotteries.logo_url IS '彩种 LOGO 链接地址';
 - 开奖结算派奖：`OrderRepository::settle_with_payouts(finance, group_buys, draw_issue)`
 - 充值入账：`RechargeRepository::confirm_rainbow_notify(...)`、`RechargeRepository::confirm_customer_service_order(...)`
 - 提现冻结/审核：`WithdrawalRepository::create_order(...)`、`approve_order(...)`、`reject_order(...)`
-- 事务内保存：`save_*_store_in_transaction(connection, store)`
+- 事务内全量保存：`save_*_store_in_transaction(connection, store)`
+- 事务内增量保存：订单、资金、合买、充值、提现等热路径使用 `save_*_store_incremental_in_transaction(connection, previous, store)`
 
 ### 3. 契约
 
@@ -137,7 +140,7 @@ COMMENT ON COLUMN lotteries.logo_url IS '彩种 LOGO 链接地址';
 1. 从相关仓储读取并克隆当前内存快照。
 2. 在快照上完成全部业务校验和状态变更。
 3. 未配置 `DATABASE_URL` 时跳过数据库保存，直接替换内存快照。
-4. 配置 PostgreSQL 时用同一个 SQLx 事务保存所有相关业务表。
+4. 配置 PostgreSQL 时用同一个 SQLx 事务保存所有相关业务表；订单、资金、合买、充值、提现之间的跨仓储热路径必须按前后快照差异增量写入，只删除、插入或更新本次变更行，不能每次重写全量历史。
 5. 数据库事务提交成功后再替换运行时内存快照。
 
 运行路径不得直接调用单仓储的“只创建订单不扣款”“只确认充值不入账”“只审核提现不处理冻结余额”入口。
@@ -187,18 +190,19 @@ let order = orders
     .await?;
 ```
 
-事务协调入口负责订单和资金快照、同一 SQLx 事务和提交后的运行时快照替换。
+事务协调入口负责订单和资金快照、同一 SQLx 事务、增量持久化和提交后的运行时快照替换。
 
 ## 场景：资金快照保存并发保护与流水序号恢复
 
 ### 1. 范围 / 触发条件
 
 - 触发条件：任意业务操作会保存 `FinanceStore`，包括投注扣款、派奖、充值、提现、合买、聊天大厅红包和后台手动调账。
-- 范围：`save_finance_store_in_transaction`、`ledger_entries`、`financial_accounts`、`finance_runtime`、资金流水编号 `L...`。
+- 范围：`save_finance_store_in_transaction`、`save_finance_store_incremental_in_transaction`、`ledger_entries`、`financial_accounts`、`finance_runtime`、资金流水编号 `L...`。
 
 ### 2. 签名
 
-- 事务内保存函数：`save_finance_store_in_transaction(connection, store)`
+- 事务内全量保存函数：`save_finance_store_in_transaction(connection, store)`
+- 事务内增量保存函数：`save_finance_store_incremental_in_transaction(connection, previous, store)`
 - 资金表：
   - `ledger_entries`
   - `financial_accounts`
@@ -209,7 +213,9 @@ let order = orders
 
 ### 3. 契约
 
-资金仓储当前使用快照式保存：先清空资金表，再写入当前内存快照。为了避免两个请求同时保存时出现“一个事务删除旧行，另一个事务插入同一批旧流水”的主键冲突，所有资金快照保存必须先在同一事务内锁定三张资金表。
+资金仓储保留快照式全量保存能力，用于初始化、维护性重载或单仓储清理等低频路径；订单扣款、取消退款、开奖派奖、合买结算、充值确认、提现流转和聊天红包等跨仓储热路径必须使用前后快照差异增量保存，不能为了保存一笔流水或一个账户余额变化而清空并重插全量历史。
+
+无论全量还是增量保存，为了避免两个请求同时保存时出现“一个事务删除旧行，另一个事务插入同一批旧流水”或同一账户余额旧值覆盖新值，资金保存必须先在同一事务内锁定三张资金表。增量保存只对差异行执行 `DELETE`、`INSERT ... ON CONFLICT DO UPDATE`，并同步更新 `finance_runtime.next_sequence`。
 
 启动加载资金仓储时，`next_sequence` 不能只相信 `finance_runtime`。后端必须同时扫描已有 `ledger_entries.id` 中符合 `L...` 格式的最大序号，并取 `max(finance_runtime.next_sequence, max_ledger_entry_sequence)` 作为下一笔流水的基准。如果发生校正，需要把校正后的运行序号持久化回数据库。
 
@@ -219,7 +225,9 @@ let order = orders
 
 | 条件 | 预期行为 |
 |------|----------|
-| 并发保存资金快照 | 后进入的事务等待资金表锁，不产生重复主键插入 |
+| 并发保存资金快照 | 后进入的事务等待资金表锁，不产生重复主键插入或旧余额覆盖新余额 |
+| 跨仓储热路径只新增一笔资金流水 | 只插入新增流水并更新受影响账户，不重写全部 `ledger_entries` |
+| 聊天红包发送或领取保存失败 | 不替换聊天大厅或资金内存快照，不出现内存已扣款但数据库未保存 |
 | `finance_runtime.next_sequence` 小于已有最大流水编号 | 启动时按已有流水编号校正并持久化 |
 | 已有流水 ID 不符合 `L...` 格式 | 跳过该 ID，不影响合法流水序号恢复 |
 | 锁表失败 | 返回 `资金表锁定失败`，不继续删除或插入 |
@@ -231,6 +239,8 @@ let order = orders
 - Good：用户同时领取红包和提交提现，两个资金保存事务串行执行，最终流水表没有主键冲突。
 - Good：历史库已有 `L0000000002810`，但 `finance_runtime.next_sequence=100`，服务启动后下一笔流水从 `2811` 开始。
 - Base：没有历史流水时，运行序号按 `finance_runtime` 或 0 启动。
+- Bad：订单扣款或开奖派奖时直接清空并重插全部资金流水；历史流水越多，单次下单或结算写回越慢。
+- Bad：红包、充值或提现先修改真实内存快照，再尝试保存数据库；数据库失败会造成运行时状态和数据库状态不一致。
 - Bad：资金保存时直接 `DELETE FROM ledger_entries`，没有先锁三张资金表；并发请求可能在重插旧流水时冲突。
 - Bad：只记录“资金流水数据保存失败”，不记录具体数据库错误；后续无法判断是主键冲突、字段约束还是连接问题。
 
@@ -264,7 +274,7 @@ sqlx::query(
 .await?;
 ```
 
-先锁定资金表，再做快照清理和重插，确保同一时间只有一个资金快照保存事务进入关键区。
+先锁定资金表，再做快照清理、重插或增量差异写入，确保同一时间只有一个资金保存事务进入关键区。
 
 ## 安全字段存储
 

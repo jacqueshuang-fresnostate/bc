@@ -23,8 +23,8 @@ use crate::{
     },
     error::{ApiError, ApiResult},
     services::{
-        finance::{save_finance_store_in_transaction, FinanceRepository},
-        group_buy::{save_group_buy_store_in_transaction, GroupBuyRepository},
+        finance::{save_finance_store_incremental_in_transaction, FinanceRepository},
+        group_buy::{save_group_buy_store_incremental_in_transaction, GroupBuyRepository},
         pagination::{ListPage, PageRequest},
         play_rules::{
             evaluate_play_rule, expanded_bets_for_rule, number_type_for_rule, play_position_label,
@@ -155,6 +155,36 @@ impl OrderRepository {
                         order.lottery_id == lottery_id
                             && order.issue == issue
                             && order.status == OrderStatus::PendingDraw
+                    })
+                    .collect()
+            })
+    }
+
+    /// 批量读取指定用户集合的正向独立下注订单，供代理投注画像避免扫描全量订单。
+    pub async fn list_direct_positive_for_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> ApiResult<Vec<OrderDetail>> {
+        let user_ids = normalized_user_ids(user_ids);
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_direct_positive_orders_for_user_ids(persistence, &user_ids).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .list()
+                    .into_iter()
+                    .filter(|order| {
+                        user_ids.contains(&order.user_id)
+                            && matches!(order.order_source, OrderSource::Direct)
+                            && !matches!(order.status, OrderStatus::Cancelled)
+                            && order.amount_minor > 0
                     })
                     .collect()
             })
@@ -299,16 +329,18 @@ impl OrderRepository {
             return Ok(Vec::new());
         }
 
-        let mut order_store = self
+        let previous_order_store = self
             .inner
             .read()
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
             .clone();
-        let mut finance_store = finance
+        let mut order_store = previous_order_store.clone();
+        let previous_finance_store = finance
             .inner
             .read()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
+        let mut finance_store = previous_finance_store.clone();
 
         let mut orders = Vec::with_capacity(requests.len());
         for (lottery, payload) in requests {
@@ -317,7 +349,15 @@ impl OrderRepository {
             orders.push(order);
         }
 
-        persist_order_finance_stores(self, finance, &order_store, &finance_store).await?;
+        persist_order_finance_stores(
+            self,
+            finance,
+            &previous_order_store,
+            &order_store,
+            &previous_finance_store,
+            &finance_store,
+        )
+        .await?;
         self.replace_store(order_store)?;
         finance.replace_store(finance_store)?;
 
@@ -357,21 +397,31 @@ impl OrderRepository {
         finance: &FinanceRepository,
         id: &str,
     ) -> ApiResult<OrderDetail> {
-        let mut order_store = self
+        let previous_order_store = self
             .inner
             .read()
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
             .clone();
-        let mut finance_store = finance
+        let mut order_store = previous_order_store.clone();
+        let previous_finance_store = finance
             .inner
             .read()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
+        let mut finance_store = previous_finance_store.clone();
 
         let order = order_store.cancel(id)?;
         finance_store.refund_order(&order)?;
 
-        persist_order_finance_stores(self, finance, &order_store, &finance_store).await?;
+        persist_order_finance_stores(
+            self,
+            finance,
+            &previous_order_store,
+            &order_store,
+            &previous_finance_store,
+            &finance_store,
+        )
+        .await?;
         self.replace_store(order_store)?;
         finance.replace_store(finance_store)?;
 
@@ -399,23 +449,33 @@ impl OrderRepository {
         order_id: Option<&str>,
         plan_id: &str,
     ) -> ApiResult<(Option<OrderDetail>, GroupBuyPlan)> {
-        let mut order_store = self
+        let previous_order_store = self
             .inner
             .read()
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
             .clone();
-        let mut group_buy_store = group_buys
+        let mut order_store = previous_order_store.clone();
+        let previous_group_buy_store = group_buys
             .inner
             .read()
             .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
             .clone();
+        let mut group_buy_store = previous_group_buy_store.clone();
 
         let removed_order = order_id
             .map(|order_id| order_store.remove_unfunded(order_id))
             .transpose()?;
         let deleted_plan = group_buy_store.delete_plan(plan_id)?;
 
-        persist_order_group_buy_stores(self, group_buys, &order_store, &group_buy_store).await?;
+        persist_order_group_buy_stores(
+            self,
+            group_buys,
+            &previous_order_store,
+            &order_store,
+            &previous_group_buy_store,
+            &group_buy_store,
+        )
+        .await?;
         self.replace_store(order_store)?;
         group_buys.replace_store(group_buy_store)?;
 
@@ -434,16 +494,18 @@ impl OrderRepository {
         }
 
         let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
-        let mut order_store = self
+        let previous_order_store = self
             .inner
             .read()
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
             .clone();
-        let mut group_buy_store = group_buys
+        let mut order_store = previous_order_store.clone();
+        let previous_group_buy_store = group_buys
             .inner
             .read()
             .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
             .clone();
+        let mut group_buy_store = previous_group_buy_store.clone();
 
         let candidates = group_buy_store.robot_cleanup_candidates(robot_user_id);
         if candidates.is_empty() {
@@ -462,7 +524,15 @@ impl OrderRepository {
             order_store.remove_robot_group_buy_orders(&order_ids, robot_user_id)?;
         let deleted_plan_count = group_buy_store.delete_plans_by_ids(&plan_ids).len();
 
-        persist_order_group_buy_stores(self, group_buys, &order_store, &group_buy_store).await?;
+        persist_order_group_buy_stores(
+            self,
+            group_buys,
+            &previous_order_store,
+            &order_store,
+            &previous_group_buy_store,
+            &group_buy_store,
+        )
+        .await?;
         self.replace_store(order_store)?;
         group_buys.replace_store(group_buy_store)?;
 
@@ -494,12 +564,21 @@ impl OrderRepository {
             .map(|store| store.recent_summaries(limit))
     }
 
-    /// 查询历史结算任务列表。
-    pub async fn settlement_runs(&self) -> ApiResult<Vec<SettlementRun>> {
-        self.inner
+    /// 分页查询历史结算任务；数据库模式下只读取当前页批次和对应明细。
+    pub async fn settlement_run_page(
+        &self,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<SettlementRun>> {
+        if let Some(persistence) = &self.persistence {
+            return query_settlement_run_page(persistence, page).await;
+        }
+
+        let runs = self
+            .inner
             .read()
-            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))
-            .map(|store| store.settlement_runs())
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .settlement_runs();
+        Ok(ListPage::from_all(runs, page))
     }
 
     /// 根据 ID 查询结算明细。
@@ -518,21 +597,24 @@ impl OrderRepository {
         draw_issue: &DrawIssue,
     ) -> ApiResult<(SettlementRun, Vec<LedgerEntry>)> {
         let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
-        let mut order_store = self
+        let previous_order_store = self
             .inner
             .read()
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
             .clone();
-        let mut finance_store = finance
+        let mut order_store = previous_order_store.clone();
+        let previous_finance_store = finance
             .inner
             .read()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
-        let mut group_buy_store = group_buys
+        let mut finance_store = previous_finance_store.clone();
+        let previous_group_buy_store = group_buys
             .inner
             .read()
             .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
             .clone();
+        let mut group_buy_store = previous_group_buy_store.clone();
 
         let settlement = order_store.settle_draw_issue(draw_issue)?;
         let order_ids = settlement
@@ -549,8 +631,11 @@ impl OrderRepository {
             self,
             finance,
             group_buys,
+            &previous_order_store,
             &order_store,
+            &previous_finance_store,
             &finance_store,
+            &previous_group_buy_store,
             &group_buy_store,
         )
         .await?;
@@ -634,46 +719,10 @@ async fn load_order_store(database: &BusinessDatabase) -> ApiResult<OrderStore> 
         let settlement_id: String = row
             .try_get("settlement_id")
             .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?;
-        let stake_count: i32 = row
-            .try_get("stake_count")
-            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?;
         settlement_orders
             .entry(settlement_id)
             .or_default()
-            .push(OrderSettlement {
-                order_id: row
-                    .try_get("order_id")
-                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
-                user_id: row
-                    .try_get("user_id")
-                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
-                rule_code: enum_from_string(
-                    row.try_get("rule_code")
-                        .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
-                )?,
-                stake_count: u32::try_from(stake_count)
-                    .map_err(|_| ApiError::Internal("结算订单注数数据无效".to_string()))?,
-                amount_minor: row
-                    .try_get("amount_minor")
-                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
-                is_winning: row
-                    .try_get("is_winning")
-                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
-                matched_bets: from_json(
-                    row.try_get("matched_bets")
-                        .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
-                )?,
-                odds_basis_points: row
-                    .try_get("odds_basis_points")
-                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
-                payout_minor: row
-                    .try_get("payout_minor")
-                    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
-                status: enum_from_string(
-                    row.try_get("status")
-                        .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
-                )?,
-            });
+            .push(order_settlement_from_row(row)?);
     }
 
     let mut settlement_runs = BTreeMap::new();
@@ -843,6 +892,91 @@ fn order_detail_from_row(row: PgRow) -> ApiResult<OrderDetail> {
     })
 }
 
+/// 从数据库行恢复单条结算订单明细。
+fn order_settlement_from_row(row: PgRow) -> ApiResult<OrderSettlement> {
+    let stake_count: i32 = row
+        .try_get("stake_count")
+        .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?;
+    Ok(OrderSettlement {
+        order_id: row
+            .try_get("order_id")
+            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+        user_id: row
+            .try_get("user_id")
+            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+        rule_code: enum_from_string(
+            row.try_get("rule_code")
+                .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+        )?,
+        stake_count: u32::try_from(stake_count)
+            .map_err(|_| ApiError::Internal("结算订单注数数据无效".to_string()))?,
+        amount_minor: row
+            .try_get("amount_minor")
+            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+        is_winning: row
+            .try_get("is_winning")
+            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+        matched_bets: from_json(
+            row.try_get("matched_bets")
+                .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+        )?,
+        odds_basis_points: row
+            .try_get("odds_basis_points")
+            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+        payout_minor: row
+            .try_get("payout_minor")
+            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+        status: enum_from_string(
+            row.try_get("status")
+                .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?,
+        )?,
+    })
+}
+
+/// 从数据库行恢复计奖派奖批次，并附加已经批量读取的订单结算明细。
+fn settlement_run_from_row(row: PgRow, orders: Vec<OrderSettlement>) -> ApiResult<SettlementRun> {
+    let settled_order_count: i32 = row
+        .try_get("settled_order_count")
+        .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?;
+    let winning_order_count: i32 = row
+        .try_get("winning_order_count")
+        .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?;
+    Ok(SettlementRun {
+        id: row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+        draw_issue_id: row
+            .try_get("draw_issue_id")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+        lottery_id: row
+            .try_get("lottery_id")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+        lottery_name: row
+            .try_get("lottery_name")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+        issue: row
+            .try_get("issue")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+        draw_number: row
+            .try_get("draw_number")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+        settled_order_count: u32::try_from(settled_order_count)
+            .map_err(|_| ApiError::Internal("结算订单数量无效".to_string()))?,
+        winning_order_count: u32::try_from(winning_order_count)
+            .map_err(|_| ApiError::Internal("中奖订单数量无效".to_string()))?,
+        total_stake_amount_minor: row
+            .try_get("total_stake_amount_minor")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+        total_payout_minor: row
+            .try_get("total_payout_minor")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
+        orders,
+    })
+}
+
 /// 数据库模式下分页读取订单，避免后台订单列表先查全量再裁剪。
 async fn query_order_page(
     database: &BusinessDatabase,
@@ -933,6 +1067,103 @@ async fn query_user_visible_order_page(
 
     Ok(ListPage::new(items, resolved))
 }
+
+/// 数据库模式下按用户集合读取正向独立下注订单，避免代理中心读取全量订单。
+async fn query_direct_positive_orders_for_user_ids(
+    database: &BusinessDatabase,
+    user_ids: &BTreeSet<String>,
+) -> ApiResult<Vec<OrderDetail>> {
+    let user_ids = user_ids.iter().cloned().collect::<Vec<_>>();
+    let rows = sqlx::query(
+        "SELECT id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+                stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
+                draw_number, matched_bets, payout_minor, status, settled_at, created_at
+         FROM orders
+         WHERE user_id = ANY($1::text[])
+           AND order_source = $2
+           AND status <> $3
+           AND amount_minor > 0
+         ORDER BY created_at DESC, id DESC",
+    )
+    .bind(&user_ids)
+    .bind(enum_to_string(&OrderSource::Direct)?)
+    .bind(enum_to_string(&OrderStatus::Cancelled)?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("直属用户投注订单数据读取失败".to_string()))?;
+
+    rows.into_iter().map(order_detail_from_row).collect()
+}
+
+/// 数据库模式下分页读取计奖派奖批次，并只加载当前页的订单明细。
+async fn query_settlement_run_page(
+    database: &BusinessDatabase,
+    page: PageRequest,
+) -> ApiResult<ListPage<SettlementRun>> {
+    let total_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM order_settlement_runs")
+        .fetch_one(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("结算批次分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("结算批次分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT id, draw_issue_id, lottery_id, lottery_name, issue, draw_number,
+                settled_order_count, winning_order_count, total_stake_amount_minor,
+                total_payout_minor, created_at
+         FROM order_settlement_runs
+         ORDER BY created_at DESC, id DESC
+         LIMIT $1 OFFSET $2",
+    )
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("结算批次分页数据读取失败".to_string()))?;
+    let run_ids = rows
+        .iter()
+        .map(|row| {
+            row.try_get("id")
+                .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))
+        })
+        .collect::<ApiResult<Vec<String>>>()?;
+
+    let mut settlement_orders = BTreeMap::<String, Vec<OrderSettlement>>::new();
+    if !run_ids.is_empty() {
+        for row in sqlx::query(
+            "SELECT settlement_id, order_id, user_id, rule_code, stake_count, amount_minor,
+                    is_winning, matched_bets, odds_basis_points, payout_minor, status
+             FROM order_settlements
+             WHERE settlement_id = ANY($1::text[])
+             ORDER BY settlement_id ASC, order_id ASC",
+        )
+        .bind(&run_ids)
+        .fetch_all(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("结算订单分页明细读取失败".to_string()))?
+        {
+            let settlement_id: String = row
+                .try_get("settlement_id")
+                .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?;
+            settlement_orders
+                .entry(settlement_id)
+                .or_default()
+                .push(order_settlement_from_row(row)?);
+        }
+    }
+
+    let items = rows
+        .into_iter()
+        .zip(run_ids)
+        .map(|(row, run_id)| {
+            let orders = settlement_orders.remove(&run_id).unwrap_or_default();
+            settlement_run_from_row(row, orders)
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
 /// 保存顺序仓储到持久化存储。
 async fn save_order_store(database: &BusinessDatabase, store: &OrderStore) -> ApiResult<()> {
     let mut tx = database
@@ -1073,11 +1304,234 @@ pub(crate) async fn save_order_store_in_transaction(
     Ok(())
 }
 
+/// 在外层事务中按前后快照差异保存订单和结算数据，避免开奖结算重写全量订单。
+async fn save_order_store_incremental_in_transaction(
+    connection: &mut PgConnection,
+    previous: &OrderStore,
+    store: &OrderStore,
+) -> ApiResult<()> {
+    for order_id in previous
+        .orders
+        .keys()
+        .filter(|order_id| !store.orders.contains_key(*order_id))
+    {
+        sqlx::query("DELETE FROM orders WHERE id = $1")
+            .bind(order_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(|_| ApiError::Internal("订单数据删除失败".to_string()))?;
+    }
+
+    for (order_id, order) in &store.orders {
+        if previous.orders.get(order_id) == Some(order) {
+            continue;
+        }
+        upsert_order_in_transaction(connection, order).await?;
+    }
+
+    for run_id in previous
+        .settlement_runs
+        .keys()
+        .filter(|run_id| !store.settlement_runs.contains_key(*run_id))
+    {
+        sqlx::query("DELETE FROM order_settlements WHERE settlement_id = $1")
+            .bind(run_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(|_| ApiError::Internal("结算订单数据删除失败".to_string()))?;
+        sqlx::query("DELETE FROM order_settlement_runs WHERE id = $1")
+            .bind(run_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(|_| ApiError::Internal("结算批次数据删除失败".to_string()))?;
+    }
+
+    for (run_id, run) in &store.settlement_runs {
+        if previous.settlement_runs.get(run_id) == Some(run) {
+            continue;
+        }
+        upsert_settlement_run_in_transaction(connection, run).await?;
+        replace_order_settlements_in_transaction(connection, run).await?;
+    }
+
+    update_order_runtime_in_transaction(connection, store).await
+}
+
+/// 在事务中插入或更新单个投注订单。
+async fn upsert_order_in_transaction(
+    connection: &mut PgConnection,
+    order: &OrderDetail,
+) -> ApiResult<()> {
+    sqlx::query(
+        "INSERT INTO orders
+         (id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+          stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
+          draw_number, matched_bets, payout_minor, status, settled_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+         ON CONFLICT (id) DO UPDATE SET
+            order_source = EXCLUDED.order_source,
+            user_id = EXCLUDED.user_id,
+            lottery_id = EXCLUDED.lottery_id,
+            lottery_name = EXCLUDED.lottery_name,
+            issue = EXCLUDED.issue,
+            rule_code = EXCLUDED.rule_code,
+            number_type = EXCLUDED.number_type,
+            selection = EXCLUDED.selection,
+            stake_count = EXCLUDED.stake_count,
+            unit_amount_minor = EXCLUDED.unit_amount_minor,
+            amount_minor = EXCLUDED.amount_minor,
+            odds_basis_points = EXCLUDED.odds_basis_points,
+            expanded_bets = EXCLUDED.expanded_bets,
+            draw_number = EXCLUDED.draw_number,
+            matched_bets = EXCLUDED.matched_bets,
+            payout_minor = EXCLUDED.payout_minor,
+            status = EXCLUDED.status,
+            settled_at = EXCLUDED.settled_at,
+            created_at = EXCLUDED.created_at",
+    )
+    .bind(&order.id)
+    .bind(enum_to_string(&order.order_source)?)
+    .bind(&order.user_id)
+    .bind(&order.lottery_id)
+    .bind(&order.lottery_name)
+    .bind(&order.issue)
+    .bind(enum_to_string(&order.rule_code)?)
+    .bind(enum_to_string(&order.number_type)?)
+    .bind(to_json(&order.selection)?)
+    .bind(
+        i32::try_from(order.stake_count)
+            .map_err(|_| ApiError::Internal("订单注数过大".to_string()))?,
+    )
+    .bind(order.unit_amount_minor)
+    .bind(order.amount_minor)
+    .bind(order.odds_basis_points)
+    .bind(to_json(&order.expanded_bets)?)
+    .bind(&order.draw_number)
+    .bind(to_json(&order.matched_bets)?)
+    .bind(order.payout_minor)
+    .bind(enum_to_string(&order.status)?)
+    .bind(&order.settled_at)
+    .bind(&order.created_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(|_| ApiError::Internal("订单数据保存失败".to_string()))?;
+    Ok(())
+}
+
+/// 在事务中插入或更新单个计奖派奖批次。
+async fn upsert_settlement_run_in_transaction(
+    connection: &mut PgConnection,
+    run: &SettlementRun,
+) -> ApiResult<()> {
+    sqlx::query(
+        "INSERT INTO order_settlement_runs
+         (id, draw_issue_id, lottery_id, lottery_name, issue, draw_number, settled_order_count,
+          winning_order_count, total_stake_amount_minor, total_payout_minor, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (id) DO UPDATE SET
+            draw_issue_id = EXCLUDED.draw_issue_id,
+            lottery_id = EXCLUDED.lottery_id,
+            lottery_name = EXCLUDED.lottery_name,
+            issue = EXCLUDED.issue,
+            draw_number = EXCLUDED.draw_number,
+            settled_order_count = EXCLUDED.settled_order_count,
+            winning_order_count = EXCLUDED.winning_order_count,
+            total_stake_amount_minor = EXCLUDED.total_stake_amount_minor,
+            total_payout_minor = EXCLUDED.total_payout_minor,
+            created_at = EXCLUDED.created_at,
+            updated_at = now()",
+    )
+    .bind(&run.id)
+    .bind(&run.draw_issue_id)
+    .bind(&run.lottery_id)
+    .bind(&run.lottery_name)
+    .bind(&run.issue)
+    .bind(&run.draw_number)
+    .bind(
+        i32::try_from(run.settled_order_count)
+            .map_err(|_| ApiError::Internal("结算订单数量过大".to_string()))?,
+    )
+    .bind(
+        i32::try_from(run.winning_order_count)
+            .map_err(|_| ApiError::Internal("中奖订单数量过大".to_string()))?,
+    )
+    .bind(run.total_stake_amount_minor)
+    .bind(run.total_payout_minor)
+    .bind(&run.created_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(|_| ApiError::Internal("结算批次数据保存失败".to_string()))?;
+    Ok(())
+}
+
+/// 在事务中重建单个结算批次的订单明细。
+async fn replace_order_settlements_in_transaction(
+    connection: &mut PgConnection,
+    run: &SettlementRun,
+) -> ApiResult<()> {
+    sqlx::query("DELETE FROM order_settlements WHERE settlement_id = $1")
+        .bind(&run.id)
+        .execute(&mut *connection)
+        .await
+        .map_err(|_| ApiError::Internal("结算订单数据删除失败".to_string()))?;
+
+    for order in &run.orders {
+        sqlx::query(
+            "INSERT INTO order_settlements
+             (settlement_id, order_id, user_id, rule_code, stake_count, amount_minor,
+              is_winning, matched_bets, odds_basis_points, payout_minor, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        )
+        .bind(&run.id)
+        .bind(&order.order_id)
+        .bind(&order.user_id)
+        .bind(enum_to_string(&order.rule_code)?)
+        .bind(
+            i32::try_from(order.stake_count)
+                .map_err(|_| ApiError::Internal("结算订单注数过大".to_string()))?,
+        )
+        .bind(order.amount_minor)
+        .bind(order.is_winning)
+        .bind(to_json(&order.matched_bets)?)
+        .bind(order.odds_basis_points)
+        .bind(order.payout_minor)
+        .bind(enum_to_string(&order.status)?)
+        .execute(&mut *connection)
+        .await
+        .map_err(|_| ApiError::Internal("结算订单数据保存失败".to_string()))?;
+    }
+    Ok(())
+}
+
+/// 在事务中保存订单运行时序号。
+async fn update_order_runtime_in_transaction(
+    connection: &mut PgConnection,
+    store: &OrderStore,
+) -> ApiResult<()> {
+    for (key, value) in [
+        ("next_sequence", store.next_sequence),
+        ("next_settlement_sequence", store.next_settlement_sequence),
+    ] {
+        sqlx::query(
+            "INSERT INTO order_runtime (key, value) VALUES ($1, $2)
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        )
+        .bind(key)
+        .bind(i64::try_from(value).map_err(|_| ApiError::Internal("订单运行序号过大".to_string()))?)
+        .execute(&mut *connection)
+        .await
+        .map_err(|_| ApiError::Internal("订单运行数据保存失败".to_string()))?;
+    }
+    Ok(())
+}
+
 /// 在同一个数据库事务中保存订单和资金快照，确保投注扣款、取消退款不会只落一边。
 async fn persist_order_finance_stores(
     orders: &OrderRepository,
     finance: &FinanceRepository,
+    previous_order_store: &OrderStore,
     order_store: &OrderStore,
+    previous_finance_store: &super::finance::FinanceStore,
     finance_store: &super::finance::FinanceStore,
 ) -> ApiResult<()> {
     match (&orders.persistence, &finance.persistence) {
@@ -1087,8 +1541,18 @@ async fn persist_order_finance_stores(
                 .begin()
                 .await
                 .map_err(|_| ApiError::Internal("订单资金事务开启失败".to_string()))?;
-            save_order_store_in_transaction(&mut *tx, order_store).await?;
-            save_finance_store_in_transaction(&mut *tx, finance_store).await?;
+            save_order_store_incremental_in_transaction(
+                &mut *tx,
+                previous_order_store,
+                order_store,
+            )
+            .await?;
+            save_finance_store_incremental_in_transaction(
+                &mut *tx,
+                previous_finance_store,
+                finance_store,
+            )
+            .await?;
             tx.commit()
                 .await
                 .map_err(|_| ApiError::Internal("订单资金事务提交失败".to_string()))
@@ -1102,7 +1566,9 @@ async fn persist_order_finance_stores(
 async fn persist_order_group_buy_stores(
     orders: &OrderRepository,
     group_buys: &GroupBuyRepository,
+    previous_order_store: &OrderStore,
     order_store: &OrderStore,
+    previous_group_buy_store: &super::group_buy::GroupBuyStore,
     group_buy_store: &super::group_buy::GroupBuyStore,
 ) -> ApiResult<()> {
     match (&orders.persistence, &group_buys.persistence) {
@@ -1112,8 +1578,18 @@ async fn persist_order_group_buy_stores(
                 .begin()
                 .await
                 .map_err(|_| ApiError::Internal("订单合买事务开启失败".to_string()))?;
-            save_order_store_in_transaction(&mut *tx, order_store).await?;
-            save_group_buy_store_in_transaction(&mut *tx, group_buy_store).await?;
+            save_order_store_incremental_in_transaction(
+                &mut *tx,
+                previous_order_store,
+                order_store,
+            )
+            .await?;
+            save_group_buy_store_incremental_in_transaction(
+                &mut *tx,
+                previous_group_buy_store,
+                group_buy_store,
+            )
+            .await?;
             tx.commit()
                 .await
                 .map_err(|_| ApiError::Internal("订单合买事务提交失败".to_string()))
@@ -1128,8 +1604,11 @@ async fn persist_order_finance_group_buy_stores(
     orders: &OrderRepository,
     finance: &FinanceRepository,
     group_buys: &GroupBuyRepository,
+    previous_order_store: &OrderStore,
     order_store: &OrderStore,
+    previous_finance_store: &super::finance::FinanceStore,
     finance_store: &super::finance::FinanceStore,
+    previous_group_buy_store: &super::group_buy::GroupBuyStore,
     group_buy_store: &super::group_buy::GroupBuyStore,
 ) -> ApiResult<()> {
     match (
@@ -1143,9 +1622,24 @@ async fn persist_order_finance_group_buy_stores(
                 .begin()
                 .await
                 .map_err(|_| ApiError::Internal("订单资金合买事务开启失败".to_string()))?;
-            save_order_store_in_transaction(&mut *tx, order_store).await?;
-            save_finance_store_in_transaction(&mut *tx, finance_store).await?;
-            save_group_buy_store_in_transaction(&mut *tx, group_buy_store).await?;
+            save_order_store_incremental_in_transaction(
+                &mut *tx,
+                previous_order_store,
+                order_store,
+            )
+            .await?;
+            save_finance_store_incremental_in_transaction(
+                &mut *tx,
+                previous_finance_store,
+                finance_store,
+            )
+            .await?;
+            save_group_buy_store_incremental_in_transaction(
+                &mut *tx,
+                previous_group_buy_store,
+                group_buy_store,
+            )
+            .await?;
             tx.commit()
                 .await
                 .map_err(|_| ApiError::Internal("订单资金合买事务提交失败".to_string()))
@@ -1163,6 +1657,16 @@ fn max_sequence<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u64 
         .filter_map(|value| value.parse::<u64>().ok())
         .max()
         .unwrap_or_default()
+}
+
+/// 归一化用户 ID 集合，去重并移除空值。
+fn normalized_user_ids(user_ids: &[String]) -> BTreeSet<String> {
+    user_ids
+        .iter()
+        .map(|user_id| user_id.trim())
+        .filter(|user_id| !user_id.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 impl OrderStore {

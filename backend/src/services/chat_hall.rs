@@ -1,13 +1,14 @@
 //! 手机端公共聊天大厅仓储，负责消息校验、历史列表和数据库持久化。
 
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{Arc, RwLock},
 };
 
 use chrono::Local;
 use serde_json::Value;
 use sqlx::{PgConnection, Row};
+use tokio::sync::Mutex;
 
 use crate::{
     domain::{
@@ -24,7 +25,7 @@ use crate::{
 
 use super::{
     business_database::{enum_from_string, enum_to_string, to_json, BusinessDatabase},
-    finance::{save_finance_store_in_transaction, FinanceRepository},
+    finance::{save_finance_store_incremental_in_transaction, FinanceRepository},
 };
 
 const CHAT_HALL_HISTORY_LIMIT: usize = 200;
@@ -37,6 +38,7 @@ const CHAT_HALL_RED_PACKET_MAX_CLAIM_COUNT: u32 = 100;
 /// 手机端公共聊天大厅仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct ChatHallRepository {
     inner: Arc<RwLock<ChatHallStore>>,
+    mutation_lock: Arc<Mutex<()>>,
     persistence: Option<BusinessDatabase>,
 }
 
@@ -46,6 +48,7 @@ impl ChatHallRepository {
     pub fn memory() -> Self {
         Self {
             inner: Arc::new(RwLock::new(ChatHallStore::default())),
+            mutation_lock: Arc::new(Mutex::new(())),
             persistence: None,
         }
     }
@@ -55,6 +58,7 @@ impl ChatHallRepository {
         let store = load_chat_hall_store(&persistence).await?;
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
+            mutation_lock: Arc::new(Mutex::new(())),
             persistence: Some(persistence),
         })
     }
@@ -69,16 +73,12 @@ impl ChatHallRepository {
 
     /// 一键清除聊天大厅历史消息和对应红包展示记录；资金流水不做回滚。
     pub async fn clear_messages(&self) -> ApiResult<usize> {
-        let (deleted_count, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("聊天大厅数据锁写入失败".to_string()))?;
-            let deleted_count = store.clear_messages();
-            (deleted_count, store.clone())
-        };
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let mut snapshot = self.current_store_snapshot()?;
+        let deleted_count = snapshot.clear_messages();
         if deleted_count > 0 {
             self.persist(&snapshot).await?;
+            self.replace_store(snapshot)?;
         }
 
         Ok(deleted_count)
@@ -90,15 +90,11 @@ impl ChatHallRepository {
         user: &UserSummary,
         request: CreateChatHallMessageRequest,
     ) -> ApiResult<ChatHallMessage> {
-        let (message, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("聊天大厅数据锁写入失败".to_string()))?;
-            let message = store.send(user, request)?;
-            (message, store.clone())
-        };
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let mut snapshot = self.current_store_snapshot()?;
+        let message = snapshot.send(user, request)?;
         self.persist(&snapshot).await?;
+        self.replace_store(snapshot)?;
 
         Ok(message)
     }
@@ -110,28 +106,32 @@ impl ChatHallRepository {
         user: &UserSummary,
         request: CreateChatHallRedPacketRequest,
     ) -> ApiResult<ChatHallMessage> {
-        let (message, chat_snapshot, finance_snapshot) = {
-            let mut chat_store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("聊天大厅数据锁写入失败".to_string()))?;
-            let prepared = chat_store.prepare_red_packet(user, request)?;
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let mut chat_snapshot = self.current_store_snapshot()?;
+        let previous_finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("资金数据锁读取失败".to_string()))?
+            .clone();
+        let mut finance_snapshot = previous_finance_store.clone();
 
-            let mut finance_store = finance
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("资金数据锁写入失败".to_string()))?;
-            finance_store.debit_chat_red_packet(
-                &user.id,
-                prepared.red_packet.total_amount_minor,
-                &prepared.red_packet.id,
-            )?;
+        let prepared = chat_snapshot.prepare_red_packet(user, request)?;
+        finance_snapshot.debit_chat_red_packet(
+            &user.id,
+            prepared.red_packet.total_amount_minor,
+            &prepared.red_packet.id,
+        )?;
 
-            let message = chat_store.insert_prepared_red_packet(prepared)?;
-            (message, chat_store.clone(), finance_store.clone())
-        };
-        self.persist_with_finance(finance, &chat_snapshot, &finance_snapshot)
-            .await?;
+        let message = chat_snapshot.insert_prepared_red_packet(prepared)?;
+        self.persist_with_finance(
+            finance,
+            &chat_snapshot,
+            &previous_finance_store,
+            &finance_snapshot,
+        )
+        .await?;
+        self.replace_store(chat_snapshot)?;
+        finance.replace_store(finance_snapshot)?;
 
         Ok(message)
     }
@@ -143,36 +143,34 @@ impl ChatHallRepository {
         user: &UserSummary,
         red_packet_id: &str,
     ) -> ApiResult<ClaimChatHallRedPacketResponse> {
-        let (message, claim, account, chat_snapshot, finance_snapshot) = {
-            let mut chat_store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("聊天大厅数据锁写入失败".to_string()))?;
-            let prepared = chat_store.prepare_red_packet_claim(user, red_packet_id)?;
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let mut chat_snapshot = self.current_store_snapshot()?;
+        let previous_finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("资金数据锁读取失败".to_string()))?
+            .clone();
+        let mut finance_snapshot = previous_finance_store.clone();
 
-            let mut finance_store = finance
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("资金数据锁写入失败".to_string()))?;
-            finance_store.credit_chat_red_packet(
-                &user.id,
-                prepared.claim.amount_minor,
-                &prepared.claim.id,
-                &prepared.claim.red_packet_id,
-            )?;
+        let prepared = chat_snapshot.prepare_red_packet_claim(user, red_packet_id)?;
+        finance_snapshot.credit_chat_red_packet(
+            &user.id,
+            prepared.claim.amount_minor,
+            &prepared.claim.id,
+            &prepared.claim.red_packet_id,
+        )?;
 
-            let (message, claim) = chat_store.apply_prepared_red_packet_claim(prepared)?;
-            let account = finance_store.account_or_create(&user.id)?;
-            (
-                message,
-                claim,
-                account,
-                chat_store.clone(),
-                finance_store.clone(),
-            )
-        };
-        self.persist_with_finance(finance, &chat_snapshot, &finance_snapshot)
-            .await?;
+        let (message, claim) = chat_snapshot.apply_prepared_red_packet_claim(prepared)?;
+        let account = finance_snapshot.account_or_create(&user.id)?;
+        self.persist_with_finance(
+            finance,
+            &chat_snapshot,
+            &previous_finance_store,
+            &finance_snapshot,
+        )
+        .await?;
+        self.replace_store(chat_snapshot)?;
+        finance.replace_store(finance_snapshot)?;
 
         Ok(ClaimChatHallRedPacketResponse {
             message,
@@ -198,32 +196,24 @@ impl ChatHallRepository {
         user: &UserSummary,
         payload: ChatHallGroupBuyPlanPayload,
     ) -> ApiResult<ChatHallMessage> {
-        let (message, snapshot) = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("聊天大厅数据锁写入失败".to_string()))?;
-            let message = store.share_group_buy_plan(user, payload)?;
-            (message, store.clone())
-        };
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let mut snapshot = self.current_store_snapshot()?;
+        let message = snapshot.share_group_buy_plan(user, payload)?;
         self.persist(&snapshot).await?;
+        self.replace_store(snapshot)?;
 
         Ok(message)
     }
 
     /// 用户头像变更后同步刷新大厅内该用户历史消息的头像快照。
     pub async fn update_user_avatar(&self, user_id: &str, avatar_url: &str) -> ApiResult<()> {
-        let snapshot = {
-            let mut store = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal("聊天大厅数据锁写入失败".to_string()))?;
-            if !store.update_user_avatar(user_id, avatar_url) {
-                return Ok(());
-            }
-            store.clone()
-        };
-        self.persist(&snapshot).await
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let mut snapshot = self.current_store_snapshot()?;
+        if !snapshot.update_user_avatar(user_id, avatar_url) {
+            return Ok(());
+        }
+        self.persist(&snapshot).await?;
+        self.replace_store(snapshot)
     }
 
     /// 从数据库重新加载聊天大厅消息和红包快照，供后台缓存维护使用。
@@ -253,6 +243,7 @@ impl ChatHallRepository {
         &self,
         finance: &FinanceRepository,
         chat_store: &ChatHallStore,
+        previous_finance_store: &crate::services::finance::FinanceStore,
         finance_store: &crate::services::finance::FinanceStore,
     ) -> ApiResult<()> {
         match (&self.persistence, &finance.persistence) {
@@ -263,7 +254,12 @@ impl ChatHallRepository {
                     .await
                     .map_err(|_| ApiError::Internal("聊天红包资金事务开启失败".to_string()))?;
                 save_chat_hall_store_in_transaction(&mut *tx, chat_store).await?;
-                save_finance_store_in_transaction(&mut *tx, finance_store).await?;
+                save_finance_store_incremental_in_transaction(
+                    &mut *tx,
+                    previous_finance_store,
+                    finance_store,
+                )
+                .await?;
                 tx.commit()
                     .await
                     .map_err(|_| ApiError::Internal("聊天红包资金事务提交失败".to_string()))?;
@@ -276,6 +272,23 @@ impl ChatHallRepository {
             }
         }
 
+        Ok(())
+    }
+
+    /// 克隆当前聊天大厅快照，供写操作先在临时快照中完成校验和变更。
+    fn current_store_snapshot(&self) -> ApiResult<ChatHallStore> {
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("聊天大厅数据锁读取失败".to_string()))
+            .map(|store| store.clone())
+    }
+
+    /// 用事务提交后的快照替换聊天大厅内存状态。
+    fn replace_store(&self, store: ChatHallStore) -> ApiResult<()> {
+        *self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("聊天大厅数据锁写入失败".to_string()))? = store;
         Ok(())
     }
 }
@@ -599,13 +612,20 @@ impl ChatHallStore {
 /// 从数据库读取聊天大厅消息，并恢复下一条消息的序号。
 async fn load_chat_hall_store(database: &BusinessDatabase) -> ApiResult<ChatHallStore> {
     let rows = sqlx::query(
-        "SELECT m.id, m.user_id, m.username,
-                COALESCE(NULLIF(m.avatar_url, ''), u.avatar_url, '') AS avatar_url,
-                m.content, m.message_type, m.payload, m.created_at
-         FROM chat_hall_messages m
-         LEFT JOIN users u ON u.id = m.user_id
-         ORDER BY m.created_at ASC, m.id ASC",
+        "WITH recent_messages AS (
+            SELECT m.id, m.user_id, m.username,
+                   COALESCE(NULLIF(m.avatar_url, ''), u.avatar_url, '') AS avatar_url,
+                   m.content, m.message_type, m.payload, m.created_at
+            FROM chat_hall_messages m
+            LEFT JOIN users u ON u.id = m.user_id
+            ORDER BY m.created_at DESC, m.id DESC
+            LIMIT $1
+         )
+         SELECT id, user_id, username, avatar_url, content, message_type, payload, created_at
+         FROM recent_messages
+         ORDER BY created_at ASC, id ASC",
     )
+    .bind(i64::try_from(CHAT_HALL_HISTORY_LIMIT).unwrap_or(200))
     .fetch_all(database.pool())
     .await
     .map_err(|_| ApiError::Internal("聊天大厅消息数据读取失败".to_string()))?;
@@ -645,12 +665,59 @@ async fn load_chat_hall_store(database: &BusinessDatabase) -> ApiResult<ChatHall
         });
     }
 
+    store.next_sequence = store.next_sequence.max(
+        max_chat_hall_sequence(
+            database,
+            "SELECT id FROM chat_hall_messages ORDER BY id DESC LIMIT 1",
+            sequence_from_chat_hall_message_id,
+            "聊天大厅消息序号读取失败",
+        )
+        .await?,
+    );
+    store.next_red_packet_sequence = store.next_red_packet_sequence.max(
+        max_chat_hall_sequence(
+            database,
+            "SELECT id FROM chat_hall_red_packets ORDER BY id DESC LIMIT 1",
+            sequence_from_chat_hall_red_packet_id,
+            "聊天大厅红包序号读取失败",
+        )
+        .await?,
+    );
+    store.next_red_packet_claim_sequence = store.next_red_packet_claim_sequence.max(
+        max_chat_hall_sequence(
+            database,
+            "SELECT id FROM chat_hall_red_packet_claims ORDER BY id DESC LIMIT 1",
+            sequence_from_chat_hall_red_packet_claim_id,
+            "聊天大厅红包领取序号读取失败",
+        )
+        .await?,
+    );
+
+    let active_red_packet_ids = store
+        .messages
+        .iter()
+        .filter_map(|message| {
+            message
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("redPacketId"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect::<BTreeSet<_>>();
+    if active_red_packet_ids.is_empty() {
+        return Ok(store);
+    }
+    let active_red_packet_ids = active_red_packet_ids.into_iter().collect::<Vec<_>>();
+
     for row in sqlx::query(
         "SELECT id, user_id, username, total_amount_minor, remaining_amount_minor,
                 claim_count, claimed_count, greeting, created_at
          FROM chat_hall_red_packets
+         WHERE id = ANY($1::text[])
          ORDER BY id ASC",
     )
+    .bind(&active_red_packet_ids)
     .fetch_all(database.pool())
     .await
     .map_err(|_| ApiError::Internal("聊天大厅红包数据读取失败".to_string()))?
@@ -701,8 +768,10 @@ async fn load_chat_hall_store(database: &BusinessDatabase) -> ApiResult<ChatHall
     for row in sqlx::query(
         "SELECT id, red_packet_id, user_id, username, amount_minor, created_at
          FROM chat_hall_red_packet_claims
+         WHERE red_packet_id = ANY($1::text[])
          ORDER BY id ASC",
     )
+    .bind(&active_red_packet_ids)
     .fetch_all(database.pool())
     .await
     .map_err(|_| ApiError::Internal("聊天大厅红包领取数据读取失败".to_string()))?
@@ -740,6 +809,20 @@ async fn load_chat_hall_store(database: &BusinessDatabase) -> ApiResult<ChatHall
     store.trim_history();
 
     Ok(store)
+}
+
+/// 读取聊天大厅相关表的最大业务 ID 序号，避免启动时只加载近期数据后重复生成编号。
+async fn max_chat_hall_sequence(
+    database: &BusinessDatabase,
+    sql: &str,
+    parser: fn(&str) -> Option<u64>,
+    error_message: &'static str,
+) -> ApiResult<u64> {
+    let latest_id = sqlx::query_scalar::<_, String>(sql)
+        .fetch_optional(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal(error_message.to_string()))?;
+    Ok(latest_id.as_deref().and_then(parser).unwrap_or_default())
 }
 
 /// 保存聊天大厅最近消息快照；大厅消息只保留近 200 条。
