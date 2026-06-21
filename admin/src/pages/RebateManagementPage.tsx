@@ -36,8 +36,11 @@ import { formatDateTime, formatMoney } from '../utils/format';
 import { yuanInputToMinor } from '../utils/moneyInput';
 
 interface RebateManagementPageProps {
+  initialTab?: RebateTabKey;
   onDashboardRefresh: () => void;
 }
+
+type RebateTabKey = 'applications' | 'policy' | 'statistics';
 
 interface RebateFormState {
   agentsCanInvite: boolean;
@@ -47,9 +50,10 @@ interface RebateFormState {
 }
 
 export function RebateManagementPage({
+  initialTab = 'statistics',
   onDashboardRefresh,
 }: RebateManagementPageProps) {
-  const [activeTab, setActiveTab] = useState('statistics');
+  const [activeTab, setActiveTab] = useState<RebateTabKey>(initialTab);
   const [statisticsPage, setStatisticsPage] = useState(1);
   const [statisticsPageSize, setStatisticsPageSize] = useState(10);
   const [applicationPage, setApplicationPage] = useState(1);
@@ -108,6 +112,10 @@ export function RebateManagementPage({
       setForm(formFromPolicy(policy));
     }
   }, [policy]);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   useEffect(() => {
     if (!selectedAgent) {
@@ -215,7 +223,7 @@ export function RebateManagementPage({
 
       <Tabs
         activeKey={activeTab}
-        onChange={(key) => setActiveTab(String(key))}
+        onChange={(key) => setActiveTab(normalizeRebateTabKey(key))}
       >
         <Tabs.TabPane itemKey="statistics" tab="返利统计">
           <section className="grid gap-3 pt-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1050,6 +1058,13 @@ function visibleStatisticTotals(items: AgentRebateSummary[]) {
 
 function rebateModeText(mode: RebateMode) {
   return mode === 'immediate' ? '立即返利' : '充值阶梯返利';
+}
+
+function normalizeRebateTabKey(key: string | number): RebateTabKey {
+  if (key === 'applications' || key === 'policy' || key === 'statistics') {
+    return key;
+  }
+  return 'statistics';
 }
 
 function percentText(basisPoints: number) {

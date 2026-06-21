@@ -71,6 +71,7 @@ interface AccessManagementPageProps {
   onDashboardRefresh: () => void;
   onOpenUserLedger: (user: AdminUserSummary) => void;
   onOpenUserOrders: (user: AdminUserSummary) => void;
+  onOpenRebateSettings?: () => void;
 }
 
 interface UserFormState {
@@ -196,6 +197,7 @@ const RECHARGE_PAYMENT_SETTING_KEYS = new Set([
   RECHARGE_BONUS_ENABLED_SETTING_KEY,
   RECHARGE_BONUS_RULES_SETTING_KEY,
 ]);
+const REBATE_LEGACY_SETTING_KEYS = new Set(['recharge_rebate_mode']);
 const MINOR_MONEY_SETTING_KEYS = new Set([
   RECHARGE_MIN_AMOUNT_SETTING_KEY,
   RECHARGE_MAX_AMOUNT_SETTING_KEY,
@@ -321,6 +323,7 @@ const USER_STATUS_FILTER_OPTIONS: Array<{ label: string; value: UserStatusFilter
 export function AccessManagementPage({
   activeModuleKey,
   onDashboardRefresh,
+  onOpenRebateSettings,
   onOpenUserLedger,
   onOpenUserOrders,
 }: AccessManagementPageProps) {
@@ -687,6 +690,7 @@ export function AccessManagementPage({
           registration={registrationForm}
           saving={saving}
           settings={settings}
+          onOpenRebateSettings={onOpenRebateSettings}
           onDraftChange={(key, value) =>
             setSettingDrafts((current) => ({ ...current, [key]: value }))
           }
@@ -1586,6 +1590,7 @@ function SettingsSection({
   lotteries,
   onClearChatHallMessages,
   onDraftChange,
+  onOpenRebateSettings,
   onRegistrationChange,
   onReloadMemoryCache,
   onSaveRegistration,
@@ -1599,6 +1604,7 @@ function SettingsSection({
   lotteries: LotteryKind[];
   onClearChatHallMessages: () => Promise<ClearRecordsResult>;
   onDraftChange: (key: string, value: string) => void;
+  onOpenRebateSettings?: () => void;
   onRegistrationChange: Dispatch<SetStateAction<RegistrationConfig | null>>;
   onReloadMemoryCache: () => Promise<MemoryCacheReloadResult>;
   onSaveRegistration: () => void;
@@ -1642,8 +1648,8 @@ function SettingsSection({
     );
   }), [settingKeyword, settings]);
   const groupedSettings = useMemo(
-    () => settingsGroups(filteredSettings),
-    [filteredSettings],
+    () => settingsGroupsWithRebateShortcut(filteredSettings, settingKeyword),
+    [filteredSettings, settingKeyword],
   );
   const [activeSettingGroup, setActiveSettingGroup] = useState('APP更新');
 
@@ -1784,6 +1790,10 @@ function SettingsSection({
                         (setting) =>
                           !RECHARGE_PAYMENT_SETTING_KEYS.has(setting.key),
                       )
+                  : groupName === '返利设置'
+                    ? items.filter(
+                        (setting) => !REBATE_LEGACY_SETTING_KEYS.has(setting.key),
+                      )
                   : items;
 
               return (
@@ -1844,6 +1854,12 @@ function SettingsSection({
                       />
                     ) : null}
 
+                    {groupName === '返利设置' ? (
+                      <RebateSettingsShortcut
+                        onOpenRebateSettings={onOpenRebateSettings}
+                      />
+                    ) : null}
+
                     {groupName === '注册与安全' ? (
                       <RegistrationSettingsPanel
                         registration={registration}
@@ -1880,6 +1896,43 @@ function PanelTitle({ icon, title }: { icon: ReactNode; title: string }) {
         {icon}
       </div>
       <h2 className="text-base font-semibold text-ink">{title}</h2>
+    </div>
+  );
+}
+
+function RebateSettingsShortcut({
+  onOpenRebateSettings,
+}: {
+  onOpenRebateSettings?: () => void;
+}) {
+  return (
+    <div className="rounded border border-slate-200 bg-slate-50 p-3">
+      <PanelTitle icon={<UserPlus size={18} />} title="代理返利配置入口" />
+      <div className="rounded border border-slate-200 bg-white p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-ink">代理返利策略配置</p>
+            <p className="mt-1 text-sm leading-6 text-slate-500">
+              代理邀请开关、普通用户邀请、返利模式和默认充值返利比例使用
+              “返利管理 / 策略配置” 维护；这里保留入口，避免和普通系统配置混在一起。
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Tag color="teal">代理邀请</Tag>
+              <Tag color="blue">返利模式</Tag>
+              <Tag color="purple">默认充值返利比例</Tag>
+              <Tag color="orange">代理申请审核</Tag>
+            </div>
+          </div>
+          <Button
+            disabled={!onOpenRebateSettings}
+            icon={<UserPlus size={16} />}
+            theme="solid"
+            onClick={onOpenRebateSettings}
+          >
+            打开策略配置
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3084,6 +3137,39 @@ function settingsGroups(
     .map((name) => [name, groups.get(name) ?? []]);
 }
 
+function settingsGroupsWithRebateShortcut(
+  settings: SystemSettingItem[],
+  keyword: string,
+): Array<[string, SystemSettingItem[]]> {
+  const groups = settingsGroups(settings);
+  if (!rebateShortcutMatchesKeyword(keyword)) {
+    return groups;
+  }
+  if (groups.some(([name]) => name === '返利设置')) {
+    return groups;
+  }
+  const nextGroups = [...groups];
+  const basicIndex = nextGroups.findIndex(([name]) => name === '基础设置');
+  const insertIndex = basicIndex >= 0 ? basicIndex : nextGroups.length;
+  nextGroups.splice(insertIndex, 0, ['返利设置', []]);
+  return nextGroups;
+}
+
+function rebateShortcutMatchesKeyword(keyword: string) {
+  const normalized = keyword.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return [
+    '代理返利',
+    '返利设置',
+    '返利管理',
+    '策略配置',
+    'recharge_rebate',
+    'rebate',
+  ].some((item) => item.toLowerCase().includes(normalized));
+}
+
 function draftSettingValue(
   settings: Array<{ key: string; value: string }>,
   drafts: Record<string, string>,
@@ -3127,11 +3213,7 @@ function rechargeBonusRuleDraftsFromSetting(value: string): RechargeBonusRuleDra
             ? record.bonusAmountYuan
             : minorToYuanInput(record.bonusAmountMinor as number | string | undefined);
         return { bonusAmountYuan, thresholdAmountYuan };
-      })
-      .filter(
-        (item) =>
-          item.thresholdAmountYuan.trim() !== '' || item.bonusAmountYuan.trim() !== '',
-      );
+      });
   } catch {
     return [];
   }

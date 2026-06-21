@@ -27,6 +27,8 @@ interface UserRecordFilter {
   username: string;
 }
 
+type RebateTabKey = 'applications' | 'policy' | 'statistics';
+
 const COMMON_NAVIGATION_ORDER = [
   'support',
   'finance',
@@ -53,6 +55,8 @@ export function App() {
   const [activeKey, setActiveKey] = useState('dashboard');
   const [orderUserFilter, setOrderUserFilter] = useState<UserRecordFilter | null>(null);
   const [ledgerUserFilter, setLedgerUserFilter] = useState<UserRecordFilter | null>(null);
+  const [rebateInitialTab, setRebateInitialTab] =
+    useState<RebateTabKey>('statistics');
   const filteredData = useMemo(
     () => (data && session ? filterDashboardByScopes(data, session.scopes) : data),
     [data, session],
@@ -84,6 +88,18 @@ export function App() {
     }
   }, [activeKey, navigationItems]);
 
+  const handleNavigate = (key: string) => {
+    if (key === 'rebate') {
+      setRebateInitialTab('statistics');
+    }
+    setActiveKey(key);
+  };
+
+  const openRebatePolicySettings = () => {
+    setRebateInitialTab('policy');
+    setActiveKey('rebate');
+  };
+
   if (authLoading) {
     return (
       <div className="grid min-h-screen place-items-center bg-panel text-sm text-slate-500">
@@ -108,7 +124,7 @@ export function App() {
       currentSession={session}
       items={navigationItems}
       onLogout={() => void logout()}
-      onNavigate={setActiveKey}
+      onNavigate={handleNavigate}
     >
       {activeKey === 'dashboard' ? (
         <DashboardPage
@@ -161,6 +177,7 @@ export function App() {
             setOrderUserFilter({ userId: user.id, username: user.username });
             setActiveKey('orders');
           }}
+          onOpenRebateSettings={openRebatePolicySettings}
           onDashboardRefresh={refresh}
         />
       ) : isRobotModule(activeKey) ? (
@@ -169,7 +186,10 @@ export function App() {
           onDashboardRefresh={refresh}
         />
       ) : activeKey === 'rebate' ? (
-        <RebateManagementPage onDashboardRefresh={refresh} />
+        <RebateManagementPage
+          initialTab={rebateInitialTab}
+          onDashboardRefresh={refresh}
+        />
       ) : activeKey === 'advertisements' ? (
         <AdvertisementManagementPage
           settings={filteredData?.settings ?? []}
