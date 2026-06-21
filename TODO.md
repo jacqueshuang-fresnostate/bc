@@ -1,5 +1,61 @@
 # TODO
 
+## 2026-06-21 19:55 HKT 聊天大厅发言充值门槛配置
+
+- 完成任务：后台系统设置新增聊天大厅发言最低累计充值金额配置，手机端聊天大厅按该配置展示发言权限提示。
+- 解决问题：此前所有登录用户都可以在聊天大厅发文本、红包和合买计划，后台无法配置“充值达到指定金额后才可发言”的运营规则。
+- 实施内容：新增 `chat_hall_speaking_min_recharge_minor` 系统设置和数据库迁移；后端新增 `GET /api/user/chat-hall/speaking-status`，并在发送文本、红包、合买分享前统一校验发言资格；累计金额只统计正向 `rechargeCredit` 充值本金，不计入赠送彩金、代理返利、红包或手动调账；后台系统设置新增“聊天设置”分组，金额按元编辑；手机端聊天大厅进入页面先读取发言状态，无权限时底部输入区改为灰底提示，不展示输入、表情、红包和合买入口。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、管理后台 `npm run build`、手机端 `pnpm build` 和 `git diff --check` 均通过；管理后台构建仍保留既有大 chunk 提示。
+
+## 2026-06-21 19:41 HKT 手机端 Header 钱包金额隐藏
+
+- 完成任务：手机端所有显示钱包余额的 Header 新增隐藏/显示金额能力。
+- 解决问题：首页、开奖页、合买大厅、全部彩种、个人中心和下注页顶部会直接显示钱包余额，用户在公共场景打开 App 时缺少隐私保护。
+- 实施内容：新增 `walletPrivacy` Pinia store 保存本地隐藏偏好；新增公共 `WalletHeaderAmount` 组件，隐藏时显示 `••••` 并使用眼睛图标切换；首页、开奖页、合买大厅、全部彩种、个人中心和下注页顶部栏统一替换为该组件；前端组件规范和架构说明同步记录后续复用规则。
+- 验证结果：手机端 `pnpm build` 和 `git diff --check` 均通过。
+
+## 2026-06-21 18:56 HKT Android 安装包样式丢失修复
+
+- 完成任务：修复部分 Android 安装包登录页、首页仍然出现裸 HTML 样式的问题，并重新生成 release APK。
+- 解决问题：此前只关闭 CSS 分片后，打包产物仍通过 `/assets/style-*.css` 外链加载主样式；部分 Tauri Android WebView 在自定义协议下会出现 JS 已执行但外链 CSS 没有挂载，导致输入框、按钮和卡片退回默认浏览器样式。
+- 实施内容：手机端 Vite 构建新增 `base='./'`，脚本、图标等资源改为相对路径；新增构建后处理插件，把唯一主 CSS 内联到 `dist/index.html` 的 `<style data-tauri-inline-css>` 并删除冗余 `.css` 资源；前端质量规范和架构说明同步记录 Android WebView 样式加载规则。
+- 验证结果：`cd mobile && pnpm build` 通过；`mobile/dist/index.html` 已包含 `data-tauri-inline-css` 且没有 `rel="stylesheet"`，`mobile/dist/assets` 无 `.css` 文件；`cd mobile/src-tauri && cargo check` 通过；`cd mobile && pnpm tauri:build:app` 已生成 `/Users/huangkunhuang/Public/程序工程目录/复合工程/bc/mobile/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`，`apksigner verify --verbose` 通过 v2 签名校验。
+
+## 2026-06-21 18:25 HKT 手机端代理中心直属下级余额展示
+
+- 完成任务：手机端代理中心直属下级列表新增个人可用余额展示。
+- 解决问题：代理此前只能看到下级注册时间、充值、提现和投注画像，无法直接判断每个直系下级当前账户还有多少余额。
+- 实施内容：后端 `GET /api/user/invitations/summary` 的 `directUsers` 项新增 `availableBalanceMinor` 字段，批量读取资金账户可用余额并默认缺失账户为 0；手机端邀请中心类型同步新增字段，并在直属下级标签中展示“余额 ¥x.xx”；后端接口契约、前端组件规范和架构说明同步记录该字段口径。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_invitation -- --nocapture`、手机端 `pnpm build` 和 `git diff --check` 均通过。
+
+## 2026-06-21 18:52 HKT 后台充值赠送活动配置
+
+- 完成任务：后台系统设置新增用户充值赠送活动配置，支持“每笔充值满 100 元送 5 元、满 500 元送 40 元”这类固定档位活动。
+- 解决问题：此前充值入账只区分本金 `rechargeCredit` 和代理返利 `rechargeRebateCredit`，没有可配置的平台赠送彩金活动；运营无法在后台按单笔充值金额配置赠送规则，用户端充值页也无法提前看到预计赠送金额。
+- 实施内容：后端新增 `RechargeBonusRule`、`recharge_bonus_enabled`、`recharge_bonus_rules` 配置读取和用户端充值配置返回；确认客服直充和彩虹易支付回调时，只在订单首次入账时按最高命中门槛发放 `rechargeBonusCredit` 流水，引用 ID 使用 `recharge-bonus:<充值单号>` 保持幂等；新增迁移写入默认配置并更新资金流水字段中文注释；后台“系统设置 / 充值设置”新增充值赠送活动面板，金额按元编辑、保存为分；后台和手机端资金流水都显示“充值赠送”；手机端充值页展示活动档位和当前金额预计赠送。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml recharge_bonus -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml recharge_repository_applies_bonus_rule_once -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml recharge_ -- --nocapture`、管理后台 `npm run build` 和手机端 `pnpm build` 均通过；管理后台构建仍保留既有大 chunk 提示。
+
+## 2026-06-21 18:06 HKT 手机端注单与合买倍数展示修复
+
+- 完成任务：修复手机端“我的注单”和“我的合买”列表、详情中投注倍数始终显示 1 倍的问题。
+- 解决问题：下注页提交时会把“基础单注金额 × 倍数”合并为 `unitAmountMinor` 发给后端，订单记录接口没有单独 `multiple` 字段；手机端归一化此前直接写死 `multiple=1`。同时未成单合买映射记录后端返回 `stakeCount=0`，手机端无法通过方案总额和注数反推出合买方案倍数。
+- 实施内容：后端未成单合买注单映射改为按玩法展开注码并返回真实 `stakeCount/expandedBets`，保留 `unitAmountMinor` 作为单份金额；手机端订单归一化按当前基础单注 2 元从合并单注金额反推倍数，未成单合买用 `amountMinor / stakeCount` 推导方案倍数，普通注单和已成单合买同步还原“单注金额 + 倍数”展示。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_bet_order -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml unformed_group_buy -- --nocapture`、手机端 `pnpm build` 和 `git diff --check` 均通过；手机端构建仍只生成单个 CSS 包。
+
+## 2026-06-21 17:35 HKT 手机端样式分片兼容修复
+
+- 完成任务：修复部分手机上手机端登录页、首页出现样式半失效的问题。
+- 解决问题：移动端 Vite 默认会把路由页面的 `<style scoped>` 拆成 `LoginView-*.css`、`HomeView-*.css` 等异步 CSS chunk；部分安卓浏览器、低版本 WebView 或企业签名 App 在加载动态页面时可能只执行 JS，没有可靠加载对应 CSS，导致页面内容出现但输入框、按钮、公告和卡片退回接近默认 HTML 样式。
+- 实施内容：手机端 Vite 构建设置 `build.cssCodeSplit=false`，把页面级样式统一打进首屏 CSS 包；前端质量规范新增“手机端样式分片兼容”场景，明确后续移动端构建不能依赖路由级 CSS 分片；架构设计同步记录该兼容策略。
+- 验证结果：`cd mobile && pnpm build` 通过；构建产物只生成 `mobile/dist/assets/style-CVt1ZVQ-.css`，`dist/index.html` 只引用这一份 CSS，未再生成 `LoginView-*.css`、`HomeView-*.css` 等页面级 CSS 分片；`git diff --check` 通过。
+
+## 2026-06-21 15:42 HKT 合买调度晚跑兜底成单与结算修复
+
+- 完成任务：修复合买计划在调度晚于开奖时间执行时仍可能未成单，以及已满单但缺真实投注订单时无法参与结算的问题。
+- 解决问题：此前流单前兜底只扫描 `scheduledAt > now` 的封盘期号；如果调度慢跑到开奖时间之后才进入慢阶段，用户未满合买会直接被退款取消，无法由机器人补满。同时历史或异常边界下 `Filled + orderId=None` 的计划不会自动补建真实订单，后续开奖结算只能看到订单表，导致合买计划看起来“成单不结算”。
+- 实施内容：封盘兜底扫描改为覆盖所有已封盘且尚未开奖的活跃期号，不再用计划开奖时间阻断补单；合买成单保护改为按期号状态和是否已有开奖号码判断，只要期号仍为 `Closed` 且未写入开奖结果就允许补建真实合买订单；流单前兜底新增对已满单但缺订单计划的补建入口，成功后进入本轮开奖和派奖结算；补充调度晚跑仍可满单结算、已满单缺订单自动补建并结算的后端测试。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml scheduler_ -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml`（381 个测试成功）和 `git diff --check` 均通过。
+
 ## 2026-06-21 14:23 HKT 充值确认入账备注弹窗
 
 - 完成任务：后台财务管理的充值订单确认入账改为弹窗确认，并支持填写入账备注。

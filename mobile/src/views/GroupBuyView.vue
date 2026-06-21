@@ -6,6 +6,7 @@ import { useBrandingStore } from '../stores/branding'
 import CachedAvatarImage from '../components/mobile/CachedAvatarImage.vue'
 import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import WalletHeaderAmount from '../components/mobile/WalletHeaderAmount.vue'
 import { fetchGroupBuyDetail } from '../features/group-buy/api'
 import { useGroupBuyHall } from '../features/group-buy/composables/useGroupBuyHall'
 import { useGroupBuyDetail } from '../features/group-buy/composables/useGroupBuyDetail'
@@ -189,10 +190,7 @@ onMounted(async () => {
         />
         <span class="font-headline text-xl font-bold italic tracking-tighter text-red-900">{{ branding.site_name }}</span>
       </div>
-      <div class="flex items-center gap-2 rounded-full bg-stone-50/70 px-4 py-1.5 text-red-800 active:scale-95">
-        <span class="text-sm">钱包</span>
-        <span class="font-headline text-sm font-semibold tracking-tight">¥{{ balance }}</span>
-      </div>
+      <WalletHeaderAmount :balance="balance" />
     </header>
     <van-nav-bar v-else title="我的合买" left-arrow @click-left="activeTab = 'hall'" />
 

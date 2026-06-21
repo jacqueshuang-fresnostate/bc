@@ -101,6 +101,16 @@
 - 跨层联调需要请求 `/api/health` 和 `/api/admin/dashboard`，再打开管理后台确认页面无控制台错误。
 - 未配置 `DATABASE_URL` 的本地启动需要确认 `/api/admin/lotteries` 和 `/api/admin/dashboard` 仍返回种子彩种。
 
+---
+
+## 补充：充值赠送活动契约
+
+- `GET /api/user/recharge/config` 需要返回 `bonusEnabled` 和 `bonusRules`；`bonusRules` 中的 `thresholdAmountMinor`、`bonusAmountMinor` 始终使用分。
+- 后台配置键为 `recharge_bonus_enabled` 与 `recharge_bonus_rules`，前端可按元编辑，但提交给后端的系统设置值必须仍是分单位 JSON。
+- 彩虹易支付回调和后台客服直充确认都必须在充值订单首次变为已入账时处理活动赠送；重复回调或重复确认不得再次发放。
+- 活动赠送资金流水类型为 `rechargeBonusCredit`，代理返利资金流水类型仍为 `rechargeRebateCredit`；代理返利统计只能基于真实充值本金，不得把赠送彩金计入下级充值返利。
+- 后端测试需要覆盖赠送彩金幂等和最高命中档位，前端构建需要覆盖后台设置页和手机端充值页类型契约。
+
 ### 7. Wrong vs Correct
 
 #### 错误
@@ -331,10 +341,13 @@ WebSocket 消息统一使用当前系统事件信封：
 聊天大厅接口：
 
 - `GET /api/user/chat-hall/messages` 返回最近大厅消息，消息字段使用 `camelCase`，按发送时间正序展示，并携带发送人的 `avatarUrl`；历史消息头像为空时后端需要用用户表当前头像兜底。
+- `GET /api/user/chat-hall/speaking-status` 返回当前用户聊天大厅发言资格，字段包含 `canSpeak`、`requiredRechargeMinor`、`currentRechargeMinor`、`missingRechargeMinor` 和中文 `message`。
 - `POST /api/user/chat-hall/messages` 请求体为 `{ "content": "..." }`，后端修剪首尾空白，空内容返回业务错误，超过 500 个字符返回业务错误。
 - `GET /api/user/chat-hall/red-packets/{id}/claims` 返回指定红包的领取进度和领取人列表，字段使用 `camelCase`，`claims` 中包含领取用户名、用户 ID、领取金额和领取时间；红包不存在时返回业务错误，不泄露资金表内部信息。
 - 聊天大厅消息必须写入 `chat_hall_messages` 表；`avatar_url` 保存发送人头像快照，用户更新头像后需要同步刷新该用户历史消息的头像快照。运行期只保留最近 200 条历史，接口返回最近 100 条。
 - 聊天大厅是所有登录用户可进入的公共大厅，不使用客服会话表，不允许把公共大厅消息写入 `support_conversations` 或 `support_messages`。
+- 聊天大厅发言门槛由系统设置 `chat_hall_speaking_min_recharge_minor` 控制，单位为分，`0` 表示不限制；门槛统计只计算当前用户正向 `rechargeCredit` 充值本金流水，不计入 `rechargeBonusCredit` 赠送彩金、`rechargeRebateCredit` 代理返利、红包或手动调账。
+- `POST /api/user/chat-hall/messages`、`POST /api/user/chat-hall/red-packets`、`POST /api/user/chat-hall/group-buy-plans` 必须在保存消息、扣款或广播前统一校验发言资格；未满足门槛时返回 403，并提示“抱歉，暂无发言权限，充值 ¥x 元即可参与群聊”。
 
 ### 4. 校验与错误矩阵
 
@@ -1135,7 +1148,7 @@ await createOrder({
 }
 ```
 
-手机端倍数没有单独后端字段时，前端可以把 `unitAmountMinor` 折算为“单注金额 × 倍数”；后端仍按玩法展开注数计算 `amountMinor`，不能信任前端提交总金额。
+手机端倍数没有单独后端字段时，前端可以把 `unitAmountMinor` 折算为“单注金额 × 倍数”；后端仍按玩法展开注数计算 `amountMinor`，不能信任前端提交总金额。未成单合买映射记录需要额外保证 `stakeCount` 为玩法展开后的真实注数，不能固定返回 `0`，否则手机端无法用 `amountMinor / stakeCount` 反推出方案倍数。
 
 用户注单列表返回的订单详情必须包含 `orderSource`：
 
@@ -1154,6 +1167,7 @@ await createOrder({
 - `orderSource=groupBuy`。
 - `groupBuyPendingPlan=true`。
 - `status` 在手机端展示为“合买认购中”，结果展示为“未成单”。
+- `stakeCount` 必须使用 `numbers + ruleCode` 展开后的真实注数，`expandedBets` 必须返回展开注码；`unitAmountMinor` 继续表示单份金额，`amountMinor` 继续表示方案总金额。
 - `createdAt` 使用当前用户最后一次认购时间参与注单时间线排序。
 - 金额展示必须使用 `participationAmountMinor`，数量展示必须使用 `participationShareCount`。
 
@@ -3250,18 +3264,20 @@ await createInvitation({
 9. `numbers` 是当前合买投注内容，后端必须通过 `group_buy_flow` 转换为当前订单引擎的 `PlaySelection`；支持直选位置 `1|2|3`、单注逗号 `1,2,3`、组合 `1,2,3`、胆拖 `1|2,3,4` 和大小单双 `tens:big|ones:odd` / 中文“大、小、单、双”。
 10. 发起或参与合买扣款成功后必须写入 `ledger_entries.kind=groupBuyDebit`，并通过实时事件推送余额变化。
 11. 当 `filledAmountMinor == totalAmountMinor` 时，后端必须立即创建一张真实投注订单，并通过 `group_buy_plans.order_id` 关联；该真实订单不能再次执行普通订单扣款，合买参与扣款才是资金来源。
-12. 封盘时仍未满员的 `draft/open` 计划必须自动取消，并按参与记录写入幂等的 `groupBuyRefund` 资金流水。
-13. 开奖结算时，如果中奖订单属于合买计划，派奖必须按参与金额占计划总金额的比例拆给参与人；除最后一名参与人外向下取整，最后一名承接余数，随后把计划标记为 `settled`。
-14. 后台计划列表不传 `page/pageSize` 时允许返回全量列表，用于内部调试；管理后台页面必须显式传入分页参数。
-15. 用户端 `/api/user/group-buy/plans`、`/api/user/group-buy/plans/{id}` 和 `/api/user/group-buy/my` 返回的 `initiatorDisplay` 必须是脱敏展示名：普通用户和机器人计划都只保留首尾字符，中间用 `*` 替代；后台合买管理、资金流水和审计仍保留真实 `initiatorUserId/initiatorUsername`。
-16. 用户端合买计划响应必须返回 `participantMinAmountMinor`，手机端认购金额用它和 `shareAmountMinor` 共同校正最小可认购金额。
-17. 参与人最低认购金额适用于普通追加认购；如果当前剩余金额已经低于该最低值，允许用户按剩余金额一次性全包尾单。
-18. 新增参与记录后如果仍未满单，剩余金额不能小于参与人最低认购金额；否则该计划会留下无人可认购的小尾巴，后端必须拒绝本次认购并提示用户增加金额或选择全包。
-19. 后台 `GET /api/admin/group-buy/plans`、用户端 `/api/user/group-buy/plans` 和 `/api/user/group-buy/my` 都必须由后端仓储统一按 `issue` 倒序返回；同一期多条计划按 `createdAt`、计划 ID 倒序稳定排列，前端不得改成升序。
-20. 后台 `GET /api/admin/group-buy/plans` 不传 `includeRobotData` 时等同于 `false`，默认过滤 `initiatorUserId` 为系统合买机器人账户的计划；传 `includeRobotData=true` 时才展示机器人发起计划。机器人作为参与人补单的普通用户发起计划不能被过滤掉。
-21. 后台计划列表摘要必须返回 `createdAt`，后台合买计划列表需要直接显示该创建时间，方便运营核对计划生成顺序。
-22. 用户端 `/api/user/group-buy/plans`、`/api/user/group-buy/plans/{id}` 和 `/api/user/group-buy/my` 返回的 `initiatorAvatarUrl` 只面向普通用户发起计划，从当前用户资料按 `initiatorUserId` 动态读取；机器人计划必须返回空字符串，避免暴露机器人账号头像。
-23. 用户端 `/api/user/group-buy/plans/{id}` 返回 `participants` 参与人摘要，字段包含 `id`、脱敏 `displayName`、`amountMinor`、`shareCount`、`isMine` 和 `createdAt`；用户端不得返回完整用户名、用户 ID 或机器人账号给普通用户页面。
+12. 封盘时仍未满员的 `draft/open` 计划不能立刻自动取消；调度慢阶段必须先对已封盘但尚未写入开奖结果的用户合买计划执行兜底补满，兜底失败后才允许取消并按参与记录写入幂等的 `groupBuyRefund` 资金流水。
+13. 如果调度晚于计划开奖时间执行，但期号仍为 `closed` 且 `drawNumber` 为空，仍视为“开奖前业务修复窗口”，允许补满用户合买和为已满单计划补建真实合买订单；已经写入开奖结果后禁止事后补单或补建订单。
+14. `filled` 且 `orderId` 为空的非机器人合买计划必须在流单退款和开奖结算前补建真实投注订单。该修复不额外扣款，只回写 `group_buy_plans.order_id`，因为参与人的认购扣款已经发生在发起或参与阶段。
+15. 开奖结算时，如果中奖订单属于合买计划，派奖必须按参与金额占计划总金额的比例拆给参与人；除最后一名参与人外向下取整，最后一名承接余数，随后把计划标记为 `settled`。
+16. 后台计划列表不传 `page/pageSize` 时允许返回全量列表，用于内部调试；管理后台页面必须显式传入分页参数。
+17. 用户端 `/api/user/group-buy/plans`、`/api/user/group-buy/plans/{id}` 和 `/api/user/group-buy/my` 返回的 `initiatorDisplay` 必须是脱敏展示名：普通用户和机器人计划都只保留首尾字符，中间用 `*` 替代；后台合买管理、资金流水和审计仍保留真实 `initiatorUserId/initiatorUsername`。
+18. 用户端合买计划响应必须返回 `participantMinAmountMinor`，手机端认购金额用它和 `shareAmountMinor` 共同校正最小可认购金额。
+19. 参与人最低认购金额适用于普通追加认购；如果当前剩余金额已经低于该最低值，允许用户按剩余金额一次性全包尾单。
+20. 新增参与记录后如果仍未满单，剩余金额不能小于参与人最低认购金额；否则该计划会留下无人可认购的小尾巴，后端必须拒绝本次认购并提示用户增加金额或选择全包。
+21. 后台 `GET /api/admin/group-buy/plans`、用户端 `/api/user/group-buy/plans` 和 `/api/user/group-buy/my` 都必须由后端仓储统一按 `issue` 倒序返回；同一期多条计划按 `createdAt`、计划 ID 倒序稳定排列，前端不得改成升序。
+22. 后台 `GET /api/admin/group-buy/plans` 不传 `includeRobotData` 时等同于 `false`，默认过滤 `initiatorUserId` 为系统合买机器人账户的计划；传 `includeRobotData=true` 时才展示机器人发起计划。机器人作为参与人补单的普通用户发起计划不能被过滤掉。
+23. 后台计划列表摘要必须返回 `createdAt`，后台合买计划列表需要直接显示该创建时间，方便运营核对计划生成顺序。
+24. 用户端 `/api/user/group-buy/plans`、`/api/user/group-buy/plans/{id}` 和 `/api/user/group-buy/my` 返回的 `initiatorAvatarUrl` 只面向普通用户发起计划，从当前用户资料按 `initiatorUserId` 动态读取；机器人计划必须返回空字符串，避免暴露机器人账号头像。
+25. 用户端 `/api/user/group-buy/plans/{id}` 返回 `participants` 参与人摘要，字段包含 `id`、脱敏 `displayName`、`amountMinor`、`shareCount`、`isMine` 和 `createdAt`；用户端不得返回完整用户名、用户 ID 或机器人账号给普通用户页面。
 
 ### 4. 校验与错误矩阵
 
@@ -3294,6 +3310,9 @@ await createInvitation({
 | 参与金额超过剩余可认购金额 | HTTP 400，返回超额参与错误 |
 | 计划不是 `draft` 或 `open` | HTTP 400，返回计划不可参与 |
 | 满员计划关联真实订单失败 | 回滚新建计划或新增参与记录，已创建的未入账订单必须移除 |
+| 调度晚跑且期号仍为 `closed`、`drawNumber` 为空 | 先兜底补满或补建订单，再开奖结算 |
+| 期号已经写入开奖结果后才发现未满合买 | 不允许事后补单，保留失败日志或按终态规则处理 |
+| `filled` 计划缺少 `orderId` 且期号尚未开奖 | 补建真实合买订单并回写 `orderId`，不重复扣款 |
 | 后台取消已开奖或已取消的合买真实订单 | HTTP 400，返回已开奖或已取消的合买订单不能取消 |
 | 后台计划列表 `page <= 0` 或缺失 | 使用第 1 页 |
 | 后台计划列表 `pageSize <= 0` 或缺失 | 使用默认每页 20 条 |
@@ -3309,6 +3328,8 @@ await createInvitation({
 - Good：计划剩余 500 分且参与人最低认购 1000 分时，用户认购 500 分可以直接全包满单。
 - Good：计划剩余 1500 分且参与人最低认购 1000 分时，用户认购 1000 分会留下 500 分尾单，后端拒绝并要求增加金额或全包。
 - Good：自动化封盘时取消未满员计划，按每条参与记录退回认购金额，重复执行不会重复退款。
+- Good：调度晚于计划开奖时间执行，但期号还没有写入开奖结果时，用户合买会先被机器人补满并创建真实订单，再进入同一轮开奖结算。
+- Good：历史边界里 `filled + orderId=null` 的用户合买计划，在开奖前被补建真实订单并回写 `orderId`，随后可以正常派奖并标记为 `settled`。
 - Good：开奖结算时识别合买订单，中奖金额按参与金额比例拆给参与用户，普通订单仍按订单用户派奖。
 - Good：后台合买管理按 `page/pageSize` 请求计划列表，响应 `items` 只包含当前页，`totalCount` 返回全部计划数。
 - Good：后台和手机端合买计划列表都按期号倒序展示，分页前已经完成排序，最新期号优先出现在第一页。
@@ -3321,6 +3342,8 @@ await createInvitation({
 - Bad：直接把 dashboard 的 `groupBuyPlans` 写成静态函数，页面创建计划后首页摘要不会同步。
 - Bad：用户端继续请求旧 `/group-buys/*` 路径，当前后端没有该旧系统接口。
 - Bad：满单后创建普通订单并再次调用 `debit_order`；这会导致用户既被合买认购扣款，又被订单扣款。
+- Bad：流单退款只看 `saleClosedAt <= now` 就直接取消未满计划；这会在调度晚跑时绕过机器人兜底，导致用户合买“不成单”。
+- Bad：已满单计划缺少 `orderId` 时只等待订单结算；结算入口只扫描订单表，这类计划永远不会被结算。
 - Bad：用户端合买列表直接展示 `initiatorUsername`、机器人账号或完整昵称，导致用户可以识别真实发起人或机器人身份。
 
 ### 6. 必要测试
@@ -3333,6 +3356,8 @@ await createInvitation({
 - 后端需要覆盖低于参与人最低认购金额的最后尾单可被全包，以及普通认购不能留下低于最低认购金额的尾单。
 - 后端需要覆盖合买扣款写入 `groupBuyDebit` 且相同参与记录不会重复扣款。
 - 后端需要覆盖满单创建真实订单并回写 `orderId`。
+- 后端需要覆盖调度晚于计划开奖时间执行时，未满用户合买仍会在开奖前被补满、创建订单并完成本轮结算。
+- 后端需要覆盖 `filled + orderId=null` 的合买计划会在开奖前补建真实订单并参与本轮结算。
 - 后端需要覆盖封盘流单退款写入 `groupBuyRefund` 且幂等。
 - 后端需要覆盖合买中奖按参与人份额拆分派奖。
 - 后端需要覆盖后台合买计划分页响应的当前页切片、总数和总页数。
@@ -4906,6 +4931,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
   "status": "active",
   "inviteStatus": "active",
   "rebateEnabled": true,
+  "availableBalanceMinor": 12000,
   "totalDepositMinor": 10000,
   "totalWithdrawalMinor": 2500,
   "totalBetAmountMinor": 12800,
@@ -4952,6 +4978,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 - `latestBet` 返回直属用户最近一笔普通下注或合买认购；没有投注时为 `null`，手机端必须展示“暂无投注记录”而不是报错。
 - 同一直属用户同时存在两类来源时，后台邀请记录优先，因为它包含人工维护的 `inviteStatus`、`rebateEnabled` 和 `createdAt`。
 - 直属用户 `registeredAt` 固定表示下级账号注册时间，来自用户表 `createdAt`；`createdAt` 继续表示邀请关系创建时间，注册绑定代理但没有邀请记录时可为空，手机端展示注册时间时必须优先使用 `registeredAt`。
+- 直属用户 `availableBalanceMinor` 固定来自资金账户当前可用余额，不能用充值、提现或投注流水推算；没有资金账户时按 `0` 返回。
 - `totalDirectDepositMinor` 和直属用户 `totalDepositMinor` 只统计正向 `rechargeCredit` 资金流水。
 - 直属用户 `totalWithdrawalMinor` 只统计该用户已通过提现订单的正向提现金额，不包含待审核、驳回、取消或异常负数金额。
 - `totalPaidCommissionMinor` 只统计当前代理自己的正向 `rechargeRebateCredit` 资金流水，不能用直属充值金额推算或伪造返利金额。
@@ -4990,12 +5017,13 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 ### 1. 范围 / 触发条件
 
 - 触发条件：手机端公共聊天大厅需要发送普通文本、红包消息，或把本人参与的合买计划分享给所有在线会员。
-- 范围：`/api/user/chat-hall/messages`、`/api/user/chat-hall/red-packets`、`/api/user/chat-hall/group-buy-plans`、聊天大厅数据库表、资金账户流水、手机端 WebSocket 消息归一化。
+- 范围：`/api/user/chat-hall/messages`、`/api/user/chat-hall/speaking-status`、`/api/user/chat-hall/red-packets`、`/api/user/chat-hall/group-buy-plans`、聊天大厅数据库表、资金账户流水、手机端 WebSocket 消息归一化。
 - 聊天大厅是公开大厅，不属于客服会话；红包收发是资金业务，必须与聊天消息持久化在同一事务内完成。
 
 ### 2. 签名
 
 - 拉取大厅消息：`GET /api/user/chat-hall/messages`
+- 读取发言资格：`GET /api/user/chat-hall/speaking-status`
 - 发送文本消息：`POST /api/user/chat-hall/messages`
 - 发送红包：`POST /api/user/chat-hall/red-packets`
 - 领取红包：`POST /api/user/chat-hall/red-packets/{id}/claim`
@@ -5004,6 +5032,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 - 实时事件：`chat_hall.message_created`
 - 数据表：`chat_hall_messages`、`chat_hall_red_packets`、`chat_hall_red_packet_claims`
 - 资金流水类型：`redPacketDebit`、`redPacketCredit`
+- 系统设置：`chat_hall_speaking_min_recharge_minor`
 
 ### 3. 契约
 
@@ -5027,6 +5056,12 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 - `text`：普通文本，`payload=null`。
 - `redPacket`：红包卡片，`payload` 包含 `redPacketId`、`amountMinor`、`claimCount`、`claimedCount`、`remainingAmountMinor`、`greeting`、`claims`。
 - `groupBuyPlan`：合买计划卡片，`payload` 包含 `planId`、`lotteryId`、`lotteryName`、`issue`、`playName`、`totalShares`、`soldShares`、`progressPercent`、`initiatorName`、`status`。
+
+聊天大厅发言资格：
+
+- 后台系统设置 `chat_hall_speaking_min_recharge_minor` 使用分作为存储单位，`0` 表示所有登录用户都可发言。
+- `GET /api/user/chat-hall/speaking-status` 按当前用户正向 `rechargeCredit` 本金流水累计金额判断资格，并返回 `canSpeak`、`requiredRechargeMinor`、`currentRechargeMinor`、`missingRechargeMinor` 和中文 `message`。
+- 发送文本、红包和合买分享都必须在业务执行前调用同一发言资格守卫；门槛不足时不扣款、不保存消息、不广播实时事件。
 
 发送红包请求体：
 

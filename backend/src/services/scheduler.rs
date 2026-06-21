@@ -1594,6 +1594,7 @@ mod tests {
             draw::{CreateDrawIssueRequest, DrawIssueStatus},
             group_buy::{CreateGroupBuyPlanRequest, GroupBuyPlanStatus},
             lottery::{DrawMode, DrawSchedule},
+            order::OrderStatus,
         },
         services::{
             access::AccessRepository,
@@ -1990,6 +1991,188 @@ mod tests {
             .iter()
             .any(|filled| filled.id == plan.id && filled.order_id.is_some()));
         assert!(run.automation_run.ledger_entries.is_empty());
+    }
+
+    /// 验证调度器晚于开奖时间执行时，仍会先补满封盘用户合买再开奖结算。
+    #[tokio::test]
+    async fn scheduler_late_run_force_fills_group_buy_before_draw_settlement() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "ssc60").await;
+        let mut lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.group_buy.enabled = true;
+        lotteries
+            .update("ssc60", lottery.clone())
+            .await
+            .expect("lottery group buy can be enabled");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
+        let users = access.snapshot().await.expect("access can load").users;
+        let config = enabled_config(1);
+        let issue = draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "GROUPBUY20260602202000".to_string(),
+                    scheduled_at: "2026-06-02 20:20:00".to_string(),
+                    sale_closed_at: "2026-06-02 20:19:30".to_string(),
+                },
+            )
+            .await
+            .expect("draw issue can be created");
+        draws.close(&issue.id).await.expect("issue can be closed");
+        let plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-USER-SCHEDULER-LATE-GUARD".to_string(),
+                    lottery_id: lottery.id.clone(),
+                    issue: issue.issue.clone(),
+                    rule_code: "fiveFrontDirect".to_string(),
+                    title: "用户调度晚跑兜底合买".to_string(),
+                    numbers: "1|2|3".to_string(),
+                    initiator_user_id: "U10001".to_string(),
+                    total_amount_minor: 5_000,
+                    initiator_amount_minor: 1_000,
+                    note: "调度晚跑流单前兜底测试".to_string(),
+                },
+                std::slice::from_ref(&lottery),
+                &users,
+            )
+            .await
+            .expect("user group buy plan can be created");
+        finance
+            .debit_group_buy(
+                &plan.initiator_user_id,
+                plan.filled_amount_minor,
+                "G-USER-SCHEDULER-LATE-GUARD-P001",
+                &plan.id,
+            )
+            .await
+            .expect("initiator group buy debit can be written");
+
+        let run = run_draw_scheduler_once(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &robots,
+            &access,
+            &config,
+            "2026-06-02 20:20:05".to_string(),
+        )
+        .await
+        .expect("late scheduler can fill, draw and settle group buy");
+        let stored_issue = draws.get(&issue.id).await.expect("issue exists");
+        let stored_plan = group_buys.get(&plan.id).await.expect("plan exists");
+        let order_id = stored_plan.order_id.as_deref().expect("order is attached");
+        let order = orders.get(order_id).await.expect("order exists");
+
+        assert_eq!(stored_issue.status, DrawIssueStatus::Drawn);
+        assert_eq!(stored_plan.status, GroupBuyPlanStatus::Settled);
+        assert_ne!(order.status, OrderStatus::PendingDraw);
+        assert_eq!(run.automation_run.settlement_runs.len(), 1);
+        assert!(run
+            .robot_run
+            .filled_plans
+            .iter()
+            .any(|filled| filled.id == plan.id && filled.order_id.is_some()));
+    }
+
+    /// 验证已满单但缺少真实订单的合买计划，会在开奖前补建订单并参与本轮结算。
+    #[tokio::test]
+    async fn scheduler_attaches_missing_order_for_filled_group_buy_before_settlement() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "ssc60").await;
+        let mut lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.group_buy.enabled = true;
+        lotteries
+            .update("ssc60", lottery.clone())
+            .await
+            .expect("lottery group buy can be enabled");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
+        let users = access.snapshot().await.expect("access can load").users;
+        let config = enabled_config(1);
+        let issue = draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "GROUPBUY20260602203000".to_string(),
+                    scheduled_at: "2026-06-02 20:30:00".to_string(),
+                    sale_closed_at: "2026-06-02 20:29:30".to_string(),
+                },
+            )
+            .await
+            .expect("draw issue can be created");
+        draws.close(&issue.id).await.expect("issue can be closed");
+        let plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-USER-SCHEDULER-FILLED-NO-ORDER".to_string(),
+                    lottery_id: lottery.id.clone(),
+                    issue: issue.issue.clone(),
+                    rule_code: "fiveFrontDirect".to_string(),
+                    title: "用户已满单缺订单合买".to_string(),
+                    numbers: "1|2|3".to_string(),
+                    initiator_user_id: "U10001".to_string(),
+                    total_amount_minor: 5_000,
+                    initiator_amount_minor: 5_000,
+                    note: "已满单补建订单测试".to_string(),
+                },
+                std::slice::from_ref(&lottery),
+                &users,
+            )
+            .await
+            .expect("filled group buy plan can be created");
+        assert_eq!(plan.status, GroupBuyPlanStatus::Filled);
+        assert!(plan.order_id.is_none());
+        finance
+            .debit_group_buy(
+                &plan.initiator_user_id,
+                plan.filled_amount_minor,
+                "G-USER-SCHEDULER-FILLED-NO-ORDER-P001",
+                &plan.id,
+            )
+            .await
+            .expect("initiator group buy debit can be written");
+
+        let run = run_draw_scheduler_once(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &robots,
+            &access,
+            &config,
+            "2026-06-02 20:30:05".to_string(),
+        )
+        .await
+        .expect("scheduler can attach missing group buy order before settlement");
+        let stored_issue = draws.get(&issue.id).await.expect("issue exists");
+        let stored_plan = group_buys.get(&plan.id).await.expect("plan exists");
+        let order_id = stored_plan.order_id.as_deref().expect("order is attached");
+        let order = orders.get(order_id).await.expect("order exists");
+
+        assert_eq!(stored_issue.status, DrawIssueStatus::Drawn);
+        assert_eq!(stored_plan.status, GroupBuyPlanStatus::Settled);
+        assert_ne!(order.status, OrderStatus::PendingDraw);
+        assert_eq!(run.automation_run.settlement_runs.len(), 1);
+        assert!(run
+            .robot_run
+            .created_orders
+            .iter()
+            .any(|created_order| created_order.id == order_id));
     }
     /// 验证调度器先推送新期开奖事件再推送开奖结果。
     #[tokio::test]

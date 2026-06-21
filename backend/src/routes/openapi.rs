@@ -437,7 +437,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/recharge-orders/{id}/confirm",
         "财务管理",
         "确认客服直充入账",
-        "后台确认客服直充订单已收款，可填写外部交易号和入账备注，写入充值流水、增加用户余额，并尝试给符合条件的上级代理发放充值返利。",
+        "后台确认客服直充订单已收款，可填写外部交易号和入账备注，写入充值流水、增加用户余额，按充值赠送活动配置补送彩金，并尝试给符合条件的上级代理发放充值返利。",
         AuthMode::Admin,
         RequestBodyKind::Json,
     ),
@@ -1459,6 +1459,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::None,
     ),
     doc(
+        "get",
+        "/user/chat-hall/speaking-status",
+        "用户端聊天大厅",
+        "聊天大厅发言状态",
+        "返回当前用户是否满足后台配置的聊天大厅发言累计充值门槛，供手机端提前禁用输入栏。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
         "post",
         "/user/chat-hall/messages",
         "用户端聊天大厅",
@@ -1535,7 +1544,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/user/recharge/epay/notify",
         "充值回调",
         "彩虹易支付通知",
-        "彩虹易支付 GET 异步通知入口，验签成功后充值入账，并尝试给符合条件的上级代理发放充值返利，成功时返回裸 success。",
+        "彩虹易支付 GET 异步通知入口，验签成功后充值入账，按充值赠送活动配置补送彩金，并尝试给符合条件的上级代理发放充值返利，成功时返回裸 success。",
         AuthMode::None,
         RequestBodyKind::None,
     ),
@@ -1544,7 +1553,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/user/recharge/epay/notify",
         "充值回调",
         "彩虹易支付表单通知",
-        "彩虹易支付 POST 表单通知入口，验签成功后充值入账，并尝试给符合条件的上级代理发放充值返利，成功时返回裸 success。",
+        "彩虹易支付 POST 表单通知入口，验签成功后充值入账，按充值赠送活动配置补送彩金，并尝试给符合条件的上级代理发放充值返利，成功时返回裸 success。",
         AuthMode::None,
         RequestBodyKind::Form,
     ),
@@ -2089,6 +2098,7 @@ mod tests {
         assert!(document["paths"]["/user/avatar/upload"]["post"].is_object());
         assert!(document["paths"]["/user/realtime"]["get"].is_object());
         assert!(document["paths"]["/user/chat-hall/messages"]["get"].is_object());
+        assert!(document["paths"]["/user/chat-hall/speaking-status"]["get"].is_object());
         assert!(document["paths"]["/user/chat-hall/messages"]["post"].is_object());
         assert!(document["paths"]["/user/chat-hall/red-packets"]["post"].is_object());
         assert!(document["paths"]["/user/chat-hall/red-packets/{id}/claim"]["post"].is_object());

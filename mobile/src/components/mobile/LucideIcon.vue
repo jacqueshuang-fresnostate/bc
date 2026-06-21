@@ -12,6 +12,8 @@ import {
   Grid2X2,
   Headset,
   HelpCircle,
+  Eye,
+  EyeOff,
   Landmark,
   LogOut,
   MessageCircle,
@@ -70,6 +72,8 @@ const icons = {
   speed: Gauge,
   star: Star,
   support_agent: Headset,
+  visibility: Eye,
+  visibility_off: EyeOff,
 } as const
 
 const fallbackIcon = CirclePlus

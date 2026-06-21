@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { fetchLotteryGroups } from '../api/lottery'
 import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
+import WalletHeaderAmount from '../components/mobile/WalletHeaderAmount.vue'
 import { useBrandingStore } from '../stores/branding'
 import { useMobileUserDataStore } from '../stores/mobileUserData'
 
@@ -142,10 +143,7 @@ onMounted(() => {
         />
         <span class="font-headline text-xl font-bold italic tracking-tighter text-red-900">{{ branding.site_name }}</span>
       </div>
-      <div class="flex items-center gap-2 rounded-full bg-stone-50/70 px-4 py-1.5 text-red-800 active:scale-95">
-        <span class="text-sm">钱包</span>
-        <span class="font-headline text-sm font-semibold tracking-tight">¥{{ balance }}</span>
-      </div>
+      <WalletHeaderAmount :balance="balance" />
     </header>
 
     <main class="mobile-safe-main-top mx-auto w-full max-w-2xl space-y-6 px-4 pb-28">

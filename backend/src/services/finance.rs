@@ -104,6 +104,22 @@ impl FinanceRepository {
             .map(|store| store.ledger_entries())
     }
 
+    /// 返回指定用户真实充值本金累计金额，只统计正向 `rechargeCredit` 流水。
+    pub async fn total_recharge_credit_minor(&self, user_id: &str) -> ApiResult<i64> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_recharge_credit_total_minor(persistence, user_id).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .recharge_credit_total_minor_for_user(user_id)
+    }
+
     /// 一键清除资金流水历史；只清除审计列表，不回滚账户余额也不重置流水序号。
     pub async fn clear_ledger_entries(&self) -> ApiResult<usize> {
         let (deleted_count, snapshot) = {
@@ -803,6 +819,26 @@ async fn query_ledger_entry_kind_page(
     Ok(ListPage::new(items, resolved))
 }
 
+/// 数据库模式下汇总指定用户真实充值本金，供聊天大厅发言门槛等资格判断使用。
+async fn query_recharge_credit_total_minor(
+    database: &BusinessDatabase,
+    user_id: &str,
+) -> ApiResult<i64> {
+    let kind = enum_to_string(&LedgerEntryKind::RechargeCredit)?;
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(amount_minor), 0)::BIGINT
+         FROM ledger_entries
+         WHERE user_id = $1
+           AND kind = $2
+           AND amount_minor > 0",
+    )
+    .bind(user_id)
+    .bind(kind)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户累计充值金额读取失败".to_string()))
+}
+
 /// 把流水类型转换为数据库枚举字符串。
 fn ledger_entry_kind_names(kinds: &[LedgerEntryKind]) -> ApiResult<Vec<String>> {
     kinds.iter().map(enum_to_string).collect()
@@ -1009,6 +1045,22 @@ impl FinanceStore {
             .cloned()
             .rev()
             .collect()
+    }
+
+    /// 统计指定用户正向充值本金流水，赠送彩金和代理返利都不计入充值门槛。
+    fn recharge_credit_total_minor_for_user(&self, user_id: &str) -> ApiResult<i64> {
+        self.ledger_entries
+            .iter()
+            .filter(|entry| {
+                entry.user_id == user_id
+                    && matches!(entry.kind, LedgerEntryKind::RechargeCredit)
+                    && entry.amount_minor > 0
+            })
+            .try_fold(0_i64, |total, entry| {
+                total
+                    .checked_add(entry.amount_minor)
+                    .ok_or_else(|| ApiError::Internal("用户累计充值金额溢出".to_string()))
+            })
     }
 
     /// 校验用户可用余额是否足够扣款。
@@ -1301,6 +1353,39 @@ impl FinanceStore {
             amount_minor,
             Some(recharge_order_id.to_string()),
             format!("用户充值入账：{recharge_order_id}"),
+        )
+    }
+
+    /// 处理充值赠送活动入账，引用 ID 绑定充值单，避免重复回调导致重复赠送。
+    pub(crate) fn credit_recharge_bonus(
+        &mut self,
+        user_id: &str,
+        bonus_amount_minor: i64,
+        recharge_order_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let user_id = user_id.trim();
+        let recharge_order_id = recharge_order_id.trim();
+        if bonus_amount_minor <= 0 {
+            return Err(ApiError::BadRequest("充值赠送金额必须大于 0".to_string()));
+        }
+        if recharge_order_id.is_empty() {
+            return Err(ApiError::BadRequest("充值订单 ID 不能为空".to_string()));
+        }
+
+        let reference_id = recharge_bonus_reference_id(recharge_order_id);
+        if let Some(entry) =
+            self.reference_entry(&LedgerEntryKind::RechargeBonusCredit, &reference_id)
+        {
+            return Ok(entry);
+        }
+
+        self.account_or_create(user_id)?;
+        self.apply_available_delta(
+            user_id,
+            LedgerEntryKind::RechargeBonusCredit,
+            bonus_amount_minor,
+            Some(reference_id),
+            format!("充值活动赠送彩金：订单 {recharge_order_id}"),
         )
     }
 
@@ -1777,6 +1862,11 @@ fn recharge_rebate_reference_id(recharge_order_id: &str) -> String {
     format!("recharge-rebate:{recharge_order_id}")
 }
 
+/// 生成充值赠送流水的业务引用 ID，用于重复回调时识别同一笔活动赠送彩金。
+fn recharge_bonus_reference_id(recharge_order_id: &str) -> String {
+    format!("recharge-bonus:{recharge_order_id}")
+}
+
 /// 从已有资金流水编号恢复最大序号，避免运行时序号落后导致新流水主键重复。
 fn next_sequence_from_ledger_entries(entries: &[LedgerEntry]) -> u64 {
     entries
@@ -2109,6 +2199,29 @@ mod tests {
         assert_eq!(entry.kind, LedgerEntryKind::RechargeCredit);
         assert_eq!(entry.amount_minor, 1_500);
         assert_eq!(account.available_balance_minor, 13_500);
+    }
+
+    #[test]
+    /// 充值赠送活动会给充值用户入账，并按充值单保持幂等。
+    fn store_credits_recharge_bonus_once() {
+        let mut store = FinanceStore::seeded();
+
+        let entry = store
+            .credit_recharge_bonus("U10001", 500, "R000000000001")
+            .expect("recharge bonus can be credited");
+        let repeated = store
+            .credit_recharge_bonus("U10001", 500, "R000000000001")
+            .expect("recharge bonus is idempotent");
+        let account = store.account("U10001").expect("account exists");
+
+        assert_eq!(entry.id, repeated.id);
+        assert_eq!(entry.kind, LedgerEntryKind::RechargeBonusCredit);
+        assert_eq!(entry.amount_minor, 500);
+        assert_eq!(
+            entry.reference_id.as_deref(),
+            Some("recharge-bonus:R000000000001")
+        );
+        assert_eq!(account.available_balance_minor, 12_500);
     }
 
     #[test]

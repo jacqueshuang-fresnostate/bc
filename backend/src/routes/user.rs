@@ -24,8 +24,9 @@ use crate::{
     },
     domain::chat_hall::{
         ChatHallGroupBuyPlanPayload, ChatHallMessage, ChatHallRedPacketClaimsResponse,
-        ClaimChatHallRedPacketResponse, CreateChatHallMessageRequest,
-        CreateChatHallRedPacketRequest, ShareChatHallGroupBuyPlanRequest,
+        ChatHallSpeakingStatusResponse, ClaimChatHallRedPacketResponse,
+        CreateChatHallMessageRequest, CreateChatHallRedPacketRequest,
+        ShareChatHallGroupBuyPlanRequest,
     },
     domain::draw::DrawIssueStatus,
     domain::finance::{FinancialAccountSummary, LedgerEntry, LedgerEntryKind},
@@ -80,7 +81,7 @@ use crate::{
         mobile_bet::build_mobile_bet_page_config,
         order::validate_draw_issue_accepts_order,
         pagination::PageRequest,
-        play_rules::play_rule_summaries,
+        play_rules::{expanded_bets_for_rule, play_rule_summaries},
         realtime::{
             audience_matches, balance_changed_event, chat_hall_message_created_event,
             heartbeat_event, order_changed_event, recharge_changed_event,
@@ -94,6 +95,7 @@ use crate::{
 
 const MAX_USER_BET_BATCH_SIZE: usize = 50;
 const REALTIME_HEARTBEAT_SECONDS: u64 = 30;
+const CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY: &str = "chat_hall_speaking_min_recharge_minor";
 const ROBOT_GROUP_BUY_PLAN_PREFIX: &str = "G-ROBOT-";
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const ROBOT_GROUP_BUY_NICKNAME_BASES: &[&str] = &[
@@ -203,6 +205,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/chat-hall/messages",
             get(list_chat_hall_messages).post(send_chat_hall_message),
+        )
+        .route(
+            "/chat-hall/speaking-status",
+            get(get_chat_hall_speaking_status),
         )
         .route("/chat-hall/red-packets", post(send_chat_hall_red_packet))
         .route(
@@ -919,11 +925,20 @@ async fn get_user_invitation_summary(
             &invite_records,
             can_invite,
         );
+        let direct_user_ids = candidates
+            .iter()
+            .map(|candidate| candidate.user.id.clone())
+            .collect::<Vec<_>>();
+        let balance_by_user_id = direct_user_available_balances(&state, &direct_user_ids).await?;
         let recharge_totals = direct_user_recharge_totals(&state).await?;
         let withdrawal_totals = direct_user_withdrawal_totals(&state).await?;
         let mut bet_profiles = direct_user_bet_profiles(&state).await?;
         let mut direct_users = Vec::with_capacity(candidates.len());
         for candidate in candidates {
+            let available_balance_minor = balance_by_user_id
+                .get(&candidate.user.id)
+                .copied()
+                .unwrap_or_default();
             let total_deposit_minor = recharge_totals
                 .get(&candidate.user.id)
                 .copied()
@@ -941,6 +956,7 @@ async fn get_user_invitation_summary(
                 status: candidate.user.status.clone(),
                 invite_status: candidate.invite_status,
                 rebate_enabled: candidate.rebate_enabled,
+                available_balance_minor,
                 total_deposit_minor,
                 total_withdrawal_minor,
                 total_bet_amount_minor: bet_profile.total_bet_amount_minor,
@@ -1251,6 +1267,18 @@ async fn direct_user_recharge_totals(state: &AppState) -> ApiResult<BTreeMap<Str
             .ok_or_else(|| ApiError::Internal("直属用户充值汇总金额溢出".to_string()))?;
     }
     Ok(totals)
+}
+
+/// 批量读取直属下级可用余额，避免代理中心为每个下级单独查询资金账户。
+async fn direct_user_available_balances(
+    state: &AppState,
+    direct_user_ids: &[String],
+) -> ApiResult<BTreeMap<String, i64>> {
+    let accounts = state.finance.accounts_for_user_ids(direct_user_ids).await?;
+    Ok(accounts
+        .into_iter()
+        .map(|account| (account.user_id, account.available_balance_minor))
+        .collect())
 }
 
 /// 汇总直属下级投注画像，普通下注按注单统计，合买按参与记录统计。
@@ -1594,6 +1622,9 @@ fn unformed_group_buy_order_response(
 
     let rule_code = parse_group_buy_rule_code(&plan.rule_code)?;
     let selection = parse_group_buy_selection(&rule_code, &plan.numbers)?;
+    let expanded_bets = expanded_bets_for_rule(&rule_code, &selection)?;
+    let stake_count = u32::try_from(expanded_bets.len())
+        .map_err(|_| ApiError::Internal("合买注数超过手机端展示范围".to_string()))?;
     let participation_amount_minor = group_buy_user_participation_amount_minor(plan, user_id)?;
     let participation_share_count = group_buy_user_participation_share_count(plan, user_id)?;
     let created_at = group_buy_user_latest_participation_at(plan, user_id)
@@ -1615,11 +1646,11 @@ fn unformed_group_buy_order_response(
             rule_code,
             number_type: group_buy_plan_number_type(plan, lotteries),
             selection,
-            stake_count: 0,
+            stake_count,
             unit_amount_minor: plan.min_share_amount_minor,
             amount_minor: plan.total_amount_minor,
             odds_basis_points: 0,
-            expanded_bets: vec![plan.numbers.clone()],
+            expanded_bets,
             draw_number: None,
             matched_bets: Vec::new(),
             payout_minor: 0,
@@ -2834,12 +2865,23 @@ async fn list_chat_hall_messages(
     Ok(Json(ApiEnvelope::success(messages)))
 }
 
+/// 返回当前用户聊天大厅发言资格，供手机端提前禁用输入栏并展示充值门槛。
+async fn get_chat_hall_speaking_status(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<ChatHallSpeakingStatusResponse>>> {
+    let status = chat_hall_speaking_status(&state, &session.user.id).await?;
+
+    Ok(Json(ApiEnvelope::success(status)))
+}
+
 /// 当前用户发送一条大厅消息，保存成功后推送给所有在线手机端连接。
 async fn send_chat_hall_message(
     State(state): State<AppState>,
     Extension(session): Extension<UserAuthSession>,
     Json(payload): Json<CreateChatHallMessageRequest>,
 ) -> ApiResult<Json<ApiEnvelope<ChatHallMessage>>> {
+    ensure_chat_hall_speaking_allowed(&state, &session.user.id).await?;
     let message = state.chat_hall.send(&session.user, payload).await?;
     state
         .realtime
@@ -2854,6 +2896,7 @@ async fn send_chat_hall_red_packet(
     Extension(session): Extension<UserAuthSession>,
     Json(payload): Json<CreateChatHallRedPacketRequest>,
 ) -> ApiResult<Json<ApiEnvelope<ChatHallMessage>>> {
+    ensure_chat_hall_speaking_allowed(&state, &session.user.id).await?;
     let message = state
         .chat_hall
         .send_red_packet(&state.finance, &session.user, payload)
@@ -2916,6 +2959,7 @@ async fn share_chat_hall_group_buy_plan(
     Extension(session): Extension<UserAuthSession>,
     Json(payload): Json<ShareChatHallGroupBuyPlanRequest>,
 ) -> ApiResult<Json<ApiEnvelope<ChatHallMessage>>> {
+    ensure_chat_hall_speaking_allowed(&state, &session.user.id).await?;
     let plan_id = payload.plan_id.trim();
     if plan_id.is_empty() {
         return Err(ApiError::BadRequest("请选择要分享的合买计划".to_string()));
@@ -2962,6 +3006,81 @@ async fn share_chat_hall_group_buy_plan(
         .publish_public(chat_hall_message_created_event(&message));
 
     Ok(Json(ApiEnvelope::success(message)))
+}
+
+/// 统一校验聊天大厅发言权限，避免前端绕过禁用态直接调用发送接口。
+async fn ensure_chat_hall_speaking_allowed(state: &AppState, user_id: &str) -> ApiResult<()> {
+    let status = chat_hall_speaking_status(state, user_id).await?;
+    if status.can_speak {
+        return Ok(());
+    }
+
+    Err(ApiError::Forbidden(status.message))
+}
+
+/// 按系统设置和用户累计充值金额组装聊天大厅发言状态。
+async fn chat_hall_speaking_status(
+    state: &AppState,
+    user_id: &str,
+) -> ApiResult<ChatHallSpeakingStatusResponse> {
+    let settings = state.access.settings().await?;
+    let required_recharge_minor = chat_hall_required_recharge_minor(&settings);
+    if required_recharge_minor <= 0 {
+        return Ok(chat_hall_speaking_status_from_amounts(0, 0));
+    }
+
+    let current_recharge_minor = state.finance.total_recharge_credit_minor(user_id).await?;
+    Ok(chat_hall_speaking_status_from_amounts(
+        required_recharge_minor,
+        current_recharge_minor,
+    ))
+}
+
+/// 从系统配置读取聊天大厅发言最低累计充值金额，非法值按不限制处理。
+fn chat_hall_required_recharge_minor(settings: &[SystemSetting]) -> i64 {
+    config_value(settings, CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY)
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|amount| *amount > 0)
+        .unwrap_or(0)
+}
+
+/// 构造聊天大厅发言状态，集中处理金额兜底和用户提示文案。
+fn chat_hall_speaking_status_from_amounts(
+    required_recharge_minor: i64,
+    current_recharge_minor: i64,
+) -> ChatHallSpeakingStatusResponse {
+    let required_recharge_minor = required_recharge_minor.max(0);
+    let current_recharge_minor = current_recharge_minor.max(0);
+    let missing_recharge_minor = required_recharge_minor.saturating_sub(current_recharge_minor);
+    let can_speak = required_recharge_minor == 0 || missing_recharge_minor == 0;
+    let message = if can_speak {
+        String::new()
+    } else {
+        format!(
+            "抱歉，暂无发言权限，充值 {} 元即可参与群聊",
+            format_chat_hall_yuan(required_recharge_minor)
+        )
+    };
+
+    ChatHallSpeakingStatusResponse {
+        can_speak,
+        required_recharge_minor,
+        current_recharge_minor,
+        missing_recharge_minor,
+        message,
+    }
+}
+
+/// 把后台配置的分金额转成用户提示里的人民币展示文本。
+fn format_chat_hall_yuan(amount_minor: i64) -> String {
+    let amount_minor = amount_minor.max(0);
+    let yuan = amount_minor / 100;
+    let cents = amount_minor % 100;
+    if cents == 0 {
+        format!("¥{yuan}")
+    } else {
+        format!("¥{yuan}.{cents:02}")
+    }
 }
 
 /// 从聊天大厅消息 payload 中读取指定字符串字段。
@@ -3460,6 +3579,33 @@ mod tests {
     }
 
     #[test]
+    /// 验证聊天大厅发言门槛不足时返回可直接展示给手机端的中文提示。
+    fn chat_hall_speaking_status_blocks_when_recharge_below_threshold() {
+        let status = chat_hall_speaking_status_from_amounts(30_000, 12_000);
+
+        assert!(!status.can_speak);
+        assert_eq!(status.required_recharge_minor, 30_000);
+        assert_eq!(status.current_recharge_minor, 12_000);
+        assert_eq!(status.missing_recharge_minor, 18_000);
+        assert_eq!(
+            status.message,
+            "抱歉，暂无发言权限，充值 ¥300 元即可参与群聊"
+        );
+    }
+
+    #[test]
+    /// 验证聊天大厅发言门槛配置为 0 时表示不限制，达到门槛也允许发言。
+    fn chat_hall_speaking_status_allows_zero_or_reached_threshold() {
+        let disabled_settings = vec![test_setting(
+            CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY,
+            "0",
+        )];
+        assert_eq!(chat_hall_required_recharge_minor(&disabled_settings), 0);
+        assert!(chat_hall_speaking_status_from_amounts(0, 0).can_speak);
+        assert!(chat_hall_speaking_status_from_amounts(30_000, 30_000).can_speak);
+    }
+
+    #[test]
     /// 验证邀请中心已结算返利只统计真实充值返利入账流水。
     fn user_invitation_paid_commission_counts_recharge_rebate_credit() {
         let entries = vec![
@@ -3931,6 +4077,9 @@ mod tests {
         assert_eq!(visible[0].order.order_source, OrderSource::GroupBuy);
         assert_eq!(visible[0].order.status, OrderStatus::PendingDraw);
         assert_eq!(visible[0].order.number_type, LotteryNumberType::FiveDigit);
+        assert_eq!(visible[0].order.stake_count, 1);
+        assert_eq!(visible[0].order.unit_amount_minor, 1_000);
+        assert_eq!(visible[0].order.expanded_bets, vec!["123".to_string()]);
         assert_eq!(
             visible[0].order.selection.positions,
             vec![vec![1], vec![2], vec![3]]

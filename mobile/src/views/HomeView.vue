@@ -7,6 +7,7 @@ import type { HomepageBanner, HomepageGroup, LotteryCard } from '../api/lottery'
 import HomeDrawCard from '../components/lottery/HomeDrawCard.vue'
 import WinningTicker from '../components/lottery/WinningTicker.vue'
 import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
+import WalletHeaderAmount from '../components/mobile/WalletHeaderAmount.vue'
 import { useHomepageDrawUpdates } from '../composables/useHomepageDrawUpdates'
 import type { LotteryDrawMessage } from '../composables/useHomepageDrawUpdates'
 import { useBrandingStore } from '../stores/branding'
@@ -230,10 +231,7 @@ watch(visibleGroups, (groups) => {
         />
         <span class="font-headline text-xl font-bold italic tracking-tighter text-red-900">{{ branding.site_name }}</span>
       </div>
-      <div class="flex items-center gap-2 rounded-full bg-stone-50/70 px-4 py-1.5 text-red-800 active:scale-95">
-        <span class="text-sm">钱包</span>
-        <span class="font-headline text-sm font-semibold tracking-tight">¥{{ balance }}</span>
-      </div>
+      <WalletHeaderAmount :balance="balance" />
     </header>
 
     <main class="mobile-safe-main-top relative z-10 mx-auto max-w-2xl space-y-4 px-4 pb-28">

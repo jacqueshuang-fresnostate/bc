@@ -7,6 +7,7 @@ import {
   errorMessage,
   fetchChatHallRedPacketClaims,
   fetchChatHallMessages,
+  fetchChatHallSpeakingStatus,
   sendChatHallMessage,
   sendChatHallRedPacket,
   shareChatHallGroupBuyPlan,
@@ -15,6 +16,7 @@ import {
   type ChatHallGroupBuyPlanPayload,
   type ChatHallMessage,
   type ChatHallRedPacketPayload,
+  type ChatHallSpeakingStatus,
 } from '../api/user'
 import CachedAvatarImage from '../components/mobile/CachedAvatarImage.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
@@ -50,6 +52,8 @@ const loadingGroupBuys = ref(false)
 const sharingGroupBuyId = ref('')
 const myGroupBuyPlans = ref<GroupBuyPlan[]>([])
 const messages = ref<ChatHallMessage[]>([])
+const speakingStatus = ref<ChatHallSpeakingStatus | null>(null)
+const loadingSpeakingStatus = ref(true)
 const failedAvatarIds = ref<Set<string>>(new Set())
 const newMessageCount = ref(0)
 const messageListRef = ref<HTMLElement | null>(null)
@@ -58,7 +62,9 @@ const emojiPickerHostRef = ref<HTMLElement | null>(null)
 let emojiPickerElement: HTMLElement | null = null
 const currentUserId = computed(() => auth.user?.id || '')
 const hasMessages = computed(() => messages.value.length > 0)
-const canSend = computed(() => draft.value.trim().length > 0 && !sending.value)
+const canSpeak = computed(() => !loadingSpeakingStatus.value && speakingStatus.value?.canSpeak !== false)
+const speakingLimitMessage = computed(() => speakingStatus.value?.message || '抱歉，暂无发言权限')
+const canSend = computed(() => canSpeak.value && draft.value.trim().length > 0 && !sending.value)
 const shareableGroupBuyPlans = computed(() => myGroupBuyPlans.value.filter(plan => plan.status !== 'cancelled' && plan.status !== 'settled'))
 
 type EmojiPickerConstructor = typeof import('emoji-mart').Picker
@@ -231,9 +237,35 @@ async function loadMessages() {
   }
 }
 
+async function loadSpeakingStatus() {
+  loadingSpeakingStatus.value = true
+  try {
+    speakingStatus.value = await fetchChatHallSpeakingStatus()
+  } catch (error) {
+    speakingStatus.value = null
+  } finally {
+    loadingSpeakingStatus.value = false
+  }
+}
+
+function ensureCanSpeak() {
+  if (canSpeak.value) return true
+  showToast(speakingLimitMessage.value)
+  return false
+}
+
+function showSendError(error: unknown, fallback: string) {
+  const message = errorMessage(error, fallback)
+  showToast(message)
+  if (message.includes('发言权限') || message.includes('参与群聊')) {
+    void loadSpeakingStatus()
+  }
+}
+
 async function sendMessage() {
   const content = draft.value.trim()
   if (!content || sending.value) return
+  if (!ensureCanSpeak()) return
   sending.value = true
   try {
     const message = await sendChatHallMessage(content)
@@ -243,13 +275,14 @@ async function sendMessage() {
     upsertMessage(message, { forceScroll: true })
     void nextTick(() => messageInputRef.value?.focus())
   } catch (error) {
-    showToast(errorMessage(error, '发送失败'))
+    showSendError(error, '发送失败')
   } finally {
     sending.value = false
   }
 }
 
 async function toggleEmojiPicker() {
+  if (!ensureCanSpeak()) return
   emojiPickerVisible.value = !emojiPickerVisible.value
   if (emojiPickerVisible.value) attachmentVisible.value = false
   if (emojiPickerVisible.value) {
@@ -258,17 +291,20 @@ async function toggleEmojiPicker() {
 }
 
 function toggleAttachmentMenu() {
+  if (!ensureCanSpeak()) return
   attachmentVisible.value = !attachmentVisible.value
   if (attachmentVisible.value) emojiPickerVisible.value = false
 }
 
 function openRedPacketDialog() {
+  if (!ensureCanSpeak()) return
   attachmentVisible.value = false
   redPacketDialogVisible.value = true
 }
 
 async function submitRedPacket() {
   if (sendingRedPacket.value) return
+  if (!ensureCanSpeak()) return
   const amountMinor = moneyToMinor(redPacketAmount.value)
   const claimCount = Math.trunc(Number(redPacketCount.value || 0))
   if (amountMinor <= 0) {
@@ -298,7 +334,7 @@ async function submitRedPacket() {
     redPacketGreeting.value = '恭喜发财，大吉大利'
     showToast('红包已发送')
   } catch (error) {
-    showToast(errorMessage(error, '发送红包失败'))
+    showSendError(error, '发送红包失败')
   } finally {
     sendingRedPacket.value = false
   }
@@ -375,6 +411,7 @@ function selectedRedPacketClaimCount() {
 }
 
 async function openGroupBuyDialog() {
+  if (!ensureCanSpeak()) return
   attachmentVisible.value = false
   groupBuyDialogVisible.value = true
   if (!myGroupBuyPlans.value.length) {
@@ -396,6 +433,7 @@ async function loadMyGroupBuyPlans() {
 
 async function shareGroupBuy(plan: GroupBuyPlan) {
   if (sharingGroupBuyId.value) return
+  if (!ensureCanSpeak()) return
   sharingGroupBuyId.value = plan.id
   try {
     const message = await shareChatHallGroupBuyPlan(plan.id)
@@ -403,7 +441,7 @@ async function shareGroupBuy(plan: GroupBuyPlan) {
     groupBuyDialogVisible.value = false
     showToast('合买计划已发送')
   } catch (error) {
-    showToast(errorMessage(error, '发送合买计划失败'))
+    showSendError(error, '发送合买计划失败')
   } finally {
     sharingGroupBuyId.value = ''
   }
@@ -550,6 +588,7 @@ watch(() => props.wsMessage, (message) => {
 
 onMounted(() => {
   void loadMessages()
+  void loadSpeakingStatus()
 })
 
 onBeforeUnmount(() => {
@@ -756,8 +795,11 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
 
-    <footer class="chat-hall__composer">
-      <div v-show="attachmentVisible" class="chat-hall__action-panel">
+    <footer class="chat-hall__composer" :class="{ 'chat-hall__composer--locked': !canSpeak }">
+      <div v-if="!canSpeak" class="chat-hall__speaking-limit">
+        {{ loadingSpeakingStatus ? '正在确认发言权限...' : speakingLimitMessage }}
+      </div>
+      <div v-show="canSpeak && attachmentVisible" class="chat-hall__action-panel">
         <button type="button" @click="openRedPacketDialog">
           <LucideIcon name="payments" />
           <span>红包</span>
@@ -767,7 +809,7 @@ onBeforeUnmount(() => {
           <span>合买计划</span>
         </button>
       </div>
-      <div class="chat-hall__input-row">
+      <div v-if="canSpeak" class="chat-hall__input-row">
         <button
           class="chat-hall__tool"
           type="button"
@@ -794,7 +836,7 @@ onBeforeUnmount(() => {
           maxlength="500"
           placeholder="输入聊天内容"
           type="text"
-          :disabled="sending"
+          :disabled="sending || !canSpeak"
           @keydown.enter="sendMessageByEnter"
         />
         <button class="chat-hall__send" :disabled="!canSend" type="button" @click="sendMessage">
@@ -1111,6 +1153,24 @@ onBeforeUnmount(() => {
   width: 100%;
   padding: 0 1rem;
   pointer-events: none;
+}
+
+.chat-hall__speaking-limit {
+  pointer-events: auto;
+  width: min(100%, 30rem);
+  min-height: 3.2rem;
+  margin: 0 auto;
+  padding: 0.95rem 1.1rem;
+  border: 1px solid rgba(120, 120, 120, 0.1);
+  border-radius: 1.25rem;
+  background: rgba(238, 238, 238, 0.92);
+  color: #5f6768;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: 0 12px 28px rgba(45, 45, 45, 0.1);
+  backdrop-filter: blur(16px);
 }
 
 .chat-hall__input-row {

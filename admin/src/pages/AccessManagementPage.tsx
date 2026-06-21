@@ -98,6 +98,11 @@ interface SettingSelectOption {
   value: string;
 }
 
+interface RechargeBonusRuleDraft {
+  bonusAmountYuan: string;
+  thresholdAmountYuan: string;
+}
+
 interface AdminFormState {
   id: string;
   password: string;
@@ -168,6 +173,10 @@ const RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY =
   'recharge_customer_service_enabled';
 const RECHARGE_MIN_AMOUNT_SETTING_KEY = 'recharge_min_amount_minor';
 const RECHARGE_MAX_AMOUNT_SETTING_KEY = 'recharge_max_amount_minor';
+const RECHARGE_BONUS_ENABLED_SETTING_KEY = 'recharge_bonus_enabled';
+const RECHARGE_BONUS_RULES_SETTING_KEY = 'recharge_bonus_rules';
+const CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY =
+  'chat_hall_speaking_min_recharge_minor';
 const SUPPORT_TELEGRAM_ENABLED_SETTING_KEY =
   'support_telegram_notification_enabled';
 const UNCONFIGURED_SETTING_VALUE = '未配置';
@@ -184,10 +193,13 @@ const RECHARGE_PAYMENT_SETTING_KEYS = new Set([
   RECHARGE_RAINBOW_ENABLED_SETTING_KEY,
   RECHARGE_RAINBOW_PAY_TYPES_SETTING_KEY,
   RECHARGE_CUSTOMER_SERVICE_ENABLED_SETTING_KEY,
+  RECHARGE_BONUS_ENABLED_SETTING_KEY,
+  RECHARGE_BONUS_RULES_SETTING_KEY,
 ]);
 const MINOR_MONEY_SETTING_KEYS = new Set([
   RECHARGE_MIN_AMOUNT_SETTING_KEY,
   RECHARGE_MAX_AMOUNT_SETTING_KEY,
+  CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY,
 ]);
 const RECHARGE_PAY_TYPE_OPTIONS: SettingSelectOption[] = [
   { label: '支付宝充值', value: 'alipay' },
@@ -696,6 +708,9 @@ export function AccessManagementPage({
               return;
             }
             void saveSetting(key, submitValue).then(onDashboardRefresh);
+          }}
+          onSaveSettingValue={(key, value) => {
+            void saveSetting(key, value).then(onDashboardRefresh);
           }}
         />
       )}
@@ -1575,6 +1590,7 @@ function SettingsSection({
   onReloadMemoryCache,
   onSaveRegistration,
   onSaveSetting,
+  onSaveSettingValue,
   registration,
   saving,
   settings,
@@ -1587,6 +1603,7 @@ function SettingsSection({
   onReloadMemoryCache: () => Promise<MemoryCacheReloadResult>;
   onSaveRegistration: () => void;
   onSaveSetting: (key: string) => void;
+  onSaveSettingValue: (key: string, value: string) => void;
   registration: RegistrationConfig | null;
   saving: boolean;
   settings: Array<{ description: string; key: string; value: string }>;
@@ -1823,6 +1840,7 @@ function SettingsSection({
                         settings={settings}
                         onDraftChange={onDraftChange}
                         onSaveSetting={onSaveSetting}
+                        onSaveSettingValue={onSaveSettingValue}
                       />
                     ) : null}
 
@@ -1942,12 +1960,14 @@ function RechargePaymentPanel({
   drafts,
   onDraftChange,
   onSaveSetting,
+  onSaveSettingValue,
   saving,
   settings,
 }: {
   drafts: Record<string, string>;
   onDraftChange: (key: string, value: string) => void;
   onSaveSetting: (key: string) => void;
+  onSaveSettingValue: (key: string, value: string) => void;
   saving: boolean;
   settings: SystemSettingItem[];
 }) {
@@ -1968,6 +1988,31 @@ function RechargePaymentPanel({
   const selectedPayTypes = settingListValue(payTypesValue);
   const rainbowReady =
     rainbowEnabledValue === 'true' && selectedPayTypes.length > 0;
+  const bonusEnabledValue =
+    draftSettingValue(settings, drafts, RECHARGE_BONUS_ENABLED_SETTING_KEY) ||
+    'false';
+  const bonusRuleDrafts = rechargeBonusRuleDraftsFromSetting(
+    draftSettingValue(settings, drafts, RECHARGE_BONUS_RULES_SETTING_KEY),
+  );
+  const bonusSummary =
+    bonusEnabledValue === 'true' && bonusRuleDrafts.length > 0
+      ? `${bonusRuleDrafts.length} 档活动`
+      : '未开启';
+
+  const updateBonusRules = (nextRules: RechargeBonusRuleDraft[]) => {
+    onDraftChange(
+      RECHARGE_BONUS_RULES_SETTING_KEY,
+      JSON.stringify(nextRules),
+    );
+  };
+
+  const saveBonusRules = () => {
+    const submitValue = rechargeBonusRuleSubmitValue(bonusRuleDrafts);
+    if (submitValue === null) {
+      return;
+    }
+    onSaveSettingValue(RECHARGE_BONUS_RULES_SETTING_KEY, submitValue);
+  };
 
   return (
     <div className="rounded border border-slate-200 bg-slate-50 p-3">
@@ -2093,6 +2138,150 @@ function RechargePaymentPanel({
             >
               保存方式
             </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded border border-slate-200 bg-white p-3">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-ink">充值赠送活动</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              按单笔充值金额匹配最高门槛档位，例如充值 100 元赠送 5 元，充值 500 元赠送 40 元。
+            </p>
+          </div>
+          <Tag color={bonusEnabledValue === 'true' && bonusRuleDrafts.length > 0 ? 'green' : 'grey'}>
+            {bonusSummary}
+          </Tag>
+        </div>
+
+        <div className="grid gap-3 xl:grid-cols-[220px_minmax(0,1fr)]">
+          <div className="rounded border border-slate-100 bg-slate-50 p-3">
+            <Field
+              description="关闭后不会给新确认入账的充值单发放赠送彩金。"
+              label="活动开关"
+            >
+              <Select
+                className="form-input"
+                value={bonusEnabledValue}
+                onChange={(value) =>
+                  onDraftChange(
+                    RECHARGE_BONUS_ENABLED_SETTING_KEY,
+                    String(value ?? 'false'),
+                  )
+                }
+              >
+                <Select.Option value="true">开启充值赠送</Select.Option>
+                <Select.Option value="false">关闭充值赠送</Select.Option>
+              </Select>
+            </Field>
+            <div className="mt-3 flex justify-end">
+              <Button
+                disabled={saving}
+                icon={<Save size={16} />}
+                size="small"
+                onClick={() => onSaveSetting(RECHARGE_BONUS_ENABLED_SETTING_KEY)}
+              >
+                保存开关
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded border border-slate-100 bg-slate-50 p-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-ink">赠送档位</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  金额按“元”填写，保存后后端按分持久化。
+                </p>
+              </div>
+              <Button
+                disabled={saving}
+                size="small"
+                onClick={() =>
+                  updateBonusRules([
+                    ...bonusRuleDrafts,
+                    { bonusAmountYuan: '', thresholdAmountYuan: '' },
+                  ])
+                }
+              >
+                新增档位
+              </Button>
+            </div>
+
+            {bonusRuleDrafts.length === 0 ? (
+              <div className="rounded border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
+                暂无赠送档位，新增后可配置类似“充值 100 送 5”的活动。
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {bonusRuleDrafts.map((rule, index) => (
+                  <div
+                    key={`bonus-rule-${index}`}
+                    className="grid gap-2 rounded border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                  >
+                    <Field label="充值满（元）">
+                      <Input
+                        className="form-input"
+                        inputMode="decimal"
+                        placeholder="例如 100"
+                        value={rule.thresholdAmountYuan}
+                        onChange={(value) => {
+                          const nextRules = [...bonusRuleDrafts];
+                          nextRules[index] = {
+                            ...rule,
+                            thresholdAmountYuan: value,
+                          };
+                          updateBonusRules(nextRules);
+                        }}
+                      />
+                    </Field>
+                    <Field label="赠送（元）">
+                      <Input
+                        className="form-input"
+                        inputMode="decimal"
+                        placeholder="例如 5"
+                        value={rule.bonusAmountYuan}
+                        onChange={(value) => {
+                          const nextRules = [...bonusRuleDrafts];
+                          nextRules[index] = {
+                            ...rule,
+                            bonusAmountYuan: value,
+                          };
+                          updateBonusRules(nextRules);
+                        }}
+                      />
+                    </Field>
+                    <div className="flex items-end justify-end">
+                      <Button
+                        disabled={saving}
+                        size="small"
+                        type="danger"
+                        onClick={() =>
+                          updateBonusRules(
+                            bonusRuleDrafts.filter((_, ruleIndex) => ruleIndex !== index),
+                          )
+                        }
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-3 flex justify-end">
+              <Button
+                disabled={saving}
+                icon={<Save size={16} />}
+                size="small"
+                type="primary"
+                onClick={saveBonusRules}
+              >
+                保存档位
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -2732,6 +2921,7 @@ function settingGroupName(key: string): string {
   if (
     key.startsWith('recharge_rainbow_epay_') ||
     key.startsWith('recharge_customer_service_') ||
+    key.startsWith('recharge_bonus_') ||
     key === RECHARGE_MIN_AMOUNT_SETTING_KEY ||
     key === RECHARGE_MAX_AMOUNT_SETTING_KEY
   ) {
@@ -2739,6 +2929,9 @@ function settingGroupName(key: string): string {
   }
   if (key.startsWith('support_telegram_')) {
     return '通知设置';
+  }
+  if (key.startsWith('chat_hall_')) {
+    return '聊天设置';
   }
   if (key.includes('email') || key.includes('registration')) {
     return '注册与安全';
@@ -2764,8 +2957,13 @@ function settingSubmitValue(key: string, value: string) {
     return value;
   }
   const amountMinor = yuanInputToMinor(value);
-  if (amountMinor === null || amountMinor <= 0) {
-    Toast.warning('充值金额设置必须大于 0 元且最多保留两位小数');
+  const allowZero = key === CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY;
+  if (amountMinor === null || amountMinor < 0 || (!allowZero && amountMinor <= 0)) {
+    Toast.warning(
+      allowZero
+        ? '聊天大厅发言门槛必须大于等于 0 元且最多保留两位小数'
+        : '充值金额设置必须大于 0 元且最多保留两位小数',
+    );
     return null;
   }
   return String(amountMinor);
@@ -2798,6 +2996,10 @@ function settingSelectOptions(
     recharge_customer_service_enabled: [
       { label: '开启客服直充', value: 'true' },
       { label: '关闭客服直充', value: 'false' },
+    ],
+    recharge_bonus_enabled: [
+      { label: '开启充值赠送', value: 'true' },
+      { label: '关闭充值赠送', value: 'false' },
     ],
     [SUPPORT_TELEGRAM_ENABLED_SETTING_KEY]: [
       { label: '开启 Telegram 提醒', value: 'true' },
@@ -2863,6 +3065,7 @@ function settingsGroups(
     '手机端设置',
     '图床设置',
     '充值设置',
+    '聊天设置',
     '通知设置',
     '注册与安全',
     '返利设置',
@@ -2896,6 +3099,90 @@ function settingListText(value: unknown): string {
     .map((item) => String(item ?? '').trim())
     .filter(Boolean)
     .join(',');
+}
+
+function rechargeBonusRuleDraftsFromSetting(value: string): RechargeBonusRuleDraft[] {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .map((item) => {
+        const record = item as Record<string, unknown>;
+        const thresholdAmountYuan =
+          typeof record.thresholdAmountYuan === 'string'
+            ? record.thresholdAmountYuan
+            : minorToYuanInput(record.thresholdAmountMinor as number | string | undefined);
+        const bonusAmountYuan =
+          typeof record.bonusAmountYuan === 'string'
+            ? record.bonusAmountYuan
+            : minorToYuanInput(record.bonusAmountMinor as number | string | undefined);
+        return { bonusAmountYuan, thresholdAmountYuan };
+      })
+      .filter(
+        (item) =>
+          item.thresholdAmountYuan.trim() !== '' || item.bonusAmountYuan.trim() !== '',
+      );
+  } catch {
+    return [];
+  }
+}
+
+function rechargeBonusRuleSubmitValue(rules: RechargeBonusRuleDraft[]) {
+  const parsed = rules
+    .map((rule) => {
+      const thresholdAmountMinor = yuanInputToMinor(rule.thresholdAmountYuan);
+      const bonusAmountMinor = yuanInputToMinor(rule.bonusAmountYuan);
+      return { bonusAmountMinor, thresholdAmountMinor };
+    })
+    .filter(
+      (rule) =>
+        rule.thresholdAmountMinor !== null ||
+        rule.bonusAmountMinor !== null,
+    );
+
+  if (
+    parsed.some(
+      (rule) => rule.thresholdAmountMinor === null || rule.bonusAmountMinor === null,
+    )
+  ) {
+    Toast.warning('充值赠送档位金额格式无效，请填写大于 0 且最多两位小数的元金额');
+    return null;
+  }
+  const normalized = parsed as Array<{
+    bonusAmountMinor: number;
+    thresholdAmountMinor: number;
+  }>;
+  if (
+    normalized.some(
+      (rule) => rule.thresholdAmountMinor <= 0 || rule.bonusAmountMinor <= 0,
+    )
+  ) {
+    Toast.warning('充值赠送档位的充值门槛和赠送金额都必须大于 0 元');
+    return null;
+  }
+
+  const sorted = [...normalized].sort(
+    (left, right) =>
+      left.thresholdAmountMinor - right.thresholdAmountMinor ||
+      left.bonusAmountMinor - right.bonusAmountMinor,
+  );
+  const duplicatedThreshold = sorted.some(
+    (rule, index) =>
+      index > 0 && rule.thresholdAmountMinor === sorted[index - 1].thresholdAmountMinor,
+  );
+  if (duplicatedThreshold) {
+    Toast.warning('充值赠送档位不能配置重复的充值门槛');
+    return null;
+  }
+
+  return JSON.stringify(
+    sorted.map((rule) => ({
+      thresholdAmountMinor: rule.thresholdAmountMinor,
+      bonusAmountMinor: rule.bonusAmountMinor,
+    })),
+  );
 }
 
 function ToggleRow({

@@ -3285,6 +3285,21 @@ fn seed_settings() -> Vec<SystemSetting> {
             description: "客服直充创建订单后返回给用户的提示文案".to_string(),
         },
         SystemSetting {
+            key: "recharge_bonus_enabled".to_string(),
+            value: "false".to_string(),
+            description: "是否开启用户充值赠送活动".to_string(),
+        },
+        SystemSetting {
+            key: "recharge_bonus_rules".to_string(),
+            value: "[]".to_string(),
+            description: "用户充值赠送活动档位，保存为 JSON 数组，金额单位为分".to_string(),
+        },
+        SystemSetting {
+            key: "chat_hall_speaking_min_recharge_minor".to_string(),
+            value: "0".to_string(),
+            description: "聊天大厅发言最低累计充值金额（分），0 表示不限制".to_string(),
+        },
+        SystemSetting {
             key: "support_telegram_notification_enabled".to_string(),
             value: "false".to_string(),
             description: "是否开启新客服消息 Telegram 提醒".to_string(),

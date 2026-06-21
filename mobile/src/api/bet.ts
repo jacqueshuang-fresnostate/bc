@@ -50,6 +50,8 @@ export type UserBetOrderDetail = {
   createdAt: string
 }
 
+const DEFAULT_DISPLAY_UNIT_AMOUNT_MINOR = 200
+
 const playNameMap: Record<string, string> = {
   threeDirect: '3 位直选',
   threeGroupThree: '3 位组三复式',
@@ -121,6 +123,41 @@ function normalizeOptionalMinor(value?: number | null) {
   return Number.isFinite(amount) ? amount : null
 }
 
+function normalizePositiveInteger(value: unknown, fallback = 0) {
+  const numberValue = Number(value)
+  return Number.isSafeInteger(numberValue) && numberValue > 0 ? numberValue : fallback
+}
+
+function normalizeMinor(value: unknown, fallback = 0) {
+  const amount = Number(value)
+  return Number.isFinite(amount) && amount > 0 ? amount : fallback
+}
+
+function inferDisplayUnitAndMultiple(combinedUnitAmountMinor: number, explicitMultiple: unknown) {
+  const multiple = normalizePositiveInteger(explicitMultiple, 0)
+  if (multiple > 0) {
+    const unitAmountMinor = combinedUnitAmountMinor > 0 && combinedUnitAmountMinor % multiple === 0
+      ? combinedUnitAmountMinor / multiple
+      : combinedUnitAmountMinor
+    return { unitAmountMinor, multiple }
+  }
+
+  if (
+    combinedUnitAmountMinor >= DEFAULT_DISPLAY_UNIT_AMOUNT_MINOR
+    && combinedUnitAmountMinor % DEFAULT_DISPLAY_UNIT_AMOUNT_MINOR === 0
+  ) {
+    return {
+      unitAmountMinor: DEFAULT_DISPLAY_UNIT_AMOUNT_MINOR,
+      multiple: combinedUnitAmountMinor / DEFAULT_DISPLAY_UNIT_AMOUNT_MINOR,
+    }
+  }
+
+  return {
+    unitAmountMinor: combinedUnitAmountMinor,
+    multiple: 1,
+  }
+}
+
 function splitDrawNumber(value?: string | null) {
   const text = String(value || '').trim()
   if (!text) return []
@@ -180,11 +217,15 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     group_buy_pending_plan?: boolean
     group_buy_plan_id?: string | null
     group_buy_plan_status?: string | null
+    multiplier?: number | null
+    multiple?: number | null
     order_source?: string
     participation_share_count?: number | null
     result?: string | null
     settled_at?: string | null
     source_name?: string
+    stake_count?: number | null
+    unit_amount_minor?: number | null
   }
   const numbers = selectionNumbers(order)
   const orderSource = String(order.orderSource || rawOrder.order_source || rawOrder.source_name || 'direct')
@@ -211,6 +252,19 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
   const odds = Number(order.oddsBasisPoints || 0) > 0
     ? formatMinorAmount(order.oddsBasisPoints / 100)
     : ''
+  const stakeCount = normalizePositiveInteger(order.stakeCount ?? rawOrder.stake_count, 0)
+  const rawUnitAmountMinor = normalizeMinor(order.unitAmountMinor ?? rawOrder.unit_amount_minor, 0)
+  const rawAmountMinor = normalizeMinor(order.amountMinor, 0)
+  const combinedUnitAmountMinor = groupBuyPendingPlan && stakeCount > 0 && rawAmountMinor > 0
+    ? Math.max(1, Math.round(rawAmountMinor / stakeCount))
+    : rawUnitAmountMinor
+  const unitAndMultiple = inferDisplayUnitAndMultiple(
+    combinedUnitAmountMinor,
+    rawOrder.multiple ?? rawOrder.multiplier,
+  )
+  const displayUnitAmountMinor = groupBuyPendingPlan && rawUnitAmountMinor > 0
+    ? rawUnitAmountMinor
+    : unitAndMultiple.unitAmountMinor
   return {
     ...order,
     orderSource: isGroupBuy ? 'groupBuy' : 'direct',
@@ -236,9 +290,11 @@ export function normalizeUserBetOrder(order: UserBetOrderDetail) {
     matched_bets: order.matchedBets || [],
     expanded_bets: order.expandedBets || [],
     status: normalizedStatus,
-    bet_count: order.stakeCount,
-    unit_amount: formatMinorAmount(order.unitAmountMinor),
-    multiple: 1,
+    bet_count: stakeCount,
+    unit_amount: formatMinorAmount(displayUnitAmountMinor),
+    unit_amount_minor: displayUnitAmountMinor,
+    raw_unit_amount_minor: rawUnitAmountMinor,
+    multiple: unitAndMultiple.multiple,
     amount: formatMinorAmount(order.amountMinor),
     participation_amount_minor: participationAmountMinor,
     participation_amount: participationAmount,

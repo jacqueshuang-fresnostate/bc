@@ -15,8 +15,8 @@ use crate::{
         permission::SystemSetting,
         recharge::{
             ConfirmRechargeOrderRequest, CreateRechargeOrderRequest, CreateRechargeOrderResponse,
-            RechargeChannel, RechargeChannelConfig, RechargeConfigResponse, RechargeOrderStatus,
-            RechargeOrderSummary,
+            RechargeBonusRule, RechargeChannel, RechargeChannelConfig, RechargeConfigResponse,
+            RechargeOrderStatus, RechargeOrderSummary,
         },
         user::UserSummary,
     },
@@ -35,6 +35,7 @@ const DEFAULT_NOTIFY_PATH: &str = "/api/user/recharge/epay/notify";
 const DEFAULT_RETURN_PATH: &str = "/api/user/recharge/epay/return";
 const DEFAULT_MIN_AMOUNT_MINOR: i64 = 100;
 const DEFAULT_MAX_AMOUNT_MINOR: i64 = 10_000_000;
+const DEFAULT_RECHARGE_BONUS_RULES: &str = "[]";
 
 #[derive(Clone)]
 /// 充值订单仓储，负责该模块数据读取、业务变更和持久化协调。
@@ -70,6 +71,10 @@ pub struct RechargeSettings {
     pub min_amount_minor: i64,
     /// maxamountminor字段。
     pub max_amount_minor: i64,
+    /// 充值赠送活动开关。
+    pub bonus_enabled: bool,
+    /// 充值赠送活动档位。
+    pub bonus_rules: Vec<RechargeBonusRule>,
 }
 
 #[derive(Debug, Clone)]
@@ -259,8 +264,12 @@ impl RechargeRepository {
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
 
+        let was_paid = recharge_store.is_paid_order(order_id)?;
         let order = recharge_store.mark_paid(order_id, paid_amount_minor, trade_no)?;
-        finance_store.credit_recharge(&order.user_id, order.amount_minor, &order.id)?;
+        if !was_paid {
+            finance_store.credit_recharge(&order.user_id, order.amount_minor, &order.id)?;
+            credit_recharge_bonus_for_order(&mut finance_store, &order, settings)?;
+        }
 
         persist_recharge_finance_stores(self, finance, &recharge_store, &finance_store).await?;
         self.replace_store(recharge_store)?;
@@ -273,6 +282,7 @@ impl RechargeRepository {
         &self,
         order_id: &str,
         request: ConfirmRechargeOrderRequest,
+        settings: &RechargeSettings,
         finance: &FinanceRepository,
     ) -> ApiResult<RechargeOrderSummary> {
         let mut recharge_store = self
@@ -286,8 +296,12 @@ impl RechargeRepository {
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
 
+        let was_paid = recharge_store.is_paid_order(order_id)?;
         let order = recharge_store.confirm_customer_service_order(order_id, request)?;
-        finance_store.credit_recharge(&order.user_id, order.amount_minor, &order.id)?;
+        if !was_paid {
+            finance_store.credit_recharge(&order.user_id, order.amount_minor, &order.id)?;
+            credit_recharge_bonus_for_order(&mut finance_store, &order, settings)?;
+        }
 
         persist_recharge_finance_stores(self, finance, &recharge_store, &finance_store).await?;
         self.replace_store(recharge_store)?;
@@ -347,6 +361,44 @@ async fn persist_recharge_finance_stores(
     }
 }
 
+/// 按充值赠送活动配置给用户补送彩金，未开启或未命中档位时静默跳过。
+fn credit_recharge_bonus_for_order(
+    finance_store: &mut super::finance::FinanceStore,
+    order: &RechargeOrderSummary,
+    settings: &RechargeSettings,
+) -> ApiResult<Option<crate::domain::finance::LedgerEntry>> {
+    let bonus_amount_minor = recharge_bonus_amount_minor(order.amount_minor, settings)?;
+    if bonus_amount_minor <= 0 {
+        return Ok(None);
+    }
+
+    finance_store
+        .credit_recharge_bonus(&order.user_id, bonus_amount_minor, &order.id)
+        .map(Some)
+}
+
+/// 计算单笔充值可获得的赠送彩金，命中多个档位时取最高充值门槛对应的赠送金额。
+fn recharge_bonus_amount_minor(
+    recharge_amount_minor: i64,
+    settings: &RechargeSettings,
+) -> ApiResult<i64> {
+    if !settings.bonus_enabled || recharge_amount_minor <= 0 {
+        return Ok(0);
+    }
+
+    Ok(settings
+        .bonus_rules
+        .iter()
+        .filter(|rule| {
+            rule.threshold_amount_minor > 0
+                && rule.bonus_amount_minor > 0
+                && recharge_amount_minor >= rule.threshold_amount_minor
+        })
+        .max_by_key(|rule| rule.threshold_amount_minor)
+        .map(|rule| rule.bonus_amount_minor)
+        .unwrap_or(0))
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 /// 充值订单运行时数据快照，用于内存模式和数据库持久化前的业务校验。
 pub(crate) struct RechargeStore {
@@ -369,6 +421,15 @@ impl RechargeStore {
             .cloned()
             .rev()
             .collect()
+    }
+
+    /// 判断订单是否已经入账，用于充值回调和后台确认保持赠送彩金幂等。
+    fn is_paid_order(&self, order_id: &str) -> ApiResult<bool> {
+        let order = self
+            .orders
+            .get(order_id)
+            .ok_or_else(|| ApiError::NotFound(format!("recharge order `{order_id}` not found")))?;
+        Ok(order.status == RechargeOrderStatus::Paid)
     }
 
     /// 清除所有充值订单记录并保留下一订单流水号，避免清理后生成重复单号。
@@ -590,6 +651,8 @@ pub fn recharge_settings_from_system_settings(settings: &[SystemSetting]) -> Rec
         ),
         min_amount_minor: i64_setting(&map, "recharge_min_amount_minor", DEFAULT_MIN_AMOUNT_MINOR),
         max_amount_minor: i64_setting(&map, "recharge_max_amount_minor", DEFAULT_MAX_AMOUNT_MINOR),
+        bonus_enabled: bool_setting(&map, "recharge_bonus_enabled", false),
+        bonus_rules: recharge_bonus_rules_setting(&map, "recharge_bonus_rules"),
     }
 }
 
@@ -614,6 +677,8 @@ pub fn recharge_config_response(settings: &RechargeSettings) -> RechargeConfigRe
         ],
         min_amount_minor: settings.min_amount_minor,
         max_amount_minor: settings.max_amount_minor,
+        bonus_enabled: settings.bonus_enabled && !settings.bonus_rules.is_empty(),
+        bonus_rules: settings.bonus_rules.clone(),
     }
 }
 
@@ -981,6 +1046,28 @@ fn csv_setting(map: &HashMap<&str, &str>, key: &str) -> Vec<String> {
         })
         .unwrap_or_else(|| vec!["alipay".to_string(), "wxpay".to_string()])
 }
+
+/// 从系统设置读取充值赠送档位，并过滤掉无效或重复的金额配置。
+fn recharge_bonus_rules_setting(map: &HashMap<&str, &str>, key: &str) -> Vec<RechargeBonusRule> {
+    let value = map
+        .get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_RECHARGE_BONUS_RULES);
+    let mut rules = serde_json::from_str::<Vec<RechargeBonusRule>>(value)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|rule| rule.threshold_amount_minor > 0 && rule.bonus_amount_minor > 0)
+        .collect::<Vec<_>>();
+    rules.sort_by(|left, right| {
+        left.threshold_amount_minor
+            .cmp(&right.threshold_amount_minor)
+            .then_with(|| right.bonus_amount_minor.cmp(&left.bonus_amount_minor))
+    });
+    rules.dedup_by_key(|rule| rule.threshold_amount_minor);
+    rules
+}
+
 /// 从系统设置读取正整数配置。
 fn i64_setting(map: &HashMap<&str, &str>, key: &str, fallback: i64) -> i64 {
     map.get(key)
@@ -1005,6 +1092,7 @@ fn current_time_label() -> String {
 mod tests {
     use super::*;
     use crate::{
+        domain::finance::LedgerEntryKind,
         domain::user::{UserKind, UserStatus},
         services::finance::FinanceRepository,
     };
@@ -1040,6 +1128,8 @@ mod tests {
             customer_service_message: "联系客服充值".to_string(),
             min_amount_minor: 100,
             max_amount_minor: 10_000,
+            bonus_enabled: false,
+            bonus_rules: Vec::new(),
         };
 
         let response = store
@@ -1077,6 +1167,8 @@ mod tests {
             customer_service_message: String::new(),
             min_amount_minor: 100,
             max_amount_minor: 10_000,
+            bonus_enabled: false,
+            bonus_rules: Vec::new(),
         };
 
         let response = store
@@ -1111,6 +1203,8 @@ mod tests {
             customer_service_message: "联系客服充值".to_string(),
             min_amount_minor: 100,
             max_amount_minor: 10_000,
+            bonus_enabled: false,
+            bonus_rules: Vec::new(),
         };
 
         let response = recharge_config_response(&settings);
@@ -1140,6 +1234,8 @@ mod tests {
             customer_service_message: String::new(),
             min_amount_minor: 100,
             max_amount_minor: 10_000,
+            bonus_enabled: false,
+            bonus_rules: Vec::new(),
         };
 
         let result = store.create_order(
@@ -1174,6 +1270,8 @@ mod tests {
             customer_service_message: "联系客服充值".to_string(),
             min_amount_minor: 100,
             max_amount_minor: 10_000,
+            bonus_enabled: false,
+            bonus_rules: Vec::new(),
         };
         let first = store
             .create_order(
@@ -1222,6 +1320,8 @@ mod tests {
             customer_service_message: "联系客服充值".to_string(),
             min_amount_minor: 100,
             max_amount_minor: 10_000,
+            bonus_enabled: false,
+            bonus_rules: Vec::new(),
         };
         let created = repository
             .create_order(
@@ -1243,6 +1343,7 @@ mod tests {
                     provider_trade_no: Some("客服收款凭证".to_string()),
                     remark: Some("线下已核对收款截图".to_string()),
                 },
+                &settings,
                 &finance,
             )
             .await
@@ -1254,6 +1355,7 @@ mod tests {
                     provider_trade_no: None,
                     remark: None,
                 },
+                &settings,
                 &finance,
             )
             .await
@@ -1274,6 +1376,96 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(account.available_balance_minor, 1200);
     }
+
+    /// 验证充值赠送活动按最高命中档位入账，并且重复确认不会重复赠送。
+    #[tokio::test]
+    async fn recharge_repository_applies_bonus_rule_once() {
+        let repository = RechargeRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let user = user();
+        let settings = RechargeSettings {
+            rainbow_enabled: false,
+            rainbow_gateway_url: String::new(),
+            rainbow_pid: String::new(),
+            rainbow_key: String::new(),
+            rainbow_notify_url: String::new(),
+            rainbow_return_url: String::new(),
+            rainbow_pay_types: vec!["alipay".to_string()],
+            customer_service_enabled: true,
+            customer_service_message: "联系客服充值".to_string(),
+            min_amount_minor: 100,
+            max_amount_minor: 100_000,
+            bonus_enabled: true,
+            bonus_rules: vec![
+                RechargeBonusRule {
+                    threshold_amount_minor: 10_000,
+                    bonus_amount_minor: 500,
+                },
+                RechargeBonusRule {
+                    threshold_amount_minor: 50_000,
+                    bonus_amount_minor: 4_000,
+                },
+            ],
+        };
+        let created = repository
+            .create_order(
+                &user,
+                CreateRechargeOrderRequest {
+                    channel: RechargeChannel::CustomerService,
+                    amount_minor: 10_000,
+                    pay_type: None,
+                },
+                &settings,
+            )
+            .await
+            .expect("customer service order can be created");
+
+        repository
+            .confirm_customer_service_order(
+                &created.order.id,
+                ConfirmRechargeOrderRequest {
+                    provider_trade_no: Some("客服收款凭证".to_string()),
+                    remark: None,
+                },
+                &settings,
+                &finance,
+            )
+            .await
+            .expect("first confirm should credit recharge and bonus");
+        repository
+            .confirm_customer_service_order(
+                &created.order.id,
+                ConfirmRechargeOrderRequest {
+                    provider_trade_no: None,
+                    remark: None,
+                },
+                &settings,
+                &finance,
+            )
+            .await
+            .expect("second confirm should stay idempotent");
+
+        let entries = finance
+            .user_ledger_entries(&user.id)
+            .await
+            .expect("ledger entries can load");
+        let account = finance
+            .account_or_create(&user.id)
+            .await
+            .expect("account can load");
+
+        assert_eq!(entries.len(), 2);
+        assert!(entries
+            .iter()
+            .any(|entry| entry.kind == LedgerEntryKind::RechargeCredit
+                && entry.amount_minor == 10_000));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.kind == LedgerEntryKind::RechargeBonusCredit
+                && entry.amount_minor == 500));
+        assert_eq!(account.available_balance_minor, 10_500);
+    }
+
     /// 构造充值测试用户。
     fn user() -> UserSummary {
         UserSummary {

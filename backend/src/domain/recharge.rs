@@ -38,6 +38,16 @@ pub struct RechargeChannelConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 充值赠送活动档位，按单笔充值金额匹配固定赠送彩金。
+pub struct RechargeBonusRule {
+    /// 触发赠送的单笔充值门槛，单位为分。
+    pub threshold_amount_minor: i64,
+    /// 达到门槛后赠送的金额，单位为分。
+    pub bonus_amount_minor: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 /// 用户端充值配置响应，包含可用渠道和金额限制。
 pub struct RechargeConfigResponse {
     /// 可用充值渠道配置列表。
@@ -46,6 +56,10 @@ pub struct RechargeConfigResponse {
     pub min_amount_minor: i64,
     /// maxamountminor字段。
     pub max_amount_minor: i64,
+    /// 充值赠送活动是否开启。
+    pub bonus_enabled: bool,
+    /// 充值赠送活动档位列表，按充值门槛从低到高返回。
+    pub bonus_rules: Vec<RechargeBonusRule>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

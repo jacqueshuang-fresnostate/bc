@@ -102,6 +102,7 @@ use crate::{
             user_account_status_changed_event, withdrawal_changed_event,
         },
         rebate::credit_recharge_rebate_for_order,
+        recharge::recharge_settings_from_system_settings,
         scheduler::DrawSchedulerConfig,
         scheduler::DrawSchedulerStatus,
     },
@@ -3741,9 +3742,11 @@ async fn confirm_recharge_order(
     Path(id): Path<String>,
     Json(payload): Json<ConfirmRechargeOrderRequest>,
 ) -> ApiResult<Json<ApiEnvelope<RechargeOrderSummary>>> {
+    let settings = state.access.settings().await?;
+    let settings = recharge_settings_from_system_settings(&settings);
     let order = state
         .recharges
-        .confirm_customer_service_order(&id, payload, &state.finance)
+        .confirm_customer_service_order(&id, payload, &settings, &state.finance)
         .await?;
     let rebate_entry = credit_recharge_rebate_for_order(
         &state.access,

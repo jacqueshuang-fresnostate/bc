@@ -137,6 +137,22 @@ pub struct ChatHallRedPacketClaimsResponse {
     pub claims: Vec<ChatHallRedPacketClaim>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 当前用户在聊天大厅的发言资格状态，由后端按系统设置和累计充值统一判断。
+pub struct ChatHallSpeakingStatusResponse {
+    /// 是否允许在聊天大厅发言、发红包或分享合买计划。
+    pub can_speak: bool,
+    /// 后台配置的最低累计充值金额，单位为分，0 表示不限制。
+    pub required_recharge_minor: i64,
+    /// 当前用户已真实入账的充值本金合计，单位为分。
+    pub current_recharge_minor: i64,
+    /// 距离发言门槛还差的金额，单位为分。
+    pub missing_recharge_minor: i64,
+    /// 不满足门槛时给手机端直接展示的中文提示。
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 /// 合买计划分享消息的 payload，保存卡片展示所需的计划摘要。

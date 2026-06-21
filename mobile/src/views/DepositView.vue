@@ -55,6 +55,25 @@ const amountLimitText = computed(() => {
   const max = formatMinorAmount(config.value?.maxAmountMinor || 0)
   return `单笔限额 ¥${min} - ¥${max}`
 })
+const activeBonusRules = computed(() => {
+  if (!config.value?.bonusEnabled) return []
+  return [...(config.value.bonusRules || [])]
+    .filter(rule => rule.thresholdAmountMinor > 0 && rule.bonusAmountMinor > 0)
+    .sort((left, right) => left.thresholdAmountMinor - right.thresholdAmountMinor)
+})
+const bonusActivityText = computed(() => {
+  if (activeBonusRules.value.length === 0) return ''
+  return activeBonusRules.value
+    .map(rule => `满${formatInputAmount(rule.thresholdAmountMinor)}送${formatInputAmount(rule.bonusAmountMinor)}`)
+    .join('，')
+})
+const matchedBonusMinor = computed(() => {
+  const amountMinor = currentAmountMinor.value || 0
+  const matchedRules = activeBonusRules.value
+    .filter(rule => amountMinor >= rule.thresholdAmountMinor)
+  return matchedRules.length > 0 ? matchedRules[matchedRules.length - 1].bonusAmountMinor : 0
+})
+const selectedBonusText = computed(() => formatMinorAmount(matchedBonusMinor.value))
 const submitText = computed(() => (isCustomerService.value ? '发起客服直充' : '立即支付'))
 const submitHint = computed(() => {
   if (isCustomerService.value) return '提交后将进入客服会话，请保留订单号方便核对。'
@@ -433,6 +452,15 @@ async function submitRecharge() {
             </button>
           </div>
 
+          <div v-if="bonusActivityText" class="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-xs font-bold leading-5 text-primary">
+            <div class="flex items-center justify-between gap-3">
+              <span class="min-w-0 flex-1 truncate">充值赠送：{{ bonusActivityText }}</span>
+              <span v-if="matchedBonusMinor > 0" class="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] shadow-sm">
+                预计送 ¥{{ selectedBonusText }}
+              </span>
+            </div>
+          </div>
+
           <div v-if="isRainbowEpay" class="mt-5">
             <p class="mb-2 text-xs font-black text-primary">支付渠道</p>
             <div class="grid grid-cols-2 gap-2">
@@ -514,6 +542,9 @@ async function submitRecharge() {
         <div class="min-w-0 flex-1">
           <p class="truncate text-[10px] font-bold text-on-surface-variant">{{ submitHint }}</p>
           <p class="mt-1 font-headline text-xl font-black text-primary">¥{{ selectedAmountText }}</p>
+          <p v-if="matchedBonusMinor > 0" class="mt-0.5 text-[10px] font-bold text-emerald-600">
+            活动赠送 ¥{{ selectedBonusText }}
+          </p>
         </div>
         <button
           type="button"

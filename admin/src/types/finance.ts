@@ -8,6 +8,7 @@ export type LedgerEntryKind =
   | 'orderDebit'
   | 'orderRefund'
   | 'payoutCredit'
+  | 'rechargeBonusCredit'
   | 'rechargeCredit'
   | 'rechargeRebateCredit'
   | 'redPacketCredit'

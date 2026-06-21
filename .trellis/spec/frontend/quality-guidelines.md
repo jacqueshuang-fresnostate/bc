@@ -36,6 +36,67 @@
 - 手机端打包版动态品牌、Logo、介绍和轮播广告都依赖当前 `API_BASE` 指向的后端；发布包必须确认 `GET /api/user/mobile/site-config` 和 `GET /api/user/mobile/advertisements` 命中同一个后台配置库。品牌配置在启动和首页进入时要支持强制刷新，避免后台更新后继续显示默认 Logo 或旧标题。
 - 手机端无签名 IPA 打包需要同步后台 `site-config` 的 Logo 到 `mobile/dist/app-logo.png`、`mobile/dist/logo.svg`、`mobile/dist/mobile-branding.json` 和临时 iOS `AppIcon.appiconset`；首屏先读取包内 `mobile-branding.json`，再静默刷新后台配置。平台 Logo、首页 Banner、彩种 Logo 等图床图片必须优先使用通用远程图片缓存组件，避免 Tauri App 内反复请求同一张网络图片。
 
+## 场景：手机端样式分片兼容
+
+### 1. 范围 / 触发
+
+- 触发：修改 `mobile/vite.config.ts`、移动端路由懒加载、页面级 `<style scoped>` 或 Tauri/WebView 打包样式加载策略时，必须按本场景验证。
+- 目标：避免部分安卓浏览器、低版本 WebView 或企业签名 App 出现页面内容已渲染但登录页、首页、底部导航等样式退回默认 HTML 的问题。
+
+### 2. 签名
+
+- Vite 构建配置：`mobile/vite.config.ts` 必须设置 `base = './'` 和 `build.cssCodeSplit = false`，并通过构建插件把主 CSS 内联到 `dist/index.html`。
+- 验证命令：`cd mobile && pnpm build`。
+
+### 3. 契约
+
+- 移动端打包产物必须把页面级 CSS 合并进首屏 CSS 包，不依赖 `LoginView-*.css`、`HomeView-*.css`、`LayoutView-*.css` 等异步 CSS chunk。
+- Tauri Android 打包产物的 `dist/index.html` 必须使用相对路径加载 JS 和图标，例如 `./assets/index-*.js`、`./logo.svg`；不能生成 `/assets/...` 这类站点根路径资源。
+- Tauri Android 打包产物的主 CSS 必须内联到 `dist/index.html` 的 `<style data-tauri-inline-css>`，不能只保留外链 `<link rel="stylesheet" href="./assets/style-*.css">`。
+- 路由预加载工具可以继续预热 JS 页面 chunk，但不能作为页面样式加载成功的唯一保障。
+- 新增页面可以继续写 `<style scoped>`，但构建后这些样式必须进入统一 CSS 产物。
+
+### 4. 校验与错误矩阵
+
+- `cssCodeSplit=true` -> 部分手机可能只加载页面 JS，没有加载异步 CSS chunk，表现为输入框和按钮使用浏览器默认边框。
+- 构建后仍生成 `/assets/...` 或外链主 CSS -> 部分 Tauri Android WebView 可能已执行 JS 但跳过 CSS 资源，登录页和首页会退回接近默认 HTML 样式。
+- 首页或登录页出现局部裸样式 -> 优先检查构建产物是否重新出现页面级 CSS chunk。
+- 单个页面 `<style scoped>` 依赖异步加载 -> 在 WebView 弱网或缓存异常时可能丢失关键布局。
+
+### 5. 好 / 基准 / 坏案例
+
+- 好：`dist/index.html` 使用相对脚本路径并包含 `<style data-tauri-inline-css>`，`dist/assets` 中没有 `.css` 文件，也没有 `LoginView-*.css`、`HomeView-*.css` 这类页面 CSS 分片。
+- 基准：登录页在打包 App、手机浏览器和普通 Vite preview 中都保持圆角卡片、填充按钮、紧凑输入框样式。
+- 坏：只依赖 `preloadMobileRoutes()` 提前动态导入页面，让异步 CSS chunk 在空闲时间“尽量加载”。
+
+### 6. 必需测试
+
+- `cd mobile && pnpm build`。
+- 构建后检查 `mobile/dist/index.html` 包含 `data-tauri-inline-css`，不包含 `rel="stylesheet"`，且 `mobile/dist/assets` 没有 `.css` 文件。
+- 有真机条件时，优先验证低版本安卓 WebView、企业签名 iOS 包或用户反馈机型的登录页和首页。
+
+### 7. 错误写法与正确写法
+
+#### 错误
+
+```ts
+export default defineConfig({
+  plugins: [vue(), tailwindcss()],
+})
+```
+
+#### 正确
+
+```ts
+export default defineConfig({
+  base: './',
+  plugins: [vue(), tailwindcss(), inlineBuiltCssForTauri()],
+  build: {
+    cssCodeSplit: false,
+  },
+})
+```
+
 ## 场景：手机端 Tauri APK 启动配置
 
 ### 1. 范围 / 触发

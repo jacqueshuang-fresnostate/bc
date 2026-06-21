@@ -67,6 +67,7 @@ pub enum LedgerEntryKind {
     OrderDebit,
     OrderRefund,
     PayoutCredit,
+    RechargeBonusCredit,
     RechargeCredit,
     RechargeRebateCredit,
     WithdrawalFreeze,

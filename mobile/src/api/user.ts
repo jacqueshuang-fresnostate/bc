@@ -77,6 +77,7 @@ export type UserInvitationDirectUser = {
   status: UserStatus
   inviteStatus: InviteStatus
   rebateEnabled: boolean
+  availableBalanceMinor: number
   totalDepositMinor: number
   totalWithdrawalMinor: number
   totalBetAmountMinor: number
@@ -233,10 +234,17 @@ export type RechargeChannelConfig = {
   payTypes: string[]
 }
 
+export type RechargeBonusRule = {
+  thresholdAmountMinor: number
+  bonusAmountMinor: number
+}
+
 export type RechargeConfig = {
   channels: RechargeChannelConfig[]
   minAmountMinor: number
   maxAmountMinor: number
+  bonusEnabled: boolean
+  bonusRules: RechargeBonusRule[]
 }
 
 export type RechargeOrder = {
@@ -273,6 +281,7 @@ export type LedgerEntryKind =
   | 'orderDebit'
   | 'orderRefund'
   | 'payoutCredit'
+  | 'rechargeBonusCredit'
   | 'rechargeCredit'
   | 'rechargeRebateCredit'
   | 'withdrawalFreeze'
@@ -406,6 +415,14 @@ export type ChatHallRedPacketClaimsResponse = {
   claimCount: number
   claimedCount: number
   claims: ChatHallRedPacketClaim[]
+}
+
+export type ChatHallSpeakingStatus = {
+  canSpeak: boolean
+  requiredRechargeMinor: number
+  currentRechargeMinor: number
+  missingRechargeMinor: number
+  message: string
 }
 
 type LoginPayload = {
@@ -689,6 +706,12 @@ export async function createRechargeOrder(payload: CreateRechargeOrderPayload) {
 
 export async function fetchChatHallMessages() {
   return unwrapApiData<ChatHallMessage[]>(await http.get('/user/chat-hall/messages'))
+}
+
+export async function fetchChatHallSpeakingStatus() {
+  return unwrapApiData<ChatHallSpeakingStatus>(
+    await http.get('/user/chat-hall/speaking-status'),
+  )
 }
 
 export async function sendChatHallMessage(content: string) {

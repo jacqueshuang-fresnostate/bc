@@ -37,6 +37,7 @@ const kindTextMap: Record<LedgerEntryKind, string> = {
   orderDebit: '投注扣款',
   orderRefund: '投注退款',
   payoutCredit: '派奖入账',
+  rechargeBonusCredit: '充值赠送',
   rechargeCredit: '充值入账',
   rechargeRebateCredit: '充值返利',
   withdrawalFreeze: '提现冻结',
@@ -51,7 +52,7 @@ function kindText(kind: LedgerEntryKind) {
 }
 
 function kindIcon(kind: LedgerEntryKind) {
-  if (kind === 'rechargeCredit' || kind === 'rechargeRebateCredit') return 'output_circle'
+  if (kind === 'rechargeCredit' || kind === 'rechargeRebateCredit' || kind === 'rechargeBonusCredit') return 'output_circle'
   if (kind === 'payoutCredit' || kind === 'orderRefund' || kind === 'withdrawalReject' || kind === 'groupBuyRefund') return 'add_circle'
   if (kind === 'agentRebateWithdrawal' || kind === 'orderDebit' || kind === 'withdrawalFreeze' || kind === 'withdrawalPayout' || kind === 'groupBuyDebit') return 'payments'
   return 'account_balance_wallet'

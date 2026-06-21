@@ -340,6 +340,8 @@ pub struct UserInvitationDirectUser {
     pub invite_status: InviteStatus,
     /// 是否允许该邀请关系产生返利。
     pub rebate_enabled: bool,
+    /// 当前可用余额，单位为分。
+    pub available_balance_minor: i64,
     /// totaldepositminor字段。
     pub total_deposit_minor: i64,
     /// total提现minor字段。

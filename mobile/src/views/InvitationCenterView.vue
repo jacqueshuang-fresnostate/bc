@@ -293,6 +293,7 @@ async function submitApplication() {
             <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-on-surface-variant">
               <span class="rounded-full bg-white px-2.5 py-1 font-bold text-red-900">邀请{{ inviteStatusText(item.inviteStatus) }}</span>
               <span class="rounded-full bg-white px-2.5 py-1">{{ item.rebateEnabled ? '返利开启' : '返利关闭' }}</span>
+              <span class="rounded-full bg-white px-2.5 py-1 font-bold text-emerald-700">余额 ¥{{ formatMoney(item.availableBalanceMinor) }}</span>
               <span class="rounded-full bg-white px-2.5 py-1">充值 ¥{{ formatMoney(item.totalDepositMinor) }}</span>
               <span class="rounded-full bg-white px-2.5 py-1">提现 ¥{{ formatMoney(item.totalWithdrawalMinor) }}</span>
               <span class="rounded-full bg-white px-2.5 py-1 font-bold text-red-900">投注 ¥{{ formatMoney(item.totalBetAmountMinor) }}</span>

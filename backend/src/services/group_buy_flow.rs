@@ -20,9 +20,9 @@ use crate::{
     },
 };
 
-enum GroupBuyOrderIssuePolicy<'a> {
+enum GroupBuyOrderIssuePolicy {
     OpenOnly,
-    AllowClosedBeforeDraw { now: &'a str },
+    AllowClosedBeforeDraw,
 }
 
 /// 根据合买计划生成无需重复扣款的真实投注订单请求。
@@ -60,7 +60,7 @@ async fn build_group_buy_order_request_with_issue_policy(
     rule_code: &str,
     numbers: &str,
     total_amount_minor: i64,
-    issue_policy: GroupBuyOrderIssuePolicy<'_>,
+    issue_policy: GroupBuyOrderIssuePolicy,
 ) -> ApiResult<CreateOrderRequest> {
     let issue = required_text(issue, "请选择合买期号")?;
     let rule_code = parse_group_buy_rule_code(rule_code)?;
@@ -106,7 +106,7 @@ fn validate_group_buy_draw_issue_accepts_order(
     draw_issue: &crate::domain::draw::DrawIssue,
     lottery: &LotteryKind,
     issue: &str,
-    issue_policy: GroupBuyOrderIssuePolicy<'_>,
+    issue_policy: GroupBuyOrderIssuePolicy,
 ) -> ApiResult<()> {
     if draw_issue.status == crate::domain::draw::DrawIssueStatus::Open {
         return validate_draw_issue_accepts_order(draw_issue, lottery, issue);
@@ -116,9 +116,9 @@ fn validate_group_buy_draw_issue_accepts_order(
         GroupBuyOrderIssuePolicy::OpenOnly => {
             validate_draw_issue_accepts_order(draw_issue, lottery, issue)
         }
-        GroupBuyOrderIssuePolicy::AllowClosedBeforeDraw { now }
+        GroupBuyOrderIssuePolicy::AllowClosedBeforeDraw
             if draw_issue.status == crate::domain::draw::DrawIssueStatus::Closed
-                && draw_issue.scheduled_at.as_str() > now.trim() =>
+                && draw_issue.draw_number.is_none() =>
         {
             if draw_issue.lottery_id != lottery.id {
                 return Err(ApiError::BadRequest(
@@ -137,8 +137,8 @@ fn validate_group_buy_draw_issue_accepts_order(
             }
             Ok(())
         }
-        GroupBuyOrderIssuePolicy::AllowClosedBeforeDraw { .. } => Err(ApiError::BadRequest(
-            "合买计划已经到开奖时间，不能补单成单".to_string(),
+        GroupBuyOrderIssuePolicy::AllowClosedBeforeDraw => Err(ApiError::BadRequest(
+            "合买计划已经开奖，不能补单成单".to_string(),
         )),
     }
 }
@@ -201,7 +201,7 @@ pub async fn create_order_for_filled_group_buy_before_draw_guard(
     group_buys: &GroupBuyRepository,
     lottery: &LotteryKind,
     plan: &GroupBuyPlan,
-    now: &str,
+    _now: &str,
 ) -> ApiResult<Option<(OrderDetail, GroupBuyPlan)>> {
     if plan.status != GroupBuyPlanStatus::Filled || plan.order_id.is_some() {
         return Ok(None);
@@ -216,7 +216,7 @@ pub async fn create_order_for_filled_group_buy_before_draw_guard(
         &plan.rule_code,
         &plan.numbers,
         plan.total_amount_minor,
-        GroupBuyOrderIssuePolicy::AllowClosedBeforeDraw { now },
+        GroupBuyOrderIssuePolicy::AllowClosedBeforeDraw,
     )
     .await?;
     let order = orders

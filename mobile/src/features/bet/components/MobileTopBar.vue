@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import WalletHeaderAmount from '../../../components/mobile/WalletHeaderAmount.vue'
+
 const props = withDefaults(defineProps<{
   title: string
   balance?: string | number
@@ -21,7 +23,11 @@ const emit = defineEmits<{ back: [] }>()
           <p class="text-xs font-semibold tracking-wider text-[#5a403e]">{{ props.subtitle }}</p>
         </div>
       </div>
-      <div class="shrink-0 rounded-full border border-[#e2beba]/40 bg-white px-4 py-2 text-sm font-bold">¥{{ Number(props.balance || 0).toFixed(2) }}</div>
+      <WalletHeaderAmount
+        :balance="props.balance"
+        label=""
+        class="border border-[#e2beba]/40 bg-white px-3.5 py-2 text-[#8c0a15]"
+      />
     </div>
   </header>
 </template>
