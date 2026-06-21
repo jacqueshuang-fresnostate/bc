@@ -186,7 +186,8 @@ pub async fn draw_due_issues_with_progress(
     let now = normalize_automation_now(&payload)?;
     let mut run = empty_draw_automation_run(&now);
     let lottery_configs = lottery_automation_configs(lotteries).await?;
-    let mut draw_candidates = Vec::new();
+    let mut local_draw_candidates = Vec::new();
+    let mut api_draw_candidates = Vec::new();
     for issue in draws.list_scheduler_active().await? {
         if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_configs) {
             push_skipped_issue_once(&mut run, &issue, &reason);
@@ -209,30 +210,46 @@ pub async fn draw_due_issues_with_progress(
             continue;
         }
 
-        draw_candidates.push(issue);
+        if issue.draw_mode == DrawMode::Api {
+            api_draw_candidates.push(issue);
+        } else {
+            local_draw_candidates.push(issue);
+        }
     }
 
-    let api_latest_issue_cache = prefetch_api_latest_issue_lookups(draws, &draw_candidates).await;
-    let mut executable_issues = Vec::new();
+    let local_jobs =
+        draw_execution_jobs_from_candidates(&mut run, &lottery_configs, local_draw_candidates);
+    let local_outcomes = execute_draw_jobs_concurrently(draws, orders, local_jobs).await?;
+    settle_draw_outcomes(
+        &mut run,
+        orders,
+        finance,
+        group_buys,
+        local_outcomes,
+        &progress_callback,
+    )
+    .await?;
+
+    let api_latest_issue_cache =
+        prefetch_api_latest_issue_lookups(draws, &api_draw_candidates).await;
+    let mut executable_api_issues = Vec::new();
     let mut api_draw_prefetch_issues = Vec::new();
-    for issue in draw_candidates {
+    for issue in api_draw_candidates {
         if let Some(reason) = stale_api_issue_retry_reason(&api_latest_issue_cache, &issue) {
             run.skipped_issues.push(skipped_issue(&issue, &reason));
             continue;
         }
-        if issue.draw_mode == DrawMode::Api {
-            let allow_control = lottery_draw_control_enabled(&issue, &lottery_configs);
-            if !allow_control || !draws.has_active_draw_control(&issue).await? {
-                api_draw_prefetch_issues.push(issue.clone());
-            }
+        let allow_control = lottery_draw_control_enabled(&issue, &lottery_configs);
+        if !allow_control || !draws.has_active_draw_control(&issue).await? {
+            api_draw_prefetch_issues.push(issue.clone());
         }
 
-        executable_issues.push(issue);
+        executable_api_issues.push(issue);
     }
     let api_draw_number_cache = prefetch_api_draw_numbers(draws, api_draw_prefetch_issues).await;
 
-    let mut draw_jobs = Vec::new();
-    for (order, issue) in executable_issues.into_iter().enumerate() {
+    let mut api_draw_jobs = Vec::new();
+    for (order, issue) in executable_api_issues.into_iter().enumerate() {
         let api_draw_number = match api_draw_number_cache.get(&issue.id) {
             Some(ApiDrawNumberLookup::Ready(draw_number)) => draw_number.clone(),
             Some(ApiDrawNumberLookup::Failed(reason)) => {
@@ -248,7 +265,7 @@ pub async fn draw_due_issues_with_progress(
             continue;
         };
 
-        draw_jobs.push(DrawExecutionJob {
+        api_draw_jobs.push(DrawExecutionJob {
             order,
             allow_control_number: lottery_draw_control_enabled(&issue, &lottery_configs),
             lottery: lottery_config.lottery.clone(),
@@ -257,7 +274,55 @@ pub async fn draw_due_issues_with_progress(
         });
     }
 
-    let draw_outcomes = execute_draw_jobs_concurrently(draws, orders, draw_jobs).await?;
+    let api_outcomes = execute_draw_jobs_concurrently(draws, orders, api_draw_jobs).await?;
+    settle_draw_outcomes(
+        &mut run,
+        orders,
+        finance,
+        group_buys,
+        api_outcomes,
+        &progress_callback,
+    )
+    .await?;
+
+    Ok(run)
+}
+
+/// 把不依赖 API 预取的本地开奖候选转换为开奖执行任务，确保平台开奖可以优先落库。
+fn draw_execution_jobs_from_candidates(
+    run: &mut DrawAutomationRun,
+    lottery_configs: &HashMap<String, LotteryAutomationConfig>,
+    candidates: Vec<DrawIssue>,
+) -> Vec<DrawExecutionJob> {
+    let mut draw_jobs = Vec::new();
+    for (order, issue) in candidates.into_iter().enumerate() {
+        let Some(lottery_config) = lottery_configs.get(&issue.lottery_id) else {
+            run.skipped_issues
+                .push(skipped_issue(&issue, "未找到彩种配置，跳过自动开奖"));
+            continue;
+        };
+
+        draw_jobs.push(DrawExecutionJob {
+            order,
+            allow_control_number: lottery_draw_control_enabled(&issue, lottery_configs),
+            lottery: lottery_config.lottery.clone(),
+            issue,
+            api_draw_number: None,
+        });
+    }
+
+    draw_jobs
+}
+
+/// 按执行结果逐期结算并推送进度；平台开奖和 API 开奖共用同一套派奖链路。
+async fn settle_draw_outcomes(
+    run: &mut DrawAutomationRun,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    draw_outcomes: Vec<DrawExecutionOutcome>,
+    progress_callback: &Option<DrawIssueSettlementProgressCallback>,
+) -> ApiResult<()> {
     for outcome in draw_outcomes {
         let issue = outcome.source_issue;
         let draw_result = outcome.result;
@@ -292,7 +357,7 @@ pub async fn draw_due_issues_with_progress(
         run.ledger_entries.extend(entries);
     }
 
-    Ok(run)
+    Ok(())
 }
 
 /// 并发写入本轮已满足开奖条件的期号结果；结算阶段仍由调用方按顺序提交，避免资金快照竞争。

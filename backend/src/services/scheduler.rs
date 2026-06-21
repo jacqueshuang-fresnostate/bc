@@ -765,7 +765,8 @@ pub fn spawn_draw_scheduler(
         "开奖调度器后台任务已启动"
     );
 
-    let slow_phase_lock = Arc::new(AsyncMutex::new(()));
+    let due_phase_lock = Arc::new(AsyncMutex::new(()));
+    let robot_phase_lock = Arc::new(AsyncMutex::new(()));
 
     tokio::spawn(async move {
         let mut next_run_at = tokio::time::Instant::now();
@@ -796,29 +797,6 @@ pub fn spawn_draw_scheduler(
             next_run_at += interval;
             let run_started = Instant::now();
 
-            let pre_close_robot_run = match run_group_buy_robots(
-                &robots,
-                &draws,
-                &lotteries,
-                &orders,
-                &finance,
-                &group_buys,
-                &access,
-                now.clone(),
-            )
-            .await
-            {
-                Ok(run) => run,
-                Err(error) => {
-                    tracing::error!(
-                        now = %now,
-                        error = %error.log_message(),
-                        "开奖调度器封盘前合买机器人兜底失败"
-                    );
-                    empty_group_buy_robot_run(now.clone())
-                }
-            };
-
             match run_draw_scheduler_opening_once_with_realtime(
                 &draws,
                 &lotteries,
@@ -828,8 +806,7 @@ pub fn spawn_draw_scheduler(
             )
             .await
             {
-                Ok(mut run) => {
-                    run.robot_run = pre_close_robot_run;
+                Ok(run) => {
                     publish_scheduler_completion_events(&realtime, &finance, &run).await;
                     let run_elapsed_ms = run_started.elapsed().as_millis();
                     let finished_at = current_scheduler_timestamp();
@@ -853,8 +830,8 @@ pub fn spawn_draw_scheduler(
                         "开奖调度器开盘阶段执行完成"
                     );
 
-                    let slow_lock = slow_phase_lock.clone();
-                    match slow_lock.try_lock_owned() {
+                    let due_lock = due_phase_lock.clone();
+                    match due_lock.try_lock_owned() {
                         Ok(guard) => {
                             let draws = draws.clone();
                             let lotteries = lotteries.clone();
@@ -865,11 +842,11 @@ pub fn spawn_draw_scheduler(
                             let access = access.clone();
                             let realtime = realtime.clone();
                             let current_config = current_config.clone();
-                            let slow_now = now.clone();
+                            let due_now = now.clone();
                             tokio::spawn(async move {
                                 let _guard = guard;
-                                let slow_started = Instant::now();
-                                match run_draw_scheduler_slow_once_with_realtime(
+                                let due_started = Instant::now();
+                                match run_draw_scheduler_due_once_with_realtime(
                                     &draws,
                                     &lotteries,
                                     &orders,
@@ -878,24 +855,77 @@ pub fn spawn_draw_scheduler(
                                     &robots,
                                     &access,
                                     &current_config,
-                                    slow_now.clone(),
+                                    due_now.clone(),
                                     Some(&realtime),
                                 )
                                 .await
                                 {
-                                    Ok(slow_run) => tracing::info!(
-                                        "当前时间" = %slow_run.now,
-                                        "慢阶段耗时毫秒" = slow_started.elapsed().as_millis(),
-                                        "开奖期数" = slow_run.automation_run.drawn_issues.len(),
-                                        "机器人新增合买" = slow_run.robot_run.created_plans.len(),
-                                        "机器人满单" = slow_run.robot_run.filled_plans.len(),
-                                        "开奖调度器慢阶段后台任务完成"
+                                    Ok(due_run) => tracing::info!(
+                                        "当前时间" = %due_run.now,
+                                        "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
+                                        "开奖期数" = due_run.automation_run.drawn_issues.len(),
+                                        "兜底满单" = due_run.robot_run.filled_plans.len(),
+                                        "开奖调度器到期开奖后台任务完成"
                                     ),
                                     Err(error) => tracing::error!(
-                                        now = %slow_now,
-                                        "慢阶段耗时毫秒" = slow_started.elapsed().as_millis(),
+                                        now = %due_now,
+                                        "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
                                         error = %error.log_message(),
-                                        "开奖调度器慢阶段后台任务失败"
+                                        "开奖调度器到期开奖后台任务失败"
+                                    ),
+                                }
+                            });
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                "当前时间" = %now,
+                                "开奖调度器到期开奖阶段仍在执行，本轮不重复启动"
+                            );
+                        }
+                    }
+
+                    let robot_lock = robot_phase_lock.clone();
+                    match robot_lock.try_lock_owned() {
+                        Ok(guard) => {
+                            let draws = draws.clone();
+                            let lotteries = lotteries.clone();
+                            let orders = orders.clone();
+                            let finance = finance.clone();
+                            let group_buys = group_buys.clone();
+                            let robots = robots.clone();
+                            let access = access.clone();
+                            let realtime = realtime.clone();
+                            let current_config = current_config.clone();
+                            let robot_now = now.clone();
+                            tokio::spawn(async move {
+                                let _guard = guard;
+                                let robot_started = Instant::now();
+                                match run_draw_scheduler_robot_once_with_realtime(
+                                    &draws,
+                                    &lotteries,
+                                    &orders,
+                                    &finance,
+                                    &group_buys,
+                                    &robots,
+                                    &access,
+                                    &current_config,
+                                    robot_now.clone(),
+                                    Some(&realtime),
+                                )
+                                .await
+                                {
+                                    Ok(robot_run) => tracing::info!(
+                                        "当前时间" = %robot_run.now,
+                                        "机器人维护耗时毫秒" = robot_started.elapsed().as_millis(),
+                                        "机器人新增合买" = robot_run.robot_run.created_plans.len(),
+                                        "机器人满单" = robot_run.robot_run.filled_plans.len(),
+                                        "开奖调度器机器人维护后台任务完成"
+                                    ),
+                                    Err(error) => tracing::error!(
+                                        now = %robot_now,
+                                        "机器人维护耗时毫秒" = robot_started.elapsed().as_millis(),
+                                        error = %error.log_message(),
+                                        "开奖调度器机器人维护后台任务失败"
                                     ),
                                 }
                             });
@@ -903,7 +933,7 @@ pub fn spawn_draw_scheduler(
                         Err(_) => {
                             tracing::debug!(
                                 "当前时间" = %now,
-                                "开奖调度器慢阶段仍在执行，本轮不重复启动慢阶段"
+                                "开奖调度器机器人维护仍在执行，本轮不重复启动"
                             );
                         }
                     }
@@ -1078,18 +1108,7 @@ async fn run_draw_scheduler_once_with_realtime(
     now: String,
     realtime: Option<&RealtimeHub>,
 ) -> ApiResult<DrawSchedulerRun> {
-    let pre_close_robot_run = run_group_buy_robots(
-        robots,
-        draws,
-        lotteries,
-        orders,
-        finance,
-        group_buys,
-        access,
-        now.clone(),
-    )
-    .await?;
-    let mut opening_run = run_draw_scheduler_opening_once_with_realtime(
+    let opening_run = run_draw_scheduler_opening_once_with_realtime(
         draws,
         lotteries,
         config,
@@ -1097,11 +1116,23 @@ async fn run_draw_scheduler_once_with_realtime(
         realtime,
     )
     .await?;
-    opening_run.robot_run = pre_close_robot_run;
     if let Some(realtime) = realtime {
         publish_scheduler_completion_events(realtime, finance, &opening_run).await;
     }
-    let slow_run = run_draw_scheduler_slow_once_with_realtime(
+    let due_run = run_draw_scheduler_due_once_with_realtime(
+        draws,
+        lotteries,
+        orders,
+        finance,
+        group_buys,
+        robots,
+        access,
+        config,
+        now.clone(),
+        realtime,
+    )
+    .await?;
+    let robot_run = run_draw_scheduler_robot_once_with_realtime(
         draws, lotteries, orders, finance, group_buys, robots, access, config, now, realtime,
     )
     .await?;
@@ -1110,10 +1141,10 @@ async fn run_draw_scheduler_once_with_realtime(
         now: opening_run.now,
         automation_run: merge_draw_automation_runs(
             opening_run.automation_run,
-            slow_run.automation_run,
+            due_run.automation_run,
         ),
         generated_issues: opening_run.generated_issues,
-        robot_run: merge_group_buy_robot_runs(opening_run.robot_run, slow_run.robot_run),
+        robot_run: merge_group_buy_robot_runs(due_run.robot_run, robot_run.robot_run),
         skipped_lotteries: opening_run.skipped_lotteries,
     })
 }
@@ -1187,8 +1218,8 @@ async fn run_draw_scheduler_opening_once_with_realtime(
         skipped_lotteries,
     })
 }
-/// 执行调度慢阶段，负责开奖、结算、机器人和派奖。
-async fn run_draw_scheduler_slow_once_with_realtime(
+/// 执行调度到期开奖阶段，优先处理封盘兜底、流单退款、开奖和派奖。
+async fn run_draw_scheduler_due_once_with_realtime(
     draws: &DrawRepository,
     lotteries: &LotteryRepository,
     orders: &OrderRepository,
@@ -1208,22 +1239,8 @@ async fn run_draw_scheduler_slow_once_with_realtime(
         ));
     }
 
-    let robot_phase_started = Instant::now();
-    let robot_run = run_group_buy_robots(
-        robots,
-        draws,
-        lotteries,
-        orders,
-        finance,
-        group_buys,
-        access,
-        now.clone(),
-    )
-    .await?;
-    let robot_phase_ms = robot_phase_started.elapsed().as_millis();
-
     let guard_phase_started = Instant::now();
-    let guard_run = force_fill_user_group_buy_plans_before_refund(
+    let robot_run = force_fill_user_group_buy_plans_before_refund(
         robots,
         draws,
         lotteries,
@@ -1235,7 +1252,6 @@ async fn run_draw_scheduler_slow_once_with_realtime(
     )
     .await?;
     let guard_phase_ms = guard_phase_started.elapsed().as_millis();
-    let robot_run = merge_group_buy_robot_runs(robot_run, guard_run);
 
     let refund_phase_started = Instant::now();
     let refund_run = refund_closed_unfilled_group_buys(
@@ -1284,14 +1300,69 @@ async fn run_draw_scheduler_slow_once_with_realtime(
         "当前时间" = %run.now,
         "封盘流单退款耗时毫秒" = refund_phase_ms,
         "开奖结算耗时毫秒" = draw_phase_ms,
-        "机器人耗时毫秒" = robot_phase_ms,
         "流单前兜底耗时毫秒" = guard_phase_ms,
         "开奖期数" = run.automation_run.drawn_issues.len(),
         "结算批次" = run.automation_run.settlement_runs.len(),
         "入账笔数" = run.automation_run.ledger_entries.len(),
+        "兜底满单" = run.robot_run.filled_plans.len(),
+        "开奖调度器到期开奖阶段完成"
+    );
+
+    Ok(run)
+}
+
+/// 执行调度机器人维护阶段，负责发起合买和节奏化补单；不能阻塞到期开奖阶段。
+async fn run_draw_scheduler_robot_once_with_realtime(
+    draws: &DrawRepository,
+    lotteries: &LotteryRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    robots: &RobotRepository,
+    access: &AccessRepository,
+    config: &DrawSchedulerConfig,
+    now: String,
+    realtime: Option<&RealtimeHub>,
+) -> ApiResult<DrawSchedulerRun> {
+    config.validate()?;
+    let now = now.trim().to_string();
+    if now.is_empty() {
+        return Err(ApiError::BadRequest(
+            "draw scheduler time is required".to_string(),
+        ));
+    }
+
+    let robot_phase_started = Instant::now();
+    let robot_run = run_group_buy_robots(
+        robots,
+        draws,
+        lotteries,
+        orders,
+        finance,
+        group_buys,
+        access,
+        now.clone(),
+    )
+    .await?;
+    let robot_phase_ms = robot_phase_started.elapsed().as_millis();
+    let run = DrawSchedulerRun {
+        now,
+        automation_run: empty_scheduler_automation_run(robot_run.now.clone()),
+        generated_issues: Vec::new(),
+        robot_run,
+        skipped_lotteries: Vec::new(),
+    };
+
+    if let Some(realtime) = realtime {
+        publish_scheduler_robot_events(realtime, finance, &run.robot_run).await;
+    }
+
+    tracing::info!(
+        "当前时间" = %run.now,
+        "机器人维护耗时毫秒" = robot_phase_ms,
         "机器人新增合买" = run.robot_run.created_plans.len(),
         "机器人满单" = run.robot_run.filled_plans.len(),
-        "开奖调度器慢阶段完成"
+        "开奖调度器机器人维护阶段完成"
     );
 
     Ok(run)
@@ -1305,6 +1376,18 @@ fn empty_group_buy_robot_run(now: String) -> GroupBuyRobotRun {
         created_orders: Vec::new(),
         ledger_entries: Vec::new(),
         skipped_items: Vec::new(),
+    }
+}
+
+/// 构造空自动开奖结果，供机器人维护阶段返回统一调度结构。
+fn empty_scheduler_automation_run(now: String) -> DrawAutomationRun {
+    DrawAutomationRun {
+        now,
+        closed_issues: Vec::new(),
+        drawn_issues: Vec::new(),
+        settlement_runs: Vec::new(),
+        ledger_entries: Vec::new(),
+        skipped_issues: Vec::new(),
     }
 }
 
@@ -2306,6 +2389,55 @@ mod tests {
                 && issue.issue == "202606021202"
                 && issue.status == DrawIssueStatus::Open));
     }
+
+    /// 验证到期开奖阶段独立于常规机器人维护，避免机器人耗时拖延平台开奖。
+    #[tokio::test]
+    async fn scheduler_due_phase_draws_without_regular_robot_maintenance() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "ssc60").await;
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
+        let config = enabled_config(1);
+        let lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        let issue = draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "DUE-ONLY-20260602205500".to_string(),
+                    scheduled_at: "2026-06-02 20:55:00".to_string(),
+                    sale_closed_at: "2026-06-02 20:54:59".to_string(),
+                },
+            )
+            .await
+            .expect("draw issue can be created");
+        draws.close(&issue.id).await.expect("issue can be closed");
+
+        let run = super::run_draw_scheduler_due_once_with_realtime(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &robots,
+            &access,
+            &config,
+            "2026-06-02 20:55:00".to_string(),
+            None,
+        )
+        .await
+        .expect("due phase can draw without robot maintenance");
+        let stored = draws.get(&issue.id).await.expect("issue exists");
+
+        assert_eq!(stored.status, DrawIssueStatus::Drawn);
+        assert_eq!(run.automation_run.drawn_issues.len(), 1);
+        assert!(run.robot_run.created_plans.is_empty());
+    }
+
     /// 验证平台普通周期即使调度晚跑，也会补到自然时钟节点而不是继续把开奖时间后移。
     #[tokio::test]
     async fn scheduler_realigns_late_platform_periodic_issue_generation() {

@@ -106,7 +106,7 @@
 ## 补充：充值赠送活动契约
 
 - `GET /api/user/recharge/config` 需要返回 `bonusEnabled` 和 `bonusRules`；`bonusRules` 中的 `thresholdAmountMinor`、`bonusAmountMinor` 始终使用分。
-- 后台配置键为 `recharge_bonus_enabled` 与 `recharge_bonus_rules`，前端可按元编辑，但提交给后端的系统设置值必须仍是分单位 JSON。
+- 后台配置键为 `recharge_bonus_enabled` 与 `recharge_bonus_rules`，`recharge_bonus_enabled` 在后台必须使用下拉框开启或关闭；`recharge_bonus_rules` 只能通过“充值满 / 赠送”结构化档位按元维护，前端提交给后端的系统设置值仍是分单位 JSON，不能让运营直接编辑 JSON 文本。
 - 彩虹易支付回调和后台客服直充确认都必须在充值订单首次变为已入账时处理活动赠送；重复回调或重复确认不得再次发放。
 - 活动赠送资金流水类型为 `rechargeBonusCredit`，代理返利资金流水类型仍为 `rechargeRebateCredit`；代理返利统计只能基于真实充值本金，不得把赠送彩金计入下级充值返利。
 - 后端测试需要覆盖赠送彩金幂等和最高命中档位，前端构建需要覆盖后台设置页和手机端充值页类型契约。
@@ -346,7 +346,7 @@ WebSocket 消息统一使用当前系统事件信封：
 - `GET /api/user/chat-hall/red-packets/{id}/claims` 返回指定红包的领取进度和领取人列表，字段使用 `camelCase`，`claims` 中包含领取用户名、用户 ID、领取金额和领取时间；红包不存在时返回业务错误，不泄露资金表内部信息。
 - 聊天大厅消息必须写入 `chat_hall_messages` 表；`avatar_url` 保存发送人头像快照，用户更新头像后需要同步刷新该用户历史消息的头像快照。运行期只保留最近 200 条历史，接口返回最近 100 条。
 - 聊天大厅是所有登录用户可进入的公共大厅，不使用客服会话表，不允许把公共大厅消息写入 `support_conversations` 或 `support_messages`。
-- 聊天大厅发言门槛由系统设置 `chat_hall_speaking_min_recharge_minor` 控制，单位为分，`0` 表示不限制；门槛统计只计算当前用户正向 `rechargeCredit` 充值本金流水，不计入 `rechargeBonusCredit` 赠送彩金、`rechargeRebateCredit` 代理返利、红包或手动调账。
+- 聊天大厅发言门槛由系统设置 `chat_hall_speaking_min_recharge_minor` 控制，后台按元展示和编辑，后端内部按分保存，`0` 表示不限制；门槛统计只计算当前用户正向 `rechargeCredit` 充值本金流水，不计入 `rechargeBonusCredit` 赠送彩金、`rechargeRebateCredit` 代理返利、红包或手动调账。
 - `POST /api/user/chat-hall/messages`、`POST /api/user/chat-hall/red-packets`、`POST /api/user/chat-hall/group-buy-plans` 必须在保存消息、扣款或广播前统一校验发言资格；未满足门槛时返回 403，并提示“抱歉，暂无发言权限，充值 ¥x 元即可参与群聊”。
 
 ### 4. 校验与错误矩阵
@@ -5062,7 +5062,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 
 聊天大厅发言资格：
 
-- 后台系统设置 `chat_hall_speaking_min_recharge_minor` 使用分作为存储单位，`0` 表示所有登录用户都可发言。
+- 后台系统设置 `chat_hall_speaking_min_recharge_minor` 使用元作为运营输入单位，保存时转换为分，`0` 表示所有登录用户都可发言。
 - `GET /api/user/chat-hall/speaking-status` 按当前用户正向 `rechargeCredit` 本金流水累计金额判断资格，并返回 `canSpeak`、`requiredRechargeMinor`、`currentRechargeMinor`、`missingRechargeMinor` 和中文 `message`。
 - 发送文本、红包和合买分享都必须在业务执行前调用同一发言资格守卫；门槛不足时不扣款、不保存消息、不广播实时事件。
 
@@ -5282,7 +5282,8 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 
 ### 2. 契约
 
-- 调度器必须先收集本轮到期开奖候选，再并发读取 API 最新期号。
+- 调度器必须先收集本轮到期开奖候选；平台开奖和手动开奖候选必须先写入开奖结果并结算，不能等待 API 最新期号或 API 开奖号码预取完成。
+- API 彩种候选在本地开奖候选处理完成后，再并发读取 API 最新期号。
 - API 最新期号读取结果用于旧期号距离判断；读取失败时保持保守行为，不执行距离跳过，继续尝试读取开奖号码。
 - 对未被旧期规则跳过、且没有后台控奖号码的 API 期号，并发读取 API 开奖号码。
 - API 开奖号码读取失败只跳过对应期号，并写入 `skippedIssues`，不得中断其它候选期号。
@@ -5303,6 +5304,7 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 | 后台控奖号码已启用 | 不预取 API 开奖号码，开奖时使用控奖号码 |
 | API 彩种配置延迟且尚未到延迟后时间 | 只做封盘等到期动作，不进入 API 最新期号或开奖号码预取 |
 | 非 API 彩种 | 不进入 API 预取流程 |
+| 平台彩种和 API 彩种同轮到期开奖 | 平台彩种先完成开奖和结算，API 彩种慢接口不得拖延平台开奖结果推送 |
 | 多个期号同时写入开奖号码 | 最多按调度实现的并发上限执行写号，后续结算仍按原顺序串行 |
 
 ### 4. 必要测试
@@ -5328,13 +5330,14 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
   - 非 API 彩种本地补齐未来 `open` 期号。
   - API 彩种并发预览下一期，再串行写入新 `open` 期号。
   - 发布 `lottery.issue_closed` 和 `lottery.issue_opened`。
-- 慢阶段才能执行：
+- 到期开奖阶段才能执行：
   - 封盘未满员合买取消与退款。
   - API/平台/手动开奖。
   - 订单结算、派奖入账、合买结算。
+- 机器人维护阶段才能执行：
   - 合买机器人和购彩机器人。
-- 常驻调度中慢阶段必须后台执行并串行互斥；慢阶段未结束时，下一轮只能跳过慢阶段启动，不能阻塞快阶段。
-- 慢阶段仍需发布余额、订单和开奖相关实时事件，但不得影响下一期生成。
+- 常驻调度中到期开奖阶段和机器人维护阶段必须分开后台执行并分别串行互斥；机器人维护未结束时，只能跳过本轮机器人维护，不能阻塞到期开奖阶段。
+- 到期开奖阶段仍需发布余额、订单和开奖相关实时事件，但不得影响下一期生成；机器人维护阶段只能发布机器人相关余额和订单事件。
 
 ### 3. 持久化契约
 
@@ -5357,15 +5360,18 @@ let message = chat_hall.send_red_packet(&finance, user, request)?;
 
 | 条件 | 预期行为 |
 |------|----------|
-| 慢阶段还在执行 | 快阶段继续按配置周期执行，慢阶段启动被跳过并记录 debug 日志 |
-| 封盘时存在未满员合买 | 快阶段只关闭期号，退款在慢阶段处理 |
+| 到期开奖阶段还在执行 | 快阶段继续按配置周期执行，到期开奖阶段启动被跳过并记录中文 warning 日志 |
+| 机器人维护阶段还在执行 | 快阶段和到期开奖阶段继续执行，只跳过本轮机器人维护 |
+| 封盘时存在未满员合买 | 快阶段只关闭期号，退款在到期开奖阶段处理 |
 | API 下一期预览慢或失败 | 不影响非 API 彩种补期；该 API 彩种写入跳过原因 |
+| 常规合买机器人执行耗时超过调度周期 | 不影响下一轮到期开奖，最多影响下一轮机器人发单或节奏补单 |
 | `draw_issues` 数量增长到上万条 | 单次封盘/补期不得因全表重写拖到数十秒 |
 | 首页存在多个历史 `closed` 期号 | 不得选择最早旧期作为当前期 |
 
 ### 6. 必要测试
 
 - 后端需要覆盖平台彩种在 API 预览失败时仍能生成下一期。
+- 后端需要覆盖到期开奖阶段可以在启用机器人配置时独立完成开奖，不触发常规机器人发单。
 - 后端需要覆盖首页当前期不会被历史 `closed` 旧期压住。
 - 后端需要覆盖封盘流单退款仍会在完整自动化链路中执行。
 - 本地联调需要至少观察 `魔力分分彩` 和 `腾讯分分彩` 跨过一次封盘点，确认 `/api/lottery/home` 与 `/api/user/bet/page-config/{lottery_id}` 都返回下一期 `selling`。

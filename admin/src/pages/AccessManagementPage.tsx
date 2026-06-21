@@ -2970,10 +2970,18 @@ function settingSubmitValue(key: string, value: string) {
 }
 
 function settingDescription(setting: SystemSettingItem) {
+  if (setting.key === RECHARGE_BONUS_RULES_SETTING_KEY) {
+    return '用户充值赠送活动档位，请在下方“赠送档位”区域按元维护，不需要手写 JSON';
+  }
+  if (setting.key === CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY) {
+    return '聊天大厅发言最低累计充值金额（元），0 表示不限制';
+  }
   if (!isMinorMoneySetting(setting.key)) {
     return setting.description;
   }
-  return setting.description.replace('（分）', '（元）');
+  return setting.description
+    .replace('（分）', '（元）')
+    .replace('金额单位为分', '金额按元填写');
 }
 
 function settingSelectOptions(

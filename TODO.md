@@ -1,5 +1,26 @@
 # TODO
 
+## 2026-06-21 23:27 HKT 老版本 Android WebView 样式兼容修复
+
+- 完成任务：修复老版本 Android 手机上登录页、首页等页面出现样式丢失、输入框和按钮退回浏览器默认样式的问题。
+- 解决问题：移动端构建已经把 CSS 内联到 `index.html`，但 Tailwind 4 最终产物仍包含 `@layer`、`@property`、`oklch()` 和 `color-mix()`；低版本 Android WebView 可能无法解析这些现代 CSS 语法，尤其会整块忽略 `@layer` 内的基础样式、主题变量和工具类。
+- 实施内容：`mobile/vite.config.ts` 的 Tauri CSS 内联插件新增旧 WebView 降级处理，内联前展开 `@layer`、删除 `@property`、递归移除现代 `color-mix()` 支持块，并把 `oklch()` 颜色转换为旧浏览器可解析的 `rgb()/rgba()`；前端质量规范和架构说明同步增加移动端打包产物的 CSS 语法扫描要求。
+- 验证结果：手机端 `pnpm --dir mobile build` 通过；脚本确认 `mobile/dist/index.html` 包含 `data-tauri-inline-css`，真实 HTML 外链 stylesheet 数量为 0，`@layer`、`@property`、`oklch`、`color-mix` 均为 0，`mobile/dist/assets` 无 `.css` 文件。
+
+## 2026-06-21 23:17 HKT 系统设置金额口径和充值赠送配置优化
+
+- 完成任务：优化后台系统设置中充值赠送和聊天大厅发言门槛的配置体验。
+- 解决问题：`recharge_bonus_enabled`、`recharge_bonus_rules` 和 `chat_hall_speaking_min_recharge_minor` 属于内部配置键，页面和数据库说明仍容易让运营误以为需要直接按分或 JSON 维护；充值赠送活动应该通过开关下拉和结构化档位维护，聊天大厅门槛应该按元填写。
+- 实施内容：后台系统设置说明对 `recharge_bonus_rules` 兜底显示为“通过赠送档位按元维护，不需要手写 JSON”；聊天大厅发言门槛说明显示为元；后端系统设置种子说明同步改为元口径；新增数据库迁移更新已有库中的系统设置说明；架构说明和 Trellis 契约同步记录 `recharge_bonus_enabled` 使用下拉框、`recharge_bonus_rules` 使用结构化档位、运营输入金额统一为元。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、管理后台 `pnpm --dir admin build` 和 `git diff --check` 均通过；管理后台构建仅保留既有大 chunk 提示。
+
+## 2026-06-21 23:05 HKT 开奖调度到点开奖防延迟修复
+
+- 完成任务：修复平台开奖或本地开奖在彩种多、机器人维护或 API 开奖源较慢时，到达计划开奖时间后仍可能延迟一分多钟才推送开奖结果的问题。
+- 解决问题：常驻调度器此前在快阶段前先执行合买机器人，并把“机器人维护、流单兜底、退款、开奖结算”放在同一个慢阶段锁中；上一轮慢阶段如果超过调度周期，下一轮到点开奖会因为锁被占用而跳过，只能等再下一轮执行。同时自动开奖会先预取 API 期号和开奖号码，再执行平台开奖，平台彩种可能被第三方接口拖慢。
+- 实施内容：常驻调度器拆成独立的“到期开奖阶段锁”和“机器人维护阶段锁”；快阶段只负责封盘、补未来期号和推送开盘事件，不再等待常规机器人；到期开奖阶段只处理封盘兜底、流单退款、开奖、结算和派奖，常规机器人发单/节奏补单改为独立后台维护阶段；自动开奖内部先执行平台/手动开奖并即时结算推送，再处理 API 彩种的最新期号与开奖号码预取；新增测试覆盖到期开奖阶段可以在启用机器人配置时独立完成开奖，不触发常规机器人发单。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml automation_ -- --nocapture` 和后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet` 均通过；调度器相关测试 24 个成功，自动开奖相关测试 10 个成功，后端全量 387 个测试成功。
+
 ## 2026-06-21 19:55 HKT 聊天大厅发言充值门槛配置
 
 - 完成任务：后台系统设置新增聊天大厅发言最低累计充值金额配置，手机端聊天大厅按该配置展示发言权限提示。

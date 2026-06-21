@@ -3292,12 +3292,12 @@ fn seed_settings() -> Vec<SystemSetting> {
         SystemSetting {
             key: "recharge_bonus_rules".to_string(),
             value: "[]".to_string(),
-            description: "用户充值赠送活动档位，保存为 JSON 数组，金额单位为分".to_string(),
+            description: "用户充值赠送活动档位，后台按元维护，系统保存为分".to_string(),
         },
         SystemSetting {
             key: "chat_hall_speaking_min_recharge_minor".to_string(),
             value: "0".to_string(),
-            description: "聊天大厅发言最低累计充值金额（分），0 表示不限制".to_string(),
+            description: "聊天大厅发言最低累计充值金额（元），0 表示不限制".to_string(),
         },
         SystemSetting {
             key: "support_telegram_notification_enabled".to_string(),
