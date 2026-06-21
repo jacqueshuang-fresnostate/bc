@@ -1049,7 +1049,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/draw-scheduler/config",
         "开奖源与调度",
         "更新调度配置",
-        "修改开奖调度开关、执行周期和生成缓冲。",
+        "修改开奖调度开关、执行周期、生成缓冲和补期并发上限。",
         AuthMode::Admin,
         RequestBodyKind::Json,
     ),

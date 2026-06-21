@@ -91,9 +91,11 @@ interface DrawSourceFormState {
 }
 
 interface SchedulerConfigFormState {
+  apiIssueGenerationConcurrency: string;
   enabled: boolean;
   futureIssueCount: string;
   intervalSeconds: string;
+  localIssueGenerationConcurrency: string;
   saleCloseLeadSeconds: string;
 }
 
@@ -2196,6 +2198,14 @@ function SchedulerStatusSummary({
           label="封盘提前"
           value={`${status.config.saleCloseLeadSeconds} 秒`}
         />
+        <ResultMetric
+          label="本地补期并发"
+          value={`${status.config.localIssueGenerationConcurrency} 个`}
+        />
+        <ResultMetric
+          label="API补期并发"
+          value={`${status.config.apiIssueGenerationConcurrency} 个`}
+        />
         <ResultMetric label="保留历史" value={`${status.runCount} 条`} />
       </div>
 
@@ -2297,6 +2307,38 @@ function SchedulerConfigForm({
               setSchedulerConfigFormValue(
                 onChange,
                 'saleCloseLeadSeconds',
+                value,
+              )
+            }
+          />
+        </Field>
+        <Field label="本地补期并发">
+          <Input
+            className="form-input"
+            max="32"
+            min="1"
+            type="number"
+            value={form.localIssueGenerationConcurrency}
+            onChange={(value) =>
+              setSchedulerConfigFormValue(
+                onChange,
+                'localIssueGenerationConcurrency',
+                value,
+              )
+            }
+          />
+        </Field>
+        <Field label="API补期并发">
+          <Input
+            className="form-input"
+            max="32"
+            min="1"
+            type="number"
+            value={form.apiIssueGenerationConcurrency}
+            onChange={(value) =>
+              setSchedulerConfigFormValue(
+                onChange,
+                'apiIssueGenerationConcurrency',
                 value,
               )
             }
@@ -2492,18 +2534,22 @@ function sourcePayload(form: DrawSourceFormState): SaveDrawSourceRequest {
 
 function emptySchedulerConfigForm(): SchedulerConfigFormState {
   return {
+    apiIssueGenerationConcurrency: '8',
     enabled: false,
     futureIssueCount: '1',
     intervalSeconds: '60',
+    localIssueGenerationConcurrency: '4',
     saleCloseLeadSeconds: '1',
   };
 }
 
 function configFormFromStatus(status: DrawSchedulerStatus): SchedulerConfigFormState {
   return {
+    apiIssueGenerationConcurrency: String(status.config.apiIssueGenerationConcurrency),
     enabled: status.config.enabled,
     futureIssueCount: String(status.config.futureIssueCount),
     intervalSeconds: String(status.config.intervalSeconds),
+    localIssueGenerationConcurrency: String(status.config.localIssueGenerationConcurrency),
     saleCloseLeadSeconds: String(status.config.saleCloseLeadSeconds),
   };
 }
@@ -2512,9 +2558,11 @@ function schedulerConfigPayload(
   form: SchedulerConfigFormState,
 ): DrawSchedulerConfig {
   return {
+    apiIssueGenerationConcurrency: numberField(form.apiIssueGenerationConcurrency),
     enabled: form.enabled,
     futureIssueCount: numberField(form.futureIssueCount),
     intervalSeconds: numberField(form.intervalSeconds),
+    localIssueGenerationConcurrency: numberField(form.localIssueGenerationConcurrency),
     saleCloseLeadSeconds: numberField(form.saleCloseLeadSeconds),
   };
 }

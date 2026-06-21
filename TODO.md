@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-21 14:07 HKT 开奖调度补期并发优化
+
+- 完成任务：给开奖调度快阶段增加可配置并发能力，提高彩种较多时的平台/手动补期和 API 补期计划生成效率。
+- 解决问题：此前本地平台和手动彩种补期按彩种串行执行，API 补期计划虽已并发但没有后台可调上限；彩种多时会拉长快阶段耗时，增加下一期开盘和控制台刷新等待。
+- 实施内容：`draw_scheduler_config` 新增本地补期并发上限和 API 补期并发上限字段；后端调度配置、数据库加载保存、参数校验、日志和 OpenAPI 描述同步接入；本地补期按彩种拆分为带 `Semaphore` 上限的并发任务；API 补期计划生成增加并发许可控制；后台调度配置 SideSheet 支持查看和修改两个并发上限。订单结算、派奖入账和合买结算仍保持串行提交，避免资金快照并发覆盖。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`（20 个调度相关测试成功）、`cargo test --manifest-path backend/Cargo.toml scheduler_config -- --nocapture`（3 个调度配置测试成功）、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml`（377 个测试成功）和管理后台 `npm run build` 均通过；管理后台构建仍保留既有大 chunk 提示。
+
 ## 2026-06-21 13:34 HKT 平台普通周期开奖时间漂移修复
 
 - 完成任务：修复平台开奖彩种在普通周期配置下，调度晚跑或历史期号带偏移时开奖时间逐轮后移的问题。

@@ -8,6 +8,8 @@ export interface DrawSchedulerConfig {
   intervalSeconds: number;
   futureIssueCount: number;
   saleCloseLeadSeconds: number;
+  localIssueGenerationConcurrency: number;
+  apiIssueGenerationConcurrency: number;
 }
 
 export interface DrawSchedulerRunRecord {

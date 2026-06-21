@@ -9,7 +9,10 @@ use std::{
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle};
+use tokio::{
+    sync::{Mutex as AsyncMutex, Semaphore},
+    task::JoinHandle,
+};
 
 use crate::{
     domain::{
@@ -49,10 +52,18 @@ use crate::{
 
 const DEFAULT_SCHEDULER_INTERVAL_SECONDS: u64 = 60;
 const DEFAULT_FUTURE_ISSUE_COUNT: u32 = 1;
+const DEFAULT_LOCAL_ISSUE_GENERATION_CONCURRENCY: u32 = 4;
+const DEFAULT_API_ISSUE_GENERATION_CONCURRENCY: u32 = 8;
 const DISABLED_SCHEDULER_POLL_SECONDS: u64 = 1;
 const MAX_SCHEDULER_HISTORY: usize = 20;
 const MAX_FUTURE_ISSUE_COUNT: u32 = 50;
+const MAX_ISSUE_GENERATION_CONCURRENCY: u32 = 32;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+struct PendingLocalIssueGeneration {
+    lottery: LotteryKind,
+    count: u32,
+}
 
 struct PendingApiIssueGeneration {
     lottery: LotteryKind,
@@ -71,6 +82,12 @@ pub struct DrawSchedulerConfig {
     pub future_issue_count: u32,
     /// 开奖前封盘提前秒数。
     pub sale_close_lead_seconds: u32,
+    /// 本地平台或手动彩种补期并发上限。
+    #[serde(default = "default_local_issue_generation_concurrency")]
+    pub local_issue_generation_concurrency: u32,
+    /// API 彩种补期计划并发上限。
+    #[serde(default = "default_api_issue_generation_concurrency")]
+    pub api_issue_generation_concurrency: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
@@ -191,8 +208,20 @@ impl Default for DrawSchedulerConfig {
             interval_seconds: DEFAULT_SCHEDULER_INTERVAL_SECONDS,
             future_issue_count: DEFAULT_FUTURE_ISSUE_COUNT,
             sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
+            local_issue_generation_concurrency: DEFAULT_LOCAL_ISSUE_GENERATION_CONCURRENCY,
+            api_issue_generation_concurrency: DEFAULT_API_ISSUE_GENERATION_CONCURRENCY,
         }
     }
+}
+
+/// 返回本地补期并发默认值，兼容旧客户端未传新配置字段的请求。
+fn default_local_issue_generation_concurrency() -> u32 {
+    DEFAULT_LOCAL_ISSUE_GENERATION_CONCURRENCY
+}
+
+/// 返回 API 补期并发默认值，兼容旧客户端未传新配置字段的请求。
+fn default_api_issue_generation_concurrency() -> u32 {
+    DEFAULT_API_ISSUE_GENERATION_CONCURRENCY
 }
 
 /// 开奖调度器仓储的方法实现。
@@ -318,7 +347,8 @@ async fn load_scheduler_store(
 ) -> ApiResult<DrawSchedulerStore> {
     let pool = database.pool();
     let config = sqlx::query(
-        "SELECT enabled, interval_seconds, future_issue_count, sale_close_lead_seconds
+        "SELECT enabled, interval_seconds, future_issue_count, sale_close_lead_seconds,
+                local_issue_generation_concurrency, api_issue_generation_concurrency
          FROM draw_scheduler_config
          WHERE id = 'default'",
     )
@@ -335,6 +365,12 @@ async fn load_scheduler_store(
         let sale_close_lead_seconds: i32 = row
             .try_get("sale_close_lead_seconds")
             .map_err(|_| ApiError::Internal("开奖调度配置数据读取失败".to_string()))?;
+        let local_issue_generation_concurrency: i32 = row
+            .try_get("local_issue_generation_concurrency")
+            .map_err(|_| ApiError::Internal("开奖调度配置数据读取失败".to_string()))?;
+        let api_issue_generation_concurrency: i32 = row
+            .try_get("api_issue_generation_concurrency")
+            .map_err(|_| ApiError::Internal("开奖调度配置数据读取失败".to_string()))?;
         Ok(DrawSchedulerConfig {
             enabled: row
                 .try_get("enabled")
@@ -345,6 +381,12 @@ async fn load_scheduler_store(
                 .map_err(|_| ApiError::Internal("开奖调度预生成数量数据无效".to_string()))?,
             sale_close_lead_seconds: u32::try_from(sale_close_lead_seconds)
                 .map_err(|_| ApiError::Internal("开奖调度封盘时间数据无效".to_string()))?,
+            local_issue_generation_concurrency: u32::try_from(local_issue_generation_concurrency)
+                .map_err(|_| {
+                ApiError::Internal("本地补期并发配置数据无效".to_string())
+            })?,
+            api_issue_generation_concurrency: u32::try_from(api_issue_generation_concurrency)
+                .map_err(|_| ApiError::Internal("API补期并发配置数据无效".to_string()))?,
         })
     })
     .transpose()?;
@@ -456,8 +498,9 @@ async fn save_scheduler_store(
 
     sqlx::query(
         "INSERT INTO draw_scheduler_config
-         (id, enabled, interval_seconds, future_issue_count, sale_close_lead_seconds)
-         VALUES ('default', $1, $2, $3, $4)",
+         (id, enabled, interval_seconds, future_issue_count, sale_close_lead_seconds,
+          local_issue_generation_concurrency, api_issue_generation_concurrency)
+         VALUES ('default', $1, $2, $3, $4, $5, $6)",
     )
     .bind(store.config.enabled)
     .bind(
@@ -471,6 +514,14 @@ async fn save_scheduler_store(
     .bind(
         i32::try_from(store.config.sale_close_lead_seconds)
             .map_err(|_| ApiError::Internal("开奖调度封盘时间过大".to_string()))?,
+    )
+    .bind(
+        i32::try_from(store.config.local_issue_generation_concurrency)
+            .map_err(|_| ApiError::Internal("本地补期并发配置过大".to_string()))?,
+    )
+    .bind(
+        i32::try_from(store.config.api_issue_generation_concurrency)
+            .map_err(|_| ApiError::Internal("API补期并发配置过大".to_string()))?,
     )
     .execute(&mut *tx)
     .await
@@ -667,9 +718,28 @@ impl DrawSchedulerConfig {
                 "开奖调度封盘时间必须大于 0 秒".to_string(),
             ));
         }
+        validate_issue_generation_concurrency(
+            self.local_issue_generation_concurrency,
+            "本地补期并发上限",
+        )?;
+        validate_issue_generation_concurrency(
+            self.api_issue_generation_concurrency,
+            "API补期并发上限",
+        )?;
 
         Ok(())
     }
+}
+
+/// 校验调度补期并发配置，防止过小无效或过大压垮数据库。
+fn validate_issue_generation_concurrency(value: u32, label: &str) -> ApiResult<()> {
+    if value == 0 || value > MAX_ISSUE_GENERATION_CONCURRENCY {
+        return Err(ApiError::BadRequest(format!(
+            "{label}必须在 1 到 {MAX_ISSUE_GENERATION_CONCURRENCY} 之间"
+        )));
+    }
+
+    Ok(())
 }
 
 /// 创建并启动异步开奖调度任务。
@@ -690,6 +760,8 @@ pub fn spawn_draw_scheduler(
         interval_seconds = config.interval_seconds,
         future_issue_count = config.future_issue_count,
         sale_close_lead_seconds = config.sale_close_lead_seconds,
+        local_issue_generation_concurrency = config.local_issue_generation_concurrency,
+        api_issue_generation_concurrency = config.api_issue_generation_concurrency,
         "开奖调度器后台任务已启动"
     );
 
@@ -1083,6 +1155,7 @@ async fn run_draw_scheduler_opening_once_with_realtime(
         "当前时间" = %now,
         "封盘耗时毫秒" = close_phase_ms,
         "本地补期耗时毫秒" = local_generation_phase_ms,
+        "本地补期并发上限" = config.local_issue_generation_concurrency,
         "封盘期数" = close_run.closed_issues.len(),
         "新增期号" = generated_issues.len(),
         "开奖调度器快阶段完成，已释放下一期开盘"
@@ -1098,6 +1171,7 @@ async fn run_draw_scheduler_opening_once_with_realtime(
     tracing::info!(
         "当前时间" = %now,
         "API补期耗时毫秒" = api_generation_phase_ms,
+        "API补期并发上限" = config.api_issue_generation_concurrency,
         "API新增期号" = api_generated_issues.len(),
         "API跳过彩种" = api_skipped_lotteries.len(),
         "开奖调度器 API 补期阶段完成"
@@ -1261,6 +1335,7 @@ async fn ensure_non_api_future_draw_issues(
     let mut generated_issues = Vec::new();
     let mut skipped_lotteries = Vec::new();
     let mut pending_api_generations = Vec::new();
+    let mut pending_local_generations = Vec::new();
 
     for lottery in lotteries.list().await? {
         if !lottery.sale_enabled {
@@ -1282,61 +1357,137 @@ async fn ensure_non_api_future_draw_issues(
             continue;
         }
 
-        let result = generate_draw_issue_batch(
-            draws,
-            &lottery,
-            GenerateDrawIssuesRequest {
-                lottery_id: lottery.id.clone(),
-                now: now.to_string(),
-                count,
-                sale_close_lead_seconds: Some(lottery.sale_close_lead_seconds),
-            },
-        )
-        .await;
+        pending_local_generations.push(PendingLocalIssueGeneration { lottery, count });
+    }
 
-        match result {
-            Ok(mut created) => generated_issues.append(&mut created),
-            Err(error) => {
+    let (mut local_generated_issues, mut local_skipped_lotteries) =
+        execute_local_issue_generation_jobs(
+            draws,
+            now,
+            pending_local_generations,
+            config.local_issue_generation_concurrency,
+        )
+        .await?;
+    generated_issues.append(&mut local_generated_issues);
+    skipped_lotteries.append(&mut local_skipped_lotteries);
+
+    Ok((generated_issues, skipped_lotteries, pending_api_generations))
+}
+
+/// 并发执行平台和人工彩种补期任务；单条期号写入由开奖仓储锁保护。
+async fn execute_local_issue_generation_jobs(
+    draws: &DrawRepository,
+    now: &str,
+    pending_generations: Vec<PendingLocalIssueGeneration>,
+    concurrency_limit: u32,
+) -> ApiResult<(Vec<DrawIssue>, Vec<DrawSchedulerSkippedLottery>)> {
+    let semaphore = Arc::new(Semaphore::new(concurrency_limit as usize));
+    let mut handles = Vec::new();
+    for pending in pending_generations {
+        let draws = draws.clone();
+        let now = now.to_string();
+        handles.push(tokio::spawn({
+            let semaphore = Arc::clone(&semaphore);
+            async move {
+                let lottery = pending.lottery;
+                let permit = match semaphore.acquire_owned().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        return (
+                            lottery,
+                            Err(ApiError::Internal("本地补期并发许可获取失败".to_string())),
+                        );
+                    }
+                };
+                let _permit = permit;
+                let result = generate_draw_issue_batch(
+                    &draws,
+                    &lottery,
+                    GenerateDrawIssuesRequest {
+                        lottery_id: lottery.id.clone(),
+                        now,
+                        count: pending.count,
+                        sale_close_lead_seconds: Some(lottery.sale_close_lead_seconds),
+                    },
+                )
+                .await;
+                (lottery, result)
+            }
+        }));
+    }
+
+    let mut generated_issues = Vec::new();
+    let mut skipped_lotteries = Vec::new();
+    for handle in handles {
+        match handle.await {
+            Ok((_lottery, Ok(mut created))) => generated_issues.append(&mut created),
+            Ok((lottery, Err(error))) => {
                 tracing::warn!(
                     lottery_id = %lottery.id,
                     error = %error.log_message(),
-                    "开奖调度器因期号生成失败跳过彩种"
+                    "开奖调度器因本地补期失败跳过彩种"
                 );
                 skipped_lotteries.push(DrawSchedulerSkippedLottery {
                     lottery_id: lottery.id,
                     reason: error.to_string(),
                 });
             }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "开奖调度器本地补期并发任务执行失败"
+                );
+                skipped_lotteries.push(DrawSchedulerSkippedLottery {
+                    lottery_id: "unknown".to_string(),
+                    reason: "本地补期并发任务执行失败".to_string(),
+                });
+            }
         }
     }
 
-    Ok((generated_issues, skipped_lotteries, pending_api_generations))
+    Ok((generated_issues, skipped_lotteries))
 }
 /// 按第三方开奖源锚点确保 API 彩种未来期号。
 async fn ensure_api_future_draw_issues(
     draws: &DrawRepository,
-    _config: &DrawSchedulerConfig,
+    config: &DrawSchedulerConfig,
     now: &str,
     pending_generations: Vec<PendingApiIssueGeneration>,
 ) -> ApiResult<(Vec<DrawIssue>, Vec<DrawSchedulerSkippedLottery>)> {
+    let semaphore = Arc::new(Semaphore::new(
+        config.api_issue_generation_concurrency as usize,
+    ));
     let mut handles = Vec::new();
     for pending in pending_generations {
         let draws = draws.clone();
         let now = now.to_string();
-        handles.push(tokio::spawn(async move {
-            let lottery = pending.lottery;
-            let result = preview_draw_issue_generation(
-                &draws,
-                &lottery,
-                GenerateDrawIssuesRequest {
-                    lottery_id: lottery.id.clone(),
-                    now,
-                    count: pending.count,
-                    sale_close_lead_seconds: Some(lottery.sale_close_lead_seconds),
-                },
-            )
-            .await;
-            (lottery, result)
+        handles.push(tokio::spawn({
+            let semaphore = Arc::clone(&semaphore);
+            async move {
+                let lottery = pending.lottery;
+                let permit = match semaphore.acquire_owned().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        return (
+                            lottery,
+                            Err(ApiError::Internal("API补期并发许可获取失败".to_string())),
+                        );
+                    }
+                };
+                let _permit = permit;
+                let result = preview_draw_issue_generation(
+                    &draws,
+                    &lottery,
+                    GenerateDrawIssuesRequest {
+                        lottery_id: lottery.id.clone(),
+                        now,
+                        count: pending.count,
+                        sale_close_lead_seconds: Some(lottery.sale_close_lead_seconds),
+                    },
+                )
+                .await;
+                (lottery, result)
+            }
         }));
     }
 
@@ -2064,6 +2215,7 @@ mod tests {
                 interval_seconds: 1,
                 future_issue_count: 1,
                 sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
+                ..DrawSchedulerConfig::default()
             })
             .await
             .expect("scheduler can be enabled from backend config");
@@ -2174,6 +2326,8 @@ mod tests {
                 interval_seconds: 5,
                 future_issue_count: 3,
                 sale_close_lead_seconds: 20,
+                local_issue_generation_concurrency: 6,
+                api_issue_generation_concurrency: 7,
             })
             .await
             .expect("valid scheduler config can be saved");
@@ -2182,6 +2336,8 @@ mod tests {
         assert_eq!(updated.config.interval_seconds, 5);
         assert_eq!(updated.config.future_issue_count, 3);
         assert_eq!(updated.config.sale_close_lead_seconds, 20);
+        assert_eq!(updated.config.local_issue_generation_concurrency, 6);
+        assert_eq!(updated.config.api_issue_generation_concurrency, 7);
 
         let error = scheduler
             .update_config(DrawSchedulerConfig {
@@ -2189,11 +2345,47 @@ mod tests {
                 interval_seconds: 0,
                 future_issue_count: 3,
                 sale_close_lead_seconds: 20,
+                ..DrawSchedulerConfig::default()
             })
             .await
             .expect_err("invalid interval must be rejected");
 
         assert!(error.to_string().contains("interval seconds"));
+
+        let error = scheduler
+            .update_config(DrawSchedulerConfig {
+                enabled: true,
+                interval_seconds: 5,
+                future_issue_count: 3,
+                sale_close_lead_seconds: 20,
+                local_issue_generation_concurrency: 0,
+                ..DrawSchedulerConfig::default()
+            })
+            .await
+            .expect_err("invalid local concurrency must be rejected");
+
+        assert!(error.to_string().contains("本地补期并发上限"));
+    }
+
+    /// 验证旧客户端未传补期并发字段时，后端会使用默认值保持兼容。
+    #[test]
+    fn scheduler_config_deserializes_missing_concurrency_with_defaults() {
+        let config: DrawSchedulerConfig = serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "intervalSeconds": 5,
+            "futureIssueCount": 2,
+            "saleCloseLeadSeconds": 1
+        }))
+        .expect("legacy scheduler config can deserialize");
+
+        assert_eq!(
+            config.local_issue_generation_concurrency,
+            super::DEFAULT_LOCAL_ISSUE_GENERATION_CONCURRENCY
+        );
+        assert_eq!(
+            config.api_issue_generation_concurrency,
+            super::DEFAULT_API_ISSUE_GENERATION_CONCURRENCY
+        );
     }
     /// 验证调度执行历史只保留最近记录。
     #[tokio::test]
@@ -2252,6 +2444,7 @@ mod tests {
             interval_seconds: 60,
             future_issue_count,
             sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
+            ..DrawSchedulerConfig::default()
         }
     }
 
