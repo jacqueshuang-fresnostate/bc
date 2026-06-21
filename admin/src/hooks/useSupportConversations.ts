@@ -15,6 +15,11 @@ import type {
   UpdateSupportConversationRequest,
 } from '../types/support';
 
+const INITIAL_RECONNECT_DELAY_MS = 1_000;
+const MAX_RECONNECT_DELAY_MS = 30_000;
+const MAX_RECONNECT_ATTEMPTS = 8;
+const HEARTBEAT_TIMEOUT_MS = 75_000;
+
 export function useSupportConversations() {
   const [admins, setAdmins] = useState<AdminSummary[]>([]);
   const [conversations, setConversations] = useState<SupportConversation[]>([]);
@@ -60,20 +65,63 @@ export function useSupportConversations() {
   useEffect(() => {
     let socket: WebSocket | null = null;
     let reconnectTimer: number | undefined;
+    let heartbeatTimer: number | undefined;
+    let reconnectAttempts = 0;
+    let lastInboundAt = Date.now();
     let stopped = false;
 
-    const scheduleReconnect = () => {
-      if (stopped || reconnectTimer !== undefined) {
+    const clearReconnectTimer = () => {
+      if (reconnectTimer === undefined) {
         return;
       }
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    };
+
+    const clearHeartbeatTimer = () => {
+      if (heartbeatTimer === undefined) {
+        return;
+      }
+      window.clearInterval(heartbeatTimer);
+      heartbeatTimer = undefined;
+    };
+
+    const startHeartbeatWatchdog = (activeSocket: WebSocket) => {
+      clearHeartbeatTimer();
+      lastInboundAt = Date.now();
+      heartbeatTimer = window.setInterval(() => {
+        if (stopped || socket !== activeSocket) {
+          return;
+        }
+        if (Date.now() - lastInboundAt <= HEARTBEAT_TIMEOUT_MS) {
+          return;
+        }
+        setError('后台实时客服心跳超时，正在重连');
+        activeSocket.close();
+      }, 10_000);
+    };
+
+    const scheduleReconnect = () => {
+      if (stopped || reconnectTimer !== undefined || document.visibilityState === 'hidden') {
+        return;
+      }
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        setError('后台实时客服连接暂时不可用，请稍后切回页面自动重试');
+        return;
+      }
+      const delay = Math.min(
+        INITIAL_RECONNECT_DELAY_MS * 2 ** reconnectAttempts,
+        MAX_RECONNECT_DELAY_MS,
+      ) + Math.floor(Math.random() * 600);
+      reconnectAttempts += 1;
       reconnectTimer = window.setTimeout(() => {
         reconnectTimer = undefined;
         connect();
-      }, 3000);
+      }, delay);
     };
 
     const connect = () => {
-      if (stopped) {
+      if (stopped || document.visibilityState === 'hidden') {
         return;
       }
       const url = adminRealtimeUrl();
@@ -84,12 +132,24 @@ export function useSupportConversations() {
       const nextSocket = new WebSocket(url);
       socket = nextSocket;
 
+      nextSocket.onopen = () => {
+        if (socket !== nextSocket) {
+          return;
+        }
+        reconnectAttempts = 0;
+        startHeartbeatWatchdog(nextSocket);
+      };
+
       nextSocket.onmessage = (event) => {
         if (socket !== nextSocket) {
           return;
         }
+        lastInboundAt = Date.now();
         try {
           const message = normalizeAdminRealtimeEvent(JSON.parse(event.data));
+          if (message?.event === 'system.heartbeat') {
+            return;
+          }
           if (
             message?.event === 'support.message_created' ||
             message?.event === 'support.conversation_updated'
@@ -110,6 +170,7 @@ export function useSupportConversations() {
       };
       nextSocket.onclose = () => {
         if (socket === nextSocket) {
+          clearHeartbeatTimer();
           scheduleReconnect();
         }
       };
@@ -120,13 +181,26 @@ export function useSupportConversations() {
       };
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        clearReconnectTimer();
+        clearHeartbeatTimer();
+        socket?.close();
+        return;
+      }
+      reconnectAttempts = 0;
+      socket?.close();
+      connect();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     connect();
 
     return () => {
       stopped = true;
-      if (reconnectTimer !== undefined) {
-        window.clearTimeout(reconnectTimer);
-      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearReconnectTimer();
+      clearHeartbeatTimer();
       socket?.close();
     };
   }, []);

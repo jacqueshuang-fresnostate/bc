@@ -17,6 +17,7 @@ use crate::{
 
 const MAX_GENERATION_COUNT: u32 = 50;
 const MAX_UNIQUE_ATTEMPTS_PER_ISSUE: u32 = 100;
+const GENERATION_SEED_ISSUE_LIMIT: usize = 5_000;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const MAX_ISSUE_FORMAT_PATTERN_LENGTH: usize = 96;
 const MAX_RENDERED_ISSUE_LENGTH: usize = 64;
@@ -138,7 +139,9 @@ async fn plan_draw_issue_generation(
 ) -> ApiResult<Vec<DrawIssueGenerationPreview>> {
     validate_request(lottery, &payload)?;
     let now = parse_timestamp(&payload.now, "now")?;
-    let existing_issues = draws.list().await?;
+    let existing_issues = draws
+        .list_generation_seed_issues(&lottery.id, GENERATION_SEED_ISSUE_LIMIT)
+        .await?;
     let latest_api_issue = draws.latest_api_issue_for_lottery(&lottery.id).await?;
     let api_anchor = api_issue_anchor(&lottery.id, &existing_issues, latest_api_issue.as_ref())?;
     let baseline = generation_baseline(lottery, &existing_issues, api_anchor.as_ref(), now)?;

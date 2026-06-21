@@ -16,7 +16,7 @@ use chrono::TimeZone;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::Row;
+use sqlx::{postgres::PgRow, Row};
 
 use crate::{
     domain::{
@@ -38,7 +38,10 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
-use super::business_database::{enum_from_string, enum_to_string, to_json, BusinessDatabase};
+use super::{
+    business_database::{enum_from_string, enum_to_string, to_json, BusinessDatabase},
+    pagination::{ListPage, PageRequest},
+};
 
 const DEFAULT_SEED_ADMIN_PASSWORD: &str = "admin123";
 const MIN_ADMIN_PASSWORD_LEN: usize = 8;
@@ -122,6 +125,53 @@ impl AccessRepository {
             .read()
             .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))
             .map(|store| store.users())
+    }
+
+    /// 按用户 ID 批量读取用户名，供后台分页表格只补当前页需要的用户名称。
+    pub async fn usernames_for_ids(
+        &self,
+        user_ids: &[String],
+    ) -> ApiResult<BTreeMap<String, String>> {
+        let user_ids = normalized_user_ids(user_ids);
+        if user_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            let user_ids = user_ids.iter().cloned().collect::<Vec<_>>();
+            return query_usernames_for_ids(persistence, &user_ids).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .users
+                    .iter()
+                    .filter(|(id, _)| user_ids.contains(id.as_str()))
+                    .map(|(id, user)| (id.clone(), user.username.clone()))
+                    .collect()
+            })
+    }
+
+    /// 分页返回用户列表；数据库模式下将状态、排序、余额联查和分页下推到 SQL。
+    pub async fn user_page(
+        &self,
+        status: Option<UserStatus>,
+        sort_by: &str,
+        sort_direction: &str,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<UserSummary>> {
+        if let Some(persistence) = &self.persistence {
+            return query_user_page(persistence, status, sort_by, sort_direction, page).await;
+        }
+
+        let mut users = self.users().await?;
+        if let Some(status) = status.as_ref() {
+            users.retain(|user| &user.status == status);
+        }
+        sort_user_summaries(&mut users, sort_by, sort_direction)?;
+        Ok(ListPage::from_all(users, page))
     }
 
     /// 获取单个用户详情，找不到用户返回 NotFound。
@@ -1083,6 +1133,262 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
 
     save_access_store(database, &access_store).await?;
     Ok(access_store)
+}
+
+/// 数据库模式下分页读取用户并联查资金账户余额。
+async fn query_user_page(
+    database: &BusinessDatabase,
+    status: Option<UserStatus>,
+    sort_by: &str,
+    sort_direction: &str,
+    page: PageRequest,
+) -> ApiResult<ListPage<UserSummary>> {
+    let status = status.as_ref().map(enum_to_string).transpose()?;
+    let order_clause = user_page_order_clause(sort_by, sort_direction)?;
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM users u
+         WHERE ($1::text IS NULL OR u.status = $1)",
+    )
+    .bind(status.as_deref())
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("用户分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let sql = format!(
+        "SELECT u.id, u.username, u.email, u.avatar_url, u.contact_qq, u.kind, u.status,
+                COALESCE(account.available_balance_minor, u.balance_minor) AS balance_minor,
+                u.agent_id, u.invite_code,
+                COALESCE(u.registered_ip, '') AS registered_ip,
+                COALESCE(u.register_country, '') AS register_country,
+                COALESCE(u.register_region, '') AS register_region,
+                COALESCE(u.register_city, '') AS register_city,
+                COALESCE(u.register_geo_source, 'unknown') AS register_geo_source,
+                to_char(u.created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at
+         FROM users u
+         LEFT JOIN financial_accounts account ON account.user_id = u.id
+         WHERE ($1::text IS NULL OR u.status = $1)
+         ORDER BY {order_clause}
+         LIMIT $2 OFFSET $3"
+    );
+    let rows = sqlx::query(&sql)
+        .bind(status.as_deref())
+        .bind(resolved.limit_i64()?)
+        .bind(resolved.offset_i64()?)
+        .fetch_all(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("用户分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(user_summary_from_row)
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
+/// 数据库模式下按用户 ID 批量读取用户名。
+async fn query_usernames_for_ids(
+    database: &BusinessDatabase,
+    user_ids: &[String],
+) -> ApiResult<BTreeMap<String, String>> {
+    let rows = sqlx::query(
+        "SELECT id, username
+         FROM users
+         WHERE id = ANY($1::text[])",
+    )
+    .bind(user_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户名映射数据读取失败".to_string()))?;
+
+    rows.into_iter()
+        .map(|row| {
+            let id = row
+                .try_get("id")
+                .map_err(|_| ApiError::Internal("用户名映射数据读取失败".to_string()))?;
+            let username = row
+                .try_get("username")
+                .map_err(|_| ApiError::Internal("用户名映射数据读取失败".to_string()))?;
+            Ok((id, username))
+        })
+        .collect()
+}
+
+/// 归一化用户 ID 集合，去重并移除空值。
+fn normalized_user_ids(user_ids: &[String]) -> BTreeSet<String> {
+    user_ids
+        .iter()
+        .map(|user_id| user_id.trim())
+        .filter(|user_id| !user_id.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// 将数据库行转换为用户摘要，供启动加载和分页查询复用。
+fn user_summary_from_row(row: PgRow) -> ApiResult<UserSummary> {
+    Ok(UserSummary {
+        id: row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        username: row
+            .try_get("username")
+            .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        email: row
+            .try_get("email")
+            .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        avatar_url: row
+            .try_get("avatar_url")
+            .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        contact_qq: row
+            .try_get("contact_qq")
+            .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        kind: enum_from_string(
+            row.try_get("kind")
+                .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        )?,
+        status: enum_from_string(
+            row.try_get("status")
+                .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        )?,
+        balance_minor: row
+            .try_get("balance_minor")
+            .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        agent_id: row
+            .try_get("agent_id")
+            .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        invite_code: row
+            .try_get("invite_code")
+            .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        registration_location: UserRegistrationLocation {
+            registered_ip: row
+                .try_get("registered_ip")
+                .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+            country: row
+                .try_get("register_country")
+                .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+            region: row
+                .try_get("register_region")
+                .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+            city: row
+                .try_get("register_city")
+                .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+            source: row
+                .try_get("register_geo_source")
+                .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+        },
+        created_at: row
+            .try_get("created_at")
+            .map_err(|_| ApiError::Internal("用户数据读取失败".to_string()))?,
+    })
+}
+
+/// 根据后台白名单排序字段生成用户分页 `ORDER BY` 片段。
+fn user_page_order_clause(sort_by: &str, sort_direction: &str) -> ApiResult<String> {
+    let direction = match sort_direction.trim().to_ascii_lowercase().as_str() {
+        "" | "desc" | "descending" => "DESC",
+        "asc" | "ascending" => "ASC",
+        _ => return Err(ApiError::BadRequest("用户列表排序方向不支持".to_string())),
+    };
+    let expression = match sort_by.trim() {
+        "" | "id" | "userId" => {
+            "CASE WHEN u.id ~ '^U[0-9]+$' THEN substring(u.id from 2)::bigint ELSE 0 END"
+        }
+        "agentId" => "COALESCE(u.agent_id, '')",
+        "balance" | "balanceMinor" => "COALESCE(account.available_balance_minor, u.balance_minor)",
+        "email" => "COALESCE(u.email, '')",
+        "inviteCode" => "u.invite_code",
+        "kind" | "userKind" => "CASE u.kind WHEN 'regular' THEN 0 WHEN 'agent' THEN 1 ELSE 9 END",
+        "status" => {
+            "CASE u.status WHEN 'active' THEN 0 WHEN 'suspended' THEN 1 WHEN 'locked' THEN 2 ELSE 9 END"
+        }
+        "username" => "u.username",
+        _ => return Err(ApiError::BadRequest("用户列表排序字段不支持".to_string())),
+    };
+
+    Ok(format!("{expression} {direction}, u.id {direction}"))
+}
+
+/// 内存模式下按后台白名单排序用户摘要，保持无数据库开发体验和数据库查询语义一致。
+fn sort_user_summaries(
+    users: &mut [UserSummary],
+    sort_by: &str,
+    sort_direction: &str,
+) -> ApiResult<()> {
+    let descending = match sort_direction.trim().to_ascii_lowercase().as_str() {
+        "" | "desc" | "descending" => true,
+        "asc" | "ascending" => false,
+        _ => return Err(ApiError::BadRequest("用户列表排序方向不支持".to_string())),
+    };
+    let sort_by = sort_by.trim();
+    users.sort_by(|left, right| {
+        let ordering = match sort_by {
+            "" | "id" | "userId" => user_id_sequence(&left.id)
+                .cmp(&user_id_sequence(&right.id))
+                .then_with(|| left.id.cmp(&right.id)),
+            "agentId" => left.agent_id.cmp(&right.agent_id),
+            "balance" | "balanceMinor" => left.balance_minor.cmp(&right.balance_minor),
+            "email" => left.email.cmp(&right.email),
+            "inviteCode" => left.invite_code.cmp(&right.invite_code),
+            "kind" | "userKind" => {
+                user_kind_sort_value(&left.kind).cmp(&user_kind_sort_value(&right.kind))
+            }
+            "status" => {
+                user_status_sort_value(&left.status).cmp(&user_status_sort_value(&right.status))
+            }
+            "username" => left.username.cmp(&right.username),
+            _ => return std::cmp::Ordering::Equal,
+        };
+        if descending {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    });
+    if !matches!(
+        sort_by,
+        "" | "id"
+            | "userId"
+            | "agentId"
+            | "balance"
+            | "balanceMinor"
+            | "email"
+            | "inviteCode"
+            | "kind"
+            | "userKind"
+            | "status"
+            | "username"
+    ) {
+        return Err(ApiError::BadRequest("用户列表排序字段不支持".to_string()));
+    }
+    Ok(())
+}
+
+/// 解析用户 ID 中的数字序号，用于默认最新用户优先排序。
+fn user_id_sequence(user_id: &str) -> u64 {
+    user_id
+        .trim()
+        .strip_prefix('U')
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_default()
+}
+
+/// 用户类型排序权重。
+fn user_kind_sort_value(kind: &UserKind) -> u8 {
+    match kind {
+        UserKind::Regular => 0,
+        UserKind::Agent => 1,
+    }
+}
+
+/// 用户状态排序权重。
+fn user_status_sort_value(status: &UserStatus) -> u8 {
+    match status {
+        UserStatus::Active => 0,
+        UserStatus::Suspended => 1,
+        UserStatus::Locked => 2,
+    }
 }
 
 /// 把用户、管理员、角色、会话和系统设置运行时快照保存到数据库。

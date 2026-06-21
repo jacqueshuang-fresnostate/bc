@@ -1664,7 +1664,7 @@ mod tests {
             .generated_issues
             .iter()
             .any(|issue| issue.lottery_id == "ssc60"
-                && issue.issue == "202606020001"
+                && issue.issue == "202606021201"
                 && issue.draw_mode == DrawMode::Platform));
     }
     /// 验证封盘前会先尝试补满用户合买计划。
@@ -1969,7 +1969,7 @@ mod tests {
             .generated_issues
             .iter()
             .any(|issue| issue.lottery_id == "ssc60"
-                && issue.issue == "202606020002"
+                && issue.issue == "202606021202"
                 && issue.status == DrawIssueStatus::Open));
     }
     /// 验证调度器线程可启动但会按后台配置决定是否执行。

@@ -1,7 +1,7 @@
 //! 财务领域模型，定义账户汇总、流水与账户调整参数
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -69,6 +69,31 @@ impl FinanceRepository {
             .read()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))
             .map(|store| store.accounts())
+    }
+
+    /// 按用户 ID 批量读取资金账户，供后台分页列表只补当前页余额。
+    pub async fn accounts_for_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> ApiResult<Vec<FinancialAccountSummary>> {
+        let user_ids = normalized_user_ids(user_ids);
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_financial_accounts_for_user_ids(persistence, &user_ids).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .accounts()
+                    .into_iter()
+                    .filter(|account| user_ids.contains(&account.user_id))
+                    .collect()
+            })
     }
 
     /// 返回财务流水列表。
@@ -644,6 +669,49 @@ async fn query_financial_account_page(
         .collect::<ApiResult<Vec<_>>>()?;
 
     Ok(ListPage::new(items, resolved))
+}
+
+/// 数据库模式下按用户 ID 批量读取资金账户。
+async fn query_financial_accounts_for_user_ids(
+    database: &BusinessDatabase,
+    user_ids: &BTreeSet<String>,
+) -> ApiResult<Vec<FinancialAccountSummary>> {
+    let user_ids = user_ids.iter().cloned().collect::<Vec<_>>();
+    let rows = sqlx::query(
+        "SELECT user_id, available_balance_minor, frozen_balance_minor
+         FROM financial_accounts
+         WHERE user_id = ANY($1::text[])",
+    )
+    .bind(&user_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("资金账户批量数据读取失败".to_string()))?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(FinancialAccountSummary {
+                user_id: row
+                    .try_get("user_id")
+                    .map_err(|_| ApiError::Internal("资金账户数据读取失败".to_string()))?,
+                available_balance_minor: row
+                    .try_get("available_balance_minor")
+                    .map_err(|_| ApiError::Internal("资金账户数据读取失败".to_string()))?,
+                frozen_balance_minor: row
+                    .try_get("frozen_balance_minor")
+                    .map_err(|_| ApiError::Internal("资金账户数据读取失败".to_string()))?,
+            })
+        })
+        .collect()
+}
+
+/// 归一化用户 ID 集合，去重并移除空值。
+fn normalized_user_ids(user_ids: &[String]) -> BTreeSet<String> {
+    user_ids
+        .iter()
+        .map(|user_id| user_id.trim())
+        .filter(|user_id| !user_id.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// 数据库模式下分页读取资金流水，避免财务流水列表先查全量再裁剪。

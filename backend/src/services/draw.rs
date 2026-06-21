@@ -72,7 +72,8 @@ impl DrawRepository {
         })
     }
 
-    /// 按当前仓储快照返回全部期号列表。
+    #[allow(dead_code)]
+    /// 按当前仓储快照返回全部期号列表；保留给测试和少量兼容路径使用，生产列表优先调用分页/专用查询。
     pub async fn list(&self) -> ApiResult<Vec<DrawIssue>> {
         self.inner
             .read()
@@ -87,6 +88,92 @@ impl DrawRepository {
             .read()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
             .map(|store| store.list_by_lottery_id(lottery_id))
+    }
+
+    /// 读取生成下一期所需的近期历史期号；数据库模式只取指定彩种的有限窗口，避免生成期号时扫描全部历史。
+    pub async fn list_generation_seed_issues(
+        &self,
+        lottery_id: &str,
+        limit: usize,
+    ) -> ApiResult<Vec<DrawIssue>> {
+        let lottery_id = lottery_id.trim();
+        if lottery_id.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_generation_seed_draw_issues(persistence, lottery_id, limit).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .list_by_lottery_id(lottery_id)
+                    .into_iter()
+                    .take(limit)
+                    .collect()
+            })
+    }
+
+    /// 读取手机端首页需要的当前期和最近开奖，数据库模式按彩种集合收敛查询范围。
+    pub async fn list_mobile_home_issues(
+        &self,
+        lottery_ids: &[String],
+    ) -> ApiResult<Vec<DrawIssue>> {
+        let lottery_ids = normalized_lottery_ids(lottery_ids);
+        if lottery_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_mobile_home_draw_issues(persistence, &lottery_ids).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|store| store.mobile_home_issues(&lottery_ids))
+    }
+
+    /// 读取指定彩种集合每个彩种最近一期已开奖数据，供手机端“最新开奖”使用。
+    pub async fn list_latest_drawn_issues_for_lotteries(
+        &self,
+        lottery_ids: &[String],
+    ) -> ApiResult<Vec<DrawIssue>> {
+        let lottery_ids = normalized_lottery_ids(lottery_ids);
+        if lottery_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_latest_drawn_issues_for_lotteries(persistence, &lottery_ids).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|store| store.latest_drawn_issues_for_lotteries(&lottery_ids))
+    }
+
+    /// 分页读取指定彩种集合的已开奖历史，供手机端开奖页避免先取全量再分页。
+    pub async fn drawn_history_page(
+        &self,
+        lottery_ids: &[String],
+        page: PageRequest,
+    ) -> ApiResult<ListPage<DrawIssue>> {
+        let lottery_ids = normalized_lottery_ids(lottery_ids);
+        if lottery_ids.is_empty() {
+            return Ok(ListPage::from_all(Vec::new(), page));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_drawn_history_page(persistence, &lottery_ids, page).await;
+        }
+
+        let issues = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
+            .drawn_history_for_lotteries(&lottery_ids);
+        Ok(ListPage::from_all(issues, page))
     }
 
     /// 按条件分页读取开奖期号；数据库模式下把彩种、状态过滤和分页下推到 SQL。
@@ -723,6 +810,153 @@ async fn query_scheduler_active_draw_issues(
     rows.into_iter().map(draw_issue_from_row).collect()
 }
 
+/// 数据库模式下读取期号生成所需的近期历史，支持恢复序号和避开重复期号。
+async fn query_generation_seed_draw_issues(
+    database: &BusinessDatabase,
+    lottery_id: &str,
+    limit: usize,
+) -> ApiResult<Vec<DrawIssue>> {
+    let limit =
+        i64::try_from(limit).map_err(|_| ApiError::BadRequest("期号种子数量过大".to_string()))?;
+    let rows = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         WHERE lottery_id = $1
+         ORDER BY scheduled_at DESC, id DESC
+         LIMIT $2",
+    )
+    .bind(lottery_id)
+    .bind(limit)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("期号生成历史数据读取失败".to_string()))?;
+
+    rows.into_iter().map(draw_issue_from_row).collect()
+}
+
+/// 数据库模式下读取首页所需期号，包含当前待处理期和每个彩种最近期开奖。
+async fn query_mobile_home_draw_issues(
+    database: &BusinessDatabase,
+    lottery_ids: &[String],
+) -> ApiResult<Vec<DrawIssue>> {
+    let rows = sqlx::query(
+        "WITH latest_drawn AS (
+             SELECT DISTINCT ON (lottery_id)
+                    id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                    sale_closed_at, status, draw_number, drawn_at, created_at
+             FROM draw_issues
+             WHERE lottery_id = ANY($1::text[])
+               AND status = 'drawn'
+               AND draw_number IS NOT NULL
+               AND btrim(draw_number) <> ''
+             ORDER BY lottery_id, scheduled_at DESC, id DESC
+         )
+         SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         WHERE lottery_id = ANY($1::text[])
+           AND status IN ('open', 'closed')
+         UNION ALL
+         SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM latest_drawn
+         ORDER BY lottery_id ASC, scheduled_at DESC, id DESC",
+    )
+    .bind(lottery_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("手机端首页期号数据读取失败".to_string()))?;
+
+    rows.into_iter().map(draw_issue_from_row).collect()
+}
+
+/// 数据库模式下按彩种集合读取每个彩种最近一期已开奖数据。
+async fn query_latest_drawn_issues_for_lotteries(
+    database: &BusinessDatabase,
+    lottery_ids: &[String],
+) -> ApiResult<Vec<DrawIssue>> {
+    let rows = sqlx::query(
+        "SELECT DISTINCT ON (lottery_id)
+                id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         WHERE lottery_id = ANY($1::text[])
+           AND status = 'drawn'
+           AND draw_number IS NOT NULL
+           AND btrim(draw_number) <> ''
+         ORDER BY lottery_id, scheduled_at DESC, id DESC",
+    )
+    .bind(lottery_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("最新开奖数据读取失败".to_string()))?;
+
+    rows.into_iter().map(draw_issue_from_row).collect()
+}
+
+/// 数据库模式下分页读取已开奖历史。
+async fn query_drawn_history_page(
+    database: &BusinessDatabase,
+    lottery_ids: &[String],
+    page: PageRequest,
+) -> ApiResult<ListPage<DrawIssue>> {
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM draw_issues
+         WHERE lottery_id = ANY($1::text[])
+           AND status = 'drawn'
+           AND draw_number IS NOT NULL
+           AND btrim(draw_number) <> ''",
+    )
+    .bind(lottery_ids)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖历史分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("开奖历史分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         WHERE lottery_id = ANY($1::text[])
+           AND status = 'drawn'
+           AND draw_number IS NOT NULL
+           AND btrim(draw_number) <> ''
+         ORDER BY scheduled_at DESC, issue DESC, id DESC
+         LIMIT $2 OFFSET $3",
+    )
+    .bind(lottery_ids)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖历史分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(draw_issue_from_row)
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
+}
+
+/// 归一化彩种 ID 集合，去空格和重复项，避免 SQL 查询绑定无效值。
+fn normalized_lottery_ids(lottery_ids: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    lottery_ids
+        .iter()
+        .filter_map(|lottery_id| {
+            let lottery_id = lottery_id.trim();
+            if lottery_id.is_empty() || !seen.insert(lottery_id.to_string()) {
+                None
+            } else {
+                Some(lottery_id.to_string())
+            }
+        })
+        .collect()
+}
+
 /// 高频期号状态变更使用单行 upsert，避免调度时反复重写整张期号表。
 async fn upsert_draw_issue(database: &BusinessDatabase, issue: &DrawIssue) -> ApiResult<()> {
     sqlx::query(
@@ -864,6 +1098,105 @@ impl DrawStore {
             .filter(|issue| issue.lottery_id == lottery_id)
             .cloned()
             .collect()
+    }
+
+    /// 返回首页需要的活跃期号和最近期开奖。
+    fn mobile_home_issues(&self, lottery_ids: &[String]) -> Vec<DrawIssue> {
+        let lottery_ids = lottery_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let mut issues = self
+            .issues
+            .values()
+            .filter(|issue| {
+                lottery_ids.contains(issue.lottery_id.as_str())
+                    && matches!(
+                        issue.status,
+                        DrawIssueStatus::Open | DrawIssueStatus::Closed
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        issues.extend(
+            self.latest_drawn_issues_for_lotteries(
+                &lottery_ids
+                    .iter()
+                    .map(|value| (*value).to_string())
+                    .collect::<Vec<_>>(),
+            ),
+        );
+        issues.sort_by(|left, right| {
+            left.lottery_id
+                .cmp(&right.lottery_id)
+                .then_with(|| right.scheduled_at.cmp(&left.scheduled_at))
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        issues
+    }
+
+    /// 返回指定彩种集合每个彩种最近一期已开奖数据。
+    fn latest_drawn_issues_for_lotteries(&self, lottery_ids: &[String]) -> Vec<DrawIssue> {
+        let lottery_ids = lottery_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let mut latest_by_lottery = BTreeMap::<String, DrawIssue>::new();
+        for issue in self.issues.values() {
+            if !lottery_ids.contains(issue.lottery_id.as_str())
+                || issue.status != DrawIssueStatus::Drawn
+                || issue
+                    .draw_number
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+            {
+                continue;
+            }
+            let should_replace = latest_by_lottery
+                .get(&issue.lottery_id)
+                .map(|current| {
+                    issue.scheduled_at > current.scheduled_at
+                        || (issue.scheduled_at == current.scheduled_at && issue.id > current.id)
+                })
+                .unwrap_or(true);
+            if should_replace {
+                latest_by_lottery.insert(issue.lottery_id.clone(), issue.clone());
+            }
+        }
+        latest_by_lottery.into_values().collect()
+    }
+
+    /// 返回指定彩种集合的已开奖历史，并按开奖时间倒序排列。
+    fn drawn_history_for_lotteries(&self, lottery_ids: &[String]) -> Vec<DrawIssue> {
+        let lottery_ids = lottery_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let mut issues = self
+            .issues
+            .values()
+            .filter(|issue| {
+                lottery_ids.contains(issue.lottery_id.as_str())
+                    && issue.status == DrawIssueStatus::Drawn
+                    && issue
+                        .draw_number
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .is_some()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        issues.sort_by(|left, right| {
+            right
+                .scheduled_at
+                .cmp(&left.scheduled_at)
+                .then_with(|| right.issue.cmp(&left.issue))
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        issues
     }
 
     /// 按标识查询并返回单条记录。

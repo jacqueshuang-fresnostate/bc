@@ -19,7 +19,10 @@ use crate::{
     },
     error::ApiResult,
     response::ApiEnvelope,
-    services::mobile_home::{build_mobile_lottery_home, mobile_featured_config_from_settings},
+    services::{
+        mobile_home::{build_mobile_lottery_home, mobile_featured_config_from_settings},
+        pagination::PageRequest,
+    },
 };
 
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -41,7 +44,8 @@ async fn get_lottery_home(
 ) -> ApiResult<Json<ApiEnvelope<MobileLotteryHomeResponse>>> {
     let lotteries = state.lotteries.list().await?;
     let categories = state.lotteries.categories().await?;
-    let issues = state.draws.list().await?;
+    let lottery_ids = selling_lottery_ids(&lotteries, &LotteryHistoryQuery::default());
+    let issues = state.draws.list_mobile_home_issues(&lottery_ids).await?;
     let settings = state.access.settings().await?;
     let featured_config = mobile_featured_config_from_settings(&settings);
     let home = build_mobile_lottery_home(lotteries, categories, issues, featured_config);
@@ -66,7 +70,11 @@ async fn list_latest_draw_history(
     Query(query): Query<LotteryHistoryQuery>,
 ) -> ApiResult<Json<ApiEnvelope<MobileLotteryHistoryPage>>> {
     let lotteries = state.lotteries.list().await?;
-    let issues = state.draws.list().await?;
+    let lottery_ids = selling_lottery_ids(&lotteries, &query);
+    let issues = state
+        .draws
+        .list_latest_drawn_issues_for_lotteries(&lottery_ids)
+        .await?;
     let items = latest_history_items(&lotteries, &issues, &query);
 
     Ok(Json(ApiEnvelope::success(
@@ -80,17 +88,25 @@ async fn list_draw_history(
     Query(query): Query<LotteryHistoryQuery>,
 ) -> ApiResult<Json<ApiEnvelope<MobileLotteryHistoryPage>>> {
     let lotteries = state.lotteries.list().await?;
-    let issues = state.draws.list().await?;
-    let items = draw_history_items(&lotteries, &issues, &query);
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query
         .page_size
         .unwrap_or(DEFAULT_HISTORY_PAGE_SIZE)
         .clamp(1, MAX_HISTORY_PAGE_SIZE);
+    let lottery_ids = selling_lottery_ids(&lotteries, &query);
+    let issue_page = state
+        .draws
+        .drawn_history_page(&lottery_ids, PageRequest::new(Some(page), Some(page_size)))
+        .await?;
+    let items = draw_history_items(&lotteries, &issue_page.items, &query);
 
-    Ok(Json(ApiEnvelope::success(
-        MobileLotteryHistoryPage::from_items(items, page, Some(page_size)),
-    )))
+    Ok(Json(ApiEnvelope::success(MobileLotteryHistoryPage {
+        items,
+        total_count: issue_page.total_count,
+        page: issue_page.page,
+        page_size: issue_page.page_size,
+        total_pages: issue_page.total_pages,
+    })))
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -225,6 +241,15 @@ fn lottery_history_groups(
     );
 
     groups
+}
+
+/// 依据查询条件返回销售中彩种 ID，用于把开奖历史筛选下推到期号仓储。
+fn selling_lottery_ids(lotteries: &[LotteryKind], query: &LotteryHistoryQuery) -> Vec<String> {
+    lotteries
+        .iter()
+        .filter(|lottery| lottery_matches_query(lottery, query))
+        .map(|lottery| lottery.id.clone())
+        .collect()
 }
 
 /// 把同一分类下的彩种转换为手机端筛选项。

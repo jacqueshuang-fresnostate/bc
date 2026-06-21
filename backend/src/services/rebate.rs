@@ -9,12 +9,18 @@ use crate::{
     domain::{
         finance::LedgerEntry,
         invite::{InviteRecord, InviteStatus},
-        rebate::{InvitePolicySummary, InvitePolicyUpdateRequest, RebateMode},
-        recharge::RechargeOrderSummary,
+        rebate::{AgentRebateSummary, InvitePolicySummary, InvitePolicyUpdateRequest, RebateMode},
+        recharge::{RechargeOrderStatus, RechargeOrderSummary},
         user::{UserKind, UserStatus, UserSummary},
+        withdrawal::WithdrawalOrderStatus,
     },
     error::{ApiError, ApiResult},
-    services::{access::AccessRepository, finance::FinanceRepository, invite::InviteRepository},
+    services::{
+        access::AccessRepository,
+        finance::FinanceRepository,
+        invite::InviteRepository,
+        pagination::{ListPage, PageRequest},
+    },
 };
 
 use super::business_database::{enum_from_string, enum_to_string, BusinessDatabase};
@@ -89,6 +95,20 @@ impl RebateRepository {
             .write()
             .map_err(|_| ApiError::Internal("返利策略缓存刷新失败".to_string()))? = store;
         Ok(true)
+    }
+
+    /// 数据库模式下分页聚合代理返利统计；内存模式返回 None 交给路由复用旧聚合路径。
+    pub async fn agent_rebate_summary_page(
+        &self,
+        page: PageRequest,
+    ) -> ApiResult<Option<ListPage<AgentRebateSummary>>> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(None);
+        };
+
+        query_agent_rebate_summary_page(persistence, page)
+            .await
+            .map(Some)
     }
 }
 
@@ -165,6 +185,168 @@ async fn save_rebate_store(database: &BusinessDatabase, store: &RebateStore) -> 
     .map_err(|_| ApiError::Internal("返利策略数据保存失败".to_string()))?;
 
     Ok(())
+}
+
+/// 数据库模式下直接聚合代理返利统计，避免后台统计页读取全量用户、流水、充值和提现记录。
+async fn query_agent_rebate_summary_page(
+    database: &BusinessDatabase,
+    page: PageRequest,
+) -> ApiResult<ListPage<AgentRebateSummary>> {
+    let agent_kind = enum_to_string(&UserKind::Agent)?;
+    let active_invite_status = enum_to_string(&InviteStatus::Active)?;
+    let rebate_kind =
+        enum_to_string(&crate::domain::finance::LedgerEntryKind::RechargeRebateCredit)?;
+    let withdrawal_kind =
+        enum_to_string(&crate::domain::finance::LedgerEntryKind::AgentRebateWithdrawal)?;
+    let paid_recharge_status = enum_to_string(&RechargeOrderStatus::Paid)?;
+    let approved_withdrawal_status = enum_to_string(&WithdrawalOrderStatus::Approved)?;
+
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM users
+         WHERE kind = $1",
+    )
+    .bind(&agent_kind)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("代理返利统计总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("代理返利统计总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "WITH direct_links AS (
+            SELECT inviter_user_id AS agent_user_id, invitee_user_id
+            FROM invite_records
+            WHERE status = $2
+            UNION
+            SELECT agent_id AS agent_user_id, id AS invitee_user_id
+            FROM users
+            WHERE agent_id IS NOT NULL AND agent_id <> ''
+         ),
+         ledger_totals AS (
+            SELECT user_id AS agent_user_id,
+                   COUNT(*) FILTER (WHERE kind = $3) AS rebate_record_count,
+                   COALESCE(SUM(CASE WHEN kind = $3 AND amount_minor > 0 THEN amount_minor ELSE 0 END), 0)::bigint AS total_rebate_minor,
+                   COALESCE(SUM(CASE WHEN kind = $4 AND amount_minor < 0 THEN -amount_minor ELSE 0 END), 0)::bigint AS withdrawn_rebate_minor,
+                   MAX(created_at) FILTER (WHERE kind = $3) AS last_rebate_at
+            FROM ledger_entries
+            WHERE kind IN ($3, $4)
+            GROUP BY user_id
+         ),
+         direct_counts AS (
+            SELECT agent_user_id, COUNT(DISTINCT invitee_user_id) AS direct_invitee_count
+            FROM direct_links
+            GROUP BY agent_user_id
+         ),
+         direct_recharges AS (
+            SELECT links.agent_user_id, COALESCE(SUM(recharge.amount_minor), 0)::bigint AS direct_invitee_recharge_minor
+            FROM (SELECT DISTINCT agent_user_id, invitee_user_id FROM direct_links) AS links
+            JOIN recharge_orders AS recharge
+              ON recharge.user_id = links.invitee_user_id
+             AND recharge.status = $5
+            GROUP BY links.agent_user_id
+         ),
+         direct_withdrawals AS (
+            SELECT links.agent_user_id, COALESCE(SUM(withdrawal.amount_minor), 0)::bigint AS direct_invitee_withdrawal_minor
+            FROM (SELECT DISTINCT agent_user_id, invitee_user_id FROM direct_links) AS links
+            JOIN withdrawal_orders AS withdrawal
+              ON withdrawal.user_id = links.invitee_user_id
+             AND withdrawal.status = $6
+            GROUP BY links.agent_user_id
+         )
+         SELECT agent.id AS agent_user_id,
+                agent.username AS agent_username,
+                agent.invite_code,
+                COALESCE(direct_counts.direct_invitee_count, 0) AS direct_invitee_count,
+                COALESCE(direct_recharges.direct_invitee_recharge_minor, 0) AS direct_invitee_recharge_minor,
+                COALESCE(direct_withdrawals.direct_invitee_withdrawal_minor, 0) AS direct_invitee_withdrawal_minor,
+                COALESCE(ledger_totals.rebate_record_count, 0) AS rebate_record_count,
+                COALESCE(ledger_totals.total_rebate_minor, 0) AS total_rebate_minor,
+                COALESCE(ledger_totals.withdrawn_rebate_minor, 0) AS withdrawn_rebate_minor,
+                GREATEST(COALESCE(ledger_totals.total_rebate_minor, 0) - COALESCE(ledger_totals.withdrawn_rebate_minor, 0), 0) AS pending_rebate_minor,
+                LEAST(
+                    GREATEST(COALESCE(ledger_totals.total_rebate_minor, 0) - COALESCE(ledger_totals.withdrawn_rebate_minor, 0), 0),
+                    COALESCE(account.available_balance_minor, 0)
+                ) AS withdrawable_rebate_minor,
+                COALESCE(account.available_balance_minor, 0) AS account_available_balance_minor,
+                ledger_totals.last_rebate_at AS last_rebate_at
+         FROM users AS agent
+         LEFT JOIN financial_accounts AS account ON account.user_id = agent.id
+         LEFT JOIN ledger_totals ON ledger_totals.agent_user_id = agent.id
+         LEFT JOIN direct_counts ON direct_counts.agent_user_id = agent.id
+         LEFT JOIN direct_recharges ON direct_recharges.agent_user_id = agent.id
+         LEFT JOIN direct_withdrawals ON direct_withdrawals.agent_user_id = agent.id
+         WHERE agent.kind = $1
+         ORDER BY
+           CASE WHEN ledger_totals.last_rebate_at IS NULL OR ledger_totals.last_rebate_at = '' THEN 1 ELSE 0 END ASC,
+           ledger_totals.last_rebate_at DESC,
+           GREATEST(COALESCE(ledger_totals.total_rebate_minor, 0) - COALESCE(ledger_totals.withdrawn_rebate_minor, 0), 0) DESC,
+           agent.id DESC
+         LIMIT $7 OFFSET $8",
+    )
+    .bind(&agent_kind)
+    .bind(&active_invite_status)
+    .bind(&rebate_kind)
+    .bind(&withdrawal_kind)
+    .bind(&paid_recharge_status)
+    .bind(&approved_withdrawal_status)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("代理返利统计分页数据读取失败".to_string()))?;
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            let direct_invitee_count: i64 = row
+                .try_get("direct_invitee_count")
+                .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?;
+            let rebate_record_count: i64 = row
+                .try_get("rebate_record_count")
+                .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?;
+            Ok(AgentRebateSummary {
+                account_available_balance_minor: row
+                    .try_get("account_available_balance_minor")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+                agent_user_id: row
+                    .try_get("agent_user_id")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+                agent_username: row
+                    .try_get("agent_username")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+                direct_invitee_count: usize::try_from(direct_invitee_count)
+                    .map_err(|_| ApiError::Internal("代理直属下级数量数据无效".to_string()))?,
+                direct_invitee_recharge_minor: row
+                    .try_get("direct_invitee_recharge_minor")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+                direct_invitee_withdrawal_minor: row
+                    .try_get("direct_invitee_withdrawal_minor")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+                invite_code: row
+                    .try_get("invite_code")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+                last_rebate_at: row
+                    .try_get("last_rebate_at")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+                pending_rebate_minor: row
+                    .try_get("pending_rebate_minor")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+                rebate_record_count: usize::try_from(rebate_record_count)
+                    .map_err(|_| ApiError::Internal("代理返利记录数量数据无效".to_string()))?,
+                total_rebate_minor: row
+                    .try_get("total_rebate_minor")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+                withdrawable_rebate_minor: row
+                    .try_get("withdrawable_rebate_minor")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+                withdrawn_rebate_minor: row
+                    .try_get("withdrawn_rebate_minor")
+                    .map_err(|_| ApiError::Internal("代理返利统计数据读取失败".to_string()))?,
+            })
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(ListPage::new(items, resolved))
 }
 
 /// 邀请返利策略运行时数据快照，用于内存模式和数据库持久化前的业务校验。

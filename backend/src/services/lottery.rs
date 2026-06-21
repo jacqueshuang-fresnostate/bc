@@ -917,8 +917,9 @@ pub fn seed_lotteries() -> Vec<LotteryKind> {
             avoid_winning_enabled: false,
             issue_format: DEFAULT_ISSUE_FORMAT_PATTERN.to_string(),
             sale_close_lead_seconds: DEFAULT_SALE_CLOSE_LEAD_SECONDS,
-            schedule: DrawSchedule::Periodic {
+            schedule: DrawSchedule::TimeNode {
                 interval_seconds: 60,
+                start_time: "00:00:00".to_string(),
             },
             sale_enabled: false,
             group_buy: group_buy_config(),
@@ -1782,7 +1783,8 @@ mod tests {
         assert_eq!(enum_value(&lottery.draw_mode).unwrap(), "platform");
 
         let schedule = json_value(&lottery.schedule).unwrap();
-        assert_eq!(schedule["periodic"]["intervalSeconds"], 60);
+        assert_eq!(schedule["timeNode"]["intervalSeconds"], 60);
+        assert_eq!(schedule["timeNode"]["startTime"], "00:00:00");
     }
 
     #[test]

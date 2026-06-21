@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-21 13:22 HKT 列表查询与实时连接性能优化
+
+- 完成任务：推进后台、用户端和调度链路的性能优化，减少全量读取、无差别轮询和固定重连。
+- 解决问题：用户列表、资金列表、订单列表、代理返利统计、手机端首页开奖数据和期号生成等路径在数据量增长后容易因为全量拉取、路由层裁剪或固定 WebSocket 重连造成响应变慢和重复请求。
+- 实施内容：后端新增期号生成种子窗口、手机端首页活跃期号/最近开奖专用查询、开奖历史分页查询、用户列表 SQL 分页排序、资金账户/流水/订单当前页用户名补齐、代理返利统计 SQL 聚合分页、用户端“我的注单/我的合买”分页下推；后台彩种控制台限制期号和订单拉取页大小；后台客服 WebSocket 改为指数退避、心跳超时和页面隐藏降级；同步修正 `ssc60` 时间节点调度测试预期。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml`（373 个测试成功）、管理后台 `npm run build` 和 `git diff --check` 均通过；管理后台构建仍保留既有大 chunk 提示。
+
+## 2026-06-21 03:43 HKT 平台高频彩种按自然时间节点开奖
+
+- 完成任务：让平台开奖高频周期彩种默认按 `timeNode` 自然时间节点生成期号和开奖时间。
+- 解决问题：普通 `periodic` 周期会从已有最后一期或当前时间顺延，无法保证 `00:00:00` 开盘、每 300 秒一期时，`00:05:00` 是第 1 期、次日 `00:00:00` 是前一天第 288 期。
+- 实施内容：内置平台彩种 `ssc60` 改为 `{"timeNode":{"intervalSeconds":60,"startTime":"00:00:00"}}`；新增迁移 `20260621013000_align_platform_periodic_lotteries_to_time_node.sql`，把已有数据库中 `draw_mode='platform'`、普通周期且周期能整除一天的彩种迁移为 `timeNode`，不修改 API 彩种的外部开奖源节奏；同步更新架构说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml lottery_database_values_use_frontend_contract_names -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml seeded_lotteries_include_txffc_api_lottery -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml time_node -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture` 和 `git diff --check` 均通过。
+
 ## 2026-06-21 00:32 HKT SQLx 历史迁移校验修复
 
 - 完成任务：修复后端启动时报 `VersionMismatch(20260603152000)` 和 `VersionMismatch(20260603234000)` 的迁移校验问题。

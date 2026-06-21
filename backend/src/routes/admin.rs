@@ -1531,6 +1531,7 @@ struct UserListQuery {
     status: Option<UserStatus>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// 后台用户列表允许排序的字段白名单。
 enum UserListSortBy {
@@ -1544,6 +1545,7 @@ enum UserListSortBy {
     Username,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// 后台用户列表排序方向。
 enum UserListSortDirection {
@@ -1644,6 +1646,7 @@ impl FinancePageQuery {
     }
 }
 
+#[cfg(test)]
 /// 后台用户列表查询参数。
 impl UserListQuery {
     /// 复用后台通用分页结构，用户列表不涉及机器人数据开关。
@@ -1787,6 +1790,7 @@ fn sort_withdrawal_orders_by_time_desc(orders: &mut [WithdrawalOrderSummary]) {
 }
 
 /// 按用户列表查询参数排序，排序字段必须来自白名单。
+#[cfg(test)]
 fn sort_users(users: &mut [UserSummary], query: &UserListQuery) -> ApiResult<()> {
     let sort_by = user_sort_by(query.sort_by.as_deref())?;
     let direction = user_sort_direction(query.sort_direction.as_deref())?;
@@ -1802,6 +1806,7 @@ fn sort_users(users: &mut [UserSummary], query: &UserListQuery) -> ApiResult<()>
 }
 
 /// 按用户状态过滤后台用户列表；未传状态时保留全部用户。
+#[cfg(test)]
 fn filter_users_by_status(users: &mut Vec<UserSummary>, status: Option<&UserStatus>) {
     let Some(status) = status else {
         return;
@@ -1811,6 +1816,7 @@ fn filter_users_by_status(users: &mut Vec<UserSummary>, status: Option<&UserStat
 }
 
 /// 解析用户列表排序字段，默认按用户 ID 排序。
+#[cfg(test)]
 fn user_sort_by(value: Option<&str>) -> ApiResult<UserListSortBy> {
     let value = value.unwrap_or("id").trim();
     if value.is_empty() {
@@ -1833,6 +1839,7 @@ fn user_sort_by(value: Option<&str>) -> ApiResult<UserListSortBy> {
 }
 
 /// 解析用户列表排序方向，默认倒序，优先让最新或编号更靠后的用户显示在前。
+#[cfg(test)]
 fn user_sort_direction(value: Option<&str>) -> ApiResult<UserListSortDirection> {
     let value = value.unwrap_or("desc").trim();
     if value.is_empty() {
@@ -1849,6 +1856,7 @@ fn user_sort_direction(value: Option<&str>) -> ApiResult<UserListSortDirection> 
 }
 
 /// 根据用户排序字段比较两条用户摘要。
+#[cfg(test)]
 fn compare_users(left: &UserSummary, right: &UserSummary, sort_by: UserListSortBy) -> Ordering {
     match sort_by {
         UserListSortBy::AgentId => {
@@ -1869,11 +1877,13 @@ fn compare_users(left: &UserSummary, right: &UserSummary, sort_by: UserListSortB
 }
 
 /// 空值排序时放在非空文本之前，保证查询结果稳定。
+#[cfg(test)]
 fn optional_text(value: Option<&String>) -> &str {
     value.map(String::as_str).unwrap_or("")
 }
 
 /// 用户类型排序顺序：普通用户在前，代理在后。
+#[cfg(test)]
 fn user_kind_order(kind: &crate::domain::user::UserKind) -> u8 {
     match kind {
         crate::domain::user::UserKind::Regular => 0,
@@ -1882,6 +1892,7 @@ fn user_kind_order(kind: &crate::domain::user::UserKind) -> u8 {
 }
 
 /// 用户状态排序顺序：启用、停用、锁定。
+#[cfg(test)]
 fn user_status_order(status: &crate::domain::user::UserStatus) -> u8 {
     match status {
         crate::domain::user::UserStatus::Active => 0,
@@ -2652,19 +2663,29 @@ async fn list_users(
     State(state): State<AppState>,
     Query(query): Query<UserListQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminUserSummary>>>> {
-    let mut users = users_with_financial_balances(&state).await?;
-    filter_users_by_status(&mut users, query.status.as_ref());
-    sort_users(&mut users, &query)?;
-    let usernames = username_map_from_users(&users);
+    let page = state
+        .access
+        .user_page(
+            query.status.clone(),
+            query.sort_by.as_deref().unwrap_or_default(),
+            query.sort_direction.as_deref().unwrap_or_default(),
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?;
+    let users = users_with_financial_balances_for_page(&state, page.items).await?;
+    let usernames = usernames_for_user_page(&state, &users).await?;
     let users = users
         .into_iter()
         .map(|user| admin_user_summary_with_usernames(user, &usernames))
         .collect::<Vec<_>>();
 
-    Ok(Json(ApiEnvelope::success(page_items(
-        users,
-        query.page_query(),
-    ))))
+    Ok(Json(ApiEnvelope::success(FinancePage {
+        items: users,
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
+    })))
 }
 
 /// 返回指定用户详情。
@@ -2766,10 +2787,13 @@ async fn reset_user_password(
     Ok(Json(ApiEnvelope::success(user)))
 }
 
-/// 返回用户列表时用财务账户可用余额覆盖用户基础资料中的历史余额字段。
-async fn users_with_financial_balances(state: &AppState) -> ApiResult<Vec<UserSummary>> {
-    let mut users = state.access.users().await?;
-    let accounts = state.finance.accounts().await?;
+/// 只为当前分页用户补充资金账户余额，避免用户列表每次读取全量资金账户。
+async fn users_with_financial_balances_for_page(
+    state: &AppState,
+    mut users: Vec<UserSummary>,
+) -> ApiResult<Vec<UserSummary>> {
+    let user_ids = users.iter().map(|user| user.id.clone()).collect::<Vec<_>>();
+    let accounts = state.finance.accounts_for_user_ids(&user_ids).await?;
     let accounts = accounts
         .iter()
         .map(|account| (account.user_id.as_str(), account))
@@ -2844,6 +2868,16 @@ fn admin_user_summary_with_usernames(
         user,
         agent_username,
     }
+}
+
+/// 只加载当前页用户和上级代理的用户名映射，避免用户列表页构建全量用户字典。
+async fn usernames_for_user_page(
+    state: &AppState,
+    users: &[UserSummary],
+) -> ApiResult<BTreeMap<String, String>> {
+    let mut user_ids = users.iter().map(|user| user.id.clone()).collect::<Vec<_>>();
+    user_ids.extend(users.iter().filter_map(|user| user.agent_id.clone()));
+    state.access.usernames_for_ids(&user_ids).await
 }
 
 /// 返回后台管理员账号列表。
@@ -3132,6 +3166,14 @@ async fn list_agent_rebate_statistics(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AgentRebateSummary>>>> {
+    if let Some(page) = state
+        .rebates
+        .agent_rebate_summary_page(PageRequest::new(query.page, query.page_size))
+        .await?
+    {
+        return Ok(Json(ApiEnvelope::success(page.into_finance_page())));
+    }
+
     let summaries = agent_rebate_summaries(&state).await?;
 
     Ok(Json(ApiEnvelope::success(page_items(summaries, query))))
@@ -3522,21 +3564,27 @@ async fn list_financial_accounts(
     } else {
         Some(ROBOT_GROUP_BUY_USER_ID)
     };
-    let users = state.access.users().await?;
-    let usernames: BTreeMap<String, String> = users
-        .into_iter()
-        .map(|user| (user.id, user.username))
-        .collect();
+    let usernames_for_memory_filter = if query.username_filter().is_some() {
+        admin_usernames(&state).await?
+    } else {
+        BTreeMap::new()
+    };
     let page = state
         .finance
         .account_page(
             query.user_id_filter(),
             query.username_filter(),
-            &usernames,
+            &usernames_for_memory_filter,
             excluded_user_id,
             PageRequest::new(query.page, query.page_size),
         )
         .await?;
+    let user_ids = page
+        .items
+        .iter()
+        .map(|account| account.user_id.clone())
+        .collect::<Vec<_>>();
+    let usernames = state.access.usernames_for_ids(&user_ids).await?;
     let accounts = page
         .items
         .into_iter()
@@ -3562,7 +3610,6 @@ async fn list_ledger_entries(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminLedgerEntry>>>> {
-    let usernames = admin_usernames(&state).await?;
     let excluded_user_id = if query.include_robot_data() {
         None
     } else {
@@ -3576,6 +3623,12 @@ async fn list_ledger_entries(
             PageRequest::new(query.page, query.page_size),
         )
         .await?;
+    let user_ids = page
+        .items
+        .iter()
+        .map(|entry| entry.user_id.clone())
+        .collect::<Vec<_>>();
+    let usernames = state.access.usernames_for_ids(&user_ids).await?;
     let entries = page
         .items
         .into_iter()
@@ -3749,7 +3802,6 @@ async fn list_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminOrderDetail>>>> {
-    let usernames = admin_usernames(&state).await?;
     let excluded_user_id = if query.include_robot_data() {
         None
     } else {
@@ -3763,6 +3815,12 @@ async fn list_orders(
             PageRequest::new(query.page, query.page_size),
         )
         .await?;
+    let user_ids = page
+        .items
+        .iter()
+        .map(|order| order.user_id.clone())
+        .collect::<Vec<_>>();
+    let usernames = state.access.usernames_for_ids(&user_ids).await?;
     let orders = page
         .items
         .into_iter()

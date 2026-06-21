@@ -1465,25 +1465,56 @@ async fn list_user_bet_orders(
     Extension(session): Extension<UserAuthSession>,
     Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<UserBetOrderDetailResponse>>>> {
-    let group_buy_plans = state
+    if matches!(query.view, Some(UserBetOrderView::GroupBuy)) {
+        let lotteries = state.lotteries.list().await?;
+        let plans = state
+            .group_buys
+            .list_unformed_details_for_user_page(
+                &session.user.id,
+                PageRequest::new(query.page, query.page_size),
+            )
+            .await?
+            .items;
+        let mut orders = Vec::new();
+        for plan in &plans {
+            if let Some(order) =
+                unformed_group_buy_order_response(&session.user.id, plan, &lotteries)?
+            {
+                orders.push(order);
+            }
+        }
+
+        return Ok(Json(ApiEnvelope::success(orders)));
+    }
+
+    let group_buy_order_ids = state
         .group_buys
-        .list_details_for_user(&session.user.id)
+        .order_ids_for_user(&session.user.id)
         .await?;
-    let group_buy_order_ids = group_buy_plans
-        .iter()
-        .filter_map(|plan| plan.order_id.clone())
-        .collect::<Vec<_>>();
     let orders = state
         .orders
         .list_user_visible_page(
             &session.user.id,
             &group_buy_order_ids,
+            PageRequest::new(query.page, query.page_size),
+        )
+        .await?
+        .items;
+    let order_ids = orders
+        .iter()
+        .map(|order| order.id.clone())
+        .collect::<Vec<_>>();
+    let group_buy_plans = state.group_buys.plans_for_order_ids(&order_ids).await?;
+    let lotteries = state.lotteries.list().await?;
+    let ledger_entries = state
+        .finance
+        .ledger_entry_kind_page(
+            Some(&session.user.id),
+            &[LedgerEntryKind::PayoutCredit],
             PageRequest::default(),
         )
         .await?
         .items;
-    let lotteries = state.lotteries.list().await?;
-    let ledger_entries = state.finance.user_ledger_entries(&session.user.id).await?;
     let orders = user_visible_bet_orders(
         &session.user.id,
         orders,
@@ -1491,10 +1522,10 @@ async fn list_user_bet_orders(
         &ledger_entries,
         &lotteries,
     )?;
-    let orders = filter_user_bet_orders_by_view(orders, query.view);
-    let orders = query.paginate(orders);
 
-    Ok(Json(ApiEnvelope::success(orders)))
+    Ok(Json(ApiEnvelope::success(filter_user_bet_orders_by_view(
+        orders, query.view,
+    ))))
 }
 
 /// 合并本人独立下注订单、本人参与且已经成单的合买投注订单，以及尚未生成真实订单的合买认购。
