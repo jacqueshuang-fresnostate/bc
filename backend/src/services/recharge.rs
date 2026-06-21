@@ -12,6 +12,7 @@ use urlencoding::encode;
 
 use crate::{
     domain::{
+        finance::LedgerEntry,
         permission::SystemSetting,
         recharge::{
             ConfirmRechargeOrderRequest, CreateRechargeOrderRequest, CreateRechargeOrderResponse,
@@ -25,6 +26,7 @@ use crate::{
         business_database::BusinessDatabase,
         finance::{save_finance_store_incremental_in_transaction, FinanceRepository},
         pagination::{ListPage, PageRequest},
+        rebate::RechargeRebateCredit,
     },
 };
 
@@ -88,6 +90,15 @@ pub struct RechargeSupportTicket {
     pub content: String,
 }
 
+#[derive(Debug, Clone)]
+/// 充值确认后的完整处理结果，包含订单和本次事务内写入的代理返利流水。
+pub struct RechargeConfirmResult {
+    /// 已确认或幂等返回的充值订单。
+    pub order: RechargeOrderSummary,
+    /// 本次确认同步写入的代理返利流水；重复确认不会再次返回。
+    pub rebate_entry: Option<LedgerEntry>,
+}
+
 /// 充值订单仓储，负责该模块数据读取、业务变更和持久化协调。
 impl RechargeRepository {
     /// 返回空的内存充值仓储，适配无数据库开发模式。
@@ -113,6 +124,18 @@ impl RechargeRepository {
             .read()
             .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))
             .map(|store| store.list())
+    }
+
+    /// 按充值订单 ID 返回订单快照，供确认入账前计算同事务返利方案。
+    pub async fn get_order(&self, order_id: &str) -> ApiResult<RechargeOrderSummary> {
+        let order_id = required_trimmed(order_id, "充值订单 ID")?;
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?
+            .orders
+            .get(&order_id)
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound(format!("充值订单 `{order_id}` 不存在")))
     }
 
     /// 按导出条件返回充值订单；数据库模式下把过滤下推到 SQL，避免无条件导出时只能靠路由层筛选。
@@ -276,6 +299,8 @@ impl RechargeRepository {
         Ok(result)
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     /// 处理彩虹易支付异步通知，验签成功且状态成功时给用户入账。
     pub async fn confirm_rainbow_notify(
         &self,
@@ -283,6 +308,19 @@ impl RechargeRepository {
         settings: &RechargeSettings,
         finance: &FinanceRepository,
     ) -> ApiResult<RechargeOrderSummary> {
+        self.confirm_rainbow_notify_with_rebate(params, settings, finance, None)
+            .await
+            .map(|result| result.order)
+    }
+
+    /// 处理彩虹易支付异步通知，并在同一个充值资金事务内发放代理返利。
+    pub async fn confirm_rainbow_notify_with_rebate(
+        &self,
+        params: HashMap<String, String>,
+        settings: &RechargeSettings,
+        finance: &FinanceRepository,
+        rebate_credit: Option<&RechargeRebateCredit>,
+    ) -> ApiResult<RechargeConfirmResult> {
         verify_rainbow_sign(&params, &settings.rainbow_key)?;
         let status = params.get("trade_status").map(String::as_str).unwrap_or("");
         if status != "TRADE_SUCCESS" {
@@ -317,9 +355,12 @@ impl RechargeRepository {
 
         let was_paid = recharge_store.is_paid_order(order_id)?;
         let order = recharge_store.mark_paid(order_id, paid_amount_minor, trade_no)?;
+        let mut rebate_entry = None;
         if !was_paid {
             finance_store.credit_recharge(&order.user_id, order.amount_minor, &order.id)?;
             credit_recharge_bonus_for_order(&mut finance_store, &order, settings)?;
+            rebate_entry =
+                credit_recharge_rebate_for_order(&mut finance_store, &order, rebate_credit)?;
         }
 
         persist_recharge_finance_stores(
@@ -333,9 +374,13 @@ impl RechargeRepository {
         .await?;
         self.replace_store(recharge_store)?;
         finance.replace_store(finance_store)?;
-        Ok(order)
+        Ok(RechargeConfirmResult {
+            order,
+            rebate_entry,
+        })
     }
 
+    #[cfg(test)]
     /// 后台确认客服直充已收款，并给用户余额入账。
     pub async fn confirm_customer_service_order(
         &self,
@@ -344,6 +389,20 @@ impl RechargeRepository {
         settings: &RechargeSettings,
         finance: &FinanceRepository,
     ) -> ApiResult<RechargeOrderSummary> {
+        self.confirm_customer_service_order_with_rebate(order_id, request, settings, finance, None)
+            .await
+            .map(|result| result.order)
+    }
+
+    /// 后台确认客服直充已收款，并在同一个充值资金事务内发放代理返利。
+    pub async fn confirm_customer_service_order_with_rebate(
+        &self,
+        order_id: &str,
+        request: ConfirmRechargeOrderRequest,
+        settings: &RechargeSettings,
+        finance: &FinanceRepository,
+        rebate_credit: Option<&RechargeRebateCredit>,
+    ) -> ApiResult<RechargeConfirmResult> {
         let previous_recharge_store = self
             .inner
             .read()
@@ -359,9 +418,12 @@ impl RechargeRepository {
 
         let was_paid = recharge_store.is_paid_order(order_id)?;
         let order = recharge_store.confirm_customer_service_order(order_id, request)?;
+        let mut rebate_entry = None;
         if !was_paid {
             finance_store.credit_recharge(&order.user_id, order.amount_minor, &order.id)?;
             credit_recharge_bonus_for_order(&mut finance_store, &order, settings)?;
+            rebate_entry =
+                credit_recharge_rebate_for_order(&mut finance_store, &order, rebate_credit)?;
         }
 
         persist_recharge_finance_stores(
@@ -375,7 +437,10 @@ impl RechargeRepository {
         .await?;
         self.replace_store(recharge_store)?;
         finance.replace_store(finance_store)?;
-        Ok(order)
+        Ok(RechargeConfirmResult {
+            order,
+            rebate_entry,
+        })
     }
     /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &RechargeStore) -> ApiResult<()> {
@@ -455,6 +520,31 @@ fn credit_recharge_bonus_for_order(
 
     finance_store
         .credit_recharge_bonus(&order.user_id, bonus_amount_minor, &order.id)
+        .map(Some)
+}
+
+/// 按预先计算的返利方案给代理入账；仅在充值本金同事务入账时调用。
+fn credit_recharge_rebate_for_order(
+    finance_store: &mut super::finance::FinanceStore,
+    order: &RechargeOrderSummary,
+    rebate_credit: Option<&RechargeRebateCredit>,
+) -> ApiResult<Option<LedgerEntry>> {
+    let Some(rebate_credit) = rebate_credit else {
+        return Ok(None);
+    };
+    if rebate_credit.invitee_user_id != order.user_id {
+        return Err(ApiError::BadRequest(
+            "充值返利下级用户与充值订单不一致".to_string(),
+        ));
+    }
+
+    finance_store
+        .credit_recharge_rebate(
+            &rebate_credit.agent_user_id,
+            &rebate_credit.invitee_user_id,
+            rebate_credit.amount_minor,
+            &order.id,
+        )
         .map(Some)
 }
 
@@ -1576,6 +1666,155 @@ mod tests {
         assert_eq!(confirmed_again.status, RechargeOrderStatus::Paid);
         assert_eq!(entries.len(), 1);
         assert_eq!(account.available_balance_minor, 1200);
+    }
+
+    /// 验证首次确认充值时，本金和代理返利在同一个资金事务里一起入账。
+    #[tokio::test]
+    async fn recharge_repository_confirms_customer_service_order_with_rebate() {
+        let repository = RechargeRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let user = user();
+        let settings = RechargeSettings {
+            rainbow_enabled: false,
+            rainbow_gateway_url: String::new(),
+            rainbow_pid: String::new(),
+            rainbow_key: String::new(),
+            rainbow_notify_url: String::new(),
+            rainbow_return_url: String::new(),
+            rainbow_pay_types: vec!["alipay".to_string()],
+            customer_service_enabled: true,
+            customer_service_message: "联系客服充值".to_string(),
+            min_amount_minor: 100,
+            max_amount_minor: 10_000,
+            bonus_enabled: false,
+            bonus_rules: Vec::new(),
+        };
+        let created = repository
+            .create_order(
+                &user,
+                CreateRechargeOrderRequest {
+                    channel: RechargeChannel::CustomerService,
+                    amount_minor: 1200,
+                    pay_type: None,
+                },
+                &settings,
+            )
+            .await
+            .expect("customer service order can be created");
+        let rebate_credit = RechargeRebateCredit {
+            agent_user_id: "U90001".to_string(),
+            invitee_user_id: user.id.clone(),
+            amount_minor: 350,
+        };
+
+        let result = repository
+            .confirm_customer_service_order_with_rebate(
+                &created.order.id,
+                ConfirmRechargeOrderRequest {
+                    provider_trade_no: Some("客服收款凭证".to_string()),
+                    remark: None,
+                },
+                &settings,
+                &finance,
+                Some(&rebate_credit),
+            )
+            .await
+            .expect("customer service order can be confirmed with rebate");
+
+        let user_account = finance
+            .account_or_create(&user.id)
+            .await
+            .expect("user account can load");
+        let agent_account = finance
+            .account_or_create("U90001")
+            .await
+            .expect("agent account can load");
+        let rebate_entry = result.rebate_entry.expect("rebate entry exists");
+
+        assert_eq!(result.order.status, RechargeOrderStatus::Paid);
+        assert_eq!(user_account.available_balance_minor, 1200);
+        assert_eq!(agent_account.available_balance_minor, 520_350);
+        assert_eq!(rebate_entry.kind, LedgerEntryKind::RechargeRebateCredit);
+        assert_eq!(rebate_entry.amount_minor, 350);
+    }
+
+    /// 验证已入账订单重复确认时不会只给代理返利，避免本金缺失但返利增加。
+    #[tokio::test]
+    async fn recharge_repository_does_not_rebate_when_paid_order_is_reconfirmed() {
+        let repository = RechargeRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let user = user();
+        let settings = RechargeSettings {
+            rainbow_enabled: false,
+            rainbow_gateway_url: String::new(),
+            rainbow_pid: String::new(),
+            rainbow_key: String::new(),
+            rainbow_notify_url: String::new(),
+            rainbow_return_url: String::new(),
+            rainbow_pay_types: vec!["alipay".to_string()],
+            customer_service_enabled: true,
+            customer_service_message: "联系客服充值".to_string(),
+            min_amount_minor: 100,
+            max_amount_minor: 10_000,
+            bonus_enabled: false,
+            bonus_rules: Vec::new(),
+        };
+        let created = repository
+            .create_order(
+                &user,
+                CreateRechargeOrderRequest {
+                    channel: RechargeChannel::CustomerService,
+                    amount_minor: 1200,
+                    pay_type: None,
+                },
+                &settings,
+            )
+            .await
+            .expect("customer service order can be created");
+        {
+            let mut store = repository
+                .inner
+                .write()
+                .expect("recharge store lock should be available");
+            let order = store
+                .orders
+                .get_mut(&created.order.id)
+                .expect("created order exists");
+            order.status = RechargeOrderStatus::Paid;
+            order.paid_at = Some("2026-06-05 12:00:00".to_string());
+        }
+        let rebate_credit = RechargeRebateCredit {
+            agent_user_id: "U90001".to_string(),
+            invitee_user_id: user.id.clone(),
+            amount_minor: 350,
+        };
+
+        let result = repository
+            .confirm_customer_service_order_with_rebate(
+                &created.order.id,
+                ConfirmRechargeOrderRequest {
+                    provider_trade_no: None,
+                    remark: None,
+                },
+                &settings,
+                &finance,
+                Some(&rebate_credit),
+            )
+            .await
+            .expect("paid order reconfirm remains idempotent");
+
+        let user_account = finance
+            .account_or_create(&user.id)
+            .await
+            .expect("user account can load");
+        let agent_account = finance
+            .account_or_create("U90001")
+            .await
+            .expect("agent account can load");
+
+        assert!(result.rebate_entry.is_none());
+        assert_eq!(user_account.available_balance_minor, 0);
+        assert_eq!(agent_account.available_balance_minor, 520_000);
     }
 
     /// 验证充值赠送活动按最高命中档位入账，并且重复确认不会重复赠送。

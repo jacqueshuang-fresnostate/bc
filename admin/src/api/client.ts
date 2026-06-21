@@ -66,6 +66,7 @@ import type {
   AddGroupBuyParticipantRequest,
   CreateGroupBuyPlanRequest,
   GroupBuyPlan,
+  GroupBuyPlanListQuery,
   GroupBuyPlanSummary,
   UpdateGroupBuyPlanRequest,
 } from '../types/groupBuy';
@@ -346,6 +347,24 @@ function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery)
   return queryString ? `${path}?${queryString}` : path;
 }
 
+function groupBuyPlanQueryPath(path: string, query?: GroupBuyPlanListQuery) {
+  const params = new URLSearchParams();
+  if (query?.page && query.page > 0) {
+    params.set('page', String(query.page));
+  }
+  if (query?.pageSize && query.pageSize > 0) {
+    params.set('pageSize', String(query.pageSize));
+  }
+  if (query?.includeRobotData) {
+    params.set('includeRobotData', 'true');
+  }
+  if (query?.formationStatus) {
+    params.set('formationStatus', query.formationStatus);
+  }
+  const queryString = params.toString();
+  return queryString ? `${path}?${queryString}` : path;
+}
+
 function userQueryPath(path: string, query?: UserListQuery) {
   const params = new URLSearchParams();
   if (query?.page && query.page > 0) {
@@ -370,9 +389,9 @@ function userQueryPath(path: string, query?: UserListQuery) {
   return queryString ? `${path}?${queryString}` : path;
 }
 
-export function fetchGroupBuyPlans(signal?: AbortSignal, query?: FinancePageQuery) {
+export function fetchGroupBuyPlans(signal?: AbortSignal, query?: GroupBuyPlanListQuery) {
   return requestJson<FinancePage<GroupBuyPlanSummary>>(
-    adminQueryPath('/api/admin/group-buy/plans', query),
+    groupBuyPlanQueryPath('/api/admin/group-buy/plans', query),
     { signal },
   );
 }

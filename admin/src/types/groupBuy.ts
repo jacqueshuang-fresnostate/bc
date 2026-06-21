@@ -5,6 +5,15 @@ export type GroupBuyPlanStatus =
   | 'cancelled'
   | 'settled';
 
+export type GroupBuyFormationStatus = 'formed' | 'unformed';
+
+export interface GroupBuyPlanListQuery {
+  formationStatus?: GroupBuyFormationStatus;
+  includeRobotData?: boolean;
+  page?: number;
+  pageSize?: number;
+}
+
 export interface GroupBuyParticipant {
   id: string;
   userId: string;

@@ -25,6 +25,7 @@ import { useGroupBuyPlans } from '../hooks/useGroupBuyPlans';
 import type {
   AddGroupBuyParticipantRequest,
   CreateGroupBuyPlanRequest,
+  GroupBuyFormationStatus,
   GroupBuyPlan,
   GroupBuyPlanStatus,
   GroupBuyPlanSummary,
@@ -64,11 +65,14 @@ interface ParticipantFormState {
 }
 
 const ROBOT_GROUP_BUY_USER_ID = 'U90001';
+type GroupBuyFormationFilter = 'all' | GroupBuyFormationStatus;
 
 export function GroupBuyManagementPage({
   onDashboardRefresh,
 }: GroupBuyManagementPageProps) {
   const [includeRobotData, setIncludeRobotData] = useState(false);
+  const [formationFilter, setFormationFilter] =
+    useState<GroupBuyFormationFilter>('all');
   const [planPageNumber, setPlanPageNumber] = useState(1);
   const [planPageSize, setPlanPageSize] = useState(10);
   const [createSheetVisible, setCreateSheetVisible] = useState(false);
@@ -94,6 +98,7 @@ export function GroupBuyManagementPage({
     users,
   } = useGroupBuyPlans({
     planQuery: {
+      formationStatus: formationFilter === 'all' ? undefined : formationFilter,
       includeRobotData,
       page: planPageNumber,
       pageSize: planPageSize,
@@ -395,18 +400,35 @@ export function GroupBuyManagementPage({
                   <h2 className="text-base font-semibold text-ink">合买计划列表</h2>
                   <Tag color="teal">{planPage.totalCount} 个计划</Tag>
                 </div>
-                <PageControls
-                  loading={loading}
-                  page={planPage.page}
-                  pageSize={planPageSize}
-                  totalCount={planPage.totalCount}
-                  totalPages={planPage.totalPages}
-                  onPageChange={setPlanPageNumber}
-                  onPageSizeChange={(nextPageSize) => {
-                    setPlanPageNumber(1);
-                    setPlanPageSize(nextPageSize);
-                  }}
-                />
+                <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <span className="shrink-0">成单状态</span>
+                    <Select
+                      className="w-36"
+                      value={formationFilter}
+                      onChange={(value) => {
+                        setFormationFilter(value as GroupBuyFormationFilter);
+                        setPlanPageNumber(1);
+                      }}
+                    >
+                      <Select.Option value="all">全部</Select.Option>
+                      <Select.Option value="formed">已成单</Select.Option>
+                      <Select.Option value="unformed">未成单</Select.Option>
+                    </Select>
+                  </label>
+                  <PageControls
+                    loading={loading}
+                    page={planPage.page}
+                    pageSize={planPageSize}
+                    totalCount={planPage.totalCount}
+                    totalPages={planPage.totalPages}
+                    onPageChange={setPlanPageNumber}
+                    onPageSizeChange={(nextPageSize) => {
+                      setPlanPageNumber(1);
+                      setPlanPageSize(nextPageSize);
+                    }}
+                  />
+                </div>
               </div>
               {plans.length > 0 ? (
                 <div className="overflow-x-auto">

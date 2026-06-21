@@ -383,7 +383,8 @@ impl FinanceRepository {
         Ok(result)
     }
 
-    /// 按充值订单给上级代理发放返利；同一个充值单重复触发只会发放一次。
+    #[cfg(test)]
+    /// 按充值订单给上级代理发放返利；仅供返利策略测试使用，运行路径必须走充值确认事务。
     pub async fn credit_recharge_rebate(
         &self,
         agent_user_id: &str,

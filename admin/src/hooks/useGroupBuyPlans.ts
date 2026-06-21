@@ -14,17 +14,18 @@ import {
 } from '../api/client';
 import type { LotteryKind, UserSummary } from '../types/dashboard';
 import type { DrawIssue } from '../types/draws';
-import type { FinancePage, FinancePageQuery } from '../types/finance';
+import type { FinancePage } from '../types/finance';
 import type {
   AddGroupBuyParticipantRequest,
   CreateGroupBuyPlanRequest,
   GroupBuyPlan,
+  GroupBuyPlanListQuery,
   GroupBuyPlanSummary,
   UpdateGroupBuyPlanRequest,
 } from '../types/groupBuy';
 
 interface UseGroupBuyPlansOptions {
-  planQuery: FinancePageQuery;
+  planQuery: GroupBuyPlanListQuery;
 }
 
 export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
@@ -86,6 +87,7 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
     };
   }, [
     planQuery.includeRobotData,
+    planQuery.formationStatus,
     planQuery.page,
     planQuery.pageSize,
     refreshToken,

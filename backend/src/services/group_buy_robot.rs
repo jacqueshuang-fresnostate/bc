@@ -3,6 +3,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::NaiveDateTime;
+use random_zh::{random_zh, RandomZhOptions};
 use tokio::{
     sync::{Mutex as AsyncMutex, Semaphore},
     task::JoinHandle,
@@ -56,6 +57,16 @@ const ROBOT_FILL_STAGE_THREE_TARGET_PERCENT: i64 = 80;
 const ROBOT_FILL_FINAL_TARGET_PERCENT: i64 = 100;
 const ROBOT_FILL_STAGE_COUNT: i64 = 5;
 const ROBOT_CONCURRENT_JOB_LIMIT: usize = 8;
+const ROBOT_DISPLAY_NAME_FALLBACKS: [&str; 8] = [
+    "林清远",
+    "沈知安",
+    "许明澜",
+    "顾云舟",
+    "周景和",
+    "陈亦然",
+    "陆星河",
+    "叶青岚",
+];
 
 type RobotFinanceMutationLock = Arc<AsyncMutex<()>>;
 type RobotIssueMutationLock = Arc<AsyncMutex<()>>;
@@ -525,8 +536,9 @@ async fn execute_lottery_robot(
             finance
                 .ensure_available(&robot_user.id, draft.total_amount_minor)
                 .await?;
+            let display_users = users_with_random_robot_display_name(users);
             let created = group_buys
-                .create(draft.clone(), std::slice::from_ref(lottery), users)
+                .create(draft.clone(), std::slice::from_ref(lottery), &display_users)
                 .await?;
             let participant_id = format!("{}-P001", created.id);
             match debit_group_buy_locked(
@@ -714,7 +726,7 @@ async fn fill_robot_plan(
                 amount_minor: fill_amount_minor,
                 note: fill_note,
             },
-            users,
+            &users_with_random_robot_display_name(users),
         )
         .await?;
     *plan = next_plan;
@@ -1123,6 +1135,92 @@ fn robot_user(users: &[UserSummary]) -> ApiResult<&UserSummary> {
                 .find(|user| user.username == ROBOT_GROUP_BUY_USERNAME)
         })
         .ok_or_else(|| ApiError::NotFound("合买机器人资金账号不存在".to_string()))
+}
+
+/// 复制用户快照并只替换合买机器人展示名，真实用户 ID 和资金账户保持不变。
+fn users_with_random_robot_display_name(users: &[UserSummary]) -> Vec<UserSummary> {
+    let robot_display_name = random_robot_display_name();
+    users
+        .iter()
+        .cloned()
+        .map(|mut user| {
+            if is_group_buy_robot_user_id(&user.id) {
+                user.username = robot_display_name.clone();
+            }
+            user
+        })
+        .collect()
+}
+
+/// 生成机器人对外展示的中文姓名，算法参考 random-zh-name 的“姓 + 名”组合方式。
+fn random_robot_display_name() -> String {
+    let surname = random_zh(RandomZhOptions {
+        count: Some(1),
+        level_range: Some((1, 1)),
+        allow_duplicates: true,
+        ..Default::default()
+    })
+    .into_iter()
+    .next();
+    let length_seed = random_zh(RandomZhOptions {
+        count: Some(1),
+        level_range: Some((1, 2)),
+        allow_duplicates: true,
+        ..Default::default()
+    })
+    .into_iter()
+    .next();
+    let firstname_len = match length_seed.map(|character| character as u32 % 100) {
+        Some(0..=44) => 1,
+        Some(45..=89) | None => 2,
+        Some(_) => 3,
+    };
+    let firstname = random_zh(RandomZhOptions {
+        count: Some(firstname_len),
+        level_range: Some((1, 2)),
+        allow_duplicates: true,
+        ..Default::default()
+    });
+    let mut name = String::new();
+    if let Some(surname) = surname {
+        name.push(surname);
+    }
+    name.extend(firstname);
+
+    if is_valid_robot_display_name(&name) {
+        name
+    } else {
+        fallback_robot_display_name()
+    }
+}
+
+/// 校验机器人展示名不能暴露机器人、会员或内部账号痕迹。
+fn is_valid_robot_display_name(name: &str) -> bool {
+    let char_count = name.chars().count();
+    (2..=4).contains(&char_count)
+        && !name.contains("会员")
+        && !name.contains("机器人")
+        && !name.to_ascii_lowercase().contains("agent")
+        && name.chars().all(|character| {
+            ('\u{4e00}'..='\u{9fff}').contains(&character)
+                || ('\u{3400}'..='\u{4dbf}').contains(&character)
+        })
+}
+
+/// 当随机库没有返回可用字符时使用固定中文姓名兜底，避免机器人流程失败。
+fn fallback_robot_display_name() -> String {
+    let index = current_robot_name_seed() % ROBOT_DISPLAY_NAME_FALLBACKS.len();
+    ROBOT_DISPLAY_NAME_FALLBACKS[index].to_string()
+}
+
+/// 生成兜底名称索引，低频路径只用于随机库异常时。
+fn current_robot_name_seed() -> usize {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos() as usize)
+        .unwrap_or(0)
 }
 
 /// 机器人账户余额不足时自动授信补足，并返回授信流水供后台实时事件广播。
@@ -1562,6 +1660,68 @@ mod tests {
             "机器人直选投注内容不能总是固定的 1|2|3"
         );
     }
+
+    /// 验证机器人展示名使用中文姓名且不暴露内部机器人痕迹。
+    #[test]
+    fn robot_display_name_uses_random_chinese_name() {
+        let name = random_robot_display_name();
+
+        assert!(is_valid_robot_display_name(&name));
+        assert!(!name.contains("会员"));
+        assert!(!name.contains("机器人"));
+        assert!(!name.to_ascii_lowercase().contains("agent"));
+    }
+
+    /// 验证替换用户快照时只改变机器人展示名，不改变机器人用户 ID。
+    #[test]
+    fn robot_display_users_keep_robot_id_and_replace_username() {
+        let users = vec![
+            UserSummary {
+                id: "U10001".to_string(),
+                username: "真实用户".to_string(),
+                email: None,
+                avatar_url: String::new(),
+                contact_qq: String::new(),
+                kind: crate::domain::user::UserKind::Regular,
+                status: crate::domain::user::UserStatus::Active,
+                balance_minor: 0,
+                agent_id: None,
+                invite_code: "ABCD1234".to_string(),
+                registration_location: crate::domain::user::UserRegistrationLocation::default(),
+                created_at: "2026-06-05 10:00:00".to_string(),
+            },
+            UserSummary {
+                id: ROBOT_GROUP_BUY_USER_ID.to_string(),
+                username: ROBOT_GROUP_BUY_USERNAME.to_string(),
+                email: None,
+                avatar_url: String::new(),
+                contact_qq: String::new(),
+                kind: crate::domain::user::UserKind::Agent,
+                status: crate::domain::user::UserStatus::Active,
+                balance_minor: 0,
+                agent_id: None,
+                invite_code: "ROBOT001".to_string(),
+                registration_location: crate::domain::user::UserRegistrationLocation::default(),
+                created_at: "2026-06-05 10:00:00".to_string(),
+            },
+        ];
+
+        let display_users = users_with_random_robot_display_name(&users);
+        let robot = display_users
+            .iter()
+            .find(|user| user.id == ROBOT_GROUP_BUY_USER_ID)
+            .expect("robot user exists");
+        let real_user = display_users
+            .iter()
+            .find(|user| user.id == "U10001")
+            .expect("real user exists");
+
+        assert_eq!(robot.id, ROBOT_GROUP_BUY_USER_ID);
+        assert_ne!(robot.username, ROBOT_GROUP_BUY_USERNAME);
+        assert!(is_valid_robot_display_name(&robot.username));
+        assert_eq!(real_user.username, "真实用户");
+    }
+
     /// 验证机器人金额keep剩余参与有效。
     #[test]
     fn robot_amounts_keep_remaining_participation_valid() {
@@ -1632,6 +1792,20 @@ mod tests {
         .expect("robot can run after auto credit");
 
         assert_eq!(run.created_plans.len(), 1);
+        let created_plan = &run.created_plans[0];
+        assert_eq!(created_plan.initiator_user_id, ROBOT_GROUP_BUY_USER_ID);
+        assert_ne!(created_plan.initiator_username, ROBOT_GROUP_BUY_USERNAME);
+        assert!(is_valid_robot_display_name(
+            &created_plan.initiator_username
+        ));
+        assert_eq!(
+            created_plan.participants[0].user_id,
+            ROBOT_GROUP_BUY_USER_ID
+        );
+        assert_eq!(
+            created_plan.participants[0].username,
+            created_plan.initiator_username
+        );
         assert!(run.ledger_entries.iter().any(|entry| {
             entry.user_id == ROBOT_GROUP_BUY_USER_ID
                 && entry.kind == LedgerEntryKind::ManualAdjustment

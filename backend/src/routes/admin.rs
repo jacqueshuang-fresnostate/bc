@@ -86,6 +86,7 @@ use crate::{
         draw_generation::{
             generate_draw_issue_batch, generate_next_draw_issue, preview_draw_issue_generation,
         },
+        group_buy::GroupBuyFormationFilter,
         group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
         group_buy_robot::{
             force_fill_user_group_buy_plans_before_refund, is_group_buy_robot_user_id,
@@ -102,7 +103,7 @@ use crate::{
             support_conversation_updated_event, support_message_created_event,
             user_account_status_changed_event, withdrawal_changed_event,
         },
-        rebate::credit_recharge_rebate_for_order,
+        rebate::recharge_rebate_credit_for_order,
         recharge::recharge_settings_from_system_settings,
         scheduler::DrawSchedulerConfig,
         scheduler::DrawSchedulerStatus,
@@ -1507,6 +1508,16 @@ struct FinancePageQuery {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台合买计划列表筛选和分页查询参数。
+struct GroupBuyPlanListQuery {
+    page: Option<usize>,
+    page_size: Option<usize>,
+    include_robot_data: Option<bool>,
+    formation_status: Option<GroupBuyFormationFilter>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 /// 后台控奖抽屉按彩种和期号查询合买认购记录的参数。
 struct ControlGroupBuyIssueQuery {
     lottery_id: String,
@@ -1646,6 +1657,14 @@ impl FinancePageQuery {
             .as_deref()
             .map(str::trim)
             .filter(|username| !username.is_empty())
+    }
+}
+
+/// 后台合买计划列表查询参数。
+impl GroupBuyPlanListQuery {
+    /// 后台合买列表默认隐藏机器人发起计划。
+    fn include_robot_data(&self) -> bool {
+        self.include_robot_data.unwrap_or(false)
     }
 }
 
@@ -2222,7 +2241,7 @@ async fn get_dashboard_summary(
 /// 返回后台合买计划分页列表。
 async fn list_group_buy_plans(
     State(state): State<AppState>,
-    Query(query): Query<FinancePageQuery>,
+    Query(query): Query<GroupBuyPlanListQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<GroupBuyPlanSummary>>>> {
     let excluded_initiator_user_id = if query.include_robot_data() {
         None
@@ -2233,6 +2252,7 @@ async fn list_group_buy_plans(
         .group_buys
         .list_page(
             excluded_initiator_user_id,
+            query.formation_status,
             PageRequest::new(query.page, query.page_size),
         )
         .await?;
@@ -3776,18 +3796,26 @@ async fn confirm_recharge_order(
 ) -> ApiResult<Json<ApiEnvelope<RechargeOrderSummary>>> {
     let settings = state.access.settings().await?;
     let settings = recharge_settings_from_system_settings(&settings);
-    let order = state
-        .recharges
-        .confirm_customer_service_order(&id, payload, &settings, &state.finance)
-        .await?;
-    let rebate_entry = credit_recharge_rebate_for_order(
+    let pending_order = state.recharges.get_order(&id).await?;
+    let rebate_credit = recharge_rebate_credit_for_order(
         &state.access,
         &state.invites,
         &state.rebates,
-        &state.finance,
-        &order,
+        &pending_order,
     )
     .await?;
+    let result = state
+        .recharges
+        .confirm_customer_service_order_with_rebate(
+            &id,
+            payload,
+            &settings,
+            &state.finance,
+            rebate_credit.as_ref(),
+        )
+        .await?;
+    let order = result.order;
+    let rebate_entry = result.rebate_entry;
     publish_user_recharge_changed(&state, &order);
     publish_user_balance_changed(&state, &order.user_id, "recharge_credit", Some(&order.id)).await;
     if let Some(entry) = rebate_entry {

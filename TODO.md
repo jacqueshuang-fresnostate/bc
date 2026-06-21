@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-22 07:04 HKT 后台合买计划成单筛选和创建时间排序
+
+- 完成任务：后台合买计划列表新增“全部、已成单、未成单”筛选，并把列表默认排序调整为创建时间倒序。
+- 解决问题：此前合买管理只能通过状态和订单号人工判断成单情况，列表排序也优先按期号倒序；运营想快速查看最新未成单或已成单计划时需要翻找。
+- 实施内容：`GET /api/admin/group-buy/plans` 新增 `formationStatus=formed|unformed` 查询参数；后端 PostgreSQL 查询把成单筛选、机器人过滤、创建时间倒序和分页下推到 SQL，内存模式保持同口径；管理后台新增 Semi UI `Select` 筛选控件，切换筛选时自动回到第一页；架构说明同步记录接口、排序和性能规则。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml group_buy_repository_list_page_filters_formation_and_sorts_by_created_at -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml group_buy -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、`pnpm --dir admin build` 和 `git diff --check` 均通过；管理后台构建仅保留既有大 chunk 提示。
+
 ## 2026-06-22 06:42 HKT 聊天大厅短昵称脱敏规则调整
 
 - 完成任务：调整聊天大厅玩家名称脱敏规则，短昵称不再原样显示。
@@ -4575,3 +4582,17 @@
 - 解决问题：用户重新安装 App 后仍看到聊天大厅完整用户名，说明只依赖前端展示函数不够稳；历史消息接口、红包领取记录接口或 WebSocket 实时推送只要拿到原始 `username`，旧包或缓存路径仍可能暴露完整用户名。
 - 实施内容：用户端聊天大厅历史消息、发送文本、发送红包、领取红包后的消息更新、红包领取记录和分享合买计划返回前统一调用公开脱敏函数；`chat_hall.message_created` 推送也使用脱敏后的消息；数据库和后台审计仍保存原始用户名；同步更新架构说明。
 - 验证结果：已补充后端单元测试覆盖中文昵称、短昵称、空昵称、消息和红包领取记录脱敏；后续继续执行格式化、检查和目标测试。
+
+## 2026-06-22 充值确认入账与代理返利事务修复
+
+- 完成任务：修复后台点击确认入账后，用户充值本金未到账但代理充值返利已经增加的账务不一致风险。
+- 解决问题：此前后台确认入账和彩虹易支付回调会先确认充值并处理用户余额，再由路由层单独调用代理返利入账；如果订单历史状态已经是已入账但本金流水缺失，或第一段和第二段之间出现异常，重复确认可能只给代理加返利。
+- 实施内容：充值确认入口新增带返利方案的事务结果，后台确认和支付回调先计算返利方案，再交给充值服务在同一个充值/资金事务内写入充值单、本金流水、充值赠送和代理返利；运行时代码不再暴露单独发放充值返利入口，重复确认已入账订单不会再次返利。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml recharge_repository -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml recharge_rebate -- --nocapture` 均通过。
+
+## 2026-06-22 合买机器人展示名随机中文姓名
+
+- 完成任务：将合买机器人对外显示的用户名改为随机中文姓名。
+- 解决问题：机器人发起合买计划时此前会落库固定机器人账号名 `agent_alpha`，用户端或后台详情中容易看出机器人痕迹；用户希望可以使用 `random-zh-name` 风格的中文随机名。
+- 实施内容：确认 `random-zh-name 0.1.0` 当前只提供命令行二进制，不暴露 Rust library API；后端改用其底层 `random-zh 0.1.3` 按“姓 + 名”的方式生成 2 到 4 个中文字符展示名。机器人创建合买计划和机器人补单参与记录时只替换用户快照中的 `username`，真实 `user_id=U90001` 保持不变，资金、过滤和清理逻辑仍按机器人 ID 执行。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture` 均通过。

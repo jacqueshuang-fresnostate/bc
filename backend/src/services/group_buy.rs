@@ -27,6 +27,26 @@ use super::{
     pagination::{ListPage, PageRequest},
 };
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// 后台合买列表按是否已经生成真实投注订单筛选的状态。
+pub enum GroupBuyFormationFilter {
+    /// 已经关联真实投注订单的合买计划。
+    Formed,
+    /// 尚未关联真实投注订单的合买计划。
+    Unformed,
+}
+
+impl GroupBuyFormationFilter {
+    /// 判断合买计划摘要是否符合当前成单筛选口径。
+    fn matches_summary(self, plan: &GroupBuyPlanSummary) -> bool {
+        match self {
+            Self::Formed => plan.order_id.is_some(),
+            Self::Unformed => plan.order_id.is_none(),
+        }
+    }
+}
+
 #[derive(Clone)]
 /// 合买计划和参与记录仓储，负责该模块数据读取、业务变更和持久化协调。
 pub struct GroupBuyRepository {
@@ -67,10 +87,11 @@ impl GroupBuyRepository {
             .map(|store| store.list())
     }
 
-    /// 分页返回合买摘要；数据库模式下把机器人发起人过滤和分页下推到 SQL。
+    /// 分页返回合买摘要；数据库模式下把机器人发起人、成单状态和分页下推到 SQL。
     pub async fn list_page(
         &self,
         excluded_initiator_user_id: Option<&str>,
+        formation_filter: Option<GroupBuyFormationFilter>,
         page: PageRequest,
     ) -> ApiResult<ListPage<GroupBuyPlanSummary>> {
         let excluded_initiator_user_id = excluded_initiator_user_id
@@ -81,6 +102,7 @@ impl GroupBuyRepository {
             return query_group_buy_summary_page(
                 persistence,
                 excluded_initiator_user_id.as_deref(),
+                formation_filter,
                 page,
             )
             .await;
@@ -97,7 +119,9 @@ impl GroupBuyRepository {
                     .as_deref()
                     .map_or(true, |excluded| plan.initiator_user_id != excluded)
             })
+            .filter(|plan| formation_filter.map_or(true, |filter| filter.matches_summary(plan)))
             .collect::<Vec<_>>();
+        let plans = sorted_group_buy_summaries_by_created_at(plans);
         Ok(ListPage::from_all(plans, page))
     }
 
@@ -578,14 +602,25 @@ fn group_buy_participant_from_row(row: PgRow) -> ApiResult<(String, GroupBuyPart
 async fn query_group_buy_summary_page(
     database: &BusinessDatabase,
     excluded_initiator_user_id: Option<&str>,
+    formation_filter: Option<GroupBuyFormationFilter>,
     page: PageRequest,
 ) -> ApiResult<ListPage<GroupBuyPlanSummary>> {
+    let formation_filter = formation_filter.map(|filter| match filter {
+        GroupBuyFormationFilter::Formed => "formed",
+        GroupBuyFormationFilter::Unformed => "unformed",
+    });
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
          FROM group_buy_plans
-         WHERE ($1::text IS NULL OR initiator_user_id <> $1)",
+         WHERE ($1::text IS NULL OR initiator_user_id <> $1)
+           AND (
+               $2::text IS NULL
+               OR ($2 = 'formed' AND order_id IS NOT NULL)
+               OR ($2 = 'unformed' AND order_id IS NULL)
+           )",
     )
     .bind(excluded_initiator_user_id)
+    .bind(formation_filter)
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("合买计划分页总数读取失败".to_string()))?;
@@ -599,10 +634,16 @@ async fn query_group_buy_summary_page(
                 participant_min_amount_minor, share_count, status, note, created_at, updated_at
          FROM group_buy_plans
          WHERE ($1::text IS NULL OR initiator_user_id <> $1)
-         ORDER BY issue DESC, created_at DESC, id DESC
-         LIMIT $2 OFFSET $3",
+           AND (
+               $2::text IS NULL
+               OR ($2 = 'formed' AND order_id IS NOT NULL)
+               OR ($2 = 'unformed' AND order_id IS NULL)
+           )
+         ORDER BY created_at DESC, id DESC
+         LIMIT $3 OFFSET $4",
     )
     .bind(excluded_initiator_user_id)
+    .bind(formation_filter)
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
     .fetch_all(database.pool())
@@ -1828,6 +1869,20 @@ fn sorted_group_buy_plans<'a>(
     sorted_plans
 }
 
+/// 后台列表按创建时间倒序展示，方便运营优先看到最新生成的合买计划。
+fn sorted_group_buy_summaries_by_created_at(
+    plans: Vec<GroupBuyPlanSummary>,
+) -> Vec<GroupBuyPlanSummary> {
+    let mut sorted_plans = plans;
+    sorted_plans.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    sorted_plans
+}
+
 /// 归一化用户 ID 集合，去重并移除空值。
 fn normalized_user_ids(user_ids: &[String]) -> BTreeSet<String> {
     user_ids
@@ -2086,6 +2141,70 @@ mod tests {
             ["20260602003", "20260602002", "20260602001"]
         );
     }
+
+    /// 验证后台合买分页列表可按成单状态筛选，并且优先展示最新创建的计划。
+    #[tokio::test]
+    async fn group_buy_repository_list_page_filters_formation_and_sorts_by_created_at() {
+        let mut first = seed_group_buy_plans()
+            .into_iter()
+            .next()
+            .expect("seed plan exists");
+        first.id = "G-FORMED-OLDER".to_string();
+        first.order_id = Some("O-GROUP-001".to_string());
+        first.created_at = "2026-06-02 09:00:00".to_string();
+
+        let mut second = first.clone();
+        second.id = "G-FORMED-NEWER".to_string();
+        second.order_id = Some("O-GROUP-002".to_string());
+        second.created_at = "2026-06-02 10:00:00".to_string();
+
+        let mut unformed = first.clone();
+        unformed.id = "G-UNFORMED".to_string();
+        unformed.order_id = None;
+        unformed.created_at = "2026-06-02 11:00:00".to_string();
+
+        let repository = GroupBuyRepository {
+            inner: Arc::new(RwLock::new(GroupBuyStore {
+                plans: BTreeMap::from([
+                    (first.id.clone(), first),
+                    (second.id.clone(), second),
+                    (unformed.id.clone(), unformed),
+                ]),
+            })),
+            persistence: None,
+            mutation_lock: Arc::new(Mutex::new(())),
+        };
+
+        let formed_page = repository
+            .list_page(
+                None,
+                Some(GroupBuyFormationFilter::Formed),
+                PageRequest::new(Some(1), Some(10)),
+            )
+            .await
+            .expect("formed page can load");
+        let unformed_page = repository
+            .list_page(
+                None,
+                Some(GroupBuyFormationFilter::Unformed),
+                PageRequest::new(Some(1), Some(10)),
+            )
+            .await
+            .expect("unformed page can load");
+
+        assert_eq!(
+            formed_page
+                .items
+                .iter()
+                .map(|plan| plan.id.as_str())
+                .collect::<Vec<_>>(),
+            ["G-FORMED-NEWER", "G-FORMED-OLDER"]
+        );
+        assert_eq!(formed_page.total_count, 2);
+        assert_eq!(unformed_page.items[0].id, "G-UNFORMED");
+        assert_eq!(unformed_page.total_count, 1);
+    }
+
     /// 验证合买合买仓储skips未结算计划whenclearing。
     #[test]
     fn group_buy_store_skips_unsettled_plans_when_clearing() {

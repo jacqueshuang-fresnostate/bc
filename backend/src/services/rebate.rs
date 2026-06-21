@@ -5,9 +5,10 @@ use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
+#[cfg(test)]
+use crate::{domain::finance::LedgerEntry, services::finance::FinanceRepository};
 use crate::{
     domain::{
-        finance::LedgerEntry,
         invite::{InviteRecord, InviteStatus},
         rebate::{AgentRebateSummary, InvitePolicySummary, InvitePolicyUpdateRequest, RebateMode},
         recharge::{RechargeOrderStatus, RechargeOrderSummary},
@@ -17,7 +18,6 @@ use crate::{
     error::{ApiError, ApiResult},
     services::{
         access::AccessRepository,
-        finance::FinanceRepository,
         invite::InviteRepository,
         pagination::{ListPage, PageRequest},
     },
@@ -407,7 +407,8 @@ fn supported_rebate_modes() -> Vec<RebateMode> {
     vec![RebateMode::Immediate, RebateMode::RechargeTiered]
 }
 
-/// 充值成功后尝试给上级代理发放返利；没有符合条件的代理时静默跳过。
+#[cfg(test)]
+/// 充值成功后尝试给上级代理发放返利；仅供返利策略测试使用，运行路径必须走充值确认事务。
 pub async fn credit_recharge_rebate_for_order(
     access: &AccessRepository,
     invites: &InviteRepository,
@@ -415,6 +416,41 @@ pub async fn credit_recharge_rebate_for_order(
     finance: &FinanceRepository,
     order: &RechargeOrderSummary,
 ) -> ApiResult<Option<LedgerEntry>> {
+    let Some(rebate) = recharge_rebate_credit_for_order(access, invites, rebates, order).await?
+    else {
+        return Ok(None);
+    };
+
+    let entry = finance
+        .credit_recharge_rebate(
+            &rebate.agent_user_id,
+            &rebate.invitee_user_id,
+            rebate.amount_minor,
+            &order.id,
+        )
+        .await?;
+
+    Ok(Some(entry))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// 待执行的充值返利方案，只描述接收人、下级和金额，不直接写资金流水。
+pub struct RechargeRebateCredit {
+    /// 接收返利的上级代理用户 ID。
+    pub agent_user_id: String,
+    /// 产生充值行为的下级用户 ID。
+    pub invitee_user_id: String,
+    /// 返利金额，单位为分。
+    pub amount_minor: i64,
+}
+
+/// 充值成功后计算上级代理返利方案；没有符合条件的代理时静默跳过。
+pub async fn recharge_rebate_credit_for_order(
+    access: &AccessRepository,
+    invites: &InviteRepository,
+    rebates: &RebateRepository,
+    order: &RechargeOrderSummary,
+) -> ApiResult<Option<RechargeRebateCredit>> {
     let policy = rebates.get().await?;
     let rebate_amount_minor = recharge_rebate_amount_minor(order.amount_minor, &policy)?;
     if rebate_amount_minor <= 0 {
@@ -429,16 +465,11 @@ pub async fn credit_recharge_rebate_for_order(
         return Ok(None);
     };
 
-    let entry = finance
-        .credit_recharge_rebate(
-            &recipient.id,
-            &order.user_id,
-            rebate_amount_minor,
-            &order.id,
-        )
-        .await?;
-
-    Ok(Some(entry))
+    Ok(Some(RechargeRebateCredit {
+        agent_user_id: recipient.id,
+        invitee_user_id: order.user_id.clone(),
+        amount_minor: rebate_amount_minor,
+    }))
 }
 
 /// 计算充值返利金额；阶梯模式未配置独立阶梯时沿用默认比例，避免策略开启后不发放。

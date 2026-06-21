@@ -89,7 +89,7 @@ use crate::{
             support_conversation_updated_event, support_message_created_event,
             withdrawal_changed_event,
         },
-        rebate::credit_recharge_rebate_for_order,
+        rebate::recharge_rebate_credit_for_order,
         support_notification::spawn_support_telegram_notification,
     },
 };
@@ -2866,18 +2866,29 @@ async fn confirm_rainbow_notify(
 ) -> ApiResult<String> {
     let settings = state.access.settings().await?;
     let settings = recharge_settings_from_system_settings(&settings);
-    let order = state
-        .recharges
-        .confirm_rainbow_notify(params, &settings, &state.finance)
-        .await?;
-    let rebate_entry = credit_recharge_rebate_for_order(
+    let order_id = params
+        .get("out_trade_no")
+        .map(String::as_str)
+        .ok_or_else(|| ApiError::BadRequest("彩虹易支付通知缺少商户订单号".to_string()))?;
+    let pending_order = state.recharges.get_order(order_id).await?;
+    let rebate_credit = recharge_rebate_credit_for_order(
         &state.access,
         &state.invites,
         &state.rebates,
-        &state.finance,
-        &order,
+        &pending_order,
     )
     .await?;
+    let result = state
+        .recharges
+        .confirm_rainbow_notify_with_rebate(
+            params,
+            &settings,
+            &state.finance,
+            rebate_credit.as_ref(),
+        )
+        .await?;
+    let order = result.order;
+    let rebate_entry = result.rebate_entry;
     publish_user_recharge_changed(&state, &order);
     publish_user_balance_changed(&state, &order.user_id, "recharge_credit", Some(&order.id)).await;
     if let Some(entry) = rebate_entry {
