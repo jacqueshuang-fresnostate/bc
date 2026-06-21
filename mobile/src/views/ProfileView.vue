@@ -143,7 +143,7 @@ async function logout() {
 </script>
 
 <template>
-  <div class="account-dashboard min-h-screen bg-background pb-28 text-on-surface font-body">
+  <div class="account-dashboard min-h-screen bg-background text-on-surface font-body">
     <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="flex items-center gap-3">
         <CachedRemoteImage
@@ -157,7 +157,7 @@ async function logout() {
       <WalletHeaderAmount :balance="balanceText" />
     </header>
 
-    <main class="mobile-safe-main-top mx-auto max-w-lg px-3">
+    <main class="account-dashboard-main mobile-safe-main-top mx-auto max-w-lg px-3">
       <section class="mb-5">
         <div class="mb-5 flex items-start justify-between px-0.5">
           <div class="flex items-center gap-3">
@@ -229,3 +229,13 @@ async function logout() {
     </main>
   </div>
 </template>
+
+<style scoped>
+.account-dashboard {
+  padding-bottom: var(--mobile-bottom-nav-space);
+}
+
+.account-dashboard-main {
+  padding-bottom: calc(var(--mobile-bottom-nav-space) + 1rem);
+}
+</style>

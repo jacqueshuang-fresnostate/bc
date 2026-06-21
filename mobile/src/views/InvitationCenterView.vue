@@ -181,7 +181,7 @@ async function submitApplication() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-background pb-24 text-on-surface font-body">
+  <div class="agent-center-page min-h-screen bg-background text-on-surface font-body">
     <header class="mobile-safe-compact-header sticky top-0 z-30 flex h-14 items-center justify-between bg-white/85 px-4 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <button class="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-50 text-red-900" type="button" @click="router.back()">
         <LucideIcon name="arrow_back" class="h-5 w-5" />
@@ -192,7 +192,7 @@ async function submitApplication() {
       </button>
     </header>
 
-    <main class="mx-auto max-w-lg space-y-4 px-3 pt-4">
+    <main class="agent-center-main mx-auto max-w-lg space-y-4 px-3 pt-4">
       <section class="rounded-[1.75rem] bg-gradient-to-br from-red-800 to-red-950 p-5 text-white shadow-xl shadow-red-950/15">
         <p class="text-xs text-white/70">我的邀请码</p>
         <div class="mt-3 flex items-center justify-between gap-3">
@@ -326,3 +326,13 @@ async function submitApplication() {
     </main>
   </div>
 </template>
+
+<style scoped>
+.agent-center-page {
+  padding-bottom: var(--mobile-bottom-nav-space);
+}
+
+.agent-center-main {
+  padding-bottom: calc(var(--mobile-bottom-nav-space) + 1rem);
+}
+</style>

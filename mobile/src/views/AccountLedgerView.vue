@@ -106,7 +106,7 @@ onMounted(() => loadLedger())
 </script>
 
 <template>
-  <div class="account-ledger min-h-screen bg-surface pb-10 text-on-surface font-body">
+  <div class="account-ledger min-h-screen bg-surface text-on-surface font-body">
     <header class="mobile-safe-header fixed top-0 left-0 z-50 w-full bg-white/85 shadow-[0_4px_40px_0_rgba(140,10,21,0.04)] backdrop-blur-md">
       <div class="mx-auto flex h-16 w-full max-w-lg items-center justify-between px-5">
         <button class="flex h-10 w-10 items-center justify-center rounded-full text-primary transition active:scale-95 active:bg-red-50" aria-label="返回" type="button" @click="router.back()">
@@ -119,7 +119,7 @@ onMounted(() => loadLedger())
       </div>
     </header>
 
-    <main class="mobile-safe-main-top mx-auto flex w-full max-w-lg flex-col gap-4 px-4">
+    <main class="account-ledger-main mobile-safe-main-top mx-auto flex w-full max-w-lg flex-col gap-4 px-4">
       <section class="rounded-2xl bg-white p-5 shadow-[0_12px_40px_rgba(140,10,21,0.07)]">
         <div class="flex items-center justify-between gap-4">
           <div>
@@ -196,3 +196,13 @@ onMounted(() => loadLedger())
     </main>
   </div>
 </template>
+
+<style scoped>
+.account-ledger {
+  padding-bottom: var(--mobile-viewport-bottom-inset);
+}
+
+.account-ledger-main {
+  padding-bottom: calc(2.5rem + var(--mobile-viewport-bottom-inset));
+}
+</style>

@@ -38,7 +38,7 @@ function confirmChanges() {
 </script>
 
 <template>
-  <van-popup :show="show" position="bottom" round :style="{ maxHeight: '68dvh' }" @update:show="emit('update:show', $event)">
+  <van-popup :show="show" position="bottom" round :style="{ maxHeight: '68vh' }" @update:show="emit('update:show', $event)">
     <div class="bg-[#f9f9f9] px-4 pb-4 pt-3">
       <div class="mx-auto mb-3 h-1.5 w-10 rounded-full bg-[#e2e2e2]"></div>
       <div class="mb-3 flex items-center justify-between">
@@ -52,7 +52,7 @@ function confirmChanges() {
         <div class="font-headline text-xl font-extrabold text-[#1a1c1c]">暂无单据</div>
         <p class="mt-2 text-sm text-[#8e706d]">先选择号码并加入购彩篮</p>
       </div>
-      <div v-else class="max-h-[40dvh] space-y-3 overflow-y-auto pb-3">
+      <div v-else class="max-h-[40vh] space-y-3 overflow-y-auto pb-3">
         <article v-for="item in editableItems" :key="item.id" class="rounded-2xl bg-white p-4 shadow-sm shadow-red-900/5">
           <div class="mb-3 flex items-start justify-between gap-3">
             <div class="flex items-center gap-3">

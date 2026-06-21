@@ -386,6 +386,13 @@ function handleMessageScroll() {
   if (isMessageListNearBottom()) newMessageCount.value = 0
 }
 
+function handleComposerFocus() {
+  const shouldKeepBottom = isMessageListNearBottom()
+  if (!shouldKeepBottom) return
+  window.setTimeout(() => void scrollToBottom(), 180)
+  window.setTimeout(() => void scrollToBottom(), 360)
+}
+
 watch(routeConversationId, (conversationId) => {
   if (conversationId && conversationId !== activeConversationId.value) {
     void loadSupportData(conversationId)
@@ -567,6 +574,7 @@ onBeforeUnmount(() => {
         :placeholder="uploadingImage ? '正在发送图片...' : (currentConversation ? '输入消息...' : '请先发起客服直充')"
         type="text"
         :disabled="sending || uploadingImage"
+        @focus="handleComposerFocus"
         @keydown.enter="sendMessageByEnter"
       />
       <button class="support-input-bar__send" type="button" :disabled="!canSend" aria-label="发送" @click="sendMessage">
@@ -578,12 +586,13 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .support-chat {
+  --support-input-bottom: var(--mobile-keyboard-bottom-inset);
   min-height: 100vh;
   background:
     radial-gradient(circle at 18% 0%, rgba(175, 40, 41, 0.11), transparent 30%),
     linear-gradient(180deg, #fff8f5 0%, #f7eee9 48%, #f4ebe6 100%);
   color: #241f1d;
-  padding-bottom: 92px;
+  padding-bottom: calc(92px + var(--support-input-bottom));
 }
 
 .support-chat__topbar {
@@ -702,7 +711,7 @@ onBeforeUnmount(() => {
   height: 100vh;
   overflow-y: auto;
   margin: 0 auto;
-  padding: calc(86px + var(--mobile-status-safe-top)) 16px calc(104px + env(safe-area-inset-bottom));
+  padding: calc(86px + var(--mobile-status-safe-top)) 16px calc(104px + var(--mobile-safe-bottom) + var(--support-input-bottom));
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -959,7 +968,7 @@ onBeforeUnmount(() => {
 .support-chat__new-message {
   position: fixed;
   left: 50%;
-  bottom: calc(86px + env(safe-area-inset-bottom));
+  bottom: calc(86px + var(--mobile-safe-bottom) + var(--support-input-bottom));
   z-index: 55;
   transform: translateX(-50%);
   border: 0;
@@ -976,7 +985,7 @@ onBeforeUnmount(() => {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--support-input-bottom);
   z-index: 50;
   display: flex;
   align-items: center;
@@ -984,11 +993,12 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: 540px;
   margin: 0 auto;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  padding: 12px 16px calc(12px + var(--mobile-safe-bottom));
   background: rgba(255, 250, 247, 0.94);
   border-top: 1px solid rgba(175, 40, 41, 0.09);
   box-shadow: 0 -10px 28px rgba(95, 10, 18, 0.08);
   backdrop-filter: blur(18px);
+  transition: bottom 0.18s ease;
 }
 
 .support-input-bar__attach {
@@ -1028,12 +1038,13 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 0 12px calc(74px + env(safe-area-inset-bottom));
+  padding: 0 12px calc(74px + var(--mobile-safe-bottom) + var(--mobile-keyboard-bottom-inset));
   pointer-events: auto;
 }
 
 .support-emoji-panel__shell {
   width: min(300px, calc(100vw - 32px));
+  height: 300px;
   height: min(300px, 46dvh);
   min-height: 240px;
   overflow: hidden;

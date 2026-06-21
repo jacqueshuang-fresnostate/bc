@@ -178,7 +178,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="group-buy-page min-h-screen bg-[#f7f7f7] pb-24 text-[#171717]">
+  <div class="group-buy-page min-h-screen bg-[#f7f7f7] text-[#171717]">
     <header v-if="activeTab === 'hall'" class="group-buy-brand-header mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <h1 class="sr-only">合买大厅</h1>
       <div class="flex items-center gap-3">
@@ -194,8 +194,8 @@ onMounted(async () => {
     </header>
     <van-nav-bar v-else title="我的合买" left-arrow @click-left="activeTab = 'hall'" />
 
-    <section v-if="activeTab === 'hall'" class="group-buy-hall group-buy-hall-scroll mobile-safe-main-top-tight space-y-2 px-3 pb-4">
-      <div class="hallCategoryChips filterChips flex min-h-8 gap-1.5 overflow-x-auto px-0.5 pb-0.5">
+    <section v-if="activeTab === 'hall'" class="group-buy-hall group-buy-hall-scroll space-y-2.5 px-3">
+      <div class="hallCategoryChips filterChips flex min-h-8 gap-1.5 overflow-x-auto px-0.5 py-0.5">
         <button
           v-for="chip in hallCategoryChips"
           :key="chip.value"
@@ -282,7 +282,7 @@ onMounted(async () => {
       </template>
     </section>
 
-    <section v-else class="space-y-3 p-3">
+    <section v-else class="group-buy-my-list space-y-3 p-3">
       <van-loading v-if="loadingMy && !myGroupBuys.length" class="mx-auto my-8 block" />
       <van-empty v-else-if="!myGroupBuys.length" description="暂无参与记录" />
       <template v-else>
@@ -309,8 +309,8 @@ onMounted(async () => {
       </template>
     </section>
 
-    <van-popup v-model:show="createVisible" position="bottom" round overlay-class="backdrop-blur-sm" :style="{ height: '70dvh', maxHeight: '70dvh' }">
-      <section class="group-buy-create-popup group-buy-create-modal flex h-[70dvh] max-h-[70dvh] flex-col overflow-hidden bg-[#f9f9f9]">
+    <van-popup v-model:show="createVisible" position="bottom" round overlay-class="backdrop-blur-sm" :style="{ height: '70vh', maxHeight: '70vh' }">
+      <section class="group-buy-create-popup group-buy-create-modal flex h-[70vh] max-h-[70vh] flex-col overflow-hidden bg-[#f9f9f9]">
         <header class="group-buy-create-header z-10 flex shrink-0 items-center justify-between border-b border-stone-100 bg-white/90 px-4 py-3 backdrop-blur-md">
           <h2 class="font-headline text-lg font-black tracking-wide text-red-900">发起合买计划</h2>
           <button aria-label="关闭发起合买弹窗" class="flex h-8 w-8 items-center justify-center rounded-full text-stone-500 transition-colors hover:bg-stone-100" @click="closeCreatePlan">×</button>
@@ -433,8 +433,8 @@ onMounted(async () => {
         </van-form>
       </section>
     </van-popup>
-    <van-popup v-model:show="detailVisible" position="bottom" round :style="{ maxHeight: '66dvh' }">
-      <section v-if="selectedGroupBuy" class="group-buy-detail-sheet flex max-h-[66dvh] flex-col overflow-y-auto bg-[#fff8f1] p-3">
+    <van-popup v-model:show="detailVisible" position="bottom" round :style="{ maxHeight: '66vh' }">
+      <section v-if="selectedGroupBuy" class="group-buy-detail-sheet flex max-h-[66vh] flex-col overflow-y-auto bg-[#fff8f1] p-3">
         <div class="mx-auto mb-3 h-1.5 w-12 rounded-full bg-stone-300"></div>
         <div class="mb-4 flex items-start justify-between gap-3">
           <div>
@@ -560,7 +560,25 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.group-buy-page {
+  min-height: 100vh;
+  padding-bottom: calc(var(--mobile-bottom-nav-space) + 0.35rem);
+  background:
+    radial-gradient(circle at 85% 26%, rgba(255, 199, 221, 0.34), transparent 28%),
+    linear-gradient(180deg, #fff7fb 0%, #f8eef6 42%, #fff6fb 100%);
+}
+
+.group-buy-hall {
+  padding-top: calc(var(--mobile-brand-header-height) + 0.55rem);
+  padding-bottom: calc(var(--mobile-bottom-nav-space) + 0.8rem);
+}
+
+.group-buy-my-list {
+  padding-bottom: calc(var(--mobile-bottom-nav-space) + 0.8rem);
+}
+
 .hallCategoryChips {
+  margin-bottom: 0.2rem;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
@@ -587,6 +605,11 @@ onMounted(async () => {
   background: rgba(255, 255, 255, 0.86);
   color: #57534e;
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.04);
+}
+
+.group-buy-plan-card {
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .group-buy-initiator-name {

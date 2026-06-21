@@ -264,6 +264,7 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
 
 <style scoped>
 .history-center {
+  min-height: 100vh;
   min-height: 100dvh;
   background:
     radial-gradient(circle at 6% 0%, rgba(255, 218, 215, 0.78), transparent 28%),
@@ -282,7 +283,7 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
 }
 
 .history-content--draws {
-  padding: var(--mobile-brand-page-top) 16px 112px;
+  padding: var(--mobile-brand-page-top) 16px calc(var(--mobile-bottom-nav-space) + 16px);
 }
 
 .history-content--orders {

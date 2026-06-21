@@ -718,7 +718,7 @@ function DrawControlSideSheet({
   const controlIssues = item ? controlCandidateIssues(item) : [];
   const controlOrders = item ? controlCandidateOrders(item) : [];
   const visibleOrders = item ? visibleConsoleOrders(item, form) : [];
-  const groupBuyRows = groupBuyParticipantRows(groupBuyPlans);
+  const groupBuyRows = groupBuyInitiatorParticipantRows(groupBuyPlans);
   const targetIssueInactive = controlFormTargetsInactiveIssue(item, form);
   const targetSelectDisabled = !form.enabled && !targetIssueInactive;
   const saveDisabled =
@@ -1008,29 +1008,29 @@ function DrawControlSideSheet({
           <section className="rounded-md border border-line p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h3 className="text-sm font-semibold text-ink">合买认购记录</h3>
+                <h3 className="text-sm font-semibold text-ink">合买发起记录</h3>
                 <p className="mt-1 text-xs text-slate-500">
-                  显示当前期号的合买计划和认购明细，未成单、未满单也会展示。
+                  只显示当前期号合买发起人的自购记录，跟单用户不在控奖列表中展示。
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 {groupBuyIssue ? (
                   <Tag color="grey">期号 {groupBuyIssue}</Tag>
                 ) : null}
-                <Tag color="orange">{groupBuyRows.length} 条认购</Tag>
+                <Tag color="orange">{groupBuyRows.length} 条发起记录</Tag>
               </div>
             </div>
             {groupBuyError ? (
               <Banner
                 className="mt-3"
                 type="warning"
-                title="合买认购记录读取失败"
+                title="合买发起记录读取失败"
                 description={groupBuyError}
               />
             ) : null}
             {groupBuyLoading ? (
               <div className="mt-3 rounded border border-dashed border-line p-4 text-sm text-slate-500">
-                正在加载合买认购记录...
+                正在加载合买发起记录...
               </div>
             ) : groupBuyRows.length > 0 ? (
               <div className="mt-3 max-h-[300px] overflow-auto">
@@ -1039,12 +1039,12 @@ function DrawControlSideSheet({
                     <tr>
                       <th className="py-2 pr-3 font-medium">合买计划</th>
                       <th className="py-2 pr-3 font-medium">状态</th>
-                      <th className="py-2 pr-3 font-medium">参与用户</th>
+                      <th className="py-2 pr-3 font-medium">发起人</th>
                       <th className="py-2 pr-3 font-medium">认购时间</th>
                       <th className="py-2 pr-3 font-medium">期号</th>
                       <th className="py-2 pr-3 font-medium">玩法</th>
                       <th className="py-2 pr-3 font-medium">投注内容</th>
-                      <th className="py-2 pr-3 font-medium">认购金额</th>
+                      <th className="py-2 pr-3 font-medium">自购金额</th>
                       <th className="py-2 pr-3 font-medium">份数</th>
                       <th className="py-2 pr-3 font-medium">占比</th>
                       <th className="py-2 pr-3 font-medium">进度</th>
@@ -1128,7 +1128,7 @@ function DrawControlSideSheet({
               </div>
             ) : (
               <div className="mt-3 rounded border border-dashed border-line p-4 text-sm text-slate-500">
-                当前期号暂无合买认购记录。
+                当前期号暂无合买发起人自购记录。
               </div>
             )}
           </section>
@@ -1578,13 +1578,22 @@ function groupBuyIssueForControl(
   return sellingIssueForControl(item);
 }
 
-function groupBuyParticipantRows(plans: GroupBuyPlan[]) {
+function groupBuyInitiatorParticipantRows(plans: GroupBuyPlan[]) {
   return plans.flatMap((plan) =>
-    plan.participants.map((participant) => ({
-      participant,
-      plan,
-    })),
+    plan.participants
+      .filter((participant) => isGroupBuyInitiatorParticipant(plan, participant))
+      .map((participant) => ({
+        participant,
+        plan,
+      })),
   );
+}
+
+function isGroupBuyInitiatorParticipant(
+  plan: GroupBuyPlan,
+  participant: GroupBuyPlan['participants'][number],
+) {
+  return participant.userId.trim() === plan.initiatorUserId.trim();
 }
 
 function participantPercent(amountMinor: number, plan: GroupBuyPlan) {

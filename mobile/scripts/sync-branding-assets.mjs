@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const DEFAULT_API_BASE = 'https://ad.1666666.site'
+const DEFAULT_API_BASE = 'https://ad.16888888.live'
 
 function usage() {
   console.log(`用途：从后台手机端站点配置同步打包用品牌资源。

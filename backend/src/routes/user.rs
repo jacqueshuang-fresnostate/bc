@@ -1978,10 +1978,35 @@ async fn create_user_bet_orders(
         checked_orders.push((lottery, order_payload));
     }
 
-    let created_orders = state
+    let redis_lock = state
+        .redis
+        .acquire_lock(format!("lock:user:{}:bet", session.user.id))
+        .await?;
+    let created_orders_result = state
         .orders
         .create_many_with_debit(&state.finance, checked_orders, OrderSource::Direct)
-        .await?;
+        .await;
+    if let Some(lock) = redis_lock {
+        if let Err(error) = lock.release().await {
+            tracing::warn!(
+                error = %error.log_message(),
+                user_id = session.user.id.as_str(),
+                "投注用户 Redis 锁释放失败"
+            );
+        }
+    }
+    let created_orders = created_orders_result?;
+    if let Err(error) = state
+        .redis
+        .delete_keys(&[format!("user:{}:balance", session.user.id)])
+        .await
+    {
+        tracing::warn!(
+            error = %error.log_message(),
+            user_id = session.user.id.as_str(),
+            "用户余额缓存失效失败"
+        );
+    }
     for order in &created_orders {
         publish_user_order_changed(&state, &order, "created");
         publish_user_balance_changed(&state, &order.user_id, "order_debit", Some(&order.id)).await;
@@ -2879,6 +2904,7 @@ async fn list_chat_hall_messages(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<ChatHallMessage>>>> {
     let messages = state.chat_hall.list().await?;
+    let messages = public_chat_hall_messages(messages);
 
     Ok(Json(ApiEnvelope::success(messages)))
 }
@@ -2901,6 +2927,7 @@ async fn send_chat_hall_message(
 ) -> ApiResult<Json<ApiEnvelope<ChatHallMessage>>> {
     ensure_chat_hall_speaking_allowed(&state, &session.user.id).await?;
     let message = state.chat_hall.send(&session.user, payload).await?;
+    let message = public_chat_hall_message(message);
     state
         .realtime
         .publish_public(chat_hall_message_created_event(&message));
@@ -2919,6 +2946,7 @@ async fn send_chat_hall_red_packet(
         .chat_hall
         .send_red_packet(&state.finance, &session.user, payload)
         .await?;
+    let message = public_chat_hall_message(message);
     state
         .realtime
         .publish_public(chat_hall_message_created_event(&message));
@@ -2946,6 +2974,7 @@ async fn claim_chat_hall_red_packet(
         .chat_hall
         .claim_red_packet(&state.finance, &session.user, &id)
         .await?;
+    let response = public_chat_hall_claim_response(response);
     state
         .realtime
         .publish_public(chat_hall_message_created_event(&response.message));
@@ -2967,6 +2996,7 @@ async fn get_chat_hall_red_packet_claims(
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<ChatHallRedPacketClaimsResponse>>> {
     let response = state.chat_hall.red_packet_claims(&id).await?;
+    let response = public_chat_hall_red_packet_claims_response(response);
 
     Ok(Json(ApiEnvelope::success(response)))
 }
@@ -3019,6 +3049,7 @@ async fn share_chat_hall_group_buy_plan(
             },
         )
         .await?;
+    let message = public_chat_hall_message(message);
     state
         .realtime
         .publish_public(chat_hall_message_created_event(&message));
@@ -3109,6 +3140,53 @@ fn chat_hall_message_payload_string(message: &ChatHallMessage, key: &str) -> Opt
         .and_then(|payload| payload.get(key))
         .and_then(|value| value.as_str())
         .map(str::to_string)
+}
+
+/// 将聊天大厅历史消息转换成用户端公开数据，避免公开暴露完整用户名。
+fn public_chat_hall_messages(messages: Vec<ChatHallMessage>) -> Vec<ChatHallMessage> {
+    messages.into_iter().map(public_chat_hall_message).collect()
+}
+
+/// 将聊天大厅消息中的用户名做公开展示脱敏，保留数据库中的原始用户名不变。
+fn public_chat_hall_message(mut message: ChatHallMessage) -> ChatHallMessage {
+    message.username = mask_public_chat_hall_username(&message.username);
+    message
+}
+
+/// 将红包领取响应转换成用户端公开数据，消息和领取人都统一脱敏。
+fn public_chat_hall_claim_response(
+    mut response: ClaimChatHallRedPacketResponse,
+) -> ClaimChatHallRedPacketResponse {
+    response.message = public_chat_hall_message(response.message);
+    response.claim.username = mask_public_chat_hall_username(&response.claim.username);
+    response
+}
+
+/// 将红包领取记录列表转换成用户端公开数据，领取人名称只展示前四个字符。
+fn public_chat_hall_red_packet_claims_response(
+    mut response: ChatHallRedPacketClaimsResponse,
+) -> ChatHallRedPacketClaimsResponse {
+    response
+        .claims
+        .iter_mut()
+        .for_each(|claim| claim.username = mask_public_chat_hall_username(&claim.username));
+    response
+}
+
+/// 对聊天大厅公开用户名做隐私脱敏，保留前四个字符，后续字符统一替换为星号。
+fn mask_public_chat_hall_username(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        return "会员".to_string();
+    }
+
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= 4 {
+        return chars.into_iter().collect();
+    }
+
+    let visible_prefix = chars.iter().take(4).collect::<String>();
+    format!("{}{}", visible_prefix, "*".repeat(chars.len() - 4))
 }
 
 /// 返回当前用户客服会话列表。
@@ -3621,6 +3699,54 @@ mod tests {
         assert_eq!(chat_hall_required_recharge_minor(&disabled_settings), 0);
         assert!(chat_hall_speaking_status_from_amounts(0, 0).can_speak);
         assert!(chat_hall_speaking_status_from_amounts(30_000, 30_000).can_speak);
+    }
+
+    #[test]
+    /// 验证聊天大厅用户端公开名称只保留前四个字符，避免完整用户名泄露到手机端。
+    fn public_chat_hall_username_is_masked() {
+        assert_eq!(mask_public_chat_hall_username("爱情819281"), "爱情81****");
+        assert_eq!(mask_public_chat_hall_username("测试用户1"), "测试用户*");
+        assert_eq!(mask_public_chat_hall_username("张三"), "张三");
+        assert_eq!(mask_public_chat_hall_username(""), "会员");
+    }
+
+    #[test]
+    /// 验证聊天大厅消息和红包领取记录在返回手机端前会统一脱敏。
+    fn public_chat_hall_response_masks_message_and_claim_usernames() {
+        use crate::domain::chat_hall::{
+            ChatHallMessageType, ChatHallRedPacketClaim, ChatHallRedPacketClaimsResponse,
+        };
+
+        let message = public_chat_hall_message(ChatHallMessage {
+            id: "CHM-000000000001".to_string(),
+            user_id: "U10001".to_string(),
+            username: "爱情819281".to_string(),
+            avatar_url: String::new(),
+            content: "大家好".to_string(),
+            message_type: ChatHallMessageType::Text,
+            payload: None,
+            created_at: "2026-06-21 18:00:00".to_string(),
+        });
+        assert_eq!(message.username, "爱情81****");
+
+        let claims = public_chat_hall_red_packet_claims_response(ChatHallRedPacketClaimsResponse {
+            red_packet_id: "CHRP-000000000001".to_string(),
+            greeting: "恭喜发财".to_string(),
+            total_amount_minor: 1_000,
+            remaining_amount_minor: 500,
+            claim_count: 2,
+            claimed_count: 1,
+            claims: vec![ChatHallRedPacketClaim {
+                id: "CHRPC-000000000001".to_string(),
+                red_packet_id: "CHRP-000000000001".to_string(),
+                user_id: "U10002".to_string(),
+                username: "明月清风888".to_string(),
+                amount_minor: 500,
+                created_at: "2026-06-21 18:01:00".to_string(),
+            }],
+        });
+
+        assert_eq!(claims.claims[0].username, "明月清风***");
     }
 
     #[test]

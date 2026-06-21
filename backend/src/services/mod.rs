@@ -26,6 +26,7 @@ pub mod play_rules;
 pub mod realtime;
 pub mod rebate;
 pub mod recharge;
+pub mod redis_runtime;
 pub mod robot;
 pub mod scheduler;
 pub mod support;

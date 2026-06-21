@@ -18,7 +18,7 @@
 
 - SQL 放在仓储或查询模块中，不放在路由处理函数中。
 - 任何会改变余额、订单、派奖、返利或机器人购彩记录的操作必须使用事务。
-- 跨仓储写操作必须先在仓储快照上完成业务校验和变更，PostgreSQL 模式下复用同一个 SQLx 事务保存所有相关业务表，提交成功后再替换运行时内存快照。
+- 跨仓储写操作必须使用同一个数据库事务或同一个内存事务边界；普通下注等高频热路径优先使用 PostgreSQL 行级锁和增量写入，不能为了扣一笔款克隆全量快照或重写全量历史。
 - 运行路径不能直接调用“只创建订单不扣款”“只改充值状态不入账”“只改提现状态不处理冻结余额”的单仓储入口；这些入口只能作为测试辅助或事务协调内部步骤。
 - 使用类型清晰的 ID，或至少使用命名明确的 `String` ID；避免跨层传递匿名元组。
 - 接口只查询自己需要的字段。
@@ -131,17 +131,18 @@ COMMENT ON COLUMN lotteries.logo_url IS '彩种 LOGO 链接地址';
 - 充值入账：`RechargeRepository::confirm_rainbow_notify(...)`、`RechargeRepository::confirm_customer_service_order(...)`
 - 提现冻结/审核：`WithdrawalRepository::create_order(...)`、`approve_order(...)`、`reject_order(...)`
 - 事务内全量保存：`save_*_store_in_transaction(connection, store)`
-- 事务内增量保存：订单、资金、合买、充值、提现等热路径使用 `save_*_store_incremental_in_transaction(connection, previous, store)`
+- 事务内增量保存：订单、资金、合买、充值、提现等仍使用快照协调的热路径使用 `save_*_store_incremental_in_transaction(connection, previous, store)`
+- 普通下注数据库事务：`OrderRepository::create_many_with_debit_in_database(finance, requests, OrderSource::Direct)`
+- Redis 投注锁：用户端普通下注路由按 `lock:user:<用户ID>:bet` 获取短时分布式锁，Redis 未配置时跳过
 
 ### 3. 契约
 
-跨仓储写操作必须按以下顺序执行：
+跨仓储写操作必须按业务热度选择以下两类模式：
 
-1. 从相关仓储读取并克隆当前内存快照。
-2. 在快照上完成全部业务校验和状态变更。
-3. 未配置 `DATABASE_URL` 时跳过数据库保存，直接替换内存快照。
-4. 配置 PostgreSQL 时用同一个 SQLx 事务保存所有相关业务表；订单、资金、合买、充值、提现之间的跨仓储热路径必须按前后快照差异增量写入，只删除、插入或更新本次变更行，不能每次重写全量历史。
-5. 数据库事务提交成功后再替换运行时内存快照。
+1. **数据库热路径模式**：普通下注这类高频路径在 PostgreSQL 模式下必须直接开启 SQLx 事务，锁定必要运行序号行和当前用户资金账户行，插入或更新本次变更行，提交成功后只把本次变更增量合并到内存快照。
+2. **快照协调模式**：内存模式、低频维护操作或尚未改造的跨仓储链路，可以从相关仓储读取并克隆当前快照，在快照上完成全部业务校验和状态变更；未配置 `DATABASE_URL` 时直接替换内存快照，配置 PostgreSQL 时用同一个 SQLx 事务按前后快照差异增量保存，提交成功后再替换运行时内存快照。
+3. **Redis 辅助模式**：Redis 只能用于分布式锁和热点缓存失效，不能作为订单、余额、流水或结算的最终账本；Redis 锁失败需要返回中文业务错误，数据库事务仍是资金一致性的最终保护。
+4. 任何热路径都不能每次清空并重插全量订单、资金流水或账户历史。
 
 运行路径不得直接调用单仓储的“只创建订单不扣款”“只确认充值不入账”“只审核提现不处理冻结余额”入口。
 
@@ -149,23 +150,28 @@ COMMENT ON COLUMN lotteries.logo_url IS '彩种 LOGO 链接地址';
 
 | 条件 | 预期行为 |
 |------|----------|
-| 任一快照业务校验失败 | 不保存数据库，不替换任何内存快照 |
+| 任一业务校验失败 | 不保存数据库，不替换任何内存快照 |
 | PostgreSQL 事务开启失败 | 返回内部错误，不替换任何内存快照 |
 | 任一仓储保存失败 | 回滚同一个 SQLx 事务，不替换任何内存快照 |
 | 相关仓储持久化配置不一致 | 返回中文内部错误，不做半边保存 |
 | 批量下注中某一单扣款失败 | 整批订单不创建、不扣款 |
+| 同一用户并发普通下注 | Redis 启用时先被用户锁串行化；数据库层继续通过当前用户账户行锁兜底 |
+| 不同用户并发普通下注 | 只竞争运行序号和各自账户行，不允许因为资金全表锁互相长时间阻塞 |
 
 ### 5. Good / Base / Bad Cases
 
-- Good：批量下注第二单余额不足时，第一单也不会出现在订单列表，资金流水也没有 `orderDebit`。
+- Good：普通批量下注第二单余额不足时，整批事务回滚，订单列表和资金流水都不会出现部分结果。
+- Good：PostgreSQL 普通下注只 `SELECT ... FOR UPDATE` 当前用户资金账户行，并只追加本次 `orderDebit` 流水。
 - Good：客服直充确认成功后，充值订单状态和 `rechargeCredit` 同时可见。
 - Good：提现申请成功后，提现单和 `withdrawalFreeze` 同时可见。
 - Base：无数据库内存模式仍按同一事务协调入口替换内存快照，支持本地演示。
+- Bad：普通下注为了扣一笔款调用 `save_finance_store_incremental_in_transaction` 并锁资金三张表；用户量上来后会把不同用户下注互相堵住。
 - Bad：路由先调用 `orders.create()` 再调用 `finance.debit_order()`；这会在中途失败时留下半边状态。
 
 ### 6. 必要测试
 
 - 后端需要覆盖批量下注失败不产生部分订单和扣款。
+- PostgreSQL 下注热路径变更时需要覆盖同一用户串行扣款、余额不足回滚和流水序号不重复。
 - 后端需要覆盖取消订单后订单状态和退款流水同时变化。
 - 后端需要覆盖开奖结算后订单状态和派奖流水同时变化。
 - 充值、提现链路变更后需要覆盖重复确认/重复审核的幂等行为。
@@ -190,7 +196,7 @@ let order = orders
     .await?;
 ```
 
-事务协调入口负责订单和资金快照、同一 SQLx 事务、增量持久化和提交后的运行时快照替换。
+事务协调入口负责订单和资金一致性；PostgreSQL 普通下注会走行级事务和增量写入，内存模式或低频链路才使用快照协调。
 
 ## 场景：资金快照保存并发保护与流水序号恢复
 
@@ -207,15 +213,16 @@ let order = orders
   - `ledger_entries`
   - `financial_accounts`
   - `finance_runtime`
-- 锁表 SQL：`LOCK TABLE ledger_entries, financial_accounts, finance_runtime IN ACCESS EXCLUSIVE MODE`
+- 快照保存锁表 SQL：`LOCK TABLE ledger_entries, financial_accounts, finance_runtime IN ACCESS EXCLUSIVE MODE`
+- 普通下注行锁 SQL：`SELECT ... FROM financial_accounts WHERE user_id = $1 FOR UPDATE`
 - 运行序号：`finance_runtime(key='next_sequence')`
 - 流水编号格式：`L000000000001`
 
 ### 3. 契约
 
-资金仓储保留快照式全量保存能力，用于初始化、维护性重载或单仓储清理等低频路径；订单扣款、取消退款、开奖派奖、合买结算、充值确认、提现流转和聊天红包等跨仓储热路径必须使用前后快照差异增量保存，不能为了保存一笔流水或一个账户余额变化而清空并重插全量历史。
+资金仓储保留快照式全量保存能力，用于初始化、维护性重载或单仓储清理等低频路径；普通下注扣款必须使用当前用户账户行级锁、当前事务追加流水和运行序号行锁，不再使用资金全表锁。取消退款、开奖派奖、合买结算、充值确认、提现流转和聊天红包等尚未行级化的跨仓储热路径必须使用前后快照差异增量保存，不能为了保存一笔流水或一个账户余额变化而清空并重插全量历史。
 
-无论全量还是增量保存，为了避免两个请求同时保存时出现“一个事务删除旧行，另一个事务插入同一批旧流水”或同一账户余额旧值覆盖新值，资金保存必须先在同一事务内锁定三张资金表。增量保存只对差异行执行 `DELETE`、`INSERT ... ON CONFLICT DO UPDATE`，并同步更新 `finance_runtime.next_sequence`。
+快照式全量或快照差异保存时，为了避免两个请求同时保存时出现“一个事务删除旧行，另一个事务插入同一批旧流水”或同一账户余额旧值覆盖新值，资金保存必须先在同一事务内锁定三张资金表。普通下注行级事务不得使用这个全表锁，而是锁定 `finance_runtime.next_sequence` 和当前用户账户行，流水按 append-only 追加。
 
 启动加载资金仓储时，`next_sequence` 不能只相信 `finance_runtime`。后端必须同时扫描已有 `ledger_entries.id` 中符合 `L...` 格式的最大序号，并取 `max(finance_runtime.next_sequence, max_ledger_entry_sequence)` 作为下一笔流水的基准。如果发生校正，需要把校正后的运行序号持久化回数据库。
 

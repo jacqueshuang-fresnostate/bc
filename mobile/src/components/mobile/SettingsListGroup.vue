@@ -62,6 +62,40 @@ function badgeContent(item: SettingsListItem) {
 </template>
 
 <style scoped>
+.settings-list-group {
+  border-radius: 1.35rem;
+  background: #f3f3f3;
+  padding: 0.375rem;
+  box-shadow: inset 0 0 0 1px rgba(26, 28, 28, 0.02);
+}
+
+.settings-list-group > div {
+  overflow: hidden;
+  border-radius: 1.05rem;
+  background: #ffffff;
+}
+
+.settings-list-group button {
+  min-height: 4rem;
+  background: #ffffff;
+}
+
+.settings-list-group button + button {
+  border-top: 1px solid #eeeeee;
+}
+
+.settings-list-group button span {
+  color: inherit;
+}
+
+.settings-list-group button > div:first-child > span:first-child {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.55rem;
+  background: #f3f3f3;
+  color: #5a403e;
+}
+
 .settings-list-group__badge-anchor {
   display: block;
   width: 1px;

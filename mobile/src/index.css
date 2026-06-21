@@ -9,14 +9,19 @@ body,
 }
 
 html {
-  touch-action: manipulation;
+  touch-action: pan-x pan-y;
   -webkit-text-size-adjust: 100%;
 }
 
 body {
+  touch-action: pan-x pan-y;
   overscroll-behavior-y: none;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  touch-action: pan-x pan-y;
 }
 
 button,
@@ -49,17 +54,34 @@ button:disabled,
 }
 
 :root {
-  --mobile-status-safe-top: max(1.75rem, env(safe-area-inset-top, 0px));
+  --mobile-status-safe-top: 1.75rem;
   --mobile-brand-header-height: calc(4rem + var(--mobile-status-safe-top));
   --mobile-compact-header-height: calc(3.5rem + var(--mobile-status-safe-top));
   --mobile-brand-page-top: calc(var(--mobile-brand-header-height) + 1rem);
   --mobile-brand-page-top-tight: var(--mobile-brand-header-height);
   --mobile-brand-page-top-loose: calc(var(--mobile-brand-header-height) + 3rem);
+  --mobile-viewport-bottom-inset: 0px;
+  --mobile-keyboard-bottom-inset: 0px;
+  --mobile-bottom-nav-extra-lift: 0.38rem;
+  --mobile-safe-bottom: 1rem;
+  --mobile-bottom-nav-bottom-offset: var(--mobile-bottom-nav-extra-lift);
+  --mobile-bottom-nav-safe-bottom: var(--mobile-safe-bottom);
+  --mobile-bottom-nav-space: calc(6.25rem + var(--mobile-bottom-nav-extra-lift));
   --mobile-app-header-background:
     radial-gradient(circle at 92% 5%, rgba(255, 255, 255, 0.78), transparent 30%),
     linear-gradient(135deg, #c8f5ff 0%, #d7c8ff 48%, #ffc4d7 100%);
   --mobile-app-header-border: rgba(255, 255, 255, 0.72);
   --mobile-app-header-shadow: 0 8px 20px rgba(123, 82, 156, 0.12);
+}
+
+@supports (padding-bottom: max(1px, 2px)) {
+  :root {
+    --mobile-status-safe-top: max(1.75rem, env(safe-area-inset-top, 0px));
+    --mobile-safe-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+    --mobile-bottom-nav-bottom-offset: calc(var(--mobile-viewport-bottom-inset) + var(--mobile-bottom-nav-extra-lift));
+    --mobile-bottom-nav-safe-bottom: var(--mobile-safe-bottom);
+    --mobile-bottom-nav-space: calc(5.25rem + var(--mobile-bottom-nav-safe-bottom) + var(--mobile-bottom-nav-bottom-offset));
+  }
 }
 
 .mobile-safe-header {

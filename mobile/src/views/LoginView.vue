@@ -322,8 +322,15 @@ async function doRegister() {
 
 <style scoped>
 .auth-main {
-  padding-top: max(0.75rem, env(safe-area-inset-top));
-  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+@supports (padding-top: max(1px, 2px)) {
+  .auth-main {
+    padding-top: max(0.75rem, env(safe-area-inset-top, 0px));
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  }
 }
 
 .auth-brand {

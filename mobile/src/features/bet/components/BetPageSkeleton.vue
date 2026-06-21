@@ -222,13 +222,19 @@
 .bet-page-skeleton__bottom {
   position: fixed;
   right: 0;
-  bottom: 0;
+  bottom: var(--mobile-viewport-bottom-inset);
   left: 0;
   z-index: 48;
-  padding: 1.1rem 1.5rem calc(1.5rem + env(safe-area-inset-bottom));
+  padding: 1.1rem 1.5rem 1.5rem;
   background: rgba(249, 249, 249, 0.94);
   box-shadow: 0 -8px 40px rgba(140, 10, 21, 0.06);
   backdrop-filter: blur(12px);
+}
+
+@supports (padding-bottom: max(1px, 2px)) {
+  .bet-page-skeleton__bottom {
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
+  }
 }
 
 .bet-page-skeleton__bottom-inner {

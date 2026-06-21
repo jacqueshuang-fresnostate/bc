@@ -192,6 +192,7 @@ function participantShareText(participant: any) {
 .order-detail-sheet {
   display: flex;
   width: min(100%, 512px);
+  max-height: 66vh;
   max-height: min(66dvh, 600px);
   flex-direction: column;
   overflow: hidden;
@@ -657,9 +658,15 @@ function participantShareText(participant: any) {
 .order-detail-sheet__footer {
   flex: 0 0 auto;
   border-top: 1px solid #f3f3f3;
-  padding: 12px 18px max(18px, env(safe-area-inset-bottom));
+  padding: 12px 18px 18px;
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(16px);
+}
+
+@supports (padding-bottom: max(1px, 2px)) {
+  .order-detail-sheet__footer {
+    padding-bottom: max(18px, env(safe-area-inset-bottom, 0px));
+  }
 }
 
 .order-detail-sheet__footer button {

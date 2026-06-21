@@ -132,7 +132,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="all-lottery-page min-h-screen bg-surface pb-28 text-on-surface font-body">
+  <div class="all-lottery-page min-h-screen bg-surface text-on-surface font-body">
     <header class="mobile-safe-header fixed top-0 left-0 z-40 flex h-16 w-full items-center justify-between bg-white/80 px-6 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="flex items-center gap-3">
         <CachedRemoteImage
@@ -146,7 +146,7 @@ onMounted(() => {
       <WalletHeaderAmount :balance="balance" />
     </header>
 
-    <main class="mobile-safe-main-top mx-auto w-full max-w-2xl space-y-6 px-4 pb-28">
+    <main class="all-lottery-main mobile-safe-main-top mx-auto w-full max-w-2xl space-y-6 px-4">
       <section class="space-y-2">
         <h2 class="font-headline text-3xl font-extrabold tracking-tight text-primary">全部彩种</h2>
         <p class="text-sm all-lottery-muted">探索全网最全的高频与经典彩票</p>
@@ -293,6 +293,14 @@ onMounted(() => {
 <style scoped>
 .all-lottery-muted {
   color: #5a403e;
+}
+
+.all-lottery-page {
+  padding-bottom: var(--mobile-bottom-nav-space);
+}
+
+.all-lottery-main {
+  padding-bottom: calc(var(--mobile-bottom-nav-space) + 1rem);
 }
 
 .placeholder\:all-lottery-muted\/50::placeholder {

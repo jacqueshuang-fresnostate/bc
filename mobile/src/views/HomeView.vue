@@ -234,7 +234,7 @@ watch(visibleGroups, (groups) => {
       <WalletHeaderAmount :balance="balance" />
     </header>
 
-    <main class="mobile-safe-main-top relative z-10 mx-auto max-w-2xl space-y-4 px-4 pb-28">
+    <main class="home-dashboard-main mobile-safe-main-top relative z-10 mx-auto max-w-2xl space-y-4 px-4">
       <!-- 首页容器只负责品牌、数据加载与区块编排。 -->
       <section
         v-if="showBanner"
@@ -385,6 +385,10 @@ watch(visibleGroups, (groups) => {
   border-color: var(--mobile-app-header-border);
   background: var(--mobile-app-header-background);
   box-shadow: var(--mobile-app-header-shadow);
+}
+
+.home-dashboard-main {
+  padding-bottom: calc(var(--mobile-bottom-nav-space) + 1rem);
 }
 
 .home-category-tabs :deep(.van-tabs__wrap) {

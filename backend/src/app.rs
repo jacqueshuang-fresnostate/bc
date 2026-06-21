@@ -26,6 +26,7 @@ use crate::{
         realtime::RealtimeHub,
         rebate::RebateRepository,
         recharge::RechargeRepository,
+        redis_runtime::RedisRuntime,
         robot::RobotRepository,
         scheduler::{spawn_draw_scheduler, DrawSchedulerConfig, DrawSchedulerRepository},
         support::SupportRepository,
@@ -60,6 +61,8 @@ pub struct AppState {
     pub rebates: RebateRepository,
     /// realtime字段。
     pub realtime: RealtimeHub,
+    /// Redis 运行时，可选提供分布式锁和热点缓存失效。
+    pub redis: RedisRuntime,
     /// recharges字段。
     pub recharges: RechargeRepository,
     /// robots字段。
@@ -122,7 +125,7 @@ impl MemoryCacheReloadResult {
 /// 应用状态构造和环境初始化方法。
 impl AppState {
     /// 创建内存模式应用状态，主要用于未配置数据库的本地开发和测试。
-    fn new_with_scheduler(scheduler: DrawSchedulerRepository) -> Self {
+    fn new_with_scheduler(scheduler: DrawSchedulerRepository, redis: RedisRuntime) -> Self {
         Self {
             access: AccessRepository::memory_seeded(),
             advertisements: AdvertisementRepository::memory(),
@@ -136,6 +139,7 @@ impl AppState {
             orders: OrderRepository::memory(),
             rebates: RebateRepository::memory_seeded(),
             realtime: RealtimeHub::new(),
+            redis,
             recharges: RechargeRepository::memory(),
             robots: RobotRepository::memory_seeded(),
             scheduler,
@@ -148,9 +152,10 @@ impl AppState {
     pub async fn from_env_with_scheduler(
         scheduler: DrawSchedulerRepository,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let redis = RedisRuntime::from_env().await?;
         let Some(database_url) = database_url_from_env()? else {
             tracing::info!("未配置 DATABASE_URL，使用内存业务仓储");
-            return Ok(Self::new_with_scheduler(scheduler));
+            return Ok(Self::new_with_scheduler(scheduler, redis));
         };
 
         let lotteries = LotteryRepository::postgres(&database_url).await?;
@@ -180,6 +185,7 @@ impl AppState {
             orders: OrderRepository::persistent(business_database.clone()).await?,
             rebates: RebateRepository::persistent(business_database.clone()).await?,
             realtime: RealtimeHub::new(),
+            redis,
             recharges: RechargeRepository::persistent(business_database.clone()).await?,
             robots: RobotRepository::persistent(business_database.clone()).await?,
             scheduler,

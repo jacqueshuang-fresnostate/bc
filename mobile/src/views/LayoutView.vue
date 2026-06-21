@@ -87,7 +87,7 @@ onMounted(() => {
 <template>
   <div class="min-h-screen bg-surface">
     <router-view :ws-message="lastMessage" />
-    <nav v-if="!hideBottomNav" class="mobile-bottom-nav fixed bottom-0 left-0 z-50 w-full px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
+    <nav v-if="!hideBottomNav" class="mobile-bottom-nav fixed bottom-0 left-0 z-50 w-full px-3 pt-2">
       <div class="liquid-glass-nav mx-auto flex max-w-md items-center justify-around rounded-[2rem] px-2 py-2 text-[10px] font-semibold tracking-wide backdrop-blur-2xl saturate-[1.8]">
         <button
           v-for="(item, index) in navItems"
@@ -114,6 +114,11 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.mobile-bottom-nav {
+  bottom: var(--mobile-bottom-nav-bottom-offset);
+  padding-bottom: var(--mobile-bottom-nav-safe-bottom);
+}
+
 .liquid-glass-nav {
   border: 1px solid var(--mobile-app-header-border);
   background: var(--mobile-app-header-background);

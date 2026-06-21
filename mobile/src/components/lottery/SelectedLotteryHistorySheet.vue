@@ -41,6 +41,7 @@ function closeDrawHistory() {
 .selected-lottery-history-sheet {
   display: flex;
   width: min(100vw, 672px);
+  max-height: 62vh;
   max-height: 62dvh;
   flex-direction: column;
   margin: 0 auto;
@@ -99,7 +100,7 @@ function closeDrawHistory() {
   flex: 1 1 auto;
   gap: 10px;
   overflow-y: auto;
-  padding: 12px 14px calc(16px + env(safe-area-inset-bottom));
+  padding: 12px 14px calc(16px + var(--mobile-safe-bottom));
   scrollbar-width: none;
 }
 

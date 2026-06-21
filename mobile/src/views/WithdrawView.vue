@@ -180,7 +180,7 @@ onMounted(() => loadWithdrawData())
 </script>
 
 <template>
-  <div class="withdraw-application flex min-h-screen flex-col items-center bg-surface pb-24 text-on-surface antialiased font-body">
+  <div class="withdraw-application flex min-h-screen flex-col items-center bg-surface text-on-surface antialiased font-body">
     <header class="mobile-safe-header fixed top-0 z-50 w-full bg-white/80 backdrop-blur-md shadow-[0_4px_40px_0_rgba(140,10,21,0.04)]">
       <div class="flex justify-between items-center px-6 py-4 w-full max-w-lg mx-auto relative">
         <button class="text-primary transition-opacity duration-200 active:scale-95 active:opacity-80" aria-label="返回" @click="router.back()">
@@ -296,12 +296,60 @@ onMounted(() => loadWithdrawData())
       </section>
     </main>
 
-    <div class="fixed bottom-0 z-40 w-full bg-surface-container-lowest px-6 pb-8 pt-4 shadow-[0_-10px_40px_0_rgba(140,10,21,0.06)]">
+    <footer class="withdraw-action-footer fixed bottom-0 left-0 right-0 z-40 w-full bg-surface-container-lowest px-6 pt-4 shadow-[0_-10px_40px_0_rgba(140,10,21,0.06)]">
       <div class="mx-auto w-full max-w-lg">
-        <button class="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-primary to-primary-container py-4 font-headline text-lg font-bold !text-on-primary shadow-sm transition-all duration-200 active:scale-[0.98] active:opacity-90 disabled:opacity-60" :disabled="submitting" @click="submitWithdraw">
+        <button type="button" class="withdraw-action-button flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-primary to-primary-container py-4 font-headline text-lg font-bold !text-on-primary shadow-sm transition-all duration-200 active:scale-[0.98] active:opacity-90 disabled:opacity-60" :disabled="submitting" @click="submitWithdraw">
           确认提现
         </button>
       </div>
-    </div>
+    </footer>
   </div>
 </template>
+
+<style scoped>
+.withdraw-application {
+  --withdraw-action-bottom: var(--mobile-viewport-bottom-inset);
+  --withdraw-action-space: calc(8.75rem + var(--withdraw-action-bottom));
+  padding-bottom: var(--withdraw-action-space);
+}
+
+:global(.mobile-keyboard-open) .withdraw-application {
+  --withdraw-action-bottom: var(--mobile-keyboard-bottom-inset);
+  --withdraw-action-space: calc(8.75rem + var(--mobile-keyboard-bottom-inset));
+}
+
+.withdraw-action-footer {
+  right: 0;
+  left: 0;
+  bottom: var(--withdraw-action-bottom);
+  padding-bottom: 24px;
+  background: rgba(255, 250, 247, 0.96);
+  border-top: 1px solid rgba(140, 10, 21, 0.08);
+  box-shadow: 0 -12px 34px rgba(140, 10, 21, 0.1);
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+
+@supports (padding-bottom: max(1px, 2px)) {
+  .withdraw-action-footer {
+    padding-bottom: max(24px, var(--mobile-safe-bottom));
+  }
+}
+
+.withdraw-action-button {
+  min-height: 54px;
+  border: 0;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #af2829, #d94a32);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 900;
+  box-shadow: 0 12px 24px rgba(175, 40, 41, 0.22);
+}
+
+.withdraw-action-button:disabled {
+  background: #d9c5c2;
+  color: rgba(255, 255, 255, 0.86);
+  box-shadow: none;
+}
+</style>

@@ -72,7 +72,7 @@ function blurSelfShares() {
 </script>
 
 <template>
-  <section class="bet-bottom-bar fixed bottom-0 left-0 right-0 z-50 bg-[#f9f9f9] px-6 pb-[calc(1.75rem+env(safe-area-inset-bottom))] pt-5 shadow-[0_-8px_40px_rgba(140,10,21,0.06)]" :class="{ 'bet-bottom-bar--group-buy': props.groupBuyMode }">
+  <section class="bet-bottom-bar fixed bottom-0 left-0 right-0 z-50 bg-[#f9f9f9] px-6 pt-5 shadow-[0_-8px_40px_rgba(140,10,21,0.06)]" :class="{ 'bet-bottom-bar--group-buy': props.groupBuyMode }">
     <div class="mx-auto max-w-md">
       <div class="standard-bottom-card" :class="{ 'standard-bottom-card--group-buy': props.groupBuyMode }">
         <div v-if="props.groupBuyMode" class="standard-bottom-card__summary group-buy-summary">
@@ -113,6 +113,17 @@ function blurSelfShares() {
 </template>
 
 <style scoped>
+.bet-bottom-bar {
+  bottom: var(--mobile-viewport-bottom-inset);
+  padding-bottom: 1.75rem;
+}
+
+@supports (padding-bottom: max(1px, 2px)) {
+  .bet-bottom-bar {
+    padding-bottom: max(1.75rem, env(safe-area-inset-bottom, 0px));
+  }
+}
+
 .unified-submit-button {
   color: #fff;
   background: #af2829;

@@ -191,7 +191,7 @@ impl GroupBuyRepository {
             .collect())
     }
 
-    /// 返回指定彩种和期号下仍在流转中的合买计划详情，供控奖页面查看未满单认购记录。
+    /// 返回指定彩种和期号下仍在流转中的合买计划详情，供控奖页面查看发起人自购记录。
     pub async fn list_control_details_for_issue(
         &self,
         lottery_id: &str,
@@ -205,14 +205,24 @@ impl GroupBuyRepository {
         if issue.is_empty() {
             return Err(ApiError::BadRequest("期号不能为空".to_string()));
         }
+        let keep_initiator_participants = |plans: Vec<GroupBuyPlan>| {
+            plans
+                .into_iter()
+                .filter_map(control_group_buy_plan_with_initiator_participants)
+                .collect()
+        };
         if let Some(persistence) = &self.persistence {
-            return query_control_group_buy_details_for_issue(persistence, lottery_id, issue).await;
+            return query_control_group_buy_details_for_issue(persistence, lottery_id, issue)
+                .await
+                .map(keep_initiator_participants);
         }
 
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))
-            .map(|store| store.list_control_details_for_issue(lottery_id, issue))
+            .map(|store| {
+                keep_initiator_participants(store.list_control_details_for_issue(lottery_id, issue))
+            })
     }
 
     /// 分页返回用户端合买大厅活跃计划，并只加载当前页计划的参与人。
@@ -895,6 +905,19 @@ async fn query_control_group_buy_details_for_issue(
         .collect())
 }
 
+/// 控奖页面只需要发起人自购单，把跟单参与人从专用接口响应中剔除。
+fn control_group_buy_plan_with_initiator_participants(
+    mut plan: GroupBuyPlan,
+) -> Option<GroupBuyPlan> {
+    let initiator_user_id = plan.initiator_user_id.trim().to_string();
+    plan.participants
+        .retain(|participant| participant.user_id.trim() == initiator_user_id);
+    if plan.participants.is_empty() {
+        return None;
+    }
+    Some(plan)
+}
+
 /// 数据库模式下分页读取用户端合买大厅活跃计划，并加载当前页参与人。
 async fn query_active_group_buy_details_page(
     database: &BusinessDatabase,
@@ -1349,7 +1372,7 @@ impl GroupBuyStore {
             .collect()
     }
 
-    /// 返回控奖页面当前期仍在流转中的合买计划，包含发起人和参与人认购记录。
+    /// 返回控奖页面当前期仍在流转中的合买计划，服务层会再裁剪为发起人自购记录。
     fn list_control_details_for_issue(&self, lottery_id: &str, issue: &str) -> Vec<GroupBuyPlan> {
         sorted_group_buy_plans(self.plans.values())
             .into_iter()
@@ -2282,6 +2305,23 @@ mod tests {
         assert_eq!(filled.status, GroupBuyPlanStatus::Filled);
         assert_eq!(filled.participants.len(), 2);
     }
+
+    /// 验证控奖专用合买查询只返回发起人自购记录，不把跟单用户暴露给控奖列表。
+    #[tokio::test]
+    async fn control_group_buy_details_keep_only_initiator_participants() {
+        let repository = GroupBuyRepository::memory_seeded();
+
+        let plans = repository
+            .list_control_details_for_issue("fc3d", "20260602001")
+            .await
+            .expect("control group buy details can load");
+
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].participants.len(), 1);
+        assert_eq!(plans[0].participants[0].user_id, plans[0].initiator_user_id);
+        assert_eq!(plans[0].participants[0].id, "G202606020001-P001");
+    }
+
     /// 验证合买合买仓储allowsfinal尾差below参与人minimum。
     #[tokio::test]
     async fn group_buy_repository_allows_final_remainder_below_participant_minimum() {

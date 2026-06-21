@@ -38,3 +38,50 @@ const emit = defineEmits<{ deposit: []; withdraw: [] }>()
     <div class="absolute -left-12 top-1/2 h-28 w-28 rounded-full bg-black/10 blur-3xl"></div>
   </section>
 </template>
+
+<style scoped>
+.wallet-bento-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.35rem;
+  background: #af2829;
+  background: linear-gradient(135deg, #9d101c 0%, #b71624 52%, #c9373a 100%);
+  padding: 1.25rem;
+  color: #ffffff;
+  box-shadow: 0 16px 32px rgba(156, 16, 28, 0.25);
+}
+
+.wallet-bento-card :deep(svg),
+.wallet-bento-card span,
+.wallet-bento-card h2,
+.wallet-bento-card div {
+  color: inherit;
+}
+
+.wallet-bento-card button {
+  min-height: 2.75rem;
+  border-radius: 0.85rem;
+}
+
+.wallet-bento-card button:first-child {
+  background: #ffffff;
+  color: #8c0a15 !important;
+}
+
+.wallet-bento-card button:first-child :deep(svg),
+.wallet-bento-card button:first-child span {
+  color: #8c0a15 !important;
+}
+
+.wallet-bento-card button:last-child {
+  border: 1px solid rgba(216, 74, 75, 0.7);
+  background: #af2829;
+  color: #ffffff !important;
+  box-shadow: 0 8px 18px rgba(95, 10, 18, 0.22);
+}
+
+.wallet-bento-card button:last-child :deep(svg),
+.wallet-bento-card button:last-child span {
+  color: #ffffff !important;
+}
+</style>

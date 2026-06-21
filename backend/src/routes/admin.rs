@@ -2273,7 +2273,7 @@ async fn clear_robot_group_buy_plans(
     )))
 }
 
-/// 返回控奖抽屉当前彩种期号下的合买计划和认购记录，包含未满单、未成单计划。
+/// 返回控奖抽屉当前彩种期号下的合买计划和发起人自购记录，跟单认购不在该接口展示。
 async fn list_control_group_buy_plans_by_issue(
     State(state): State<AppState>,
     Query(query): Query<ControlGroupBuyIssueQuery>,
@@ -4709,6 +4709,7 @@ mod tests {
             realtime::RealtimeHub,
             rebate::RebateRepository,
             recharge::RechargeRepository,
+            redis_runtime::RedisRuntime,
             robot::RobotRepository,
             scheduler::{DrawSchedulerConfig, DrawSchedulerRepository},
             support::SupportRepository,
@@ -5429,6 +5430,7 @@ mod tests {
             orders: OrderRepository::memory(),
             rebates: RebateRepository::memory_seeded(),
             realtime: RealtimeHub::new(),
+            redis: RedisRuntime::disabled(),
             recharges: RechargeRepository::memory(),
             robots: RobotRepository::memory_seeded(),
             scheduler: DrawSchedulerRepository::new(DrawSchedulerConfig {

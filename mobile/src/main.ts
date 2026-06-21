@@ -13,9 +13,14 @@ import router from './router'
 import { useAuthStore } from './stores/auth'
 import { useBrandingStore } from './stores/branding'
 import { checkAppUpdateOnce } from './composables/useAppUpdateCheck'
+import { installMobileTouchZoomGuard } from './utils/mobileTouchZoomGuard'
+import { installMobileViewportInsets } from './utils/mobileViewportInsets'
 import { preloadMobileRoutes } from './utils/preloadMobileRoutes'
 
 async function bootstrap() {
+  installMobileTouchZoomGuard()
+  installMobileViewportInsets()
+
   const app = createApp(App)
   const pinia = createPinia()
   app.use(pinia)

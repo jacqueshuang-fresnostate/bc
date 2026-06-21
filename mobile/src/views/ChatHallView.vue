@@ -84,6 +84,16 @@ function isMine(message: ChatHallMessage) {
   return Boolean(currentUserId.value) && message.userId === currentUserId.value
 }
 
+function maskedChatHallUsername(value: string) {
+  const chars = Array.from(String(value || '').trim() || '会员')
+  if (chars.length <= 4) return chars.join('')
+  return `${chars.slice(0, 4).join('')}${'*'.repeat(chars.length - 4)}`
+}
+
+function messageDisplayName(message: ChatHallMessage) {
+  return isMine(message) ? '我' : maskedChatHallUsername(message.username)
+}
+
 function avatarText(username: string) {
   return String(username || '会员').trim().slice(0, 1) || '会'
 }
@@ -387,7 +397,7 @@ async function openRedPacketClaims(message: ChatHallMessage) {
 
 function claimDisplayName(claim: ChatHallRedPacketClaim) {
   if (claim.userId === currentUserId.value) return '我'
-  return claim.username || '会员'
+  return maskedChatHallUsername(claim.username)
 }
 
 function selectedRedPacketFallbackPayload() {
@@ -569,6 +579,13 @@ function handleMessageScroll() {
   if (isMessageListNearBottom()) newMessageCount.value = 0
 }
 
+function handleComposerFocus() {
+  const shouldKeepBottom = isMessageListNearBottom()
+  if (!shouldKeepBottom) return
+  window.setTimeout(() => void scrollToBottom(), 180)
+  window.setTimeout(() => void scrollToBottom(), 360)
+}
+
 function sendMessageByEnter(event: KeyboardEvent) {
   if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return
   event.preventDefault()
@@ -621,7 +638,7 @@ onBeforeUnmount(() => {
           <div class="chat-hall__avatar">
             <CachedAvatarImage
               v-if="messageAvatarUrl(message)"
-              :alt="`${message.username || '会员'}头像`"
+              :alt="`${messageDisplayName(message)}头像`"
               :src="messageAvatarUrl(message)"
               @error="markAvatarFailed(message)"
             >
@@ -631,7 +648,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="chat-hall__bubble-wrap">
             <div class="chat-hall__meta">
-              <span>{{ isMine(message) ? '我' : message.username }}</span>
+              <span>{{ messageDisplayName(message) }}</span>
               <time>{{ formatMessageTime(message.createdAt) }}</time>
             </div>
             <button
@@ -837,6 +854,7 @@ onBeforeUnmount(() => {
           placeholder="输入聊天内容"
           type="text"
           :disabled="sending || !canSpeak"
+          @focus="handleComposerFocus"
           @keydown.enter="sendMessageByEnter"
         />
         <button class="chat-hall__send" :disabled="!canSend" type="button" @click="sendMessage">
@@ -850,11 +868,28 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .chat-hall {
-  --chat-hall-bottom-nav-space: calc(5.25rem + max(1rem, env(safe-area-inset-bottom)));
+  --chat-hall-bottom-nav-space: var(--mobile-bottom-nav-space);
   --chat-hall-composer-height: 4.25rem;
+  --chat-hall-composer-bottom: var(--chat-hall-bottom-nav-space);
+  --chat-hall-messages-bottom-space: calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 1.25rem);
   min-height: 100vh;
   background: linear-gradient(180deg, #fffafa 0%, #fbf3f1 46%, #f4f6f8 100%);
   color: #2b1f1f;
+}
+
+:global(.mobile-keyboard-open) .chat-hall {
+  --chat-hall-composer-bottom: calc(var(--mobile-keyboard-bottom-inset) + 0.65rem);
+  --chat-hall-messages-bottom-space: calc(var(--mobile-keyboard-bottom-inset) + var(--chat-hall-composer-height) + 1.25rem);
+}
+
+@supports (bottom: max(1px, 2px)) {
+  .chat-hall {
+    --chat-hall-composer-bottom: max(var(--chat-hall-bottom-nav-space), calc(var(--mobile-keyboard-bottom-inset) + 0.65rem));
+    --chat-hall-messages-bottom-space: max(
+      calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 1.25rem),
+      calc(var(--mobile-keyboard-bottom-inset) + var(--chat-hall-composer-height) + 1.25rem)
+    );
+  }
 }
 
 .chat-hall__topbar {
@@ -892,13 +927,13 @@ onBeforeUnmount(() => {
 .chat-hall__messages {
   height: 100vh;
   overflow-y: auto;
-  padding: calc(4.25rem + var(--mobile-status-safe-top)) 1rem calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 1.25rem);
+  padding: calc(4.25rem + var(--mobile-status-safe-top)) 1rem var(--chat-hall-messages-bottom-space);
 }
 
 .chat-hall__new-message {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 0.55rem);
+  bottom: calc(var(--chat-hall-composer-bottom) + var(--chat-hall-composer-height) + 0.55rem);
   z-index: 46;
   transform: translateX(-50%);
   border: 0;
@@ -1148,11 +1183,12 @@ onBeforeUnmount(() => {
 .chat-hall__composer {
   position: fixed;
   left: 0;
-  bottom: var(--chat-hall-bottom-nav-space);
+  bottom: var(--chat-hall-composer-bottom);
   z-index: 45;
   width: 100%;
   padding: 0 1rem;
   pointer-events: none;
+  transition: bottom 0.18s ease;
 }
 
 .chat-hall__speaking-limit {
@@ -1257,12 +1293,22 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 0 12px calc(var(--chat-hall-bottom-nav-space) + var(--chat-hall-composer-height) + 0.5rem);
+  padding: 0 12px calc(var(--mobile-bottom-nav-space) + 4.75rem);
   pointer-events: auto;
+}
+
+@supports (padding-bottom: max(1px, 2px)) {
+  .chat-hall-emoji-panel {
+    padding-bottom: max(
+      calc(var(--mobile-bottom-nav-space) + 4.75rem),
+      calc(var(--mobile-keyboard-bottom-inset) + 5.4rem)
+    );
+  }
 }
 
 .chat-hall-emoji-panel__shell {
   width: min(300px, calc(100vw - 32px));
+  height: 300px;
   height: min(300px, 42dvh);
   min-height: 240px;
   overflow: hidden;
@@ -1344,12 +1390,13 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 0.8rem 0.9rem calc(0.8rem + env(safe-area-inset-bottom));
+  padding: 0.8rem 0.9rem calc(0.8rem + var(--mobile-safe-bottom));
   background: rgba(43, 31, 31, 0.22);
 }
 
 .chat-hall-modal__sheet {
   width: min(100%, 24rem);
+  max-height: 28rem;
   max-height: min(64dvh, 28rem);
   overflow: auto;
   border-radius: 1.15rem;

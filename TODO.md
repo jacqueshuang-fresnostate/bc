@@ -1,5 +1,90 @@
 # TODO
 
+## 2026-06-22 04:48 HKT 老安卓提现管理新增入口修复
+
+- 完成任务：修复老机型 Android 端提现管理页面看不到“新增提现方式”的问题。
+- 解决问题：提现管理页的新增入口原本放在内容流底部，并主要依赖 Tailwind 渐变、颜色和阴影类；老安卓 WebView 在安全区、内容高度或工具类解析异常时，按钮容易出现在可视区外或退回不可识别样式。
+- 实施内容：将“新增提现方式”改为固定底部主操作栏，补充 `left/right/bottom`、虚拟导航安全区、普通 CSS 渐变背景、白色文字、圆角、阴影和触控高度兜底；提现方式卡片、默认标签和编辑弹窗保存按钮也补普通 CSS 兜底；同步更新架构说明。
+- 验证结果：`pnpm --dir mobile build` 和 `git diff --check` 均通过；构建产物继续保持内联 CSS，`mobile/dist/assets` 没有独立 CSS 文件，`index.html` 中 `rel="stylesheet"`、`@layer`、`@property`、`oklch` 和 `color-mix` 检查均为 0。
+
+## 2026-06-22 04:30 HKT 聊天大厅用户名脱敏展示
+
+- 完成任务：手机端聊天大厅用户名不再完整显示。
+- 解决问题：聊天大厅消息元信息和红包领取记录会直接展示用户完整昵称，不符合前台公开聊天的隐私展示口径。
+- 实施内容：新增聊天大厅本地展示脱敏函数，普通用户昵称长度超过 4 个字符时只保留前 4 个字符，剩余字符逐个替换为 `*`；当前登录用户仍显示“我”；消息头像 `alt`、消息头部用户名和红包领取记录统一使用脱敏展示名。
+- 验证结果：`pnpm --dir mobile build` 通过。
+
+## 2026-06-22 04:20 HKT 安卓提现确认按钮可见性修复
+
+- 完成任务：修复手机端 Android 申请提现页面看不到“确认提现”按钮的问题。
+- 解决问题：提现页底部固定提交栏没有显式设置 `left/right`，部分 Android WebView 对未完整定位的 `fixed bottom` 元素表现不稳定；按钮视觉也主要依赖 Tailwind 渐变和颜色变量，在旧 WebView 样式解析不完整时可能看起来像消失。金额输入框弹起键盘时，底部按钮也没有消费键盘高度变量。
+- 实施内容：提现提交栏补齐 `left: 0`、`right: 0` 和普通 CSS 背景、边框、阴影、GPU 合成兜底；“确认提现”按钮新增专用语义类，写入旧安卓可解析的线性渐变、白色文字、最小高度和禁用态；提现页底部留白改为跟随提交栏实际安全距离，键盘打开时使用 `--mobile-keyboard-bottom-inset` 把提交栏抬到键盘上方。
+- 验证结果：`pnpm --dir mobile build` 通过；后续需要在反馈的 Android 机型复测申请提现页面初始状态、金额输入键盘弹起状态和虚拟导航栏机型下的“确认提现”按钮可见性。
+
+## 2026-06-22 03:40 HKT 老安卓聊天输入框键盘兜底
+
+- 完成任务：继续修复部分老机型点击在线客服或聊天大厅输入框后，输入法弹起仍遮挡输入栏的问题。
+- 解决问题：上一版键盘避让主要依赖 `visualViewport` 或窗口高度变化来计算 `--mobile-keyboard-bottom-inset`；部分低版本 Android WebView 不支持 `visualViewport`，或者输入法弹起时不稳定上报高度变化，导致键盘高度变量仍为 0，固定底部输入栏继续停在屏幕底部。
+- 实施内容：`mobileViewportInsets` 改为三层测量策略：优先使用 `visualViewport` 底部差值，其次使用稳定视口高度和当前 `innerHeight` 的差值；如果输入控件已聚焦但仍测不到有效键盘高度，则按稳定视口高度给出 260-430px 的保守键盘兜底高度，并在键盘动画期间多次刷新和滚动当前输入控件到可视区域。虚拟导航栏小安全区和键盘高度分开计算，避免修键盘时影响底部导航安全区。
+- 验证结果：`pnpm --dir mobile build` 通过；后续需要在反馈的老 Android WebView 机型重点复测在线客服、聊天大厅输入框、表情面板和消息列表底部留白。
+
+## 2026-06-22 03:24 HKT 控奖合买记录只显示发起人
+
+- 完成任务：优化后台“彩种控制台 > 控制开奖号码”抽屉中的合买记录展示口径。
+- 解决问题：控奖抽屉原本把当前期号合买计划的所有参与人都展开显示，跟单用户也会出现在“合买认购记录”中；运营控奖时只需要看到发起人自购单，跟单记录会造成信息过载和误判。
+- 实施内容：后端控奖专用接口 `GET /api/admin/group-buy/plans/by-issue` 在服务层统一裁剪参与人，只返回 `participant.userId === plan.initiatorUserId` 的发起人自购记录，并新增单元测试覆盖；管理后台控奖抽屉保留同口径兜底过滤；对应标题、数量标签、列名、加载失败和空状态文案同步改为“合买发起记录/自购金额”，其它合买管理和订单详情仍保留全部参与人展示。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml control_group_buy_details_keep_only_initiator_participants -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、`pnpm --dir admin build` 和 `git diff --check` 均通过；管理后台构建仅保留既有大 chunk 提示。
+
+## 2026-06-22 03:08 HKT 手机端旧安卓安全区与弹层兼容巡检
+
+- 完成任务：继续排查手机端是否还有类似“老安卓样式失效、固定底栏间距异常、虚拟导航遮挡”的风险点，并修复高风险页面。
+- 解决问题：全局安全区变量基础值直接使用 `max(... env(...))`，部分旧 Android WebView 不支持 `max()` 时会让 Header、主内容和底部导航依赖的变量计算失效；下注底栏、登录页、客服聊天、聊天大厅、充值/提现固定按钮和若干弹层仍直接依赖 `env()` 或 `dvh`，在旧 WebView 下可能回退成默认间距或高度无效。
+- 实施内容：全局安全区变量改为“普通基础值 + `@supports` 增强”；登录页安全区 padding 增加基础值；下注底栏、下注骨架屏、充值提交栏、提现提交栏和资金流水页改用 `--mobile-viewport-bottom-inset`/`--mobile-safe-bottom`；客服聊天和聊天大厅消息区、表情面板、弹层底部间距改用公共安全区变量；合买、提现方式、购彩篮、开奖历史和注单详情弹层补充 `vh/px` fallback，再用 `dvh/env/max` 增强。
+- 验证结果：已通过 `pnpm --dir mobile build` 初步验证；构建产物 `mobile/dist/index.html` 继续保持内联 CSS，`rel="stylesheet"`、`@layer`、`@property`、`oklch`、`color-mix` 检查均为 0。后续需在反馈的低版本 Android WebView 机型复测登录页、我的账户、合买大厅、下注页、在线客服和聊天大厅。
+
+## 2026-06-22 02:53 HKT 手机端合买页安全间距修复
+
+- 完成任务：优化部分水滴屏、刘海屏和虚拟导航机型上合买大厅顶部筛选、合买卡片和底部导航之间的间距。
+- 解决问题：合买页大厅内容直接使用 `mobile-safe-main-top-tight` 紧贴固定 Header，底部仍用固定 `pb-24`，在不同 WebView 安全区和虚拟导航栏计算下容易出现顶部筛选太贴、第一条卡片被压缩或底部留白不稳定。
+- 实施内容：合买页根容器改为通过 `--mobile-bottom-nav-space` 计算底部留白；大厅列表改为按 `--mobile-brand-header-height` 加额外间距计算顶部 padding；“我的合买”列表也复用底部导航空间；为合买页背景、卡片和分类筛选增加普通 scoped CSS 兜底，避免老安卓只依赖 Tailwind 间距类。
+- 验证结果：`pnpm --dir mobile build` 和 `git diff --check` 均通过；构建产物继续保持内联 CSS，`mobile/dist/assets` 没有独立 CSS 文件，`index.html` 未出现 `@layer`、`@property`、`oklch` 或 `color-mix`。反馈机型仍需重点复测顶部筛选、第一条卡片和底部导航间距。
+
+## 2026-06-22 02:33 HKT 聊天输入框键盘避让
+
+- 完成任务：修复手机端聊天大厅和在线客服在输入法弹起时，底部输入框被键盘遮挡的问题。
+- 解决问题：此前两个聊天页的输入栏都使用固定 `bottom` 和 safe-area 计算，只考虑底部导航或系统安全区，没有读取 `visualViewport` 中输入法占用的可视高度；键盘弹起后输入栏仍停留在布局视口底部，容易被键盘盖住。
+- 实施内容：`mobileViewportInsets` 新增 `--mobile-keyboard-bottom-inset`，当可视视口底部差值超过键盘阈值时写入真实键盘高度；聊天大厅输入栏在底部导航空间和键盘高度之间取更大值，客服输入栏直接按键盘高度上移；两个页面的消息列表底部留白、新消息提示和表情面板同步消费键盘高度；输入框 focus 时如果当前在消息底部，会延迟滚动到底部以等待键盘动画完成。
+- 验证结果：`pnpm --dir mobile build` 通过；构建产物继续保持内联 CSS，聊天大厅和客服聊天的输入栏样式已进入最终 `dist/index.html`。
+
+## 2026-06-22 02:29 HKT 手机端拖动缩放防护
+
+- 完成任务：修复用户在手机端拖动、双指或双击时可能把整个 WebView 页面放大的问题。
+- 解决问题：`mobile/index.html` 原 viewport 只设置了 `initial-scale=1.0`，部分 Android WebView 或 iOS WebView 仍可能允许双指缩放、双击缩放或系统 `gesture*` 缩放；页面被放大后会导致底部导航、下注页和首页卡片比例异常。
+- 实施内容：viewport 增加 `minimum-scale=1.0`、`maximum-scale=1.0` 和 `user-scalable=no`；新增 `mobileTouchZoomGuard` 在应用启动时统一修正 viewport，并拦截多指 `touchmove`、快速双击 `touchend` 和 iOS `gesturestart/gesturechange/gestureend`；全局 `html/body/#app` 改为 `touch-action: pan-x pan-y`，只允许正常平移滚动，不允许浏览器解释为页面缩放。
+- 验证结果：`pnpm --dir mobile build` 通过；构建产物继续生成内联 CSS 的 `dist/index.html`，并保留不可缩放 viewport 配置。
+
+## 2026-06-22 02:17 HKT 普通下注 Redis 锁与数据库行级事务优化
+
+- 完成任务：普通用户下注热路径新增可选 Redis 分布式锁，并在 PostgreSQL 模式下改为订单、资金账户和资金流水的行级原子事务。
+- 解决问题：此前 `create_many_with_debit` 会克隆全量订单和资金快照，资金增量保存还会锁定 `ledger_entries`、`financial_accounts` 和 `finance_runtime` 三张表；历史订单/流水变多后，普通下注容易因为全量克隆、全表锁和全量差异扫描变慢。
+- 实施内容：新增 `RedisRuntime`，通过 `REDIS_URL` 启用短时投注锁和缓存失效；用户端普通下注提交前按用户获取 `lock:user:<用户ID>:bet`，事务完成后释放锁并清理余额缓存；PostgreSQL 普通下注只锁订单运行序号、资金流水运行序号和当前用户账户行，只插入本次订单、追加本次 `orderDebit` 流水、更新当前用户余额和运行序号；事务提交后只把本次订单、账户和流水增量合并到内存快照。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml order -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml redis -- --nocapture` 和后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet` 均通过，当前后端测试 389 个成功；后续还需要在配置 Redis 与外部 PostgreSQL 的本地环境中做并发下注联调，确认同一用户串行、不同用户不互相阻塞。
+
+## 2026-06-22 00:12 HKT 老安卓我的页面样式兜底
+
+- 完成任务：修复老版本 Android 手机上“我的”页面余额卡、充值/提现按钮和设置列表出现局部样式丢失的问题。
+- 解决问题：页面主样式已经内联且现代 CSS 语法已降级，但“我的”页核心卡片仍大量依赖 Tailwind 渐变变量、透明色、任意阴影和局部工具类组合；部分旧 WebView 解析这些组合不稳定时，会让余额卡红色背景或列表卡片质感丢失，白色文字落在浅底上看起来像没有样式。
+- 实施内容：`WalletBentoCard.vue` 为余额卡、按钮、文字和图标增加普通 scoped CSS 兜底，红色渐变、白色充值按钮、红色提现按钮都不再只依赖 Tailwind 生成规则；`SettingsListGroup.vue` 为设置列表容器、内层白底、分隔线和图标底色增加普通 CSS 兜底；前端组件规范和架构说明同步记录老安卓关键卡片不要只依赖复杂 Tailwind 组合。
+- 验证结果：手机端 `pnpm --dir mobile build` 通过；构建产物继续保持内联 CSS，未重新生成独立 `.css` 文件；`pnpm --dir mobile tauri:build:app` 已重新生成 Android APK，`apksigner verify --verbose` 校验通过，APK 使用 v2 签名。
+
+## 2026-06-22 00:03 HKT 安卓虚拟按键底部导航适配
+
+- 完成任务：优化手机端底部主导航在安卓三键虚拟导航栏机型上的安全区表现。
+- 解决问题：部分安卓手机使用虚拟返回/主页/多任务按键时，`env(safe-area-inset-bottom)` 可能返回 0，原 `mobile-bottom-nav` 会贴近屏幕底部或被系统按键区域压住。
+- 实施内容：新增 `mobileViewportInsets` 工具，启动时通过 `visualViewport` 计算底部可视视口差值并写入 `--mobile-viewport-bottom-inset`；全局 CSS 新增 `--mobile-bottom-nav-safe-bottom`、`--mobile-bottom-nav-bottom-offset` 和 `--mobile-bottom-nav-space`；`LayoutView.vue` 的底部导航改用这组变量抬起和留白；聊天大厅底部输入区同步复用统一底部导航空间。
+- 追加处理（2026-06-22 00:52 HKT）：根据真机反馈新增 `--mobile-bottom-nav-extra-lift: 0.38rem`，让底部导航在所有机型上再上移一点点，并把这段额外距离同步计入 `--mobile-bottom-nav-space`，避免页面内容被上移后的导航遮挡。
+- 验证结果：手机端 `pnpm --dir mobile build` 通过；构建产物继续保持内联 CSS，未重新生成独立 `.css` 文件；`pnpm --dir mobile tauri:build:app` 已重新生成 Android APK，`apksigner verify --verbose` 校验通过，APK 使用 v2 签名。
+
 ## 2026-06-21 23:27 HKT 老版本 Android WebView 样式兼容修复
 
 - 完成任务：修复老版本 Android 手机上登录页、首页等页面出现样式丢失、输入框和按钮退回浏览器默认样式的问题。
@@ -213,9 +298,9 @@
 ## 2026-06-20 03:10 HKT IPA 打包运行时域名与品牌同步统一
 
 - 完成任务：修正无签名 IPA 打包时品牌同步地址和 App 运行时 API 地址可能不一致的问题。
-- 解决问题：`--branding-api-base` 过去只用于下载后台 Logo 和写入包内 `mobile-branding.json`，没有同步传给 Vite 构建；App 启动后会再次请求运行时 `/api/user/mobile/site-config`，如果运行时 API 地址不是当前平台后台，就可能把包内“盛源”覆盖成其它平台名。本次确认当前域名 `https://ad.1666666.site/api/user/mobile/site-config` 返回 `platformName=盛源`，域名本身不是旧域名。
-- 实施内容：`mobile/src/api/http.ts` 保留当前平台默认打包后端 `https://ad.1666666.site`，并继续支持 `VITE_API_BASE_URL` / `VITE_API_BASE` 覆盖；`build-unsigned-ipa.sh` 新增 `--api-base` 参数并在前端构建时写入 `VITE_API_BASE_URL`，`--branding-api-base` 默认复用同一地址；脚本生成 IPA 后会打印包内 `assets/mobile-branding.json`，便于签名前确认 IPA 内平台名、Logo 和简介。
-- 验证结果：已通过 `bash -n mobile/scripts/build-unsigned-ipa.sh`、`node --check mobile/scripts/sync-branding-assets.mjs`、`VITE_API_BASE_URL=https://ad.1666666.site pnpm build` 和 `git diff --check`；联网执行品牌同步后确认后台返回并写入 `platformName=盛源`，`mobile/dist/mobile-branding.json` 当前平台名为“盛源”。
+- 解决问题：`--branding-api-base` 过去只用于下载后台 Logo 和写入包内 `mobile-branding.json`，没有同步传给 Vite 构建；App 启动后会再次请求运行时 `/api/user/mobile/site-config`，如果运行时 API 地址不是当前平台后台，就可能把包内“鼎鸿”覆盖成其它平台名。本次确认当前域名 `https://ad.16888888.live/api/user/mobile/site-config` 返回 `platformName=鼎鸿`，域名本身不是旧域名。
+- 实施内容：`mobile/src/api/http.ts` 保留当前平台默认打包后端 `https://ad.16888888.live`，并继续支持 `VITE_API_BASE_URL` / `VITE_API_BASE` 覆盖；`build-unsigned-ipa.sh` 新增 `--api-base` 参数并在前端构建时写入 `VITE_API_BASE_URL`，`--branding-api-base` 默认复用同一地址；脚本生成 IPA 后会打印包内 `assets/mobile-branding.json`，便于签名前确认 IPA 内平台名、Logo 和简介。
+- 验证结果：已通过 `bash -n mobile/scripts/build-unsigned-ipa.sh`、`node --check mobile/scripts/sync-branding-assets.mjs`、`VITE_API_BASE_URL=https://ad.16888888.live pnpm build` 和 `git diff --check`；联网执行品牌同步后确认后台返回并写入 `platformName=鼎鸿`，`mobile/dist/mobile-branding.json` 当前平台名为“鼎鸿”。
 
 ## 2026-06-19 12:08 HKT 用户冻结强制退出登录
 
@@ -267,14 +352,14 @@
 - 完成任务：使用已连接的 iPad 对手机端 iOS 包进行真机安装启动验证，并在验证通过后重新生成无签名 IPA。
 - 解决问题：此前只完成包内结构和品牌资源静态校验，仍需要确认真实 iOS 设备上不会点击后闪退，并确认主屏图标已经切换为后台配置的 Logo。
 - 实施内容：同步 `mobile/dist`、`mobile-branding.json`、本地 `app-logo.png` 和 iOS `AppIcon.appiconset` 到临时真机测试工程；使用已有 `arm64/release/libapp.a` 跳过卡住的 Tauri Rust 构建脚本，构建 release 真机 App；通过 `xcrun devicectl` 安装并启动 `com.hongfu.app`；从设备生成 App 图标到 `mobile/src-tauri/gen/apple/build/device-test/hongfu-ios-app-icon.png`；验证通过后重新执行 `pnpm tauri:build:ios-unsigned` 生成最终无签名 IPA。
-- 验证结果：设备 `iPad mini (6th generation)` 安装成功，应用列表显示“盛源 / com.hongfu.app / 0.1.0”；启动后 `HongFu`、`WebKit.WebContent`、`WebKit.Networking` 和 `WebKit.GPU` 进程仍在，未生成新的 `HongFu` 或“盛源”崩溃报告；设备生成的 App 图标不是占位图，内容为后台 Logo；最终 IPA 路径为 `mobile/src-tauri/gen/apple/build/DingHong-display-HongFu-internal-unsigned.ipa`，大小 6.8M，解包确认 `Payload/HongFu.app/HongFu`、`CFBundleDisplayName=盛源`、`assets/mobile-branding.json` 和 `assets/app-logo.png` 均正确；`git diff --check` 通过。
+- 验证结果：设备 `iPad mini (6th generation)` 安装成功，应用列表显示“鼎鸿 / com.hongfu.app / 0.1.0”；启动后 `HongFu`、`WebKit.WebContent`、`WebKit.Networking` 和 `WebKit.GPU` 进程仍在，未生成新的 `HongFu` 或“鼎鸿”崩溃报告；设备生成的 App 图标不是占位图，内容为后台 Logo；最终 IPA 路径为 `mobile/src-tauri/gen/apple/build/DingHong-display-HongFu-internal-unsigned.ipa`，大小 6.8M，解包确认 `Payload/HongFu.app/HongFu`、`CFBundleDisplayName=鼎鸿`、`assets/mobile-branding.json` 和 `assets/app-logo.png` 均正确；`git diff --check` 通过。
 
 ## 2026-06-19 03:24 HKT 手机端 IPA 品牌资源同步与远程图片缓存
 
 - 完成任务：让无签名 IPA 打包时同步后台手机端 Logo，并把手机端常见远程图片接入本地缓存。
 - 解决问题：iOS IPA 企业签名后桌面图标和 App 内首屏品牌仍可能使用旧资源；同时首页彩种 Logo、全部彩种页 Logo 和 Banner 都是图床网络地址，进入页面时会反复请求同一批图片。
 - 实施内容：新增 `mobile/scripts/sync-branding-assets.mjs`，从后台 `GET /api/user/mobile/site-config` 下载 Logo，生成 `app-logo.png`、`logo.svg`、`mobile-branding.json`，并重写临时 iOS `AppIcon.appiconset`；无签名 IPA 脚本默认执行品牌同步；`branding` store 启动时先读取包内 `mobile-branding.json`，再静默刷新后台配置；新增 `CachedRemoteImage` 通用组件，首页彩种卡片、全部彩种页、开奖记录卡片、平台页头 Logo 和首页 Banner 改为使用缓存图片。
-- 验证结果：`cd mobile && pnpm build` 通过；品牌同步脚本可生成包内品牌资源和 iOS 多尺寸图标；`cd mobile && pnpm tauri:build:ios-unsigned -- --output src-tauri/gen/apple/build/DingHong-display-HongFu-internal-unsigned.ipa` 通过，生成 6.8M 无签名 IPA；解包确认 `Payload/HongFu.app/HongFu`、`CFBundleDisplayName=盛源`、`CFBundleExecutable=HongFu`，并确认 `assets/mobile-branding.json` 指向包内 `/app-logo.png`；`bash -n mobile/scripts/build-unsigned-ipa.sh`、`node --check mobile/scripts/sync-branding-assets.mjs`、`git diff --check` 均通过。
+- 验证结果：`cd mobile && pnpm build` 通过；品牌同步脚本可生成包内品牌资源和 iOS 多尺寸图标；`cd mobile && pnpm tauri:build:ios-unsigned -- --output src-tauri/gen/apple/build/DingHong-display-HongFu-internal-unsigned.ipa` 通过，生成 6.8M 无签名 IPA；解包确认 `Payload/HongFu.app/HongFu`、`CFBundleDisplayName=鼎鸿`、`CFBundleExecutable=HongFu`，并确认 `assets/mobile-branding.json` 指向包内 `/app-logo.png`；`bash -n mobile/scripts/build-unsigned-ipa.sh`、`node --check mobile/scripts/sync-branding-assets.mjs`、`git diff --check` 均通过。
 
 ## 2026-06-19 03:10 HKT 开奖调度慢阶段并发与逐期推送优化
 
@@ -289,20 +374,20 @@
 - 完成任务：调整手机端默认品牌配置，未读取到后台配置前不再显示“鸿福”。
 - 解决问题：手机端打包 App 启动时会先渲染本地 `DEFAULT_BRANDING`，此前默认名称为“鸿福”，在后台动态平台名称和 Logo 尚未返回前会短暂显示错误品牌。
 - 实施内容：将 `DEFAULT_BRANDING.site_name`、`slogan` 和 `footer_text` 改为空字符串；默认 Logo 改为透明 1 像素占位图，避免空 `src` 触发破图或请求当前页面；同步清空 `mobile/index.html` 的静态标题，避免 JS 接管前短暂显示“鸿福”；提现方式页顶部标题改为读取动态品牌配置，后台 `site-config` 加载成功后仍按接口返回的平台名称、Logo 和介绍覆盖默认值。
-- 验证结果：`cd mobile && pnpm tauri:build:ios-unsigned --output src-tauri/gen/apple/build/DingHong-display-HongFu-internal-unsigned.ipa` 通过；解包确认 `Payload/HongFu.app/HongFu`、`CFBundleDisplayName=盛源`、`CFBundleExecutable=HongFu`，并确认 App 内前端资源已无默认“鸿福”“开启您的幸运之门”“传承现代美学”残留；`git diff --check` 通过。
+- 验证结果：`cd mobile && pnpm tauri:build:ios-unsigned --output src-tauri/gen/apple/build/DingHong-display-HongFu-internal-unsigned.ipa` 通过；解包确认 `Payload/HongFu.app/HongFu`、`CFBundleDisplayName=鼎鸿`、`CFBundleExecutable=HongFu`，并确认 App 内前端资源已无默认“鸿福”“开启您的幸运之门”“传承现代美学”残留；`git diff --check` 通过。
 
 ## 2026-06-19 02:48 HKT 修正手机端动态品牌和广告刷新链路
 
 - 完成任务：加强手机端启动和首页进入时的动态品牌、Logo、介绍和广告配置刷新。
-- 解决问题：打包 App 内平台名称、Logo、广告标题依赖后端配置，但此前品牌配置只在启动后普通加载一次，首页再次进入不会强制刷新；如果后台刚更新配置或 App 命中旧缓存，容易继续显示默认 Logo 或旧标题。排查同时确认当前打包域名 `https://ad.1666666.site` 的 `/api/user/mobile/site-config` 已返回 `platformName=盛源` 和图床 Logo，但 `/api/user/mobile/advertisements` 返回空数组，因此该域名下手机端轮播广告当前没有可展示数据。
+- 解决问题：打包 App 内平台名称、Logo、广告标题依赖后端配置，但此前品牌配置只在启动后普通加载一次，首页再次进入不会强制刷新；如果后台刚更新配置或 App 命中旧缓存，容易继续显示默认 Logo 或旧标题。排查同时确认当前打包域名 `https://ad.16888888.live` 的 `/api/user/mobile/site-config` 已返回 `platformName=鼎鸿` 和图床 Logo，但 `/api/user/mobile/advertisements` 返回空数组，因此该域名下手机端轮播广告当前没有可展示数据。
 - 实施内容：`branding` Pinia store 增加强制刷新、加载状态、更新时间和“未配置”过滤；App 启动时使用 `force` 读取后台品牌配置；首页挂载时同步强刷品牌配置和手机端广告列表；同步修正架构说明中打包默认后端域名，并补充动态配置依赖当前 `API_BASE` 的前端规范。
-- 验证结果：已通过 `curl https://ad.1666666.site/api/user/mobile/site-config` 验证动态平台名和 Logo 可达；`curl https://ad.1666666.site/api/user/mobile/advertisements` 当前返回空数组，后续需要在同一后台域名下新增并启用手机端轮播广告后再验证首页广告展示。
+- 验证结果：已通过 `curl https://ad.16888888.live/api/user/mobile/site-config` 验证动态平台名和 Logo 可达；`curl https://ad.16888888.live/api/user/mobile/advertisements` 当前返回空数组，后续需要在同一后台域名下新增并启用手机端轮播广告后再验证首页广告展示。
 
 ## 2026-06-19 02:30 HKT 确认 iOS 企业签名前后内部名校验规则
 
 - 完成任务：确认无签名 IPA 的正确结构，并记录企业签名后的校验要求。
-- 解决问题：用户使用 `DingHong-display-HongFu-internal-unsigned.ipa` 企业签名后仍闪退；真机崩溃日志显示签名后的应用路径再次变为 `/盛源.app/盛源`，并在 `wry::wkwebview::platform_webview_version` 初始化阶段触发 `CFRelease() called with NULL`，说明签名后的内部 `.app` 目录和可执行文件名被改成中文。
-- 实施内容：保留“桌面显示名=盛源、内部名=HongFu”的无签名 IPA 生成方式；同步更新架构说明和前端质量规范，明确签名前后都必须校验包结构为 `Payload/HongFu.app/HongFu`，不能让企业签名平台改成 `Payload/盛源.app/盛源`。
+- 解决问题：用户使用 `DingHong-display-HongFu-internal-unsigned.ipa` 企业签名后仍闪退；真机崩溃日志显示签名后的应用路径再次变为 `/鼎鸿.app/鼎鸿`，并在 `wry::wkwebview::platform_webview_version` 初始化阶段触发 `CFRelease() called with NULL`，说明签名后的内部 `.app` 目录和可执行文件名被改成中文。
+- 实施内容：保留“桌面显示名=鼎鸿、内部名=HongFu”的无签名 IPA 生成方式；同步更新架构说明和前端质量规范，明确签名前后都必须校验包结构为 `Payload/HongFu.app/HongFu`，不能让企业签名平台改成 `Payload/鼎鸿.app/鼎鸿`。
 - 验证结果：确认 `DingHong-display-HongFu-internal-unsigned.ipa` 的签名前结构是正确方向；后续企业签名后的 IPA 需要重新解包校验内部 `.app` 目录、`CFBundleExecutable` 和实际可执行文件名是否仍为 `HongFu`。
 
 ## 2026-06-18 15:26 HKT Cloudflare 注册来源识别修正
@@ -317,7 +402,7 @@
 - 完成任务：新增 macOS 无签名 IPA 打包脚本，并在手机端 `package.json` 增加快捷命令。
 - 解决问题：直接执行 `pnpm tauri:build:ios` 会因为未配置 Apple Developer Team 在 Xcode 签名阶段失败，临时手动命令又太长，不方便重复生成无签名 IPA。
 - 实施内容：新增 `mobile/scripts/build-unsigned-ipa.sh`，脚本会构建手机端前端资源、复制临时 iOS 工程、同步 `mobile/dist` 到 iOS `assets`、在临时工程中跳过 Tauri iOS Rust 构建脚本与 Xcode 签名，并封装 `Payload/*.app` 为无签名 IPA；新增 `pnpm tauri:build:ios-unsigned` 快捷命令。
-- 验证结果：`bash -n mobile/scripts/build-unsigned-ipa.sh` 通过；`bash mobile/scripts/build-unsigned-ipa.sh --skip-web-build` 和 `cd mobile && pnpm tauri:build:ios-unsigned -- --skip-web-build` 均成功生成 `/Users/huangkunhuang/Public/程序工程目录/复合工程/bc/mobile/src-tauri/gen/apple/build/盛源-unsigned.ipa`，包内 `CFBundleName` 为“盛源”、`CFBundleIdentifier` 为 `com.hongfu.app`。
+- 验证结果：`bash -n mobile/scripts/build-unsigned-ipa.sh` 通过；`bash mobile/scripts/build-unsigned-ipa.sh --skip-web-build` 和 `cd mobile && pnpm tauri:build:ios-unsigned -- --skip-web-build` 均成功生成 `/Users/huangkunhuang/Public/程序工程目录/复合工程/bc/mobile/src-tauri/gen/apple/build/鼎鸿-unsigned.ipa`，包内 `CFBundleName` 为“鼎鸿”、`CFBundleIdentifier` 为 `com.hongfu.app`。
 
 ## 2026-06-18 12:22 HKT 部署迁移 logo_url 注释顺序修复
 
@@ -4416,9 +4501,9 @@
 ## 2026-06-19 01:12 HKT 修复 iOS 真机启动闪退
 
 - 完成任务：修复 Tauri iOS 真机安装后点击 App 立即闪退的问题。
-- 解决问题：iPad 崩溃报告显示主线程在 `wry::wkwebview::platform_webview_version` 初始化 WKWebView 时触发 `CFRelease() called with NULL`，崩溃路径中 `.app` 和可执行文件名均为中文“盛源”；iOS 26.5 下该组合会在 Wry 查询 WebKit 版本阶段触发原生崩溃。
-- 实施内容：将 Tauri 内部 `productName`、iOS `PRODUCT_NAME` 和可执行文件名统一改为英文 `HongFu`，并通过 `CFBundleDisplayName=盛源` 保留桌面显示名；同步更新 iOS 架构说明，明确后续原生产物名必须使用英文内部名。
-- 验证结果：使用已连接 iPad 真机构建并安装成功，产物路径变为 `HongFu.app/HongFu`，设备进程列表显示 `HongFu` 和 WebKit 子进程持续运行，未再生成新的“盛源/HongFu”崩溃报告。
+- 解决问题：iPad 崩溃报告显示主线程在 `wry::wkwebview::platform_webview_version` 初始化 WKWebView 时触发 `CFRelease() called with NULL`，崩溃路径中 `.app` 和可执行文件名均为中文“鼎鸿”；iOS 26.5 下该组合会在 Wry 查询 WebKit 版本阶段触发原生崩溃。
+- 实施内容：将 Tauri 内部 `productName`、iOS `PRODUCT_NAME` 和可执行文件名统一改为英文 `HongFu`，并通过 `CFBundleDisplayName=鼎鸿` 保留桌面显示名；同步更新 iOS 架构说明，明确后续原生产物名必须使用英文内部名。
+- 验证结果：使用已连接 iPad 真机构建并安装成功，产物路径变为 `HongFu.app/HongFu`，设备进程列表显示 `HongFu` 和 WebKit 子进程持续运行，未再生成新的“鼎鸿/HongFu”崩溃报告。
 
 ## 2026-06-19 13:46 HKT 后台角色权限细粒度重设计
 
@@ -4454,3 +4539,17 @@
 - 解决问题：充值确认、提现审核和聊天红包仍会联动资金全量快照保存；聊天红包在数据库保存失败时存在先改内存后落库失败的状态漂移风险；计奖派奖列表仍由路由层全量读取后分页；聊天大厅启动会先读取全量消息再裁剪；充值 CSV 导出缺少筛选能力，数据量大时容易误导出全部历史。
 - 实施内容：充值和提现跨资金事务改为前后快照差异保存；聊天大厅写操作新增串行写锁并改为临时快照提交成功后替换内存，红包扣款和领取入账使用资金增量持久化；计奖派奖列表新增仓储分页 SQL，只加载当前页批次和明细；充值导出支持按用户、状态和创建时间范围过滤；聊天大厅启动只加载最近 200 条消息及相关红包，同时单独读取最大序号；资金流水清除改为数据库直接删除流水，不重写账户；补充充值导出索引和中文索引注释。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet`、手机端 `pnpm --dir mobile build`、管理后台 `pnpm --dir admin build` 和 `git diff --check` 均通过；后端全量 386 个测试成功，管理后台构建仅保留既有大 chunk 提示。
+
+## 2026-06-22 03:02 HKT 手机端防缩放不再误拦截滚动
+
+- 完成任务：修复防止页面缩放后，部分页面或弹层上下拖动失效的问题。
+- 解决问题：原双击缩放防护只按两次 `touchend` 的时间间隔拦截，快速连续滚动时可能被误判为双击，导致滚动结束事件被 `preventDefault()`。
+- 实施内容：`mobileTouchZoomGuard` 新增单指触摸起点、移动距离和点击时长判断；双指缩放继续被拦截，短距离双击继续防缩放，但普通单指上下滚动、输入框编辑和长按不会被拦截；同步更新前端组件与质量规范。
+- 验证结果：`pnpm --dir mobile build` 和 `git diff --check` 均通过；构建产物继续保持内联 CSS，`mobile/dist/assets` 未生成独立 CSS 文件。真机需要重点复测首页、我的账户、聊天大厅、客服聊天和弹层列表的上下滚动。
+
+## 2026-06-22 04:45 HKT 聊天大厅公开用户名后端脱敏
+
+- 完成任务：把聊天大厅用户名脱敏从手机端展示兜底升级为后端用户端公开出口强制处理。
+- 解决问题：用户重新安装 App 后仍看到聊天大厅完整用户名，说明只依赖前端展示函数不够稳；历史消息接口、红包领取记录接口或 WebSocket 实时推送只要拿到原始 `username`，旧包或缓存路径仍可能暴露完整用户名。
+- 实施内容：用户端聊天大厅历史消息、发送文本、发送红包、领取红包后的消息更新、红包领取记录和分享合买计划返回前统一调用公开脱敏函数；`chat_hall.message_created` 推送也使用脱敏后的消息；数据库和后台审计仍保存原始用户名；同步更新架构说明。
+- 验证结果：已补充后端单元测试覆盖中文昵称、短昵称、空昵称、消息和红包领取记录脱敏；后续继续执行格式化、检查和目标测试。

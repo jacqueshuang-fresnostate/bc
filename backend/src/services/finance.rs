@@ -472,6 +472,25 @@ impl FinanceRepository {
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))? = store;
         Ok(())
     }
+
+    /// 数据库原子事务提交后，把本次变更的账户和流水增量合并进内存快照。
+    pub(crate) fn apply_persisted_order_debits(
+        &self,
+        accounts: Vec<FinancialAccountSummary>,
+        ledger_entries: Vec<LedgerEntry>,
+        next_sequence: u64,
+    ) -> ApiResult<()> {
+        let mut store = self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+        for account in accounts {
+            store.accounts.insert(account.user_id.clone(), account);
+        }
+        store.ledger_entries.extend(ledger_entries);
+        store.next_sequence = store.next_sequence.max(next_sequence);
+        Ok(())
+    }
 }
 
 /// 归一化可选筛选值，空字符串不参与过滤。

@@ -615,11 +615,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .bet-page-main {
-  padding-bottom: calc(9rem + env(safe-area-inset-bottom));
+  padding-bottom: calc(9rem + var(--mobile-viewport-bottom-inset));
 }
 
 .bet-page-main--group-buy {
-  padding-bottom: calc(10.75rem + env(safe-area-inset-bottom));
+  padding-bottom: calc(10.75rem + var(--mobile-viewport-bottom-inset));
 }
 
 .play-select-popup {
@@ -628,11 +628,18 @@ onBeforeUnmount(() => {
 }
 
 .play-select-sheet {
+  max-height: 480px;
   max-height: min(64dvh, 480px);
   overflow-y: auto;
   border-radius: 24px 24px 0 0;
-  padding: 18px 16px max(18px, env(safe-area-inset-bottom));
+  padding: 18px 16px 18px;
   background: #f9f9f9;
+}
+
+@supports (padding-bottom: max(1px, 2px)) {
+  .play-select-sheet {
+    padding-bottom: max(18px, env(safe-area-inset-bottom, 0px));
+  }
 }
 
 .play-select-sheet__header {

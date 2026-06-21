@@ -332,7 +332,7 @@ async function submitRecharge() {
 </script>
 
 <template>
-  <div class="deposit-page min-h-screen bg-surface pb-32 text-on-surface font-body">
+  <div class="deposit-page min-h-screen bg-surface text-on-surface font-body">
     <header class="mobile-safe-header fixed top-0 left-0 z-50 w-full bg-white/85 shadow-sm shadow-red-900/5 backdrop-blur-md">
       <div class="mx-auto flex h-16 w-full max-w-lg items-center justify-between px-5">
         <button class="text-primary transition-opacity duration-200 active:scale-95 active:opacity-80" aria-label="返回" @click="router.back()">
@@ -537,7 +537,7 @@ async function submitRecharge() {
       </template>
     </main>
 
-    <footer v-if="enabledChannels.length > 0" class="fixed bottom-0 left-0 z-40 w-full bg-white/90 px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_35px_rgba(140,10,21,0.08)] backdrop-blur-md">
+    <footer v-if="enabledChannels.length > 0" class="deposit-submit-footer fixed bottom-0 left-0 z-40 w-full bg-white/90 px-4 pt-3 shadow-[0_-12px_35px_rgba(140,10,21,0.08)] backdrop-blur-md">
       <div class="mx-auto flex w-full max-w-lg items-center gap-3">
         <div class="min-w-0 flex-1">
           <p class="truncate text-[10px] font-bold text-on-surface-variant">{{ submitHint }}</p>
@@ -561,9 +561,21 @@ async function submitRecharge() {
 
 <style scoped>
 .deposit-page {
+  padding-bottom: calc(8rem + var(--mobile-viewport-bottom-inset));
   background:
     radial-gradient(circle at 20% 0%, rgba(254, 218, 177, 0.58), transparent 32%),
     linear-gradient(180deg, #fff8f5 0%, #f8f1ee 46%, #f5efeb 100%);
+}
+
+.deposit-submit-footer {
+  bottom: var(--mobile-viewport-bottom-inset);
+  padding-bottom: 20px;
+}
+
+@supports (padding-bottom: max(1px, 2px)) {
+  .deposit-submit-footer {
+    padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  }
 }
 
 .deposit-hero {

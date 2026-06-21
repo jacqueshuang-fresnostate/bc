@@ -60,5 +60,5 @@ export function useControlGroupBuyPlans(lotteryId: string | null, issue: string)
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : '合买认购记录读取失败';
+  return error instanceof Error ? error.message : '合买发起记录读取失败';
 }

@@ -509,7 +509,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/group-buy/plans/by-issue",
         "合买管理",
         "按期号查询控奖合买认购",
-        "按 lotteryId 和 issue 返回指定彩种期号下仍在流转中的合买计划详情，包含未满单、未成单计划的认购记录。",
+        "按 lotteryId 和 issue 返回指定彩种期号下仍在流转中的合买计划详情；该控奖专用接口只返回发起人自购记录，不返回普通跟单用户认购。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
