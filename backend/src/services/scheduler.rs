@@ -1442,7 +1442,7 @@ mod tests {
         domain::{
             draw::{CreateDrawIssueRequest, DrawIssueStatus},
             group_buy::{CreateGroupBuyPlanRequest, GroupBuyPlanStatus},
-            lottery::DrawMode,
+            lottery::{DrawMode, DrawSchedule},
         },
         services::{
             access::AccessRepository,
@@ -1971,6 +1971,49 @@ mod tests {
             .any(|issue| issue.lottery_id == "ssc60"
                 && issue.issue == "202606021202"
                 && issue.status == DrawIssueStatus::Open));
+    }
+    /// 验证平台普通周期即使调度晚跑，也会补到自然时钟节点而不是继续把开奖时间后移。
+    #[tokio::test]
+    async fn scheduler_realigns_late_platform_periodic_issue_generation() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        let mut lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.sale_enabled = true;
+        lottery.schedule = DrawSchedule::Periodic {
+            interval_seconds: 300,
+        };
+        lottery.issue_format = "{timestamp}".to_string();
+        lotteries
+            .update("ssc60", lottery)
+            .await
+            .expect("lottery schedule can be updated");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
+        let config = enabled_config(1);
+
+        let run = run_draw_scheduler_once(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &robots,
+            &access,
+            &config,
+            "2026-06-10 00:05:30".to_string(),
+        )
+        .await
+        .expect("late scheduler can run");
+
+        assert!(run
+            .generated_issues
+            .iter()
+            .any(|issue| issue.lottery_id == "ssc60"
+                && issue.issue == "20260610001000"
+                && issue.scheduled_at == "2026-06-10 00:10:00"));
     }
     /// 验证调度器线程可启动但会按后台配置决定是否执行。
     #[tokio::test]

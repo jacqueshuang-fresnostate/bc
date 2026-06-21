@@ -425,6 +425,15 @@ fn generation_baseline(
     }
 
     if let DrawSchedule::Periodic { interval_seconds } = &lottery.schedule {
+        if lottery.draw_mode == DrawMode::Platform
+            && periodic_interval_divides_day(*interval_seconds)
+        {
+            let anchor = latest_scheduled_at(existing_issues, &lottery.id)?
+                .map(|latest| latest.max(now))
+                .unwrap_or(now);
+            return clock_aligned_periodic_baseline(anchor, *interval_seconds);
+        }
+
         if let Some(latest_scheduled_at) = latest_scheduled_at(existing_issues, &lottery.id)? {
             if *interval_seconds == 0 {
                 return Err(ApiError::BadRequest(
@@ -449,6 +458,41 @@ fn generation_baseline(
 
     let baseline = latest_scheduled_at(existing_issues, &lottery.id)?.unwrap_or(now);
     Ok(if baseline > now { baseline } else { now })
+}
+
+/// 判断普通周期是否可以安全按自然日时钟节点对齐。
+fn periodic_interval_divides_day(interval_seconds: u32) -> bool {
+    interval_seconds > 0 && 86_400 % interval_seconds == 0
+}
+
+/// 平台普通周期的兜底对齐：按当天 00:00 起算最近节点作为基线，避免调度晚跑造成开奖时间漂移。
+fn clock_aligned_periodic_baseline(
+    anchor: NaiveDateTime,
+    interval_seconds: u32,
+) -> ApiResult<NaiveDateTime> {
+    if interval_seconds == 0 {
+        return Err(ApiError::BadRequest(
+            "periodic interval must be greater than zero".to_string(),
+        ));
+    }
+    if !periodic_interval_divides_day(interval_seconds) {
+        return Ok(anchor);
+    }
+
+    let day_start = combine_date_time(
+        anchor.date(),
+        NaiveTime::from_hms_opt(0, 0, 0)
+            .ok_or_else(|| ApiError::Internal("自然日开始时间无效".to_string()))?,
+    )?;
+    let elapsed_seconds = anchor.signed_duration_since(day_start).num_seconds().max(0);
+    let interval_seconds = i64::from(interval_seconds);
+    let completed_intervals = elapsed_seconds
+        .checked_div(interval_seconds)
+        .ok_or_else(|| ApiError::BadRequest("periodic interval is invalid".to_string()))?;
+
+    day_start
+        .checked_add_signed(Duration::seconds(completed_intervals * interval_seconds))
+        .ok_or_else(|| ApiError::BadRequest("scheduled time is out of range".to_string()))
 }
 
 /// 把期号偏移量转换为安全的有符号计数。
@@ -1806,6 +1850,54 @@ mod tests {
         assert_eq!(issue.issue, "202606100001");
         assert_eq!(issue.scheduled_at, "2026-06-10 20:19:27");
         assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:26");
+    }
+    /// 验证平台普通周期在调度晚跑时也按自然时钟节点对齐，避免开奖时间逐轮后移。
+    #[tokio::test]
+    async fn platform_periodic_generation_aligns_clock_nodes_when_scheduler_runs_late() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 300,
+        });
+        lottery.draw_mode = DrawMode::Platform;
+        lottery.issue_format = "{timestamp}".to_string();
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-10 00:05:30"))
+            .await
+            .expect("late platform scheduler can generate aligned issue");
+
+        assert_eq!(issue.issue, "20260610001000");
+        assert_eq!(issue.scheduled_at, "2026-06-10 00:10:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 00:09:59");
+    }
+    /// 验证平台普通周期遇到历史偏移期号时会重新对齐到自然节点，不继续生成偏移时间。
+    #[tokio::test]
+    async fn platform_periodic_generation_realigns_drifted_existing_issue() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 300,
+        });
+        lottery.draw_mode = DrawMode::Platform;
+        lottery.issue_format = "{timestamp}".to_string();
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "20260610000530".to_string(),
+                    scheduled_at: "2026-06-10 00:05:30".to_string(),
+                    sale_closed_at: "2026-06-10 00:05:29".to_string(),
+                },
+            )
+            .await
+            .expect("drifted existing issue can be created");
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-10 00:05:31"))
+            .await
+            .expect("drifted cadence can be realigned");
+
+        assert_eq!(issue.issue, "20260610001000");
+        assert_eq!(issue.scheduled_at, "2026-06-10 00:10:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 00:09:59");
     }
     /// 验证批量生成以最新已有期号作为基线。
     #[tokio::test]
