@@ -11,6 +11,8 @@ use sqlx::{postgres::PgRow, PgConnection, Row};
 
 use crate::{
     domain::{
+        finance::WithdrawalTurnoverSummary,
+        permission::SystemSetting,
         user::{UserSummary, WithdrawalMethod},
         withdrawal::{CreateWithdrawalOrderRequest, WithdrawalOrderStatus, WithdrawalOrderSummary},
     },
@@ -23,6 +25,63 @@ use crate::{
 };
 
 use super::business_database::{enum_from_string, enum_to_string};
+
+const WITHDRAWAL_TURNOVER_ENABLED_SETTING_KEY: &str = "withdrawal_turnover_enabled";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 提现流水校验策略，控制用户提现前是否必须完成充值等额有效投注。
+pub struct WithdrawalTurnoverPolicy {
+    /// 是否启用提现流水校验。
+    pub enabled: bool,
+}
+
+/// 从系统设置解析提现流水校验策略，旧库缺失配置时默认关闭。
+pub fn withdrawal_turnover_policy_from_system_settings(
+    settings: &[SystemSetting],
+) -> WithdrawalTurnoverPolicy {
+    WithdrawalTurnoverPolicy {
+        enabled: bool_setting(settings, WITHDRAWAL_TURNOVER_ENABLED_SETTING_KEY),
+    }
+}
+
+impl WithdrawalTurnoverPolicy {
+    /// 返回关闭状态的提现流水策略，供测试或无需校验的调用方显式使用。
+    #[cfg(test)]
+    pub fn disabled() -> Self {
+        Self { enabled: false }
+    }
+
+    /// 根据用户累计充值和有效投注判断当前是否允许提现。
+    fn ensure_withdrawable(&self, turnover: &WithdrawalTurnoverSummary) -> ApiResult<()> {
+        if !self.enabled || turnover.remaining_effective_bet_minor <= 0 {
+            return Ok(());
+        }
+
+        Err(ApiError::BadRequest(format!(
+            "提现流水不足：累计充值 {}，需要有效投注 {}，当前有效投注 {}，还差 {}",
+            format_minor_money(turnover.cumulative_recharge_minor),
+            format_minor_money(turnover.required_effective_bet_minor),
+            format_minor_money(turnover.completed_effective_bet_minor),
+            format_minor_money(turnover.remaining_effective_bet_minor)
+        )))
+    }
+}
+
+/// 读取布尔系统设置，只有明确为 true 才视为开启。
+fn bool_setting(settings: &[SystemSetting], key: &str) -> bool {
+    settings
+        .iter()
+        .find(|setting| setting.key == key)
+        .map(|setting| setting.value.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or_default()
+}
+
+/// 把分金额格式化为面向用户的元金额文本。
+fn format_minor_money(amount_minor: i64) -> String {
+    let sign = if amount_minor < 0 { "-" } else { "" };
+    let amount = i128::from(amount_minor).abs();
+    format!("{sign}¥{}.{:02}", amount / 100, amount % 100)
+}
 
 #[derive(Clone)]
 /// 提现申请仓储，负责该模块数据读取、业务变更和持久化协调。
@@ -146,6 +205,7 @@ impl WithdrawalRepository {
         method: &WithdrawalMethod,
         request: CreateWithdrawalOrderRequest,
         finance: &FinanceRepository,
+        turnover_policy: &WithdrawalTurnoverPolicy,
     ) -> ApiResult<WithdrawalOrderSummary> {
         let previous_withdrawal_store = self
             .inner
@@ -161,6 +221,8 @@ impl WithdrawalRepository {
         let mut finance_store = previous_finance_store.clone();
 
         let order = withdrawal_store.draft_order(user, method, request)?;
+        let turnover = finance.withdrawal_turnover_for_user(&order.user_id).await?;
+        turnover_policy.ensure_withdrawable(&turnover)?;
         finance_store.freeze_withdrawal(&order.user_id, order.amount_minor, &order.id)?;
         let result = withdrawal_store.insert_order(order)?;
 
@@ -747,10 +809,15 @@ fn current_time_label() -> String {
 mod tests {
     use crate::{
         domain::{
+            finance::WithdrawalTurnoverSummary,
+            permission::SystemSetting,
             user::{UserKind, UserStatus, UserSummary, WithdrawalMethod, WithdrawalMethodType},
             withdrawal::{CreateWithdrawalOrderRequest, WithdrawalOrderStatus},
         },
-        services::withdrawal::WithdrawalStore,
+        services::withdrawal::{
+            withdrawal_turnover_policy_from_system_settings, WithdrawalStore,
+            WithdrawalTurnoverPolicy,
+        },
     };
 
     #[test]
@@ -836,6 +903,48 @@ mod tests {
             .expect_err("approved order cannot be rejected")
             .to_string()
             .contains("不能驳回"));
+    }
+
+    #[test]
+    /// 提现流水策略从系统设置读取，开启后会拒绝有效投注不足的用户提现。
+    fn withdrawal_turnover_policy_rejects_missing_effective_bet() {
+        let settings = vec![SystemSetting {
+            key: "withdrawal_turnover_enabled".to_string(),
+            value: "true".to_string(),
+            description: "是否开启提现前充值等额有效投注要求".to_string(),
+        }];
+        let policy = withdrawal_turnover_policy_from_system_settings(&settings);
+        let turnover = WithdrawalTurnoverSummary {
+            user_id: "U10001".to_string(),
+            cumulative_recharge_minor: 100_000,
+            required_effective_bet_minor: 100_000,
+            completed_effective_bet_minor: 25_000,
+            remaining_effective_bet_minor: 75_000,
+        };
+
+        let error = policy
+            .ensure_withdrawable(&turnover)
+            .expect_err("insufficient turnover must be rejected");
+
+        assert!(error.to_string().contains("提现流水不足"));
+        assert!(error.to_string().contains("¥750.00"));
+    }
+
+    #[test]
+    /// 提现流水策略关闭时不会拦截提现申请。
+    fn disabled_withdrawal_turnover_policy_allows_any_turnover() {
+        let policy = WithdrawalTurnoverPolicy::disabled();
+        let turnover = WithdrawalTurnoverSummary {
+            user_id: "U10001".to_string(),
+            cumulative_recharge_minor: 100_000,
+            required_effective_bet_minor: 100_000,
+            completed_effective_bet_minor: 0,
+            remaining_effective_bet_minor: 100_000,
+        };
+
+        policy
+            .ensure_withdrawable(&turnover)
+            .expect("disabled policy should not block withdrawal");
     }
 
     #[test]

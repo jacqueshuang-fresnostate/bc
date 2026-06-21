@@ -13,7 +13,7 @@ use crate::{
     domain::{
         finance::{
             FinanceOverview, FinancialAccountSummary, LedgerEntry, LedgerEntryKind,
-            ManualBalanceAdjustmentRequest,
+            ManualBalanceAdjustmentRequest, WithdrawalTurnoverSummary,
         },
         group_buy::{GroupBuyParticipant, GroupBuyPlan},
         order::OrderDetail,
@@ -118,6 +118,25 @@ impl FinanceRepository {
             .read()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .recharge_credit_total_minor_for_user(user_id)
+    }
+
+    /// 返回指定用户提现前有效投注累计摘要，数据库模式直接读取增量累计表。
+    pub async fn withdrawal_turnover_for_user(
+        &self,
+        user_id: &str,
+    ) -> ApiResult<WithdrawalTurnoverSummary> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("用户 ID 不能为空".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_withdrawal_turnover_for_user(persistence, user_id).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .withdrawal_turnover_for_user(user_id)
     }
 
     /// 按用户 ID 集合批量汇总真实充值本金，避免邀请中心读取全量资金流水后再过滤。
@@ -900,6 +919,73 @@ async fn query_recharge_credit_total_minor(
     .map_err(|_| ApiError::Internal("用户累计充值金额读取失败".to_string()))
 }
 
+/// 数据库模式下读取用户提现流水累计摘要，避免提现时扫描全量资金流水。
+async fn query_withdrawal_turnover_for_user(
+    database: &BusinessDatabase,
+    user_id: &str,
+) -> ApiResult<WithdrawalTurnoverSummary> {
+    let row = sqlx::query(
+        "SELECT user_id, cumulative_recharge_minor, required_effective_bet_minor, completed_effective_bet_minor
+         FROM user_withdrawal_turnovers
+         WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(database.pool())
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, user_id, "用户提现流水累计读取失败");
+        ApiError::Internal("用户提现流水累计读取失败".to_string())
+    })?;
+
+    let Some(row) = row else {
+        return withdrawal_turnover_summary(user_id, 0, 0, 0);
+    };
+
+    let user_id: String = row
+        .try_get("user_id")
+        .map_err(|_| ApiError::Internal("用户提现流水累计读取失败".to_string()))?;
+    let cumulative_recharge_minor = row
+        .try_get("cumulative_recharge_minor")
+        .map_err(|_| ApiError::Internal("用户提现流水累计读取失败".to_string()))?;
+    let required_effective_bet_minor = row
+        .try_get("required_effective_bet_minor")
+        .map_err(|_| ApiError::Internal("用户提现流水累计读取失败".to_string()))?;
+    let completed_effective_bet_minor = row
+        .try_get("completed_effective_bet_minor")
+        .map_err(|_| ApiError::Internal("用户提现流水累计读取失败".to_string()))?;
+
+    withdrawal_turnover_summary(
+        &user_id,
+        cumulative_recharge_minor,
+        required_effective_bet_minor,
+        completed_effective_bet_minor,
+    )
+}
+
+/// 组装用户提现流水累计摘要，并计算仍需完成的有效投注金额。
+fn withdrawal_turnover_summary(
+    user_id: &str,
+    cumulative_recharge_minor: i64,
+    required_effective_bet_minor: i64,
+    completed_effective_bet_minor: i64,
+) -> ApiResult<WithdrawalTurnoverSummary> {
+    if cumulative_recharge_minor < 0
+        || required_effective_bet_minor < 0
+        || completed_effective_bet_minor < 0
+    {
+        return Err(ApiError::Internal("用户提现流水累计金额无效".to_string()));
+    }
+
+    Ok(WithdrawalTurnoverSummary {
+        user_id: user_id.to_string(),
+        cumulative_recharge_minor,
+        required_effective_bet_minor,
+        completed_effective_bet_minor,
+        remaining_effective_bet_minor: required_effective_bet_minor
+            .saturating_sub(completed_effective_bet_minor),
+    })
+}
+
 /// 数据库模式下按用户集合聚合充值本金，避免代理中心扫描无关用户资金流水。
 async fn query_recharge_credit_totals_for_user_ids(
     database: &BusinessDatabase,
@@ -1301,6 +1387,50 @@ impl FinanceStore {
                     .checked_add(entry.amount_minor)
                     .ok_or_else(|| ApiError::Internal("用户累计充值金额溢出".to_string()))
             })
+    }
+
+    /// 内存模式下从当前资金流水临时计算提现流水要求摘要。
+    fn withdrawal_turnover_for_user(&self, user_id: &str) -> ApiResult<WithdrawalTurnoverSummary> {
+        let mut cumulative_recharge_minor = 0_i64;
+        let mut completed_effective_bet_minor = 0_i64;
+        for entry in self
+            .ledger_entries
+            .iter()
+            .filter(|entry| entry.user_id == user_id)
+        {
+            match entry.kind {
+                LedgerEntryKind::RechargeCredit if entry.amount_minor > 0 => {
+                    cumulative_recharge_minor = cumulative_recharge_minor
+                        .checked_add(entry.amount_minor)
+                        .ok_or_else(|| ApiError::Internal("用户累计充值金额溢出".to_string()))?;
+                }
+                LedgerEntryKind::OrderDebit | LedgerEntryKind::GroupBuyDebit
+                    if entry.amount_minor < 0 =>
+                {
+                    let amount_minor = entry
+                        .amount_minor
+                        .checked_neg()
+                        .ok_or_else(|| ApiError::Internal("用户有效投注金额溢出".to_string()))?;
+                    completed_effective_bet_minor = completed_effective_bet_minor
+                        .checked_add(amount_minor)
+                        .ok_or_else(|| ApiError::Internal("用户有效投注金额溢出".to_string()))?;
+                }
+                LedgerEntryKind::OrderRefund | LedgerEntryKind::GroupBuyRefund
+                    if entry.amount_minor > 0 =>
+                {
+                    completed_effective_bet_minor =
+                        completed_effective_bet_minor.saturating_sub(entry.amount_minor);
+                }
+                _ => {}
+            }
+        }
+
+        withdrawal_turnover_summary(
+            user_id,
+            cumulative_recharge_minor,
+            cumulative_recharge_minor,
+            completed_effective_bet_minor,
+        )
     }
 
     /// 按用户集合聚合充值本金，内存模式下只扫描一次资金流水。
@@ -2490,6 +2620,33 @@ mod tests {
         assert_eq!(totals.get("U10001").copied(), Some(3_500));
         assert!(!totals.contains_key("U10002"));
         assert!(!totals.contains_key("U10003"));
+    }
+
+    #[test]
+    /// 提现流水累计只统计真实充值本金和有效投注，充值赠送不计入门槛，退款会扣回有效投注。
+    fn store_calculates_withdrawal_turnover_from_ledger_entries() {
+        let mut store = FinanceStore::seeded();
+        store
+            .credit_recharge("U10001", 10_000, "R000000000001")
+            .expect("recharge can be credited");
+        store
+            .credit_recharge_bonus("U10001", 500, "R000000000001")
+            .expect("recharge bonus can be credited");
+        let order = order_detail("O000000000001", "U10001", 3_000, 0);
+        store.debit_order(&order).expect("order can be debited");
+        store.refund_order(&order).expect("order can be refunded");
+        store
+            .debit_group_buy("U10001", 2_000, "G202606050001-P001", "G202606050001")
+            .expect("group buy debit can be applied");
+
+        let turnover = store
+            .withdrawal_turnover_for_user("U10001")
+            .expect("withdrawal turnover can be calculated");
+
+        assert_eq!(turnover.cumulative_recharge_minor, 10_000);
+        assert_eq!(turnover.required_effective_bet_minor, 10_000);
+        assert_eq!(turnover.completed_effective_bet_minor, 2_000);
+        assert_eq!(turnover.remaining_effective_bet_minor, 8_000);
     }
 
     #[test]

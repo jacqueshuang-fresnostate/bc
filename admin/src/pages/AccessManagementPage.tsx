@@ -178,6 +178,7 @@ const RECHARGE_BONUS_ENABLED_SETTING_KEY = 'recharge_bonus_enabled';
 const RECHARGE_BONUS_RULES_SETTING_KEY = 'recharge_bonus_rules';
 const CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY =
   'chat_hall_speaking_min_recharge_minor';
+const WITHDRAWAL_TURNOVER_ENABLED_SETTING_KEY = 'withdrawal_turnover_enabled';
 const SUPPORT_TELEGRAM_ENABLED_SETTING_KEY =
   'support_telegram_notification_enabled';
 const UNCONFIGURED_SETTING_VALUE = '未配置';
@@ -2986,6 +2987,9 @@ function settingGroupName(key: string): string {
   if (key.startsWith('chat_hall_')) {
     return '聊天设置';
   }
+  if (key.startsWith('withdrawal_')) {
+    return '提现设置';
+  }
   if (key.includes('email') || key.includes('registration')) {
     return '注册与安全';
   }
@@ -3066,6 +3070,10 @@ function settingSelectOptions(
       { label: '开启 Telegram 提醒', value: 'true' },
       { label: '关闭 Telegram 提醒', value: 'false' },
     ],
+    [WITHDRAWAL_TURNOVER_ENABLED_SETTING_KEY]: [
+      { label: '开启提现流水要求', value: 'true' },
+      { label: '关闭提现流水要求', value: 'false' },
+    ],
   };
   const options = optionsByKey[key] ?? [];
   const normalizedCurrentValue = currentValue.trim();
@@ -3126,6 +3134,7 @@ function settingsGroups(
     '手机端设置',
     '图床设置',
     '充值设置',
+    '提现设置',
     '聊天设置',
     '通知设置',
     '注册与安全',

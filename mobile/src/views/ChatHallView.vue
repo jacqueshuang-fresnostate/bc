@@ -85,9 +85,11 @@ function isMine(message: ChatHallMessage) {
 }
 
 function maskedChatHallUsername(value: string) {
-  const chars = Array.from(String(value || '').trim() || '会员')
-  if (chars.length <= 4) return chars.join('')
-  return `${chars.slice(0, 4).join('')}${'*'.repeat(chars.length - 4)}`
+  const normalized = String(value || '').trim()
+  if (!normalized) return '会员'
+  const chars = Array.from(normalized)
+  const visibleCount = chars.length >= 4 ? 4 : Math.floor(chars.length / 2)
+  return `${chars.slice(0, visibleCount).join('')}${'*'.repeat(chars.length - visibleCount)}`
 }
 
 function messageDisplayName(message: ChatHallMessage) {

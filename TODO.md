@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-22 06:42 HKT 聊天大厅短昵称脱敏规则调整
+
+- 完成任务：调整聊天大厅玩家名称脱敏规则，短昵称不再原样显示。
+- 解决问题：此前聊天大厅只对超过 4 个字符的用户名做脱敏，2-3 个字符的真实昵称会完整暴露；当前需要统一只展示玩家名前四位，短于 4 位时只展示一半并用 `*` 替代剩余字符。
+- 实施内容：后端 `mask_public_chat_hall_username` 改为长昵称保留前 4 个字符、短昵称保留前一半字符并星号替换，空昵称仍回退“会员”；手机端 `ChatHallView.vue` 的兜底脱敏函数同步同一规则；同步更新架构说明中的聊天大厅用户名展示规则。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml public_chat_hall_username_is_masked -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml public_chat_hall_response_masks_message_and_claim_usernames -- --nocapture`、`pnpm --dir mobile build` 和 `git diff --check` 均通过。
+
+## 2026-06-22 06:37 HKT 提现前充值等额有效投注要求
+
+- 完成任务：新增后台可配置的“充值等额有效投注后才能提现”规则。
+- 解决问题：此前用户充值后可以立即申请提现，系统没有按累计充值金额要求用户完成对应有效投注；如果每次提现都临时扫描资金流水，历史数据增长后也会拖慢提现接口。
+- 实施内容：新增 `withdrawal_turnover_enabled` 系统设置并在后台“提现设置”中用下拉框维护；新增 `user_withdrawal_turnovers` 和 `user_withdrawal_turnover_events` 数据表及触发器，按资金流水增量维护累计充值、所需有效投注和已完成有效投注；用户提现申请在冻结余额前校验流水门槛，不满足时返回中文差额提示；内存模式补充同口径临时计算；同步更新架构说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml withdrawal_turnover -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、`pnpm --dir admin build` 和 `git diff --check` 均通过；本机没有 `psql`，未做数据库迁移实跑。
+
 ## 2026-06-22 06:05 HKT 修复充值赠送新增和返利配置入口
 
 - 完成任务：修复后台系统设置中“充值赠送活动”无法新增档位的问题，并恢复代理返利配置的清晰入口。

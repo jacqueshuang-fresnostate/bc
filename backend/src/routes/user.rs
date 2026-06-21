@@ -68,6 +68,7 @@ use crate::{
         recharge_config_response, recharge_settings_from_system_settings,
         support_ticket_for_recharge,
     },
+    services::withdrawal::withdrawal_turnover_policy_from_system_settings,
     services::{
         business_database::enum_to_string,
         group_buy_flow::{
@@ -3162,7 +3163,7 @@ fn public_chat_hall_claim_response(
     response
 }
 
-/// 将红包领取记录列表转换成用户端公开数据，领取人名称只展示前四个字符。
+/// 将红包领取记录列表转换成用户端公开数据，领取人名称按聊天大厅规则脱敏。
 fn public_chat_hall_red_packet_claims_response(
     mut response: ChatHallRedPacketClaimsResponse,
 ) -> ChatHallRedPacketClaimsResponse {
@@ -3173,7 +3174,7 @@ fn public_chat_hall_red_packet_claims_response(
     response
 }
 
-/// 对聊天大厅公开用户名做隐私脱敏，保留前四个字符，后续字符统一替换为星号。
+/// 对聊天大厅公开用户名做隐私脱敏，长昵称保留前四个字符，短昵称只保留一半。
 fn mask_public_chat_hall_username(value: &str) -> String {
     let value = value.trim();
     if value.is_empty() {
@@ -3181,12 +3182,13 @@ fn mask_public_chat_hall_username(value: &str) -> String {
     }
 
     let chars: Vec<char> = value.chars().collect();
-    if chars.len() <= 4 {
-        return chars.into_iter().collect();
-    }
-
-    let visible_prefix = chars.iter().take(4).collect::<String>();
-    format!("{}{}", visible_prefix, "*".repeat(chars.len() - 4))
+    let visible_count = if chars.len() >= 4 { 4 } else { chars.len() / 2 };
+    let visible_prefix = chars.iter().take(visible_count).collect::<String>();
+    format!(
+        "{}{}",
+        visible_prefix,
+        "*".repeat(chars.len() - visible_count)
+    )
 }
 
 /// 返回当前用户客服会话列表。
@@ -3360,9 +3362,17 @@ async fn create_withdrawal_order(
         .into_iter()
         .find(|method| method.id == method_id)
         .ok_or_else(|| ApiError::NotFound("提现方式不存在".to_string()))?;
+    let settings = state.access.settings().await?;
+    let turnover_policy = withdrawal_turnover_policy_from_system_settings(&settings);
     let order = state
         .withdrawals
-        .create_order(&session.user, &method, payload, &state.finance)
+        .create_order(
+            &session.user,
+            &method,
+            payload,
+            &state.finance,
+            &turnover_policy,
+        )
         .await?;
     publish_user_withdrawal_changed(&state, &order);
     publish_user_balance_changed(&state, &order.user_id, "withdrawal_freeze", Some(&order.id))
@@ -3702,11 +3712,13 @@ mod tests {
     }
 
     #[test]
-    /// 验证聊天大厅用户端公开名称只保留前四个字符，避免完整用户名泄露到手机端。
+    /// 验证聊天大厅用户端公开名称按长名和短名规则脱敏，避免完整用户名泄露到手机端。
     fn public_chat_hall_username_is_masked() {
         assert_eq!(mask_public_chat_hall_username("爱情819281"), "爱情81****");
         assert_eq!(mask_public_chat_hall_username("测试用户1"), "测试用户*");
-        assert_eq!(mask_public_chat_hall_username("张三"), "张三");
+        assert_eq!(mask_public_chat_hall_username("测试用"), "测**");
+        assert_eq!(mask_public_chat_hall_username("张三"), "张*");
+        assert_eq!(mask_public_chat_hall_username("A"), "*");
         assert_eq!(mask_public_chat_hall_username(""), "会员");
     }
 

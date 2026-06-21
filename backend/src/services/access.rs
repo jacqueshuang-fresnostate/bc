@@ -3300,6 +3300,11 @@ fn seed_settings() -> Vec<SystemSetting> {
             description: "聊天大厅发言最低累计充值金额（元），0 表示不限制".to_string(),
         },
         SystemSetting {
+            key: "withdrawal_turnover_enabled".to_string(),
+            value: "false".to_string(),
+            description: "是否开启提现前充值等额有效投注要求".to_string(),
+        },
+        SystemSetting {
             key: "support_telegram_notification_enabled".to_string(),
             value: "false".to_string(),
             description: "是否开启新客服消息 Telegram 提醒".to_string(),

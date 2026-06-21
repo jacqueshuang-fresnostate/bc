@@ -44,6 +44,22 @@ pub struct AdminFinancialAccountSummary {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 用户提现流水门槛累计摘要，用于判断充值后是否完成等额有效投注。
+pub struct WithdrawalTurnoverSummary {
+    /// 关联用户 ID。
+    pub user_id: String,
+    /// 用户累计真实充值本金，单位为分。
+    pub cumulative_recharge_minor: i64,
+    /// 当前需要完成的有效投注金额，单位为分。
+    pub required_effective_bet_minor: i64,
+    /// 已完成有效投注金额，单位为分。
+    pub completed_effective_bet_minor: i64,
+    /// 距离可提现还差的有效投注金额，单位为分。
+    pub remaining_effective_bet_minor: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 /// 后台财务列表通用分页结构。
 pub struct FinancePage<T> {
     /// 分页数据列表。
