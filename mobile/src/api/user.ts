@@ -67,6 +67,10 @@ export type UserInvitationLatestBet = {
   issue: string
   ruleCode: string
   playName: string
+  numberSummary: string
+  betSource: 'direct' | 'groupBuy'
+  groupBuyPlanId?: string | null
+  groupBuyInitiatorDisplay?: string | null
   amountMinor: number
   createdAt: string
 }

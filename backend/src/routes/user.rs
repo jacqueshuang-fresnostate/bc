@@ -45,6 +45,7 @@ use crate::{
     },
     domain::order::{CreateOrderRequest, OrderDetail, OrderSource, OrderStatus},
     domain::permission::SystemSetting,
+    domain::play::{BigSmallOddEvenPosition, DigitAttribute, PlayRuleCode, PlaySelection},
     domain::rebate::InvitePolicySummary,
     domain::recharge::{
         CreateRechargeOrderRequest, CreateRechargeOrderResponse, RechargeConfigResponse,
@@ -56,10 +57,10 @@ use crate::{
         RegistrationConfig, UserAuthSession, UserAvatarRequest, UserBalanceResponse,
         UserBindEmailRequest, UserChangePasswordRequest, UserForgotPasswordRequest,
         UserForgotPasswordResponse, UserInvitationBetLotterySummary, UserInvitationBetPlaySummary,
-        UserInvitationDirectUser, UserInvitationLatestBet, UserInvitationSummaryResponse, UserKind,
-        UserLoginRequest, UserLogoutResponse, UserProfileResponse, UserRegisterRequest,
-        UserResetPasswordRequest, UserResetPasswordResponse, UserStatus, UserSummary,
-        WithdrawalMethodRequest,
+        UserInvitationBetSource, UserInvitationDirectUser, UserInvitationLatestBet,
+        UserInvitationSummaryResponse, UserKind, UserLoginRequest, UserLogoutResponse,
+        UserProfileResponse, UserRegisterRequest, UserResetPasswordRequest,
+        UserResetPasswordResponse, UserStatus, UserSummary, WithdrawalMethodRequest,
     },
     domain::withdrawal::{CreateWithdrawalOrderRequest, WithdrawalOrderSummary},
     error::{ApiError, ApiResult},
@@ -1133,6 +1134,10 @@ struct DirectUserBetInput {
     issue: String,
     rule_code: String,
     play_name: String,
+    number_summary: String,
+    bet_source: UserInvitationBetSource,
+    group_buy_plan_id: Option<String>,
+    group_buy_initiator_display: Option<String>,
     amount_minor: i64,
     created_at: String,
 }
@@ -1198,6 +1203,10 @@ impl DirectUserBetProfile {
             issue: bet.issue,
             rule_code: bet.rule_code,
             play_name: bet.play_name,
+            number_summary: bet.number_summary,
+            bet_source: bet.bet_source,
+            group_buy_plan_id: bet.group_buy_plan_id,
+            group_buy_initiator_display: bet.group_buy_initiator_display,
             amount_minor: bet.amount_minor,
             created_at: bet.created_at,
         };
@@ -1341,6 +1350,7 @@ async fn direct_user_bet_profiles(
     {
         let rule_code = enum_to_string(&order.rule_code)?;
         let play_name = play_rule_label(&play_labels, &rule_code);
+        let number_summary = play_selection_summary(&order.rule_code, &order.selection);
         profiles
             .entry(order.user_id.clone())
             .or_default()
@@ -1349,8 +1359,12 @@ async fn direct_user_bet_profiles(
                 lottery_id: order.lottery_id,
                 lottery_name: order.lottery_name,
                 issue: order.issue,
-                rule_code,
+                rule_code: rule_code.clone(),
                 play_name,
+                number_summary,
+                bet_source: UserInvitationBetSource::Direct,
+                group_buy_plan_id: None,
+                group_buy_initiator_display: None,
                 amount_minor: order.amount_minor,
                 created_at: order.created_at,
             })?;
@@ -1368,6 +1382,9 @@ async fn direct_user_bet_profiles(
         let issue = plan.issue.clone();
         let rule_code = plan.rule_code.clone();
         let play_name = play_rule_label(&play_labels, &rule_code);
+        let number_summary = group_buy_number_summary(&rule_code, &plan.numbers);
+        let group_buy_plan_id = plan.id.clone();
+        let group_buy_initiator_display = user_group_buy_initiator_display(&plan);
         for participant in plan.participants.into_iter().filter(|participant| {
             direct_user_id_set.contains(&participant.user_id) && participant.amount_minor > 0
         }) {
@@ -1381,6 +1398,10 @@ async fn direct_user_bet_profiles(
                     issue: issue.clone(),
                     rule_code: rule_code.clone(),
                     play_name: play_name.clone(),
+                    number_summary: number_summary.clone(),
+                    bet_source: UserInvitationBetSource::GroupBuy,
+                    group_buy_plan_id: Some(group_buy_plan_id.clone()),
+                    group_buy_initiator_display: Some(group_buy_initiator_display.clone()),
                     amount_minor: participant.amount_minor,
                     created_at: participant.created_at,
                 })?;
@@ -1405,6 +1426,142 @@ fn play_rule_label(labels: &HashMap<String, String>, rule_code: &str) -> String 
         .get(rule_code)
         .cloned()
         .unwrap_or_else(|| rule_code.to_string())
+}
+
+/// 把标准选号结构翻译成代理中心可读的中文号码摘要。
+fn play_selection_summary(rule_code: &PlayRuleCode, selection: &PlaySelection) -> String {
+    if !selection.big_small_odd_even.is_empty() {
+        return selection
+            .big_small_odd_even
+            .iter()
+            .map(|pick| {
+                let attributes = pick
+                    .attributes
+                    .iter()
+                    .map(digit_attribute_label)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{} {}",
+                    big_small_odd_even_position_label(&pick.position),
+                    attributes
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("；");
+    }
+
+    if !selection.banker_numbers.is_empty() || !selection.drag_numbers.is_empty() {
+        return format!(
+            "胆码 {}；拖码 {}",
+            digit_list_summary(&selection.banker_numbers),
+            digit_list_summary(&selection.drag_numbers)
+        );
+    }
+
+    if !selection.positions.is_empty() {
+        return selection
+            .positions
+            .iter()
+            .enumerate()
+            .map(|(index, values)| {
+                format!(
+                    "{} {}",
+                    position_summary_label(rule_code, index),
+                    digit_list_summary(values)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("；");
+    }
+
+    if !selection.numbers.is_empty() {
+        return format!("选号 {}", digit_list_summary(&selection.numbers));
+    }
+
+    "号码未记录".to_string()
+}
+
+/// 把合买投注内容文本解析成统一号码摘要，历史异常数据解析失败时保留原始内容。
+fn group_buy_number_summary(rule_code: &str, numbers: &str) -> String {
+    parse_group_buy_rule_code(rule_code)
+        .and_then(|rule_code| {
+            parse_group_buy_selection(&rule_code, numbers)
+                .map(|selection| play_selection_summary(&rule_code, &selection))
+        })
+        .unwrap_or_else(|_| {
+            let numbers = numbers.trim();
+            if numbers.is_empty() {
+                "号码未记录".to_string()
+            } else {
+                numbers.to_string()
+            }
+        })
+}
+
+/// 将数字列表按投注展示格式拼接。
+fn digit_list_summary(values: &[u8]) -> String {
+    if values.is_empty() {
+        return "-".to_string();
+    }
+    values
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// 返回直选位置的中文标签。
+fn position_summary_label(rule_code: &PlayRuleCode, index: usize) -> &'static str {
+    match rule_code {
+        PlayRuleCode::ThreeDirect => ["百位", "十位", "个位"]
+            .get(index)
+            .copied()
+            .unwrap_or("位置"),
+        PlayRuleCode::FiveFrontDirect
+        | PlayRuleCode::FiveFrontDirectCombination
+        | PlayRuleCode::FiveFrontGroupThree
+        | PlayRuleCode::FiveFrontGroupSix => ["第1位", "第2位", "第3位"]
+            .get(index)
+            .copied()
+            .unwrap_or("位置"),
+        PlayRuleCode::FiveMiddleDirect
+        | PlayRuleCode::FiveMiddleDirectCombination
+        | PlayRuleCode::FiveMiddleGroupThree
+        | PlayRuleCode::FiveMiddleGroupSix => ["第2位", "第3位", "第4位"]
+            .get(index)
+            .copied()
+            .unwrap_or("位置"),
+        PlayRuleCode::FiveBackDirect
+        | PlayRuleCode::FiveBackDirectCombination
+        | PlayRuleCode::FiveBackGroupThree
+        | PlayRuleCode::FiveBackGroupSix => ["第3位", "第4位", "第5位"]
+            .get(index)
+            .copied()
+            .unwrap_or("位置"),
+        _ => ["第1位", "第2位", "第3位"]
+            .get(index)
+            .copied()
+            .unwrap_or("位置"),
+    }
+}
+
+/// 返回大小单双位置中文名。
+fn big_small_odd_even_position_label(position: &BigSmallOddEvenPosition) -> &'static str {
+    match position {
+        BigSmallOddEvenPosition::Tens => "十位",
+        BigSmallOddEvenPosition::Ones => "个位",
+    }
+}
+
+/// 返回大小单双属性中文名。
+fn digit_attribute_label(attribute: &DigitAttribute) -> &'static str {
+    match attribute {
+        DigitAttribute::Big => "大",
+        DigitAttribute::Small => "小",
+        DigitAttribute::Odd => "单",
+        DigitAttribute::Even => "双",
+    }
 }
 
 /// 汇总全部已通过提现订单，供邀请中心展示直属下级提现金额。
@@ -3704,6 +3861,10 @@ mod tests {
                 issue: "202606170001".to_string(),
                 rule_code: "fiveFrontDirect".to_string(),
                 play_name: "前 3 直选".to_string(),
+                number_summary: "第1位 1；第2位 2；第3位 3".to_string(),
+                bet_source: UserInvitationBetSource::Direct,
+                group_buy_plan_id: None,
+                group_buy_initiator_display: None,
                 amount_minor: 1_000,
                 created_at: "2026-06-17 10:00:00".to_string(),
             })
@@ -3716,6 +3877,10 @@ mod tests {
                 issue: "202606170002".to_string(),
                 rule_code: "fiveBackDirect".to_string(),
                 play_name: "后 3 直选".to_string(),
+                number_summary: "第3位 7；第4位 8；第5位 9".to_string(),
+                bet_source: UserInvitationBetSource::GroupBuy,
+                group_buy_plan_id: Some("G-1".to_string()),
+                group_buy_initiator_display: Some("爱情81****".to_string()),
                 amount_minor: 2_500,
                 created_at: "2026-06-17 10:02:00".to_string(),
             })
@@ -3728,6 +3893,59 @@ mod tests {
         let latest_bet = profile.latest_bet.expect("应存在最近投注");
         assert_eq!(latest_bet.order_id, "O-2");
         assert_eq!(latest_bet.issue, "202606170002");
+        assert_eq!(latest_bet.number_summary, "第3位 7；第4位 8；第5位 9");
+        assert_eq!(latest_bet.bet_source, UserInvitationBetSource::GroupBuy);
+        assert_eq!(latest_bet.group_buy_plan_id.as_deref(), Some("G-1"));
+        assert_eq!(
+            latest_bet.group_buy_initiator_display.as_deref(),
+            Some("爱情81****")
+        );
+    }
+
+    #[test]
+    /// 验证邀请中心投注号码摘要能展示直选、胆拖、大小单双和合买原始内容。
+    fn user_invitation_bet_number_summary_formats_selection() {
+        let direct = PlaySelection {
+            positions: vec![vec![1, 2], vec![3], vec![4, 5]],
+            ..PlaySelection::default()
+        };
+        assert_eq!(
+            play_selection_summary(&PlayRuleCode::ThreeDirect, &direct),
+            "百位 1,2；十位 3；个位 4,5"
+        );
+
+        let banker = PlaySelection {
+            banker_numbers: vec![1],
+            drag_numbers: vec![2, 3, 4],
+            ..PlaySelection::default()
+        };
+        assert_eq!(
+            play_selection_summary(&PlayRuleCode::ThreeGroupSixBanker, &banker),
+            "胆码 1；拖码 2,3,4"
+        );
+
+        let odd_even = PlaySelection {
+            big_small_odd_even: vec![
+                crate::domain::play::BigSmallOddEvenPick {
+                    position: BigSmallOddEvenPosition::Tens,
+                    attributes: vec![DigitAttribute::Big],
+                },
+                crate::domain::play::BigSmallOddEvenPick {
+                    position: BigSmallOddEvenPosition::Ones,
+                    attributes: vec![DigitAttribute::Odd, DigitAttribute::Even],
+                },
+            ],
+            ..PlaySelection::default()
+        };
+        assert_eq!(
+            play_selection_summary(&PlayRuleCode::FiveBigSmallOddEven, &odd_even),
+            "十位 大；个位 单,双"
+        );
+
+        assert_eq!(
+            group_buy_number_summary("threeGroupSixBanker", "1|2,3,4"),
+            "胆码 1；拖码 2,3,4"
+        );
     }
 
     #[test]

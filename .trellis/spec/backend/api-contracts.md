@@ -4962,6 +4962,10 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
     "issue": "202606170001",
     "ruleCode": "fiveFrontDirect",
     "playName": "前 3 直选",
+    "numberSummary": "第1位 1,2；第2位 3；第3位 4",
+    "betSource": "direct",
+    "groupBuyPlanId": null,
+    "groupBuyInitiatorDisplay": null,
     "amountMinor": 1000,
     "createdAt": "2026-06-17 10:00:00"
   },
@@ -4978,6 +4982,8 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 - 直属用户投注画像必须合并普通独立下注和合买认购：普通注单只统计 `orderSource=direct` 且未取消的正向金额；合买按 `participants` 正向认购金额统计，已取消合买计划不计入。
 - `betLotterySummaries` 按彩种汇总投注金额，`betPlaySummaries` 按彩种和玩法汇总投注金额；两个列表都按金额倒序返回，玩法名使用后端 `play_rule_summaries()` 的中文标签。
 - `latestBet` 返回直属用户最近一笔普通下注或合买认购；没有投注时为 `null`，手机端必须展示“暂无投注记录”而不是报错。
+- `latestBet.numberSummary` 必须由后端按玩法生成中文投注号码摘要，普通下注从 `PlaySelection` 转换，合买从计划 `numbers` 解析；解析失败时返回原始投注内容或“号码未记录”，手机端不自行解析玩法号码。
+- `latestBet.betSource` 只允许 `direct` 或 `groupBuy`；当值为 `groupBuy` 时，需要同时返回 `groupBuyPlanId` 和脱敏后的 `groupBuyInitiatorDisplay`，手机端展示为“跟单：某某** 的合买”。
 - 同一直属用户同时存在两类来源时，后台邀请记录优先，因为它包含人工维护的 `inviteStatus`、`rebateEnabled` 和 `createdAt`。
 - 直属用户 `registeredAt` 固定表示下级账号注册时间，来自用户表 `createdAt`；`createdAt` 继续表示邀请关系创建时间，注册绑定代理但没有邀请记录时可为空，手机端展示注册时间时必须优先使用 `registeredAt`。
 - 直属用户 `availableBalanceMinor` 固定来自资金账户当前可用余额，不能用充值、提现或投注流水推算；没有资金账户时按 `0` 返回。

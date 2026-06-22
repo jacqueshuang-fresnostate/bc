@@ -4546,6 +4546,13 @@
 - 实施内容：后端 `GET /api/user/invitations/summary` 的 `directUsers` 新增 `totalBetAmountMinor`、`betLotterySummaries`、`betPlaySummaries` 和 `latestBet`；普通独立下注按未取消注单汇总，合买按参与人认购记录汇总且跳过已取消计划；玩法名复用 `play_rule_summaries()` 中文标签；直属充值统计改为一次性按资金流水汇总；手机端 `InvitationCenterView.vue` 展示投注总额、最近投注和主要玩法汇总；同步更新 Trellis 接口/前端规范和架构说明。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml user_invitation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi_document_contains_core_paths -- --nocapture`、手机端 `pnpm build`、手机端 `pnpm test` 和 `git diff --check` 均通过；手机端测试脚本当前显示 0 个测试用例。
 
+## 2026-06-23 07:29 HKT 代理中心下级投注号码与合买跟单展示
+
+- 完成任务：补齐手机端代理中心直属下级最近投注的号码展示和合买跟单来源展示。
+- 解决问题：代理此前只能看到下级买了什么彩种、什么玩法和金额，看不到具体买了哪些号码；如果下级是合买认购，也看不到跟了谁的合买，无法核对下级真实参与内容。
+- 实施内容：后端 `latestBet` 新增 `numberSummary`、`betSource`、`groupBuyPlanId` 和 `groupBuyInitiatorDisplay`；普通下注按 `PlaySelection` 输出中文号码摘要，合买认购按计划 `numbers` 解析投注内容并返回发起人脱敏名；手机端 `InvitationCenterView.vue` 在最近投注区域展示“号码：...”和“跟单：... 的合买”；同步更新架构说明、Trellis 后端接口契约和前端组件规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml user_invitation -- --nocapture` 和 `pnpm --dir mobile build` 均通过。
+
 ## 2026-06-17 02:19 HKT 河内5分彩 BB 开奖源接入
 
 - 完成任务：新增“河内5分彩”彩种，并接入 BB 开奖接口 `gameCodeList=VIFFC5`。

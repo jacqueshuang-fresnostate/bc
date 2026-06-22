@@ -133,6 +133,19 @@ function latestBetMetaText(item: UserInvitationDirectUser) {
   return `${issue} · ¥${formatMoney(latestBet.amountMinor)}`
 }
 
+function latestBetNumberText(item: UserInvitationDirectUser) {
+  const latestBet = item.latestBet
+  if (!latestBet) return ''
+  return latestBet.numberSummary || '号码未记录'
+}
+
+function latestBetFollowText(item: UserInvitationDirectUser) {
+  const latestBet = item.latestBet
+  if (!latestBet || latestBet.betSource !== 'groupBuy') return ''
+  const initiator = latestBet.groupBuyInitiatorDisplay || '合买发起人'
+  return `跟单：${initiator} 的合买`
+}
+
 function formatBasisPoints(value: number) {
   const percent = (Number(value || 0) / 100).toFixed(2)
   return `${percent.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')}%`
@@ -304,6 +317,12 @@ async function submitApplication() {
                   <p class="text-[11px] font-bold text-red-900">最近投注</p>
                   <p class="mt-1 truncate text-xs font-bold text-on-surface">{{ latestBetMainText(item) }}</p>
                   <p v-if="item.latestBet" class="mt-0.5 text-[11px] text-on-surface-variant">{{ latestBetMetaText(item) }}</p>
+                  <p v-if="item.latestBet" class="mt-1 break-words text-[11px] font-semibold leading-4 text-on-surface">
+                    号码：{{ latestBetNumberText(item) }}
+                  </p>
+                  <p v-if="latestBetFollowText(item)" class="mt-1 rounded-lg bg-red-50 px-2 py-1 text-[11px] font-bold text-primary">
+                    {{ latestBetFollowText(item) }}
+                  </p>
                 </div>
                 <span class="shrink-0 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-bold text-primary">
                   {{ hasBetProfile(item) ? `${topBetPlaySummaries(item).length || 1} 类玩法` : '无投注' }}

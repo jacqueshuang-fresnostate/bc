@@ -306,6 +306,16 @@ pub struct UserInvitationBetPlaySummary {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 邀请中心直属用户最近投注的来源类型。
+pub enum UserInvitationBetSource {
+    /// 用户直接在下注页独立下单。
+    Direct,
+    /// 用户认购或跟单合买计划。
+    GroupBuy,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 /// 邀请中心直属用户最近一笔投注摘要，用于手机端快速查看下级购买内容。
 pub struct UserInvitationLatestBet {
     /// 投注订单 ID。
@@ -320,6 +330,14 @@ pub struct UserInvitationLatestBet {
     pub rule_code: String,
     /// 玩法中文名称。
     pub play_name: String,
+    /// 投注号码中文摘要。
+    pub number_summary: String,
+    /// 投注来源，区分独立下注和合买跟单。
+    pub bet_source: UserInvitationBetSource,
+    /// 关联合买计划 ID，仅合买跟单时存在。
+    pub group_buy_plan_id: Option<String>,
+    /// 合买发起人脱敏展示名，仅合买跟单时存在。
+    pub group_buy_initiator_display: Option<String>,
     /// 业务金额，单位为分。
     pub amount_minor: i64,
     /// 创建时间。
