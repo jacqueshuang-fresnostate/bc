@@ -564,6 +564,10 @@ struct RegistrationClientInfo {
     registered_ip: Option<String>,
     /// Cloudflare IP Geolocation 提供的国家或地区。
     cloudflare_country: Option<String>,
+    /// Cloudflare IP Geolocation 提供的省份、州或区域。
+    cloudflare_region: Option<String>,
+    /// Cloudflare IP Geolocation 提供的城市。
+    cloudflare_city: Option<String>,
 }
 
 /// 给注册请求补入服务端可见的请求 IP 和可信代理地区，客户端定位失败时也不阻断注册。
@@ -584,8 +588,8 @@ fn attach_registration_client_info(
             } else {
                 location.country.clear();
             }
-            location.region.clear();
-            location.city.clear();
+            location.region = client_info.cloudflare_region.unwrap_or_default();
+            location.city = client_info.cloudflare_city.unwrap_or_default();
             location.source = "ip".to_string();
         }
         if location.source.trim().is_empty() || location.source == "unknown" {
@@ -604,10 +608,18 @@ fn registration_client_info_from_headers(headers: &HeaderMap) -> RegistrationCli
     let cloudflare_country = registered_ip
         .as_ref()
         .and_then(|_| registration_cloudflare_country_from_headers(headers));
+    let cloudflare_region = registered_ip
+        .as_ref()
+        .and_then(|_| registration_proxy_location_header(headers, &["cf-ipregion", "cf-region"]));
+    let cloudflare_city = registered_ip
+        .as_ref()
+        .and_then(|_| registration_proxy_location_header(headers, &["cf-ipcity", "cf-city"]));
 
     RegistrationClientInfo {
         registered_ip,
         cloudflare_country,
+        cloudflare_region,
+        cloudflare_city,
     }
 }
 
@@ -636,6 +648,38 @@ fn registration_cloudflare_country_from_headers(headers: &HeaderMap) -> Option<S
         .filter(|value| !value.is_empty())
         .filter(|value| value != "XX" && value != "T1")
         .map(|value| registration_country_label(&value))
+}
+
+/// 读取可信代理传入的地区文本，并兼容 Cloudflare 对非 ASCII 字段的百分号编码。
+fn registration_proxy_location_header(headers: &HeaderMap, names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| {
+        headers
+            .get(*name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(normalize_registration_proxy_location_value)
+    })
+}
+
+/// 清洗代理地区文本，过滤未知占位并解码 URL 百分号编码。
+fn normalize_registration_proxy_location_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let upper = value.to_ascii_uppercase();
+    if matches!(upper.as_str(), "XX" | "T1" | "UNKNOWN" | "NULL" | "N/A") {
+        return None;
+    }
+
+    let decoded = urlencoding::decode(value)
+        .map(|value| value.into_owned())
+        .unwrap_or_else(|_| value.to_string());
+    let decoded = decoded.trim().to_string();
+    if decoded.is_empty() {
+        None
+    } else {
+        Some(decoded)
+    }
 }
 
 /// 把常见国家或地区代码转为后台可读中文，未知代码保留原值便于排障。
@@ -3193,13 +3237,12 @@ fn mask_public_chat_hall_username(value: &str) -> String {
     }
 
     let chars: Vec<char> = value.chars().collect();
-    let visible_count = if chars.len() >= 4 { 4 } else { chars.len() / 2 };
-    let visible_prefix = chars.iter().take(visible_count).collect::<String>();
-    format!(
-        "{}{}",
-        visible_prefix,
-        "*".repeat(chars.len() - visible_count)
-    )
+    let visible_count = if chars.len() >= 4 {
+        4
+    } else {
+        (chars.len() / 2).max(1)
+    };
+    chars.iter().take(visible_count).collect::<String>()
 }
 
 /// 返回当前用户客服会话列表。
@@ -3493,6 +3536,8 @@ mod tests {
             "2409:8950:5353:80:c46d:c9ff:fec7:4f38".parse().unwrap(),
         );
         headers.insert("cf-ipcountry", "CN".parse().unwrap());
+        headers.insert("cf-ipregion", "Guangdong".parse().unwrap());
+        headers.insert("cf-ipcity", "Shenzhen".parse().unwrap());
 
         let client_info = registration_client_info_from_headers(&headers);
 
@@ -3501,6 +3546,24 @@ mod tests {
             Some("2409:8950:5353:80:c46d:c9ff:fec7:4f38".to_string())
         );
         assert_eq!(client_info.cloudflare_country, Some("中国".to_string()));
+        assert_eq!(client_info.cloudflare_region, Some("Guangdong".to_string()));
+        assert_eq!(client_info.cloudflare_city, Some("Shenzhen".to_string()));
+    }
+
+    #[test]
+    /// 验证 Cloudflare 地区和城市头支持百分号编码，便于保存非 ASCII 地名。
+    fn registration_location_parser_decodes_cloudflare_region_city_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cf-connecting-ip", "203.0.113.9".parse().unwrap());
+        headers.insert("cf-ipcountry", "BR".parse().unwrap());
+        headers.insert("cf-ipregion", "S%C3%A3o%20Paulo".parse().unwrap());
+        headers.insert("cf-ipcity", "S%C3%A3o%20Paulo".parse().unwrap());
+
+        let client_info = registration_client_info_from_headers(&headers);
+
+        assert_eq!(client_info.cloudflare_country, Some("BR".to_string()));
+        assert_eq!(client_info.cloudflare_region, Some("São Paulo".to_string()));
+        assert_eq!(client_info.cloudflare_city, Some("São Paulo".to_string()));
     }
 
     #[test]
@@ -3526,6 +3589,8 @@ mod tests {
             RegistrationClientInfo {
                 registered_ip: Some("203.0.113.20".to_string()),
                 cloudflare_country: None,
+                cloudflare_region: None,
+                cloudflare_city: None,
             },
         );
 
@@ -3534,6 +3599,42 @@ mod tests {
         assert_eq!(location.country, "");
         assert_eq!(location.region, "");
         assert_eq!(location.city, "");
+        assert_eq!(location.source, "ip");
+    }
+
+    #[test]
+    /// 验证 Cloudflare 提供的服务端地区和城市会写入 IP 注册来源。
+    fn registration_client_info_keeps_cloudflare_region_and_city() {
+        let mut payload = UserRegisterRequest {
+            username: Some("proxy_region_user".to_string()),
+            email: None,
+            contact_qq: None,
+            password: "password123".to_string(),
+            invite_code: None,
+            registration_location: Some(crate::domain::user::UserRegistrationLocation {
+                registered_ip: "1.1.1.1".to_string(),
+                country: "客户端国家".to_string(),
+                region: "客户端区域".to_string(),
+                city: "客户端城市".to_string(),
+                source: "client".to_string(),
+            }),
+        };
+
+        attach_registration_client_info(
+            &mut payload,
+            RegistrationClientInfo {
+                registered_ip: Some("203.0.113.21".to_string()),
+                cloudflare_country: Some("中国".to_string()),
+                cloudflare_region: Some("广东".to_string()),
+                cloudflare_city: Some("深圳".to_string()),
+            },
+        );
+
+        let location = payload.registration_location.expect("location attached");
+        assert_eq!(location.registered_ip, "203.0.113.21");
+        assert_eq!(location.country, "中国");
+        assert_eq!(location.region, "广东");
+        assert_eq!(location.city, "深圳");
         assert_eq!(location.source, "ip");
     }
 
@@ -3560,6 +3661,8 @@ mod tests {
             RegistrationClientInfo {
                 registered_ip: Some("203.0.113.30".to_string()),
                 cloudflare_country: Some("美国".to_string()),
+                cloudflare_region: Some("California".to_string()),
+                cloudflare_city: Some("Los Angeles".to_string()),
             },
         );
 
@@ -3725,11 +3828,11 @@ mod tests {
     #[test]
     /// 验证聊天大厅用户端公开名称按长名和短名规则脱敏，避免完整用户名泄露到手机端。
     fn public_chat_hall_username_is_masked() {
-        assert_eq!(mask_public_chat_hall_username("爱情819281"), "爱情81****");
-        assert_eq!(mask_public_chat_hall_username("测试用户1"), "测试用户*");
-        assert_eq!(mask_public_chat_hall_username("测试用"), "测**");
-        assert_eq!(mask_public_chat_hall_username("张三"), "张*");
-        assert_eq!(mask_public_chat_hall_username("A"), "*");
+        assert_eq!(mask_public_chat_hall_username("爱情819281"), "爱情81");
+        assert_eq!(mask_public_chat_hall_username("测试用户1"), "测试用户");
+        assert_eq!(mask_public_chat_hall_username("测试用"), "测");
+        assert_eq!(mask_public_chat_hall_username("张三"), "张");
+        assert_eq!(mask_public_chat_hall_username("A"), "A");
         assert_eq!(mask_public_chat_hall_username(""), "会员");
     }
 
@@ -3750,7 +3853,7 @@ mod tests {
             payload: None,
             created_at: "2026-06-21 18:00:00".to_string(),
         });
-        assert_eq!(message.username, "爱情81****");
+        assert_eq!(message.username, "爱情81");
 
         let claims = public_chat_hall_red_packet_claims_response(ChatHallRedPacketClaimsResponse {
             red_packet_id: "CHRP-000000000001".to_string(),
@@ -3769,7 +3872,7 @@ mod tests {
             }],
         });
 
-        assert_eq!(claims.claims[0].username, "明月清风***");
+        assert_eq!(claims.claims[0].username, "明月清风");
     }
 
     #[test]

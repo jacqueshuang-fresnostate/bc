@@ -154,6 +154,30 @@ impl AccessRepository {
             })
     }
 
+    /// 按用户 ID 批量读取用户摘要，供后台分页列表补充上级代理等当前页展示信息。
+    pub async fn users_for_ids(&self, user_ids: &[String]) -> ApiResult<Vec<UserSummary>> {
+        let user_ids = normalized_user_ids(user_ids);
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            let user_ids = user_ids.iter().cloned().collect::<Vec<_>>();
+            return query_users_for_ids(persistence, &user_ids).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .users
+                    .iter()
+                    .filter(|(id, _)| user_ids.contains(id.as_str()))
+                    .map(|(_, user)| user.clone())
+                    .collect()
+            })
+    }
+
     /// 分页返回用户列表；数据库模式下将状态、用户名搜索、排序、余额联查和分页下推到 SQL。
     pub async fn user_page(
         &self,
@@ -1233,6 +1257,35 @@ async fn query_usernames_for_ids(
             Ok((id, username))
         })
         .collect()
+}
+
+/// 数据库模式下按用户 ID 批量读取用户摘要，避免后台列表为了补代理信息全量扫描用户表。
+async fn query_users_for_ids(
+    database: &BusinessDatabase,
+    user_ids: &[String],
+) -> ApiResult<Vec<UserSummary>> {
+    let rows = sqlx::query(
+        "SELECT u.id, u.username, u.email, u.avatar_url, u.contact_qq, u.kind, u.status,
+                COALESCE(account.available_balance_minor, u.balance_minor) AS balance_minor,
+                u.agent_id, u.invite_code,
+                COALESCE(u.registered_ip, '') AS registered_ip,
+                COALESCE(u.register_country, '') AS register_country,
+                COALESCE(u.register_region, '') AS register_region,
+                COALESCE(u.register_city, '') AS register_city,
+                COALESCE(u.register_geo_source, 'unknown') AS register_geo_source,
+                to_char(u.created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at
+         FROM users u
+         LEFT JOIN financial_accounts account ON account.user_id = u.id
+         WHERE u.id = ANY($1::text[])",
+    )
+    .bind(user_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户展示数据读取失败".to_string()))?;
+
+    rows.into_iter()
+        .map(user_summary_from_row)
+        .collect::<ApiResult<Vec<_>>>()
 }
 
 /// 归一化用户 ID 集合，去重并移除空值。
@@ -2601,14 +2654,16 @@ fn normalize_registration_location(
             };
         }
     } else {
-        let server_country = if location.source == "ip" && !location.registered_ip.is_empty() {
-            location.country.trim().to_string()
+        let has_server_ip_location = location.source == "ip" && !location.registered_ip.is_empty();
+        if has_server_ip_location {
+            location.country = location.country.trim().to_string();
+            location.region = location.region.trim().to_string();
+            location.city = location.city.trim().to_string();
         } else {
-            String::new()
-        };
-        location.country = server_country;
-        location.region.clear();
-        location.city.clear();
+            location.country.clear();
+            location.region.clear();
+            location.city.clear();
+        }
         location.source = if location.registered_ip.is_empty() {
             "unknown".to_string()
         } else {
@@ -3931,7 +3986,7 @@ mod tests {
         assert_eq!(user.registration_location.city, "");
         assert_eq!(user.registration_location.source, "ip");
     }
-    /// 验证服务端从可信代理头写入的 IP 国家字段会保留。
+    /// 验证服务端从可信代理头写入的 IP 国家、省份和城市字段会保留。
     #[tokio::test]
     async fn access_repository_keeps_server_ip_country_registration_location() {
         let access = AccessRepository::memory_seeded();
@@ -3946,8 +4001,8 @@ mod tests {
                 registration_location: Some(UserRegistrationLocation {
                     registered_ip: "2409:8950:5353:80:c46d:c9ff:fec7:4f38".to_string(),
                     country: "中国".to_string(),
-                    region: "客户端区域".to_string(),
-                    city: "客户端城市".to_string(),
+                    region: "广东".to_string(),
+                    city: "深圳".to_string(),
                     source: "ip".to_string(),
                 }),
             })
@@ -3959,8 +4014,8 @@ mod tests {
             "2409:8950:5353:80:c46d:c9ff:fec7:4f38"
         );
         assert_eq!(user.registration_location.country, "中国");
-        assert_eq!(user.registration_location.region, "");
-        assert_eq!(user.registration_location.city, "");
+        assert_eq!(user.registration_location.region, "广东");
+        assert_eq!(user.registration_location.city, "深圳");
         assert_eq!(user.registration_location.source, "ip");
     }
     /// 验证明确 GPS 来源的注册地会被保留。

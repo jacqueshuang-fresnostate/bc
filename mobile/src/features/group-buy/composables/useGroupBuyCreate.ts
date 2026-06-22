@@ -3,6 +3,7 @@ import { storeToRefs } from 'pinia'
 import { showToast } from 'vant'
 import { errorMessage } from '../../../api/user'
 import { useMobileUserDataStore } from '../../../stores/mobileUserData'
+import { sortByCreatedTimeDesc } from '../../../utils/timeSort'
 import { createGroupBuyPlan, fetchGroupBuyCreateOptions, fetchMyGroupBuys } from '../api'
 import { buildCreateGroupBuyPayload, calculateCreatePaymentAmount, calculateFixedShareCount, calculateRequiredSelfShares, createDefaultGroupBuyForm, normalizeItems, normalizeOptionPayload } from '../presentation'
 import type { GroupBuySettings, SelectOption } from '../types'
@@ -140,7 +141,7 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
       const nextPage = append ? myGroupBuysPage.value + 1 : 1
       const res = await fetchMyGroupBuys({ page: nextPage, pageSize: MY_GROUP_BUY_PAGE_SIZE })
       const items = normalizeItems(res.data)
-      myGroupBuys.value = append ? mergePlans(myGroupBuys.value, items) : items
+      myGroupBuys.value = sortByCreatedTimeDesc(append ? mergePlans(myGroupBuys.value, items) : items)
       myGroupBuysPage.value = items.length > 0 ? nextPage : (append ? myGroupBuysPage.value : 0)
       myGroupBuysHasMore.value = items.length >= MY_GROUP_BUY_PAGE_SIZE
     } catch (e: any) {

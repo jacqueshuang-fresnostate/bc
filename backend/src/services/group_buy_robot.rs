@@ -99,6 +99,8 @@ fn empty_group_buy_robot_run(now: String) -> GroupBuyRobotRun {
         created_orders: Vec::new(),
         ledger_entries: Vec::new(),
         skipped_items: Vec::new(),
+        protected_plan_ids: Vec::new(),
+        protected_issue_keys: Vec::new(),
     }
 }
 
@@ -109,11 +111,58 @@ fn append_group_buy_robot_run(target: &mut GroupBuyRobotRun, source: GroupBuyRob
     target.created_orders.extend(source.created_orders);
     target.ledger_entries.extend(source.ledger_entries);
     target.skipped_items.extend(source.skipped_items);
+    extend_unique_strings(&mut target.protected_plan_ids, source.protected_plan_ids);
+    extend_unique_strings(
+        &mut target.protected_issue_keys,
+        source.protected_issue_keys,
+    );
 }
 
 /// 生成同一彩种同一期号的并发互斥键，避免多个机器人同时补同一个期号。
 fn group_buy_robot_issue_key(lottery_id: &str, issue: &str) -> String {
     format!("{lottery_id}:{issue}")
+}
+
+/// 向字符串列表追加去重值，用于合并并发机器人内部保护标记。
+fn push_unique_string(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
+/// 合并字符串列表并保持首次出现顺序，避免调度保护项重复膨胀。
+fn extend_unique_strings(target: &mut Vec<String>, values: Vec<String>) {
+    for value in values {
+        push_unique_string(target, value);
+    }
+}
+
+/// 标记合买计划在本轮不能流单退款，对应期号也不能继续开奖。
+fn protect_group_buy_plan(run: &mut GroupBuyRobotRun, plan: &GroupBuyPlan) {
+    push_unique_string(&mut run.protected_plan_ids, plan.id.clone());
+    push_unique_string(
+        &mut run.protected_issue_keys,
+        group_buy_robot_issue_key(&plan.lottery_id, &plan.issue),
+    );
+}
+
+/// 选择流单前兜底机器人，优先使用绑定当前彩种的配置，没有绑定时使用任意启用合买机器人。
+fn guard_robot_for_lottery<'a>(
+    robots: &'a [RobotConfigSummary],
+    lottery_id: &str,
+) -> Option<&'a RobotConfigSummary> {
+    robots
+        .iter()
+        .find(|robot| {
+            robot.kind == RobotKind::GroupBuy
+                && robot.status == RobotStatus::Enabled
+                && robot.lottery_ids.iter().any(|id| id == lottery_id)
+        })
+        .or_else(|| {
+            robots.iter().find(|robot| {
+                robot.kind == RobotKind::GroupBuy && robot.status == RobotStatus::Enabled
+            })
+        })
 }
 
 /// 执行全部已启用的合买机器人，并返回本轮创建、满单、成单和跳过明细。
@@ -379,19 +428,24 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
             );
             continue;
         }
-        let Some(robot) = robots.iter().find(|robot| {
-            robot.kind == RobotKind::GroupBuy
-                && robot.status == RobotStatus::Enabled
-                && robot.lottery_ids.iter().any(|id| id == &lottery.id)
-        }) else {
+        let Some(robot) = guard_robot_for_lottery(&robots, &lottery.id) else {
             tracing::warn!(
                 "合买计划ID" = %plan.id,
                 "彩种ID" = %plan.lottery_id,
                 "期号" = %plan.issue,
-                "合买兜底补满没有可用机器人，计划将进入流单退款检查"
+                "合买兜底补满没有可用机器人，本轮暂缓流单和开奖等待下一轮兜底"
             );
+            protect_group_buy_plan(&mut run, &plan);
             continue;
         };
+        if !robot.lottery_ids.iter().any(|id| id == &lottery.id) {
+            tracing::warn!(
+                "机器人ID" = %robot.id,
+                "彩种ID" = %lottery.id,
+                "期号" = %plan.issue,
+                "合买兜底补满使用未绑定当前彩种的启用机器人兜底"
+            );
+        }
 
         if let Err(error) = fill_robot_plan(
             &mut run,
@@ -416,8 +470,9 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
                 "彩种ID" = %plan.lottery_id,
                 "期号" = %plan.issue,
                 error = %error.log_message(),
-                "合买兜底补满失败，计划将进入流单退款检查"
+                "合买兜底补满失败，本轮暂缓流单和开奖等待下一轮兜底"
             );
+            protect_group_buy_plan(&mut run, &plan);
             push_skipped(
                 &mut run,
                 robot,
@@ -473,11 +528,8 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
                     error = %error.log_message(),
                     "合买已满单补建订单失败，计划暂时保留等待下一轮"
                 );
-                if let Some(robot) = robots.iter().find(|robot| {
-                    robot.kind == RobotKind::GroupBuy
-                        && robot.status == RobotStatus::Enabled
-                        && robot.lottery_ids.iter().any(|id| id == &lottery.id)
-                }) {
+                protect_group_buy_plan(&mut run, &plan);
+                if let Some(robot) = guard_robot_for_lottery(&robots, &lottery.id) {
                     push_skipped(
                         &mut run,
                         robot,
@@ -1152,7 +1204,7 @@ fn users_with_random_robot_display_name(users: &[UserSummary]) -> Vec<UserSummar
         .collect()
 }
 
-/// 生成机器人对外展示的中文姓名，算法参考 random-zh-name 的“姓 + 名”组合方式。
+/// 使用 random-zh 生成机器人对外展示的中文姓名，按“姓 + 名”组合。
 fn random_robot_display_name() -> String {
     let surname = random_zh(RandomZhOptions {
         count: Some(1),

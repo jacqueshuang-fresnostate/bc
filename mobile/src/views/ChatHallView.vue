@@ -88,8 +88,8 @@ function maskedChatHallUsername(value: string) {
   const normalized = String(value || '').trim()
   if (!normalized) return '会员'
   const chars = Array.from(normalized)
-  const visibleCount = chars.length >= 4 ? 4 : Math.floor(chars.length / 2)
-  return `${chars.slice(0, visibleCount).join('')}${'*'.repeat(chars.length - visibleCount)}`
+  const visibleCount = chars.length >= 4 ? 4 : Math.max(1, Math.floor(chars.length / 2))
+  return chars.slice(0, visibleCount).join('')
 }
 
 function messageDisplayName(message: ChatHallMessage) {

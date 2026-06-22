@@ -106,4 +106,10 @@ pub struct GroupBuyRobotRun {
     pub ledger_entries: Vec<LedgerEntry>,
     /// 本轮机器人跳过项及原因。
     pub skipped_items: Vec<GroupBuyRobotSkippedItem>,
+    /// 本轮兜底失败但不能立即流单的合买计划 ID，仅调度器内部使用。
+    #[serde(skip_serializing)]
+    pub protected_plan_ids: Vec<String>,
+    /// 本轮兜底失败但不能立即开奖的彩种期号键，仅调度器内部使用。
+    #[serde(skip_serializing)]
+    pub protected_issue_keys: Vec<String>,
 }

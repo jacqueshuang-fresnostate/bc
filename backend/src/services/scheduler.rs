@@ -1,7 +1,7 @@
 //! 开奖调度服务，处理常驻调度配置、启动/关闭和历史记录
 
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
@@ -28,9 +28,9 @@ use crate::{
     services::{
         access::AccessRepository,
         automation::{
-            close_due_draw_issues, draw_due_issues_with_progress, merge_draw_automation_runs,
-            refund_closed_unfilled_group_buys, DrawIssueSettlementProgress,
-            DrawIssueSettlementProgressCallback,
+            close_due_draw_issues, draw_due_issues_with_progress_excluding_group_buy_issues,
+            merge_draw_automation_runs, refund_closed_unfilled_group_buys_with_protected_plans,
+            DrawIssueSettlementProgress, DrawIssueSettlementProgressCallback,
         },
         business_database::{
             enum_from_string, enum_to_string, from_json, to_json, BusinessDatabase,
@@ -1252,14 +1252,25 @@ async fn run_draw_scheduler_due_once_with_realtime(
     )
     .await?;
     let guard_phase_ms = guard_phase_started.elapsed().as_millis();
+    let protected_plan_ids = robot_run
+        .protected_plan_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let protected_issue_keys = robot_run
+        .protected_issue_keys
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
 
     let refund_phase_started = Instant::now();
-    let refund_run = refund_closed_unfilled_group_buys(
+    let refund_run = refund_closed_unfilled_group_buys_with_protected_plans(
         draws,
         lotteries,
         finance,
         group_buys,
         DrawAutomationRunRequest { now: now.clone() },
+        &protected_plan_ids,
     )
     .await?;
     let refund_phase_ms = refund_phase_started.elapsed().as_millis();
@@ -1271,7 +1282,7 @@ async fn run_draw_scheduler_due_once_with_realtime(
     let draw_phase_started = Instant::now();
     let draw_progress_callback =
         realtime.map(|realtime| draw_settlement_progress_callback(realtime, finance));
-    let draw_run = draw_due_issues_with_progress(
+    let draw_run = draw_due_issues_with_progress_excluding_group_buy_issues(
         draws,
         lotteries,
         orders,
@@ -1279,6 +1290,7 @@ async fn run_draw_scheduler_due_once_with_realtime(
         group_buys,
         DrawAutomationRunRequest { now: now.clone() },
         draw_progress_callback,
+        &protected_issue_keys,
     )
     .await?;
     let draw_phase_ms = draw_phase_started.elapsed().as_millis();
@@ -1376,6 +1388,8 @@ fn empty_group_buy_robot_run(now: String) -> GroupBuyRobotRun {
         created_orders: Vec::new(),
         ledger_entries: Vec::new(),
         skipped_items: Vec::new(),
+        protected_plan_ids: Vec::new(),
+        protected_issue_keys: Vec::new(),
     }
 }
 
@@ -1401,7 +1415,18 @@ fn merge_group_buy_robot_runs(
     first.created_orders.extend(second.created_orders);
     first.ledger_entries.extend(second.ledger_entries);
     first.skipped_items.extend(second.skipped_items);
+    extend_unique_strings(&mut first.protected_plan_ids, second.protected_plan_ids);
+    extend_unique_strings(&mut first.protected_issue_keys, second.protected_issue_keys);
     first
+}
+
+/// 合并调度内部字符串标记并去重，避免并发机器人重复保护同一期号。
+fn extend_unique_strings(target: &mut Vec<String>, values: Vec<String>) {
+    for value in values {
+        if !target.iter().any(|existing| existing == &value) {
+            target.push(value);
+        }
+    }
 }
 /// 确保平台或人工彩种存在足够的未来期号。
 async fn ensure_non_api_future_draw_issues(
@@ -1678,6 +1703,7 @@ mod tests {
             group_buy::{CreateGroupBuyPlanRequest, GroupBuyPlanStatus},
             lottery::{DrawMode, DrawSchedule},
             order::OrderStatus,
+            robot::RobotStatus,
         },
         services::{
             access::AccessRepository,
@@ -2074,6 +2100,197 @@ mod tests {
             .iter()
             .any(|filled| filled.id == plan.id && filled.order_id.is_some()));
         assert!(run.automation_run.ledger_entries.is_empty());
+    }
+
+    /// 验证未绑定当前彩种的启用合买机器人也会作为流单前兜底，避免新彩种漏绑导致不满单。
+    #[tokio::test]
+    async fn scheduler_guard_uses_enabled_group_buy_robot_for_unbound_lottery() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "au5").await;
+        let mut lottery = lotteries.get("au5").await.expect("lottery exists");
+        lottery.group_buy.enabled = true;
+        lotteries
+            .update("au5", lottery.clone())
+            .await
+            .expect("lottery group buy can be enabled");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
+        let users = access.snapshot().await.expect("access can load").users;
+        let config = enabled_config(1);
+        let issue = draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "AU5-GROUPBUY-20260602201500".to_string(),
+                    scheduled_at: "2026-06-02 20:15:00".to_string(),
+                    sale_closed_at: "2026-06-02 20:14:30".to_string(),
+                },
+            )
+            .await
+            .expect("draw issue can be created");
+        draws.close(&issue.id).await.expect("issue can be closed");
+        let plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-USER-AU5-GUARD".to_string(),
+                    lottery_id: lottery.id.clone(),
+                    issue: issue.issue.clone(),
+                    rule_code: "fiveFrontDirect".to_string(),
+                    title: "未绑定彩种兜底合买".to_string(),
+                    numbers: "1|2|3".to_string(),
+                    initiator_user_id: "U10001".to_string(),
+                    total_amount_minor: 5_000,
+                    initiator_amount_minor: 1_000,
+                    note: "未绑定彩种兜底测试".to_string(),
+                },
+                std::slice::from_ref(&lottery),
+                &users,
+            )
+            .await
+            .expect("user group buy plan can be created");
+        finance
+            .debit_group_buy(
+                &plan.initiator_user_id,
+                plan.filled_amount_minor,
+                "G-USER-AU5-GUARD-P001",
+                &plan.id,
+            )
+            .await
+            .expect("initiator group buy debit can be written");
+
+        let run = run_draw_scheduler_once(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &robots,
+            &access,
+            &config,
+            "2026-06-02 20:14:45".to_string(),
+        )
+        .await
+        .expect("scheduler can use fallback robot before refund");
+        let stored_plan = group_buys.get(&plan.id).await.expect("plan exists");
+
+        assert_eq!(stored_plan.status, GroupBuyPlanStatus::Filled);
+        assert!(stored_plan.order_id.is_some());
+        assert!(run
+            .robot_run
+            .filled_plans
+            .iter()
+            .any(|filled| filled.id == plan.id && filled.order_id.is_some()));
+        assert!(run.robot_run.protected_plan_ids.is_empty());
+        assert!(run.automation_run.ledger_entries.is_empty());
+    }
+
+    /// 验证没有可用合买机器人时，调度器暂缓流单和开奖，避免未满单状态被同轮固化。
+    #[tokio::test]
+    async fn scheduler_protects_group_buy_when_guard_robot_unavailable() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "ssc60").await;
+        let mut lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.group_buy.enabled = true;
+        lotteries
+            .update("ssc60", lottery.clone())
+            .await
+            .expect("lottery group buy can be enabled");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        robots
+            .set_status("R-GROUP-001", RobotStatus::Disabled)
+            .await
+            .expect("group buy robot can be disabled");
+        let access = AccessRepository::memory_seeded();
+        let users = access.snapshot().await.expect("access can load").users;
+        let config = enabled_config(1);
+        let issue = draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "GROUPBUY-PROTECT-20260602201600".to_string(),
+                    scheduled_at: "2026-06-02 20:16:00".to_string(),
+                    sale_closed_at: "2026-06-02 20:15:30".to_string(),
+                },
+            )
+            .await
+            .expect("draw issue can be created");
+        draws.close(&issue.id).await.expect("issue can be closed");
+        let plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-USER-GUARD-PROTECTED".to_string(),
+                    lottery_id: lottery.id.clone(),
+                    issue: issue.issue.clone(),
+                    rule_code: "fiveFrontDirect".to_string(),
+                    title: "无可用机器人保护合买".to_string(),
+                    numbers: "1|2|3".to_string(),
+                    initiator_user_id: "U10001".to_string(),
+                    total_amount_minor: 5_000,
+                    initiator_amount_minor: 1_000,
+                    note: "无可用机器人保护测试".to_string(),
+                },
+                std::slice::from_ref(&lottery),
+                &users,
+            )
+            .await
+            .expect("user group buy plan can be created");
+        finance
+            .debit_group_buy(
+                &plan.initiator_user_id,
+                plan.filled_amount_minor,
+                "G-USER-GUARD-PROTECTED-P001",
+                &plan.id,
+            )
+            .await
+            .expect("initiator group buy debit can be written");
+
+        let run = run_draw_scheduler_once(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &robots,
+            &access,
+            &config,
+            "2026-06-02 20:16:05".to_string(),
+        )
+        .await
+        .expect("scheduler can protect group buy without robot");
+        let stored_issue = draws.get(&issue.id).await.expect("issue exists");
+        let stored_plan = group_buys.get(&plan.id).await.expect("plan exists");
+
+        assert_eq!(stored_issue.status, DrawIssueStatus::Closed);
+        assert_eq!(stored_plan.status, GroupBuyPlanStatus::Open);
+        assert_eq!(stored_plan.order_id, None);
+        assert!(run
+            .robot_run
+            .protected_plan_ids
+            .iter()
+            .any(|plan_id| plan_id == &plan.id));
+        assert!(run
+            .robot_run
+            .protected_issue_keys
+            .iter()
+            .any(|key| key == &format!("{}:{}", lottery.id, issue.issue)));
+        assert!(run.automation_run.drawn_issues.is_empty());
+        assert!(run.automation_run.ledger_entries.is_empty());
+        assert!(run
+            .automation_run
+            .skipped_issues
+            .iter()
+            .any(|skipped| skipped.draw_issue_id == issue.id
+                && skipped.reason.contains("合买兜底失败")));
     }
 
     /// 验证调度器晚于开奖时间执行时，仍会先补满封盘用户合买再开奖结算。

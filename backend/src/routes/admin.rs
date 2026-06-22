@@ -1611,6 +1611,34 @@ struct AdminLedgerEntry {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台充值订单展示结构，在订单摘要外补充上级代理信息，便于财务核对代理归属。
+struct AdminRechargeOrderSummary {
+    #[serde(flatten)]
+    order: RechargeOrderSummary,
+    agent_id: Option<String>,
+    agent_username: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台提现申请展示结构，在提现摘要外补充上级代理信息，便于财务审核时识别上下级。
+struct AdminWithdrawalOrderSummary {
+    #[serde(flatten)]
+    order: WithdrawalOrderSummary,
+    agent_id: Option<String>,
+    agent_username: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+/// 后台财务列表当前页用户展示信息，统一承载用户名和上级代理资料。
+struct AdminFinanceUserDisplay {
+    username: Option<String>,
+    agent_id: Option<String>,
+    agent_username: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 /// 后台结算明细展示结构，在订单结算结果外补充用户名。
 struct AdminOrderSettlement {
     #[serde(flatten)]
@@ -2936,6 +2964,63 @@ async fn usernames_for_user_page(
     state.access.usernames_for_ids(&user_ids).await
 }
 
+/// 只读取当前页用户和上级代理资料，供财务三类列表统一展示“上级代理”列。
+async fn finance_user_displays_for_ids(
+    state: &AppState,
+    user_ids: &[String],
+) -> ApiResult<BTreeMap<String, AdminFinanceUserDisplay>> {
+    let users = state.access.users_for_ids(user_ids).await?;
+    let agent_ids = users
+        .iter()
+        .filter_map(|user| user.agent_id.clone())
+        .collect::<Vec<_>>();
+    let agent_usernames = state.access.usernames_for_ids(&agent_ids).await?;
+
+    Ok(users
+        .into_iter()
+        .map(|user| {
+            let agent_id = user.agent_id.clone();
+            let agent_username = agent_id
+                .as_ref()
+                .and_then(|agent_id| agent_usernames.get(agent_id).cloned());
+            (
+                user.id,
+                AdminFinanceUserDisplay {
+                    username: Some(user.username),
+                    agent_id,
+                    agent_username,
+                },
+            )
+        })
+        .collect())
+}
+
+/// 使用已加载的当前页用户展示映射包装充值订单。
+fn admin_recharge_order_with_user_display(
+    order: RechargeOrderSummary,
+    displays: &BTreeMap<String, AdminFinanceUserDisplay>,
+) -> AdminRechargeOrderSummary {
+    let display = displays.get(&order.user_id).cloned().unwrap_or_default();
+    AdminRechargeOrderSummary {
+        order,
+        agent_id: display.agent_id,
+        agent_username: display.agent_username,
+    }
+}
+
+/// 使用已加载的当前页用户展示映射包装提现申请。
+fn admin_withdrawal_order_with_user_display(
+    order: WithdrawalOrderSummary,
+    displays: &BTreeMap<String, AdminFinanceUserDisplay>,
+) -> AdminWithdrawalOrderSummary {
+    let display = displays.get(&order.user_id).cloned().unwrap_or_default();
+    AdminWithdrawalOrderSummary {
+        order,
+        agent_id: display.agent_id,
+        agent_username: display.agent_username,
+    }
+}
+
 /// 返回后台管理员账号列表。
 async fn list_admins(
     State(state): State<AppState>,
@@ -3641,15 +3726,20 @@ async fn list_financial_accounts(
         .iter()
         .map(|account| account.user_id.clone())
         .collect::<Vec<_>>();
-    let usernames = state.access.usernames_for_ids(&user_ids).await?;
+    let displays = finance_user_displays_for_ids(&state, &user_ids).await?;
     let accounts = page
         .items
         .into_iter()
-        .map(|account| AdminFinancialAccountSummary {
-            username: usernames.get(&account.user_id).cloned(),
-            user_id: account.user_id,
-            available_balance_minor: account.available_balance_minor,
-            frozen_balance_minor: account.frozen_balance_minor,
+        .map(|account| {
+            let display = displays.get(&account.user_id).cloned().unwrap_or_default();
+            AdminFinancialAccountSummary {
+                username: display.username,
+                agent_id: display.agent_id,
+                agent_username: display.agent_username,
+                user_id: account.user_id,
+                available_balance_minor: account.available_balance_minor,
+                frozen_balance_minor: account.frozen_balance_minor,
+            }
         })
         .collect::<Vec<_>>();
 
@@ -3716,13 +3806,30 @@ async fn clear_ledger_entries(
 async fn list_recharge_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
-) -> ApiResult<Json<ApiEnvelope<FinancePage<RechargeOrderSummary>>>> {
+) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminRechargeOrderSummary>>>> {
     let page = state
         .recharges
         .list_page(PageRequest::new(query.page, query.page_size))
         .await?;
+    let user_ids = page
+        .items
+        .iter()
+        .map(|order| order.user_id.clone())
+        .collect::<Vec<_>>();
+    let displays = finance_user_displays_for_ids(&state, &user_ids).await?;
+    let items = page
+        .items
+        .into_iter()
+        .map(|order| admin_recharge_order_with_user_display(order, &displays))
+        .collect();
 
-    Ok(Json(ApiEnvelope::success(page.into_finance_page())))
+    Ok(Json(ApiEnvelope::success(FinancePage {
+        items,
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
+    })))
 }
 
 /// 导出全部充值订单为 CSV 文件，供后台财务留档或离线核对。
@@ -3768,13 +3875,30 @@ async fn clear_recharge_orders(
 async fn list_withdrawal_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
-) -> ApiResult<Json<ApiEnvelope<FinancePage<WithdrawalOrderSummary>>>> {
+) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminWithdrawalOrderSummary>>>> {
     let page = state
         .withdrawals
         .list_page(PageRequest::new(query.page, query.page_size))
         .await?;
+    let user_ids = page
+        .items
+        .iter()
+        .map(|order| order.user_id.clone())
+        .collect::<Vec<_>>();
+    let displays = finance_user_displays_for_ids(&state, &user_ids).await?;
+    let items = page
+        .items
+        .into_iter()
+        .map(|order| admin_withdrawal_order_with_user_display(order, &displays))
+        .collect();
 
-    Ok(Json(ApiEnvelope::success(page.into_finance_page())))
+    Ok(Json(ApiEnvelope::success(FinancePage {
+        items,
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
+    })))
 }
 
 /// 一键清除提现申请历史；存在待审核申请时由仓储拒绝执行。
@@ -4692,7 +4816,8 @@ struct SaleStatusRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        admin_login_audit_context_from_headers, admin_user_summary_with_usernames,
+        admin_login_audit_context_from_headers, admin_recharge_order_with_user_display,
+        admin_user_summary_with_usernames, admin_withdrawal_order_with_user_display,
         agent_rebate_records_from_data, agent_rebate_summary_from_data,
         align_draw_issue_plan_after_sale_on, filter_users_by_status, filter_users_by_username,
         finance_overview_for_query, first_admin_audit_ip, normalize_admin_draw_control_target,
@@ -4701,8 +4826,8 @@ mod tests {
         should_include_user_scoped_record, should_match_user_filter,
         sort_agent_rebate_records_by_time_desc, sort_financial_accounts_by_latest_user_desc,
         sort_ledger_entries_by_time_desc, sort_recharge_orders_by_time_desc, sort_users,
-        sort_withdrawal_orders_by_time_desc, username_map_from_users, FinancePageQuery,
-        UserListQuery,
+        sort_withdrawal_orders_by_time_desc, username_map_from_users, AdminFinanceUserDisplay,
+        FinancePageQuery, UserListQuery,
     };
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
@@ -5027,6 +5152,33 @@ mod tests {
 
         assert_eq!(summary.user.agent_id.as_deref(), Some("U90001"));
         assert_eq!(summary.agent_username.as_deref(), Some("agent_alpha"));
+    }
+
+    #[test]
+    /// 财务充值和提现列表会在订单摘要外补充上级代理信息。
+    fn finance_order_wrappers_include_agent_display() {
+        let displays = BTreeMap::from([(
+            "U10001".to_string(),
+            AdminFinanceUserDisplay {
+                agent_id: Some("U90001".to_string()),
+                agent_username: Some("agent_alpha".to_string()),
+                username: Some("alice".to_string()),
+            },
+        )]);
+
+        let recharge = admin_recharge_order_with_user_display(
+            test_recharge_order("R10001", "2026-06-22 10:00:00"),
+            &displays,
+        );
+        let withdrawal = admin_withdrawal_order_with_user_display(
+            test_withdrawal_order("W10001", "2026-06-22 10:00:00"),
+            &displays,
+        );
+
+        assert_eq!(recharge.agent_id.as_deref(), Some("U90001"));
+        assert_eq!(recharge.agent_username.as_deref(), Some("agent_alpha"));
+        assert_eq!(withdrawal.agent_id.as_deref(), Some("U90001"));
+        assert_eq!(withdrawal.agent_username.as_deref(), Some("agent_alpha"));
     }
 
     #[test]
@@ -5524,6 +5676,8 @@ mod tests {
     /// 构造测试用资金账户摘要。
     fn test_financial_account(user_id: &str) -> AdminFinancialAccountSummary {
         AdminFinancialAccountSummary {
+            agent_id: None,
+            agent_username: None,
             available_balance_minor: 1000,
             frozen_balance_minor: 0,
             user_id: user_id.to_string(),

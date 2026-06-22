@@ -404,10 +404,11 @@ export function FinanceManagementPage({
             </div>
           ) : accounts.items.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-left text-sm">
+              <table className="w-full min-w-[980px] text-left text-sm">
                 <thead className="border-b border-line text-xs text-slate-500">
                   <tr>
                     <th className="py-2 pr-4 font-medium">用户</th>
+                    <th className="py-2 pr-4 font-medium">上级代理</th>
                     <th className="py-2 pr-4 font-medium">可用余额</th>
                     <th className="py-2 pr-4 font-medium">冻结余额</th>
                     <th className="py-2 pr-4 font-medium">账户总额</th>
@@ -423,6 +424,12 @@ export function FinanceManagementPage({
                           {account.username ?? '未知用户'}
                         </div>
                         <div className="mt-1 text-xs text-slate-400">{account.userId}</div>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <AgentCell
+                          agentId={account.agentId}
+                          agentUsername={account.agentUsername}
+                        />
                       </td>
                       <td className="py-3 pr-4 text-slate-600">
                         {formatMoney(account.availableBalanceMinor)}
@@ -517,11 +524,12 @@ export function FinanceManagementPage({
           </div>
         ) : rechargeOrders.items.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1280px] text-left text-sm">
+            <table className="w-full min-w-[1400px] text-left text-sm">
               <thead className="border-b border-line text-xs text-slate-500">
                 <tr>
                   <th className="py-2 pr-4 font-medium">订单</th>
                   <th className="py-2 pr-4 font-medium">用户</th>
+                  <th className="py-2 pr-4 font-medium">上级代理</th>
                   <th className="py-2 pr-4 font-medium">渠道</th>
                   <th className="py-2 pr-4 font-medium">金额</th>
                   <th className="py-2 pr-4 font-medium">状态</th>
@@ -547,6 +555,12 @@ export function FinanceManagementPage({
                     <td className="py-3 pr-4">
                       <div className="font-medium text-slate-700">{order.username}</div>
                       <div className="mt-1 text-xs text-slate-400">{order.userId}</div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <AgentCell
+                        agentId={order.agentId}
+                        agentUsername={order.agentUsername}
+                      />
                     </td>
                     <td className="py-3 pr-4">
                       <Tag color={order.channel === 'rainbowEpay' ? 'blue' : 'teal'}>
@@ -653,11 +667,12 @@ export function FinanceManagementPage({
           </div>
         ) : withdrawalOrders.items.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1180px] text-left text-sm">
+            <table className="w-full min-w-[1300px] text-left text-sm">
               <thead className="border-b border-line text-xs text-slate-500">
                 <tr>
                   <th className="py-2 pr-4 font-medium">申请</th>
                   <th className="py-2 pr-4 font-medium">用户</th>
+                  <th className="py-2 pr-4 font-medium">上级代理</th>
                   <th className="py-2 pr-4 font-medium">金额</th>
                   <th className="py-2 pr-4 font-medium">状态</th>
                   <th className="py-2 pr-4 font-medium">提现方式</th>
@@ -678,6 +693,12 @@ export function FinanceManagementPage({
                     <td className="py-3 pr-4">
                       <div className="font-medium text-slate-700">{order.username}</div>
                       <div className="mt-1 text-xs text-slate-400">{order.userId}</div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <AgentCell
+                        agentId={order.agentId}
+                        agentUsername={order.agentUsername}
+                      />
                     </td>
                     <td className="py-3 pr-4 font-semibold text-rose-700">
                       {formatMoney(order.amountMinor)}
@@ -997,6 +1018,24 @@ function Field({ children, label }: FieldProps) {
       <span className="text-xs font-medium text-slate-500">{label}</span>
       {children}
     </label>
+  );
+}
+
+interface AgentCellProps {
+  agentId?: string | null;
+  agentUsername?: string | null;
+}
+
+function AgentCell({ agentId, agentUsername }: AgentCellProps) {
+  if (!agentId) {
+    return <span className="text-slate-400">无</span>;
+  }
+
+  return (
+    <div className="min-w-0">
+      <div className="font-medium text-slate-700">{agentUsername ?? '未知代理'}</div>
+      <div className="mt-1 text-xs text-slate-400">{agentId}</div>
+    </div>
   );
 }
 

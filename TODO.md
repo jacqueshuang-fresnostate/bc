@@ -1,5 +1,40 @@
 # TODO
 
+## 2026-06-22 17:28 HKT 手机端我的注单和我的合买倒序
+
+- 完成任务：手机端“我的记录”的“我的注单”和“我的合买”统一按创建时间倒序展示。
+- 解决问题：部分分页合并场景只做去重不重新排序，未成单合买在内存模式下还可能沿用期号排序，导致用户看到的记录不是最新在最前面。
+- 实施内容：新增手机端通用 `sortByCreatedTimeDesc` 时间排序工具，兼容 `createdAt`、`created_at` 和历史 `unix:` 时间；`useBetOrders` 和 `useGroupBuyCreate` 在加载/追加分页后统一排序；后端合买仓储的未成单合买分页内存路径改为创建时间倒序，并补充对应单测；架构说明同步记录前后端排序规则。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy_repository_unformed_user_page_sorts_by_created_at -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、`pnpm --dir mobile build` 和 `git diff --check` 均通过。
+
+## 2026-06-22 17:13 HKT 财务管理列表显示上级代理
+
+- 完成任务：后台财务管理“账户与调账、充值订单、提现管理”三张列表新增上级代理显示。
+- 解决问题：财务审核充值、提现或执行调账时，此前只能看到当前用户，无法直接判断该用户属于哪个上级代理；无代理用户也没有统一的空值展示口径。
+- 实施内容：后端访问仓储新增按当前页用户 ID 批量读取用户资料；后台财务接口在资金账户、充值订单、提现申请列表中补充 `agentId`、`agentUsername`；管理端财务页新增共享 `AgentCell`，三张表统一显示“代理用户名 + 代理 ID”，无上级代理时显示“无”；架构说明同步更新接口与展示规则。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml finance_order_wrappers_include_agent_display -- --nocapture`、`pnpm --dir admin build` 均通过。
+
+## 2026-06-22 17:03 HKT 注册地支持 Cloudflare 省市头
+
+- 完成任务：修复用户注册地只显示“中国”而不显示省份、城市的问题。
+- 解决问题：后端此前只读取 `CF-IPCountry`，并且 `source=ip` 的注册地入库前会清空 `region/city`，因此 Cloudflare 代理下最多只能看到国家；即使后续代理透传省市，也会被清洗掉。
+- 实施内容：注册接口新增解析 `CF-IPRegion`、`CF-IPCity`，并兼容百分号编码地名；`RegistrationClientInfo` 增加服务端可信省市字段；访问控制仓储允许 `source=ip` 且存在服务端 IP 时保留国家、省份和城市；Docker Nginx 反代新增透传 `CF-IPRegion`、`CF-IPCity`；架构说明同步更新注册来源审计规则和边界。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml registration_client_info -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml registration_location -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml access_repository_keeps_server_ip_country_registration_location -- --nocapture` 和 `git diff --check` 均通过。
+
+## 2026-06-22 16:58 HKT 聊天大厅用户名只截断展示
+
+- 完成任务：调整聊天大厅玩家名展示规则，用户端公开名称只显示可见前缀，不再补星号。
+- 解决问题：此前聊天大厅脱敏规则会显示“前四位 + 星号”或“短昵称前半段 + 星号”，当前要求为“只显示玩家名字前四位，低于 4 位就显示一半”，避免界面上出现一串星号。
+- 实施内容：后端 `mask_public_chat_hall_username` 改为 4 位及以上只返回前 4 个字符，2-3 位只返回前 1 个字符，1 位返回自身，空昵称回退“会员”；手机端 `ChatHallView.vue` 的兜底展示函数同步同口径；架构说明更新当前聊天大厅公开展示规则。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml public_chat_hall -- --nocapture`、`pnpm --dir mobile build` 和 `git diff --check` 均通过。
+
+## 2026-06-22 16:54 HKT 合买流单前兜底保护
+
+- 完成任务：修复合买计划封盘后仍可能出现不满单、未成单或同轮被流单/开奖固化的问题。
+- 解决问题：此前兜底机器人只查找绑定当前彩种的合买机器人；新彩种或漏绑彩种在封盘后可能找不到机器人，随后同一轮调度继续进入流单退款和开奖阶段，导致用户合买计划不满单。兜底补满或补建订单失败时，也缺少本轮保护，可能继续被后续阶段处理。
+- 实施内容：合买机器人运行结果新增内部保护计划和保护期号；流单前兜底优先使用绑定当前彩种的启用合买机器人，没有绑定时使用任意启用合买机器人兜底；兜底失败或已满单补建订单失败时，退款阶段跳过保护计划，开奖阶段跳过保护期号，保持期号封盘等待下一轮继续补满；合买仓储新增带保护名单的取消入口；架构说明同步记录保护规则。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml scheduler_guard_uses_enabled_group_buy_robot_for_unbound_lottery -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler_protects_group_buy_when_guard_robot_unavailable -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml scheduler -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet`（402 个测试成功）和 `git diff --check` 均通过。
+
 ## 2026-06-22 07:04 HKT 后台合买计划成单筛选和创建时间排序
 
 - 完成任务：后台合买计划列表新增“全部、已成单、未成单”筛选，并把列表默认排序调整为创建时间倒序。
@@ -4593,6 +4628,13 @@
 ## 2026-06-22 合买机器人展示名随机中文姓名
 
 - 完成任务：将合买机器人对外显示的用户名改为随机中文姓名。
-- 解决问题：机器人发起合买计划时此前会落库固定机器人账号名 `agent_alpha`，用户端或后台详情中容易看出机器人痕迹；用户希望可以使用 `random-zh-name` 风格的中文随机名。
-- 实施内容：确认 `random-zh-name 0.1.0` 当前只提供命令行二进制，不暴露 Rust library API；后端改用其底层 `random-zh 0.1.3` 按“姓 + 名”的方式生成 2 到 4 个中文字符展示名。机器人创建合买计划和机器人补单参与记录时只替换用户快照中的 `username`，真实 `user_id=U90001` 保持不变，资金、过滤和清理逻辑仍按机器人 ID 执行。
+- 解决问题：机器人发起合买计划时此前会落库固定机器人账号名 `agent_alpha`，用户端或后台详情中容易看出机器人痕迹；用户希望直接使用 `random-zh` 生成中文随机名。
+- 实施内容：后端接入 `random-zh 0.1.3`，按“姓 + 名”的方式生成 2 到 4 个中文字符展示名。机器人创建合买计划和机器人补单参与记录时只替换用户快照中的 `username`，真实 `user_id=U90001` 保持不变，资金、过滤和清理逻辑仍按机器人 ID 执行。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture` 均通过。
+
+## 2026-06-22 明确合买机器人中文名依赖为 random-zh
+
+- 完成任务：统一代码注释和项目文档中的机器人中文名生成依赖说明。
+- 解决问题：文档中仍有历史依赖描述，容易让人误以为后端没有直接使用用户指定的 `random-zh`。
+- 实施内容：确认 `backend/Cargo.toml` 和 `backend/src/services/group_buy_robot.rs` 已直接使用 `random-zh 0.1.3`；同步修正文档描述和代码注释，当前实现依赖统一为 `random-zh`。
+- 验证结果：后续继续执行格式化和目标检查。

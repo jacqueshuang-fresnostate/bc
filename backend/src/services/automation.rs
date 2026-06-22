@@ -135,6 +135,26 @@ pub async fn refund_closed_unfilled_group_buys(
     group_buys: &GroupBuyRepository,
     payload: DrawAutomationRunRequest,
 ) -> ApiResult<DrawAutomationRun> {
+    refund_closed_unfilled_group_buys_with_protected_plans(
+        draws,
+        lotteries,
+        finance,
+        group_buys,
+        payload,
+        &HashSet::new(),
+    )
+    .await
+}
+
+/// 后台慢阶段处理封盘未满员合买退款，但跳过本轮机器人兜底失败的保护计划。
+pub async fn refund_closed_unfilled_group_buys_with_protected_plans(
+    draws: &DrawRepository,
+    lotteries: &crate::services::lottery::LotteryRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    payload: DrawAutomationRunRequest,
+    protected_plan_ids: &HashSet<String>,
+) -> ApiResult<DrawAutomationRun> {
     let now = normalize_automation_now(&payload)?;
     let mut run = empty_draw_automation_run(&now);
     let lottery_configs = lottery_automation_configs(lotteries).await?;
@@ -145,9 +165,19 @@ pub async fn refund_closed_unfilled_group_buys(
         }
 
         if should_refund_unfilled_group_buy(&issue, &now) {
-            let cancelled_plans = group_buys
-                .cancel_unfilled_for_issue(&issue.lottery_id, &issue.issue)
-                .await?;
+            let cancelled_plans = if protected_plan_ids.is_empty() {
+                group_buys
+                    .cancel_unfilled_for_issue(&issue.lottery_id, &issue.issue)
+                    .await?
+            } else {
+                group_buys
+                    .cancel_unfilled_for_issue_except(
+                        &issue.lottery_id,
+                        &issue.issue,
+                        protected_plan_ids,
+                    )
+                    .await?
+            };
             for plan in cancelled_plans {
                 let entries = finance
                     .refund_group_buy_plan(&plan, "封盘未满员流单退款")
@@ -183,6 +213,30 @@ pub async fn draw_due_issues_with_progress(
     payload: DrawAutomationRunRequest,
     progress_callback: Option<DrawIssueSettlementProgressCallback>,
 ) -> ApiResult<DrawAutomationRun> {
+    draw_due_issues_with_progress_excluding_group_buy_issues(
+        draws,
+        lotteries,
+        orders,
+        finance,
+        group_buys,
+        payload,
+        progress_callback,
+        &HashSet::new(),
+    )
+    .await
+}
+
+/// 处理到期开奖并跳过本轮合买兜底失败的期号，避免未满单计划被同轮开奖固化。
+pub async fn draw_due_issues_with_progress_excluding_group_buy_issues(
+    draws: &DrawRepository,
+    lotteries: &crate::services::lottery::LotteryRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    payload: DrawAutomationRunRequest,
+    progress_callback: Option<DrawIssueSettlementProgressCallback>,
+    protected_issue_keys: &HashSet<String>,
+) -> ApiResult<DrawAutomationRun> {
     let now = normalize_automation_now(&payload)?;
     let mut run = empty_draw_automation_run(&now);
     let lottery_configs = lottery_automation_configs(lotteries).await?;
@@ -195,6 +249,13 @@ pub async fn draw_due_issues_with_progress(
         }
 
         if !should_draw(&issue, &now, &lottery_configs) {
+            continue;
+        }
+        if protected_issue_keys.contains(&group_buy_issue_key(&issue.lottery_id, &issue.issue)) {
+            run.skipped_issues.push(skipped_issue(
+                &issue,
+                "本期存在合买兜底失败计划，暂缓开奖等待下一轮补满",
+            ));
             continue;
         }
         if issue.draw_mode == DrawMode::Manual
@@ -653,6 +714,11 @@ fn push_skipped_issue_once(run: &mut DrawAutomationRun, issue: &DrawIssue, reaso
     {
         run.skipped_issues.push(skipped_issue(issue, reason));
     }
+}
+
+/// 构造调度内部彩种期号键，和合买机器人保护标记保持一致。
+fn group_buy_issue_key(lottery_id: &str, issue: &str) -> String {
+    format!("{lottery_id}:{issue}")
 }
 
 /// 对 API 开奖旧期号做重试上限判断，超过最新期号 5 期后不再请求旧期号开奖号码。

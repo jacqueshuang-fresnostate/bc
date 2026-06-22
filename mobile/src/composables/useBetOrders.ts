@@ -3,6 +3,7 @@ import type { Router } from 'vue-router'
 import { fetchUserBetOrders } from '../api/bet'
 import { fetchGroupBuyDetail } from '../features/group-buy/api'
 import { orderDrawNumbers, orderNumber } from '../utils/lotteryFormat'
+import { sortByCreatedTimeDesc } from '../utils/timeSort'
 
 const ORDER_PAGE_SIZE = 20
 export type BetOrderView = 'groupBuy' | 'orders'
@@ -53,7 +54,9 @@ export function useBetOrders(router: Router) {
       const scopedOrders = filterOrdersByView(nextOrders, view)
       ordersByView.value = {
         ...ordersByView.value,
-        [view]: append ? mergeOrders(ordersByView.value[view], scopedOrders) : scopedOrders,
+        [view]: sortByCreatedTimeDesc(
+          append ? mergeOrders(ordersByView.value[view], scopedOrders) : scopedOrders,
+        ),
       }
       ordersPageByView.value = {
         ...ordersPageByView.value,

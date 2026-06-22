@@ -51,6 +51,8 @@ import type {
 } from '../types/draws';
 import type {
   AdminFinancialAccountSummary,
+  AdminRechargeOrderSummary,
+  AdminWithdrawalOrderSummary,
   ClearRecordsResult,
   ClearRobotGroupBuyRecordsResult,
   LedgerEntry,
@@ -258,7 +260,7 @@ export function clearLedgerEntries() {
 }
 
 export function fetchRechargeOrders(signal?: AbortSignal, query?: FinancePageQuery) {
-  return requestJson<FinancePage<RechargeOrderSummary>>(
+  return requestJson<FinancePage<AdminRechargeOrderSummary>>(
     adminQueryPath('/api/admin/recharge-orders', query),
     { signal },
   );
@@ -288,7 +290,7 @@ export function confirmRechargeOrder(
 }
 
 export function fetchWithdrawalOrders(signal?: AbortSignal, query?: FinancePageQuery) {
-  return requestJson<FinancePage<WithdrawalOrderSummary>>(
+  return requestJson<FinancePage<AdminWithdrawalOrderSummary>>(
     adminQueryPath('/api/admin/withdrawal-orders', query),
     { signal },
   );

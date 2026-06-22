@@ -60,6 +60,8 @@ export interface ClearRobotGroupBuyRecordsResult extends ClearRecordsResult {
 export interface AdminFinancialAccountSummary {
   userId: string;
   username: string | null;
+  agentId?: string | null;
+  agentUsername?: string | null;
   availableBalanceMinor: number;
   frozenBalanceMinor: number;
 }
@@ -103,6 +105,11 @@ export interface RechargeOrderSummary {
   paidAt: string | null;
 }
 
+export interface AdminRechargeOrderSummary extends RechargeOrderSummary {
+  agentId?: string | null;
+  agentUsername?: string | null;
+}
+
 export interface WithdrawalOrderSummary {
   id: string;
   userId: string;
@@ -116,4 +123,9 @@ export interface WithdrawalOrderSummary {
   status: WithdrawalOrderStatus;
   createdAt: string;
   reviewedAt: string | null;
+}
+
+export interface AdminWithdrawalOrderSummary extends WithdrawalOrderSummary {
+  agentId?: string | null;
+  agentUsername?: string | null;
 }

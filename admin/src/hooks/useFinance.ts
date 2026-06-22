@@ -16,14 +16,14 @@ import {
 } from '../api/client';
 import type {
   AdminFinancialAccountSummary,
+  AdminRechargeOrderSummary,
+  AdminWithdrawalOrderSummary,
   FinanceOverview,
   FinancePage,
   FinancePageQuery,
   ConfirmRechargeOrderRequest,
   LedgerEntry,
   ManualBalanceAdjustmentRequest,
-  RechargeOrderSummary,
-  WithdrawalOrderSummary,
 } from '../types/finance';
 
 interface UseFinanceOptions {
@@ -47,9 +47,9 @@ export function useFinance({
   );
   const [ledgerEntries, setLedgerEntries] = useState<FinancePage<LedgerEntry>>(emptyPage);
   const [rechargeOrders, setRechargeOrders] =
-    useState<FinancePage<RechargeOrderSummary>>(emptyPage);
+    useState<FinancePage<AdminRechargeOrderSummary>>(emptyPage);
   const [withdrawalOrders, setWithdrawalOrders] =
-    useState<FinancePage<WithdrawalOrderSummary>>(emptyPage);
+    useState<FinancePage<AdminWithdrawalOrderSummary>>(emptyPage);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -36,6 +36,10 @@ pub struct AdminFinancialAccountSummary {
     pub user_id: String,
     /// 用户展示名。
     pub username: Option<String>,
+    /// 上级代理用户 ID；没有上级代理时为空。
+    pub agent_id: Option<String>,
+    /// 上级代理用户名；代理账号缺失时为空，前端可结合代理 ID 显示未知代理。
+    pub agent_username: Option<String>,
     /// 可用余额，单位为分。
     pub available_balance_minor: i64,
     /// 冻结余额，单位为分。

@@ -1,7 +1,7 @@
 //! 合买领域模型，定义合买计划、参与人和份额约束
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::{Arc, RwLock},
 };
 
@@ -192,6 +192,7 @@ impl GroupBuyRepository {
             .into_iter()
             .filter(|plan| plan.order_id.is_none())
             .collect::<Vec<_>>();
+        let plans = sorted_group_buy_details_by_created_at(plans);
         Ok(ListPage::from_all(plans, page))
     }
 
@@ -333,6 +334,22 @@ impl GroupBuyRepository {
     ) -> ApiResult<Vec<GroupBuyPlan>> {
         self.mutate_and_persist_if(|store| {
             let result = store.cancel_unfilled_for_issue(lottery_id, issue);
+            let should_persist = !result.is_empty();
+            Ok((result, should_persist))
+        })
+        .await
+    }
+
+    /// 封盘时取消未满单的合买计划，但跳过调度器本轮保护的计划。
+    pub async fn cancel_unfilled_for_issue_except(
+        &self,
+        lottery_id: &str,
+        issue: &str,
+        protected_plan_ids: &HashSet<String>,
+    ) -> ApiResult<Vec<GroupBuyPlan>> {
+        self.mutate_and_persist_if(|store| {
+            let result =
+                store.cancel_unfilled_for_issue_except(lottery_id, issue, protected_plan_ids);
             let should_persist = !result.is_empty();
             Ok((result, should_persist))
         })
@@ -1687,12 +1704,23 @@ impl GroupBuyStore {
         lottery_id: &str,
         issue: &str,
     ) -> Vec<GroupBuyPlan> {
+        self.cancel_unfilled_for_issue_except(lottery_id, issue, &HashSet::new())
+    }
+
+    /// 封盘时取消仍未满单的合买计划，跳过保护名单中的计划。
+    pub(crate) fn cancel_unfilled_for_issue_except(
+        &mut self,
+        lottery_id: &str,
+        issue: &str,
+        protected_plan_ids: &HashSet<String>,
+    ) -> Vec<GroupBuyPlan> {
         let lottery_id = lottery_id.trim();
         let issue = issue.trim();
         let mut cancelled = Vec::new();
         for plan in self.plans.values_mut() {
             if plan.lottery_id == lottery_id
                 && plan.issue == issue
+                && !protected_plan_ids.contains(&plan.id)
                 && plan.filled_amount_minor < plan.total_amount_minor
                 && matches!(
                     plan.status,
@@ -1873,6 +1901,18 @@ fn sorted_group_buy_plans<'a>(
 fn sorted_group_buy_summaries_by_created_at(
     plans: Vec<GroupBuyPlanSummary>,
 ) -> Vec<GroupBuyPlanSummary> {
+    let mut sorted_plans = plans;
+    sorted_plans.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    sorted_plans
+}
+
+/// 用户端“我的合买”按创建时间倒序展示，避免内存模式沿用期号排序。
+fn sorted_group_buy_details_by_created_at(plans: Vec<GroupBuyPlan>) -> Vec<GroupBuyPlan> {
     let mut sorted_plans = plans;
     sorted_plans.sort_by(|left, right| {
         right
@@ -2203,6 +2243,45 @@ mod tests {
         assert_eq!(formed_page.total_count, 2);
         assert_eq!(unformed_page.items[0].id, "G-UNFORMED");
         assert_eq!(unformed_page.total_count, 1);
+    }
+
+    /// 验证用户端未成单合买分页按创建时间倒序，而不是沿用期号排序。
+    #[tokio::test]
+    async fn group_buy_repository_unformed_user_page_sorts_by_created_at() {
+        let mut older = seed_group_buy_plans()
+            .into_iter()
+            .next()
+            .expect("seed plan exists");
+        older.id = "G-UNFORMED-OLDER".to_string();
+        older.issue = "20260602099".to_string();
+        older.order_id = None;
+        older.created_at = "2026-06-02 09:00:00".to_string();
+
+        let mut newer = older.clone();
+        newer.id = "G-UNFORMED-NEWER".to_string();
+        newer.issue = "20260602001".to_string();
+        newer.created_at = "2026-06-02 10:00:00".to_string();
+
+        let repository = GroupBuyRepository {
+            inner: Arc::new(RwLock::new(GroupBuyStore {
+                plans: BTreeMap::from([(older.id.clone(), older), (newer.id.clone(), newer)]),
+            })),
+            persistence: None,
+            mutation_lock: Arc::new(Mutex::new(())),
+        };
+
+        let page = repository
+            .list_unformed_details_for_user_page("U10001", PageRequest::new(Some(1), Some(10)))
+            .await
+            .expect("unformed user page can load");
+
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|plan| plan.id.as_str())
+                .collect::<Vec<_>>(),
+            ["G-UNFORMED-NEWER", "G-UNFORMED-OLDER"]
+        );
     }
 
     /// 验证合买合买仓储skips未结算计划whenclearing。
