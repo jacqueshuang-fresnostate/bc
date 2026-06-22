@@ -3229,7 +3229,7 @@ fn public_chat_hall_red_packet_claims_response(
     response
 }
 
-/// 对聊天大厅公开用户名做隐私脱敏，长昵称保留前四个字符，短昵称只保留一半。
+/// 对聊天大厅公开用户名做隐私脱敏，长昵称保留前四个字符，其余字符统一用星号替代。
 fn mask_public_chat_hall_username(value: &str) -> String {
     let value = value.trim();
     if value.is_empty() {
@@ -3242,7 +3242,12 @@ fn mask_public_chat_hall_username(value: &str) -> String {
     } else {
         (chars.len() / 2).max(1)
     };
-    chars.iter().take(visible_count).collect::<String>()
+    let hidden_count = chars.len().saturating_sub(visible_count);
+    format!(
+        "{}{}",
+        chars.iter().take(visible_count).collect::<String>(),
+        "*".repeat(hidden_count)
+    )
 }
 
 /// 返回当前用户客服会话列表。
@@ -3828,10 +3833,10 @@ mod tests {
     #[test]
     /// 验证聊天大厅用户端公开名称按长名和短名规则脱敏，避免完整用户名泄露到手机端。
     fn public_chat_hall_username_is_masked() {
-        assert_eq!(mask_public_chat_hall_username("爱情819281"), "爱情81");
-        assert_eq!(mask_public_chat_hall_username("测试用户1"), "测试用户");
-        assert_eq!(mask_public_chat_hall_username("测试用"), "测");
-        assert_eq!(mask_public_chat_hall_username("张三"), "张");
+        assert_eq!(mask_public_chat_hall_username("爱情819281"), "爱情81****");
+        assert_eq!(mask_public_chat_hall_username("测试用户1"), "测试用户*");
+        assert_eq!(mask_public_chat_hall_username("测试用"), "测**");
+        assert_eq!(mask_public_chat_hall_username("张三"), "张*");
         assert_eq!(mask_public_chat_hall_username("A"), "A");
         assert_eq!(mask_public_chat_hall_username(""), "会员");
     }
@@ -3853,7 +3858,7 @@ mod tests {
             payload: None,
             created_at: "2026-06-21 18:00:00".to_string(),
         });
-        assert_eq!(message.username, "爱情81");
+        assert_eq!(message.username, "爱情81****");
 
         let claims = public_chat_hall_red_packet_claims_response(ChatHallRedPacketClaimsResponse {
             red_packet_id: "CHRP-000000000001".to_string(),
@@ -3872,7 +3877,7 @@ mod tests {
             }],
         });
 
-        assert_eq!(claims.claims[0].username, "明月清风");
+        assert_eq!(claims.claims[0].username, "明月清风***");
     }
 
     #[test]

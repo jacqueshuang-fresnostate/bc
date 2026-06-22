@@ -4,30 +4,25 @@ import {
   Button,
   Card,
   Select,
-  SideSheet,
   Spin,
   Switch,
   Tag,
   Toast,
 } from '@douyinfe/semi-ui';
 import {
-  Activity,
   Clock3,
-  ClipboardList,
   Hash,
   Radio,
   RefreshCcw,
   Save,
-  Settings2,
   Timer,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { MetricCard } from '../components/MetricCard';
 import { OrderBetInfo } from '../components/OrderBetInfo';
 import { useControlGroupBuyPlans } from '../hooks/useControlGroupBuyPlans';
 import { useLotteryConsole } from '../hooks/useLotteryConsole';
 import { usePlayRules } from '../hooks/usePlayRules';
-import type { DrawMode, LotteryKind } from '../types/dashboard';
+import type { LotteryKind } from '../types/dashboard';
 import type {
   DrawControlTargetScope,
   DrawIssue,
@@ -74,21 +69,6 @@ interface LotteryDrawControlFormState {
   targetScope: DrawControlTargetScope;
 }
 
-type LotteryConsoleStatusFilter =
-  | 'all'
-  | 'closed'
-  | 'drawn'
-  | 'noCurrent'
-  | 'open'
-  | 'saleDisabled'
-  | 'saleEnabled';
-
-interface LotteryConsoleStatusFilterOption {
-  count: number;
-  key: LotteryConsoleStatusFilter;
-  label: string;
-}
-
 export function LotteryConsolePage({
   onDashboardRefresh,
 }: LotteryConsolePageProps) {
@@ -106,9 +86,6 @@ export function LotteryConsolePage({
   } = useLotteryConsole();
   const { rules: playRules } = usePlayRules();
   const [now, setNow] = useState(() => new Date());
-  const [statusFilter, setStatusFilter] =
-    useState<LotteryConsoleStatusFilter>('saleEnabled');
-  const [nameSearch, setNameSearch] = useState('');
   const [selectedControlItem, setSelectedControlItem] =
     useState<LotteryConsoleItem | null>(null);
   const [controlForm, setControlForm] = useState<LotteryDrawControlFormState>(
@@ -145,20 +122,9 @@ export function LotteryConsolePage({
       ),
     [drawControlByLotteryId, issues, lotteries, orders],
   );
-  const searchMatchedItems = useMemo(
-    () => items.filter((item) => lotteryConsoleItemMatchesName(item, nameSearch)),
-    [items, nameSearch],
-  );
-  const statusFilterOptions = useMemo(
-    () => lotteryConsoleStatusFilterOptions(searchMatchedItems, now),
-    [searchMatchedItems, now],
-  );
-  const filteredItems = useMemo(
-    () =>
-      searchMatchedItems.filter((item) =>
-        lotteryConsoleItemMatchesFilter(item, statusFilter, now),
-      ),
-    [searchMatchedItems, statusFilter, now],
+  const controllableSaleItems = useMemo(
+    () => items.filter((item) => lotteryConsoleItemIsControllableSale(item)),
+    [items],
   );
   const selectedControlLotteryId = selectedControlItem?.lottery.id ?? null;
   const controlGroupBuyIssue = useMemo(
@@ -186,59 +152,35 @@ export function LotteryConsolePage({
   };
 
   useEffect(() => {
-    if (!selectedControlLotteryId) {
-      return;
-    }
-    const nextItem = items.find((item) => item.lottery.id === selectedControlLotteryId);
+    const currentItem = selectedControlLotteryId
+      ? controllableSaleItems.find(
+          (item) => item.lottery.id === selectedControlLotteryId,
+        ) ?? null
+      : null;
+    const nextItem = currentItem ?? controllableSaleItems[0] ?? null;
+
     if (!nextItem) {
       setSelectedControlItem(null);
       return;
     }
+
+    if (nextItem.lottery.id !== selectedControlLotteryId) {
+      setSelectedControlItem(nextItem);
+      setControlForm(
+        normalizeControlFormForIssueStatus(
+          nextItem,
+          drawControlFormFromControl(nextItem.drawControl, nextItem),
+        ),
+      );
+      setControlError(null);
+      return;
+    }
+
     setSelectedControlItem(nextItem);
     setControlForm((current) => normalizeControlFormForIssueStatus(nextItem, current));
-  }, [items, selectedControlLotteryId]);
+  }, [controllableSaleItems, selectedControlLotteryId]);
 
-  const metrics = useMemo(() => {
-    const saleEnabledCount = lotteries.filter((lottery) => lottery.saleEnabled).length;
-    const openCount = items.filter(
-      (item) => item.currentIssue?.status === 'open',
-    ).length;
-    const waitingDrawCount = items.filter((item) =>
-      lotteryConsoleItemIsWaitingDraw(item, now),
-    ).length;
-    const controlEnabledCount = items.filter(
-      (item) => item.lottery.drawControlEnabled && item.drawControl?.enabled,
-    ).length;
-
-    return [
-      {
-        key: 'lotteries',
-        label: '彩种总数',
-        trend: '当前后台配置',
-        value: `${lotteries.length}`,
-      },
-      {
-        key: 'saleEnabled',
-        label: '销售开启',
-        trend: '允许生成销售期号',
-        value: `${saleEnabledCount}`,
-      },
-      {
-        key: 'open',
-        label: '开盘中',
-        trend: '存在 open 期号',
-        value: `${openCount}`,
-      },
-      {
-        key: 'waitingDraw',
-        label: '待开奖',
-        trend: `${controlEnabledCount} 个彩种控制中`,
-        value: `${waitingDrawCount}`,
-      },
-    ];
-  }, [items, lotteries, now]);
-
-  const openControlSheet = (item: LotteryConsoleItem) => {
+  const selectControlLottery = (item: LotteryConsoleItem) => {
     if (!item.lottery.drawControlEnabled) {
       Toast.warning('该彩种未开启开奖号码控制');
       return;
@@ -251,11 +193,6 @@ export function LotteryConsolePage({
         drawControlFormFromControl(item.drawControl, item),
       ),
     );
-    setControlError(null);
-  };
-
-  const closeControlSheet = () => {
-    setSelectedControlItem(null);
     setControlError(null);
   };
 
@@ -282,7 +219,7 @@ export function LotteryConsolePage({
         targetOrderId: normalizedForm.enabled ? normalizedForm.targetOrderId.trim() || null : null,
         targetScope: normalizedForm.targetScope,
       });
-      closeControlSheet();
+      Toast.success('开奖号码控制已保存');
       refresh();
     } catch (requestError) {
       setControlError(errorMessage(requestError));
@@ -354,333 +291,81 @@ export function LotteryConsolePage({
         />
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {metrics.map((metric) => (
-          <MetricCard
-            key={metric.key}
-            label={metric.label}
-            value={metric.value}
-            trend={metric.trend}
-          />
-        ))}
-      </section>
-
-      <LotteryConsoleStatusFilterBar
-        active={statusFilter}
-        filteredCount={filteredItems.length}
-        nameSearch={nameSearch}
-        options={statusFilterOptions}
-        totalCount={items.length}
-        onChange={setStatusFilter}
-        onNameSearchChange={setNameSearch}
+      <LotteryConsoleControlLotteryStrip
+        items={controllableSaleItems}
+        selectedLotteryId={selectedControlLotteryId}
+        onSelect={selectControlLottery}
       />
 
-      {filteredItems.length > 0 ? (
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {filteredItems.map((item) => (
-            <LotteryConsoleCard
-              key={item.lottery.id}
-              item={item}
-              now={now}
-              schedulerStatus={schedulerStatus}
-              onOpenControl={openControlSheet}
-              onSyncSource={(nextItem) => void syncLotterySource(nextItem)}
-              syncing={syncingLotteryId === item.lottery.id}
-            />
-          ))}
-        </section>
+      {selectedControlItem ? (
+        <LotteryConsoleControlPanel
+          error={controlError}
+          form={controlForm}
+          groupBuyError={controlGroupBuyError}
+          groupBuyIssue={controlGroupBuyIssue}
+          groupBuyLoading={controlGroupBuyLoading}
+          groupBuyPlans={controlGroupBuyPlans}
+          item={selectedControlItem}
+          now={now}
+          playRules={playRules}
+          refreshing={loading || controlGroupBuyLoading}
+          saving={controlSaving}
+          schedulerStatus={schedulerStatus}
+          syncingSource={syncingLotteryId === selectedControlItem.lottery.id}
+          onChange={setControlForm}
+          onRefreshOrders={refreshControlData}
+          onSubmit={() => void submitDrawControl()}
+          onSyncSource={(nextItem) => void syncLotterySource(nextItem)}
+        />
       ) : (
         <Card className="rounded-md border border-line">
           <div className="py-8 text-center text-sm text-slate-500">
-            {items.length > 0 ? '当前筛选下暂无彩种。' : '暂无彩种配置。'}
+            {items.length > 0 ? '暂无销售中且允许控制的彩种。' : '暂无彩种配置。'}
           </div>
         </Card>
       )}
-
-      <DrawControlSideSheet
-        error={controlError}
-        form={controlForm}
-        groupBuyError={controlGroupBuyError}
-        groupBuyIssue={controlGroupBuyIssue}
-        groupBuyLoading={controlGroupBuyLoading}
-        groupBuyPlans={controlGroupBuyPlans}
-        item={selectedControlItem}
-        playRules={playRules}
-        refreshing={loading || controlGroupBuyLoading}
-        saving={controlSaving}
-        visible={Boolean(selectedControlItem)}
-        onChange={setControlForm}
-        onClose={closeControlSheet}
-        onRefreshOrders={refreshControlData}
-        onSubmit={() => void submitDrawControl()}
-      />
     </div>
   );
 }
 
-function LotteryConsoleStatusFilterBar({
-  active,
-  filteredCount,
-  nameSearch,
-  onChange,
-  onNameSearchChange,
-  options,
-  totalCount,
+function LotteryConsoleControlLotteryStrip({
+  items,
+  onSelect,
+  selectedLotteryId,
 }: {
-  active: LotteryConsoleStatusFilter;
-  filteredCount: number;
-  nameSearch: string;
-  onChange: (filter: LotteryConsoleStatusFilter) => void;
-  onNameSearchChange: (keyword: string) => void;
-  options: LotteryConsoleStatusFilterOption[];
-  totalCount: number;
+  items: LotteryConsoleItem[];
+  onSelect: (item: LotteryConsoleItem) => void;
+  selectedLotteryId: string | null;
 }) {
   return (
-    <Card className="rounded-md border border-line">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div>
-          <div className="text-sm font-semibold text-ink">状态筛选</div>
-          <div className="mt-1 text-xs text-slate-500">
-            当前显示 {filteredCount} / {totalCount} 个彩种
+    <Card bodyStyle={{ padding: 16 }} className="rounded-md border border-line">
+      <div className="flex flex-wrap items-center gap-3">
+        {items.length > 0 ? (
+          items.map((item) => (
+            <button
+              key={item.lottery.id}
+              className={`h-10 min-w-[128px] rounded-md border px-4 text-center text-sm font-medium shadow-sm transition focus:outline-none focus:ring-2 focus:ring-blue-100 ${
+                selectedLotteryId === item.lottery.id
+                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                  : 'border-line bg-white text-ink hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600'
+              }`}
+              type="button"
+              onClick={() => onSelect(item)}
+            >
+              {item.lottery.name}
+            </button>
+          ))
+        ) : (
+          <div className="py-6 text-sm text-slate-500">
+            暂无销售中且允许控制的彩种。
           </div>
-        </div>
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-          <Input
-            className="form-input min-w-[220px]"
-            placeholder="搜索彩种名称"
-            value={nameSearch}
-            onChange={onNameSearchChange}
-          />
-          <div className="flex flex-wrap gap-2">
-            {options.map((option) => (
-              <Button
-                key={option.key}
-                size="small"
-                theme={active === option.key ? 'solid' : 'light'}
-                onClick={() => onChange(option.key)}
-              >
-                {option.label}
-                <span className="ml-1 font-mono text-xs opacity-75">{option.count}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
+        )}
       </div>
     </Card>
   );
 }
 
-function LotteryConsoleCard({
-  item,
-  now,
-  schedulerStatus,
-  onOpenControl,
-  onSyncSource,
-  syncing,
-}: {
-  item: LotteryConsoleItem;
-  now: Date;
-  schedulerStatus: DrawSchedulerStatus | null;
-  onOpenControl: (item: LotteryConsoleItem) => void;
-  onSyncSource: (item: LotteryConsoleItem) => void;
-  syncing: boolean;
-}) {
-  const { currentIssue, lottery, recentDrawnIssue } = item;
-  const currentIssueDrawNumber =
-    currentIssue?.status === 'drawn' && currentIssue.drawNumber
-      ? currentIssue.drawNumber
-      : null;
-  const drawNumber = currentIssueDrawNumber ?? recentDrawnIssue?.drawNumber ?? null;
-  const drawNumberLabel = currentIssueDrawNumber ? '本期开奖' : '最近开奖';
-  const controlAllowed = lottery.drawControlEnabled;
-  const visibleDrawControl = controlAllowed ? displayableDrawControl(item, now) : null;
-  const controlEnabled = Boolean(visibleDrawControl);
-  const currentOrderAmountMinor = item.currentIssueOrders.reduce(
-    (total, order) => total + order.amountMinor,
-    0,
-  );
-
-  return (
-    <Card
-      bodyStyle={{ padding: 12 }}
-      shadows="hover"
-      className="min-w-0 rounded-md border border-line"
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold text-ink">{lottery.name}</h2>
-          <div className="mt-0.5 truncate text-[11px] text-slate-400">
-            {lottery.id} · {scheduleText(lottery)}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Tag color={currentIssue ? statusColor(currentIssue.status) : 'grey'}>
-            {currentIssue ? statusText(currentIssue.status) : '无当前期'}
-          </Tag>
-          <Tag color={lottery.saleEnabled ? 'green' : 'grey'}>
-            {lottery.saleEnabled ? '开售' : '停售'}
-          </Tag>
-        </div>
-      </div>
-
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        <Tag color="cyan">{numberTypeText(lottery.numberType)}</Tag>
-        <Tag color={drawModeColor(lottery.drawMode)}>{drawModeText(lottery.drawMode)}</Tag>
-        <Tag color={controlEnabled ? 'red' : controlAllowed ? 'grey' : 'blue'}>
-          {controlEnabled ? '控制开奖' : controlAllowed ? '未控制' : '不控制'}
-        </Tag>
-        {item.waitingIssueCount > 0 && item.waitingIssue?.id !== currentIssue?.id ? (
-          <Tag color="orange">待补开奖 {item.waitingIssueCount}</Tag>
-        ) : null}
-      </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <CountdownBlock
-          icon={<Clock3 size={16} />}
-          label="封盘"
-          value={countdownText(currentIssue?.saleClosedAt, now, '已到封盘', '暂无期号')}
-        />
-        <CountdownBlock
-          icon={<Timer size={16} />}
-          label="开奖"
-          value={drawCountdownText(currentIssue, now, schedulerStatus)}
-        />
-      </div>
-
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <CompactInfoRow
-          icon={<Hash size={13} />}
-          label="期号"
-          meta={
-            currentIssue
-              ? `封 ${formatTimePoint(currentIssue.saleClosedAt)} / 开 ${formatTimePoint(currentIssue.scheduledAt)}`
-              : `历史 ${item.issueCount} 期`
-          }
-          value={currentIssue?.issue ?? '暂无当前期'}
-        />
-        <CompactInfoRow
-          icon={<Radio size={13} />}
-          label={drawNumberLabel}
-          meta={
-            recentDrawnIssue
-              ? `第 ${recentDrawnIssue.issue} 期 · ${recentDrawnIssue.drawnAt ? formatTimePoint(recentDrawnIssue.drawnAt) : '已开奖'}`
-              : undefined
-          }
-          value={drawNumber ?? '待开奖'}
-          valueClassName={drawNumber ? 'font-mono text-sm text-ink' : 'text-sm text-slate-400'}
-        />
-        <CompactInfoRow
-          icon={<ClipboardList size={13} />}
-          label="本期下注"
-          meta={`最近 ${item.orders.length} 单`}
-          value={`${item.currentIssueOrders.length} 单 / ${formatMoney(currentOrderAmountMinor)}`}
-          valueClassName="text-sm text-ink"
-        />
-      </div>
-
-      <div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded border border-slate-100 bg-slate-50 px-2.5 py-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
-            <Settings2 size={13} />
-            开奖控制
-          </div>
-          <div
-            className={`mt-1 truncate text-sm font-semibold ${
-              controlEnabled ? 'font-mono text-rose-700' : 'text-slate-400'
-            }`}
-            title={
-              controlEnabled
-                ? visibleDrawControl?.drawNumber ?? '-'
-                : controlAllowed
-                  ? '未启用'
-                  : '未开启控制'
-            }
-          >
-            {controlEnabled
-              ? visibleDrawControl?.drawNumber ?? '-'
-              : controlAllowed
-                ? '未启用'
-                : '未开启控制'}
-          </div>
-          {controlAllowed && visibleDrawControl?.updatedAt ? (
-            <div className="mt-0.5 truncate text-[11px] text-slate-500">
-              {controlTargetText(visibleDrawControl)} · 更新{' '}
-              {formatTimePoint(visibleDrawControl.updatedAt)}
-            </div>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 flex-col gap-1.5">
-          {controlAllowed ? (
-            <Button
-              icon={<Settings2 size={14} />}
-              size="small"
-              onClick={() => onOpenControl(item)}
-            >
-              控制
-            </Button>
-          ) : null}
-          {lottery.drawMode === 'api' ? (
-            <Button
-              icon={<RefreshCcw size={14} />}
-              loading={syncing}
-              size="small"
-              theme="light"
-              onClick={() => onSyncSource(item)}
-            >
-              立即同步
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
-        <span className="flex items-center gap-1">
-          <Activity size={13} />
-          期号 {item.issueCount} 个
-        </span>
-        <span className="truncate">{lottery.drawMode === 'api' ? '开奖源同步' : '本地调度'}</span>
-      </div>
-    </Card>
-  );
-}
-
-function CompactInfoRow({
-  action,
-  icon,
-  label,
-  meta,
-  value,
-  valueClassName = 'font-mono text-sm text-ink',
-}: {
-  action?: ReactNode;
-  icon: ReactNode;
-  label: string;
-  meta?: string;
-  value: string;
-  valueClassName?: string;
-}) {
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-2 rounded border border-slate-100 bg-slate-50 px-2.5 py-2">
-      <div className="min-w-0">
-        <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
-          {icon}
-          <span>{label}</span>
-        </div>
-        <div className={`mt-1 truncate font-semibold ${valueClassName}`} title={value}>
-          {value}
-        </div>
-        {meta ? (
-          <div className="mt-0.5 truncate text-[11px] text-slate-500" title={meta}>
-            {meta}
-          </div>
-        ) : null}
-      </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
-    </div>
-  );
-}
-
-function DrawControlSideSheet({
+function LotteryConsoleControlPanel({
   error,
   form,
   groupBuyError,
@@ -689,13 +374,15 @@ function DrawControlSideSheet({
   groupBuyPlans,
   item,
   onChange,
-  onClose,
   onRefreshOrders,
   onSubmit,
+  onSyncSource,
   playRules,
   refreshing,
   saving,
-  visible,
+  schedulerStatus,
+  syncingSource,
+  now,
 }: {
   error: string | null;
   form: LotteryDrawControlFormState;
@@ -703,21 +390,23 @@ function DrawControlSideSheet({
   groupBuyIssue: string;
   groupBuyLoading: boolean;
   groupBuyPlans: GroupBuyPlan[];
-  item: LotteryConsoleItem | null;
+  item: LotteryConsoleItem;
   onChange: (form: LotteryDrawControlFormState) => void;
-  onClose: () => void;
   onRefreshOrders: () => void;
   onSubmit: () => void;
+  onSyncSource: (item: LotteryConsoleItem) => void;
   playRules: PlayRuleSummary[];
   refreshing: boolean;
   saving: boolean;
-  visible: boolean;
+  schedulerStatus: DrawSchedulerStatus | null;
+  syncingSource: boolean;
+  now: Date;
 }) {
-  const lottery = item?.lottery ?? null;
-  const inputMeta = lottery ? drawNumberInputMeta(lottery.numberType) : null;
-  const controlIssues = item ? controlCandidateIssues(item) : [];
-  const controlOrders = item ? controlCandidateOrders(item) : [];
-  const visibleOrders = item ? visibleConsoleOrders(item, form) : [];
+  const lottery = item.lottery;
+  const inputMeta = drawNumberInputMeta(lottery.numberType);
+  const controlIssues = controlCandidateIssues(item);
+  const controlOrders = controlCandidateOrders(item);
+  const visibleOrders = visibleConsoleOrders(item, form);
   const groupBuyRows = groupBuyInitiatorParticipantRows(groupBuyPlans);
   const targetIssueInactive = controlFormTargetsInactiveIssue(item, form);
   const targetSelectDisabled = !form.enabled && !targetIssueInactive;
@@ -728,32 +417,80 @@ function DrawControlSideSheet({
         (form.targetScope === 'issue' && !form.targetIssue.trim()) ||
         (form.targetScope === 'order' && !form.targetOrderId.trim())));
 
+  const currentIssue = item.currentIssue;
+  const recentDrawnIssue = item.recentDrawnIssue;
+  const drawNumber = recentDrawnIssue?.drawNumber || currentIssue?.drawNumber || '';
+
   return (
-    <SideSheet
-      aria-label="控制开奖号码"
-      title="控制开奖号码"
-      visible={visible}
-      width="80%"
-      onCancel={onClose}
-    >
-      {lottery ? (
-        <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
+    <Card bodyStyle={{ padding: 20 }} className="rounded-md border border-line">
+      <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
           {error ? (
             <Banner type="danger" title="保存控制失败" description={error} />
           ) : null}
 
-          <section className="grid gap-3 lg:grid-cols-[1fr_1.1fr_1.4fr]">
-            <div className="rounded-md border border-line bg-slate-50/70 p-3">
-              <div className="text-xs font-medium text-slate-500">控制彩种</div>
-              <div className="mt-2 truncate text-lg font-semibold text-ink" title={lottery.name}>
-                {lottery.name}
+          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <CountdownBlock
+              icon={<Clock3 size={15} />}
+              label="封盘"
+              value={countdownText(currentIssue?.saleClosedAt, now, '已到封盘', '暂无期号')}
+            />
+            <CountdownBlock
+              icon={<Timer size={15} />}
+              label="开奖"
+              value={drawCountdownText(currentIssue, now, schedulerStatus)}
+            />
+            <CountdownBlock
+              icon={<Hash size={15} />}
+              label="期号"
+              value={currentIssue?.issue ?? '暂无当前期'}
+            />
+            <CountdownBlock
+              icon={<Radio size={15} />}
+              label="最近开奖"
+              value={drawNumber || '待开奖'}
+            />
+          </section>
+
+          <section className="grid gap-3 lg:grid-cols-[1fr_1.1fr_1.35fr_1.25fr]">
+            <div className="rounded-md border border-line bg-white p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-medium text-slate-500">
+                    总开关（是/否）
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-ink">
+                    {form.enabled ? '已启用控制开奖' : '未启用控制开奖'}
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    开启后按下方号码开奖。
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <Switch
+                    checked={form.enabled}
+                    disabled={targetIssueInactive}
+                    onChange={(checked) =>
+                      onChange(
+                        normalizeControlFormForIssueStatus(item, {
+                          ...form,
+                          enabled: checked,
+                        }),
+                      )
+                    }
+                  />
+                  <Tag color={form.enabled ? 'red' : 'grey'}>
+                    {form.enabled ? '是' : '否'}
+                  </Tag>
+                </div>
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <Tag color="cyan">{numberTypeText(lottery.numberType)}</Tag>
-                <Tag color={drawModeColor(lottery.drawMode)}>
-                  {drawModeText(lottery.drawMode)}
-                </Tag>
-              </div>
+              {targetIssueInactive ? (
+                <Banner
+                  className="mt-3"
+                  type="warning"
+                  title="指定期号已结束"
+                  description="已开奖或已取消期号不能继续启用开奖号码控制，系统已自动取消勾选。请选择未结束期号后再启用。"
+                />
+              ) : null}
             </div>
 
             <div className="rounded-md border border-line bg-white p-3">
@@ -837,49 +574,6 @@ function DrawControlSideSheet({
                 <div className="mt-2 rounded border border-dashed border-line bg-slate-50 px-3 py-2 text-sm text-slate-600">
                   当前设置将作用于该彩种后续所有未开奖期号。
                 </div>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="grid gap-3 lg:grid-cols-[1fr_1.25fr]">
-            <div className="rounded-md border border-line bg-white p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-xs font-medium text-slate-500">
-                    总开关（是/否）
-                  </div>
-                  <div className="mt-1 text-base font-semibold text-ink">
-                    {form.enabled ? '已启用控制开奖' : '未启用控制开奖'}
-                  </div>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">
-                    开启后将按下方号码开奖；关闭后恢复正常开奖流程。
-                  </p>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-2">
-                  <Switch
-                    checked={form.enabled}
-                    disabled={targetIssueInactive}
-                    onChange={(checked) =>
-                      onChange(
-                        normalizeControlFormForIssueStatus(item, {
-                          ...form,
-                          enabled: checked,
-                        }),
-                      )
-                    }
-                  />
-                  <Tag color={form.enabled ? 'red' : 'grey'}>
-                    {form.enabled ? '是' : '否'}
-                  </Tag>
-                </div>
-              </div>
-              {targetIssueInactive ? (
-                <Banner
-                  className="mt-3"
-                  type="warning"
-                  title="指定期号已结束"
-                  description="已开奖或已取消期号不能继续启用开奖号码控制，系统已自动取消勾选。请选择未结束期号后再启用。"
-                />
               ) : null}
             </div>
 
@@ -1143,17 +837,19 @@ function DrawControlSideSheet({
             >
               保存控制
             </Button>
-            <Button disabled={saving} onClick={onClose}>
-              关闭
-            </Button>
+            {lottery.drawMode === 'api' ? (
+              <Button
+                disabled={saving}
+                icon={<RefreshCcw size={15} />}
+                loading={syncingSource}
+                onClick={() => onSyncSource(item)}
+              >
+                立即同步开奖源
+              </Button>
+            ) : null}
           </div>
-        </form>
-      ) : (
-        <div className="rounded-md border border-line p-4 text-sm text-slate-500">
-          暂无可维护彩种。
-        </div>
-      )}
-    </SideSheet>
+      </form>
+    </Card>
   );
 }
 
@@ -1185,15 +881,6 @@ function GroupBuyNumbersInfo({
   );
 }
 
-function Field({ children, label }: { children: ReactNode; label: string }) {
-  return (
-    <label className="block">
-      <span className="text-xs font-medium text-slate-500">{label}</span>
-      <div className="mt-1">{children}</div>
-    </label>
-  );
-}
-
 function CountdownBlock({
   icon,
   label,
@@ -1216,75 +903,8 @@ function CountdownBlock({
   );
 }
 
-function lotteryConsoleStatusFilterOptions(
-  items: LotteryConsoleItem[],
-  now: Date,
-): LotteryConsoleStatusFilterOption[] {
-  return [
-    { count: items.length, key: 'all', label: '全部' },
-    {
-      count: items.filter((item) => item.lottery.saleEnabled).length,
-      key: 'saleEnabled',
-      label: '销售开启',
-    },
-    {
-      count: items.filter((item) => !item.lottery.saleEnabled).length,
-      key: 'saleDisabled',
-      label: '已停售',
-    },
-    {
-      count: items.filter((item) => item.currentIssue?.status === 'open').length,
-      key: 'open',
-      label: '开盘中',
-    },
-    {
-      count: items.filter((item) => lotteryConsoleItemIsWaitingDraw(item, now))
-        .length,
-      key: 'closed',
-      label: '待开奖',
-    },
-    {
-      count: items.filter((item) => item.recentDrawnIssue !== null).length,
-      key: 'drawn',
-      label: '已开奖',
-    },
-    {
-      count: items.filter((item) => item.currentIssue === null).length,
-      key: 'noCurrent',
-      label: '无当前期',
-    },
-  ];
-}
-
-function lotteryConsoleItemMatchesFilter(
-  item: LotteryConsoleItem,
-  filter: LotteryConsoleStatusFilter,
-  now: Date,
-) {
-  switch (filter) {
-    case 'all':
-      return true;
-    case 'closed':
-      return lotteryConsoleItemIsWaitingDraw(item, now);
-    case 'drawn':
-      return item.recentDrawnIssue !== null;
-    case 'noCurrent':
-      return item.currentIssue === null;
-    case 'open':
-      return item.currentIssue?.status === 'open';
-    case 'saleDisabled':
-      return !item.lottery.saleEnabled;
-    case 'saleEnabled':
-      return item.lottery.saleEnabled;
-  }
-}
-
-function lotteryConsoleItemMatchesName(item: LotteryConsoleItem, keyword: string) {
-  const normalizedKeyword = keyword.trim().toLowerCase();
-  if (!normalizedKeyword) {
-    return true;
-  }
-  return item.lottery.name.toLowerCase().includes(normalizedKeyword);
+function lotteryConsoleItemIsControllableSale(item: LotteryConsoleItem) {
+  return item.lottery.saleEnabled && item.lottery.drawControlEnabled;
 }
 
 function lotteryConsoleItemIsWaitingDraw(item: LotteryConsoleItem, now: Date) {
@@ -1469,54 +1089,6 @@ function issueStatusForControl(
   return (
     item?.issues.find((issue) => issue.issue === targetIssue.trim())?.status ?? null
   );
-}
-
-function displayableDrawControl(item: LotteryConsoleItem, now: Date) {
-  const control = item.drawControl;
-  if (!control?.enabled) {
-    return null;
-  }
-
-  if (control.targetScope === 'lottery') {
-    return control;
-  }
-
-  const targetIssue = targetIssueForDrawControl(item, control);
-  if (!targetIssue || !issueStillDisplayableForControl(targetIssue, now)) {
-    return null;
-  }
-
-  return control;
-}
-
-function targetIssueForDrawControl(
-  item: LotteryConsoleItem,
-  control: LotteryDrawControl,
-) {
-  const explicitIssue = control.targetIssue?.trim();
-  if (explicitIssue) {
-    return item.issues.find((issue) => issue.issue === explicitIssue) ?? null;
-  }
-
-  if (control.targetScope !== 'order' || !control.targetOrderId) {
-    return null;
-  }
-
-  const order = item.orders.find((order) => order.id === control.targetOrderId);
-  if (!order) {
-    return null;
-  }
-
-  return item.issues.find((issue) => issue.issue === order.issue) ?? null;
-}
-
-function issueStillDisplayableForControl(issue: DrawIssue, now: Date) {
-  if (issue.status !== 'open' && issue.status !== 'closed') {
-    return false;
-  }
-
-  const scheduledAt = parseTimeLabel(issue.scheduledAt);
-  return scheduledAt === null || scheduledAt >= now.getTime();
 }
 
 function controlCandidateIssues(item: LotteryConsoleItem | null) {
@@ -1711,19 +1283,6 @@ function orderTimeValue(order: OrderDetail) {
   return parseTimeLabel(order.createdAt) ?? 0;
 }
 
-function controlTargetText(control: LotteryDrawControl) {
-  if (!control.enabled) {
-    return '未启用';
-  }
-  if (control.targetScope === 'issue') {
-    return control.targetIssue ? `期号 ${control.targetIssue}` : '指定期号';
-  }
-  if (control.targetScope === 'order') {
-    return control.targetOrderId ? `订单 ${control.targetOrderId}` : '指定订单';
-  }
-  return '整彩种';
-}
-
 function parseTimeLabel(value: string | null | undefined) {
   if (!value) {
     return null;
@@ -1753,25 +1312,6 @@ function formatTimePoint(value: string | null | undefined) {
   return formatClock(new Date(timestamp));
 }
 
-function drawModeText(mode: DrawMode) {
-  const labels: Record<DrawMode, string> = {
-    api: 'API 开奖',
-    manual: '手动开奖',
-    platform: '平台开奖',
-  };
-  return labels[mode];
-}
-
-function drawModeColor(mode: DrawMode) {
-  if (mode === 'api') {
-    return 'blue';
-  }
-  if (mode === 'manual') {
-    return 'orange';
-  }
-  return 'green';
-}
-
 function statusText(status: DrawIssueStatus) {
   const labels: Record<DrawIssueStatus, string> = {
     cancelled: '已取消',
@@ -1780,19 +1320,6 @@ function statusText(status: DrawIssueStatus) {
     open: '销售中',
   };
   return labels[status];
-}
-
-function statusColor(status: DrawIssueStatus) {
-  if (status === 'cancelled') {
-    return 'grey';
-  }
-  if (status === 'closed') {
-    return 'orange';
-  }
-  if (status === 'drawn') {
-    return 'green';
-  }
-  return 'blue';
 }
 
 function orderStatusText(status: OrderStatus) {
@@ -1825,20 +1352,6 @@ function orderSourceColor(source: OrderDetail['orderSource']) {
 
 function formatOrderUser(order: OrderDetail) {
   return `${order.username ?? '未知用户'}（${order.userId}）`;
-}
-
-function scheduleText(lottery: LotteryKind) {
-  const { schedule } = lottery;
-  if ('periodic' in schedule) {
-    return `${schedule.periodic.intervalSeconds} 秒一期`;
-  }
-  if ('timeNode' in schedule) {
-    return `时间节点 ${schedule.timeNode.startTime} 起，每 ${schedule.timeNode.intervalSeconds} 秒一期`;
-  }
-  if ('daily' in schedule) {
-    return `每日 ${schedule.daily.time}`;
-  }
-  return `${schedule.weekly.weekdays.join('、')} ${schedule.weekly.time}`;
 }
 
 function errorMessage(error: unknown) {

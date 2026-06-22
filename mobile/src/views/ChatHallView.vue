@@ -87,9 +87,14 @@ function isMine(message: ChatHallMessage) {
 function maskedChatHallUsername(value: string) {
   const normalized = String(value || '').trim()
   if (!normalized) return '会员'
+  if (normalized.includes('*')) return normalized
+
   const chars = Array.from(normalized)
   const visibleCount = chars.length >= 4 ? 4 : Math.max(1, Math.floor(chars.length / 2))
-  return chars.slice(0, visibleCount).join('')
+  const hiddenCount = chars.length >= 4
+    ? Math.max(chars.length - visibleCount, 4)
+    : chars.length - visibleCount
+  return `${chars.slice(0, visibleCount).join('')}${'*'.repeat(hiddenCount)}`
 }
 
 function messageDisplayName(message: ChatHallMessage) {
