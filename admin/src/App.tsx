@@ -20,6 +20,7 @@ import { RebateManagementPage } from './pages/RebateManagementPage';
 import { RobotManagementPage } from './pages/RobotManagementPage';
 import { SettlementManagementPage } from './pages/SettlementManagementPage';
 import { SupportManagementPage } from './pages/SupportManagementPage';
+import type { AdminLoginRequest } from './types/auth';
 import type { DashboardSummary, PermissionScope } from './types/dashboard';
 
 interface UserRecordFilter {
@@ -28,6 +29,9 @@ interface UserRecordFilter {
 }
 
 type RebateTabKey = 'applications' | 'policy' | 'statistics';
+
+const ADMIN_ACTIVE_MODULE_STORAGE_KEY = 'bc.admin.activeModule';
+const DEFAULT_ADMIN_ACTIVE_MODULE_KEY = 'support';
 
 const COMMON_NAVIGATION_ORDER = [
   'support',
@@ -52,7 +56,7 @@ export function App() {
     session,
   } = useAuth();
   const { data, loading, error, refresh } = useDashboard(Boolean(session));
-  const [activeKey, setActiveKey] = useState('dashboard');
+  const [activeKey, setActiveKey] = useState(() => readStoredActiveModuleKey());
   const [orderUserFilter, setOrderUserFilter] = useState<UserRecordFilter | null>(null);
   const [ledgerUserFilter, setLedgerUserFilter] = useState<UserRecordFilter | null>(null);
   const [rebateInitialTab, setRebateInitialTab] =
@@ -83,10 +87,20 @@ export function App() {
   }, [filteredData]);
 
   useEffect(() => {
+    if (!filteredData) {
+      return;
+    }
     if (!navigationItems.some((item) => item.key === activeKey)) {
       setActiveKey('dashboard');
     }
-  }, [activeKey, navigationItems]);
+  }, [activeKey, filteredData, navigationItems]);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+    writeStoredActiveModuleKey(activeKey);
+  }, [activeKey, session]);
 
   const handleNavigate = (key: string) => {
     if (key === 'rebate') {
@@ -98,6 +112,13 @@ export function App() {
   const openRebatePolicySettings = () => {
     setRebateInitialTab('policy');
     setActiveKey('rebate');
+  };
+
+  const handleLogin = async (payload: AdminLoginRequest) => {
+    const nextSession = await login(payload);
+    setActiveKey(DEFAULT_ADMIN_ACTIVE_MODULE_KEY);
+    writeStoredActiveModuleKey(DEFAULT_ADMIN_ACTIVE_MODULE_KEY);
+    return nextSession;
   };
 
   if (authLoading) {
@@ -113,7 +134,7 @@ export function App() {
       <LoginPage
         error={authError}
         loading={authSaving}
-        onLogin={login}
+        onLogin={handleLogin}
       />
     );
   }
@@ -226,6 +247,33 @@ function orderNavigationItems(items: NavigationItem[]): NavigationItem[] {
     }));
 
   return [...commonItems, ...infrequentItems];
+}
+
+function readStoredActiveModuleKey(): string {
+  if (typeof window === 'undefined') {
+    return DEFAULT_ADMIN_ACTIVE_MODULE_KEY;
+  }
+
+  try {
+    return (
+      window.localStorage.getItem(ADMIN_ACTIVE_MODULE_STORAGE_KEY) ||
+      DEFAULT_ADMIN_ACTIVE_MODULE_KEY
+    );
+  } catch {
+    return DEFAULT_ADMIN_ACTIVE_MODULE_KEY;
+  }
+}
+
+function writeStoredActiveModuleKey(activeKey: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(ADMIN_ACTIVE_MODULE_STORAGE_KEY, activeKey);
+  } catch {
+    // 本地存储不可用时只影响刷新后记忆页面，不影响后台正常操作。
+  }
 }
 
 function filterDashboardByScopes(

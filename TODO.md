@@ -1,5 +1,19 @@
 # TODO
 
+## 2026-06-23 06:08 HKT 在线客服统计卡片网格移除
+
+- 完成任务：删除后台“在线客服”页面顶部 `grid gap-3 sm:grid-cols-2 xl:grid-cols-4` 统计卡片区。
+- 解决问题：在线客服页进入后先展示会话总数、未读消息、紧急会话、已解决等统计卡片，占用客服处理会话的首屏空间；当前页面应直接进入会话列表和消息详情，减少客服扫描路径。
+- 实施内容：`SupportManagementPage.tsx` 移除 `MetricCard` 引用、`totals` 派生值、四个统计卡片和 `supportTotals` 辅助函数；保留状态 Tabs、会话列表、未读 Badge、详情和回复能力；前端组件规范和架构说明同步记录在线客服主页面不保留顶部统计网格。
+- 验证结果：`pnpm --dir admin build` 和 `git diff --check` 均通过。
+
+## 2026-06-23 06:01 HKT 聊天大厅发言门槛读取累计表
+
+- 完成任务：修复用户充值后仍无法在聊天大厅发言的问题。
+- 解决问题：聊天大厅发言资格在数据库模式下仍通过 `ledger_entries` 汇总充值本金；如果后台清理过资金流水审计列表，或后续只依赖累计表维护充值总额，用户真实累计充值会被误判为 0，导致达到门槛后仍不能发言。
+- 实施内容：`FinanceRepository::total_recharge_credit_minor` 在数据库模式下改为只读取 `user_withdrawal_turnovers.cumulative_recharge_minor`；批量用户充值汇总同样只读累计表，缺失累计行按 0 处理；内存模式继续按当前资金流水临时计算；架构说明和数据库规范同步沉淀“累计充值资格判断不扫描审计流水”的规则。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall -- --nocapture` 和 `git diff --check` 均通过。
+
 ## 2026-06-22 20:07 HKT 彩种控制台 Tab 单彩种详情布局
 
 - 完成任务：将后台彩种控制台整体布局调整为顶部彩种 Tab + 下方单彩种控制详情。
@@ -4673,3 +4687,17 @@
 - 解决问题：文档中仍有历史依赖描述，容易让人误以为后端没有直接使用用户指定的 `random-zh`。
 - 实施内容：确认 `backend/Cargo.toml` 和 `backend/src/services/group_buy_robot.rs` 已直接使用 `random-zh 0.1.3`；同步修正文档描述和代码注释，当前实现依赖统一为 `random-zh`。
 - 验证结果：后续继续执行格式化和目标检查。
+
+## 2026-06-23 06:11 HKT 后台刷新保持当前页面
+
+- 完成任务：修复后台刷新后切换到其它页面的问题。
+- 解决问题：后台当前模块只保存在 React 内存状态里，浏览器刷新会回到默认“系统概览”；在线客服页面的局部刷新还会额外触发全局模块刷新，存在误扰动当前页面的风险。
+- 实施内容：后台 `App` 把当前模块写入 `localStorage`，刷新或重新打开后优先恢复原页面；模块权限摘要未加载完成前不再把当前模块误判为不存在；在线客服页面刷新按钮只刷新客服会话数据。
+- 验证结果：`pnpm --dir admin build` 和 `git diff --check` 均通过，管理端构建仅保留既有大 chunk 提示。
+
+## 2026-06-23 06:17 HKT 后台登录默认进入在线客服
+
+- 完成任务：调整后台登录后的默认入口页面。
+- 解决问题：管理员登录成功后默认停留在“系统概览”，不符合客服优先处理的后台使用习惯。
+- 实施内容：管理端新增默认后台模块常量 `support`；没有历史页面记录时默认进入在线客服；管理员手动登录成功后强制切换到在线客服，同时仍保留浏览器刷新时恢复当前页面的能力。
+- 验证结果：`pnpm --dir admin build` 和 `git diff --check` 均通过，管理端构建仅保留既有大 chunk 提示。

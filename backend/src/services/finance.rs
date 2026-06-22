@@ -104,7 +104,9 @@ impl FinanceRepository {
             .map(|store| store.ledger_entries())
     }
 
-    /// 返回指定用户真实充值本金累计金额，只统计正向 `rechargeCredit` 流水。
+    /// 返回指定用户真实充值本金累计金额。
+    ///
+    /// 数据库模式只读取增量累计表，避免后台清理资金流水审计列表后把聊天大厅发言门槛误判为未充值。
     pub async fn total_recharge_credit_minor(&self, user_id: &str) -> ApiResult<i64> {
         let user_id = user_id.trim();
         if user_id.is_empty() {
@@ -901,20 +903,24 @@ async fn query_ledger_entry_kind_page(
 }
 
 /// 数据库模式下汇总指定用户真实充值本金，供聊天大厅发言门槛等资格判断使用。
+///
+/// 只读取 `user_withdrawal_turnovers` 中的累计充值字段；该表由资金流水触发器增量维护，
+/// 即使运营一键清理 `ledger_entries` 审计列表，历史累计充值也不会丢失。没有累计行时表示当前累计充值为 0。
 async fn query_recharge_credit_total_minor(
     database: &BusinessDatabase,
     user_id: &str,
 ) -> ApiResult<i64> {
-    let kind = enum_to_string(&LedgerEntryKind::RechargeCredit)?;
     sqlx::query_scalar::<_, i64>(
-        "SELECT COALESCE(SUM(amount_minor), 0)::BIGINT
-         FROM ledger_entries
-         WHERE user_id = $1
-           AND kind = $2
-           AND amount_minor > 0",
+        "SELECT COALESCE(
+            (
+                SELECT cumulative_recharge_minor
+                FROM user_withdrawal_turnovers
+                WHERE user_id = $1
+            ),
+            0
+         )::BIGINT",
     )
     .bind(user_id)
-    .bind(kind)
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("用户累计充值金额读取失败".to_string()))
@@ -988,22 +994,20 @@ fn withdrawal_turnover_summary(
 }
 
 /// 数据库模式下按用户集合聚合充值本金，避免代理中心扫描无关用户资金流水。
+///
+/// 只读取累计表，缺失累计行的用户按 0 处理。
 async fn query_recharge_credit_totals_for_user_ids(
     database: &BusinessDatabase,
     user_ids: &BTreeSet<String>,
 ) -> ApiResult<BTreeMap<String, i64>> {
-    let kind = enum_to_string(&LedgerEntryKind::RechargeCredit)?;
     let user_ids = user_ids.iter().cloned().collect::<Vec<_>>();
     let rows = sqlx::query(
-        "SELECT user_id, COALESCE(SUM(amount_minor), 0)::BIGINT AS total_minor
-         FROM ledger_entries
+        "SELECT user_id, cumulative_recharge_minor AS total_minor
+         FROM user_withdrawal_turnovers
          WHERE user_id = ANY($1::text[])
-           AND kind = $2
-           AND amount_minor > 0
-         GROUP BY user_id",
+           AND cumulative_recharge_minor > 0",
     )
     .bind(&user_ids)
-    .bind(kind)
     .fetch_all(database.pool())
     .await
     .map_err(|_| ApiError::Internal("直属用户累计充值金额读取失败".to_string()))?;

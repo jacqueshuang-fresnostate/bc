@@ -33,7 +33,6 @@ import {
 } from 'react';
 import { uploadImageBedFile } from '../api/client';
 import { extractImageUrlFromUploadResult } from '../components/ImageUploadAvatar';
-import { MetricCard } from '../components/MetricCard';
 import { useSupportConversations } from '../hooks/useSupportConversations';
 import type {
   SupportConversation,
@@ -145,7 +144,6 @@ export function SupportManagementPage({
       null,
     [selectedId, visibleConversations],
   );
-  const totals = useMemo(() => supportTotals(conversations), [conversations]);
   const selectedChatMessages = useMemo(
     () =>
       selectedConversation
@@ -226,7 +224,6 @@ export function SupportManagementPage({
 
   const refreshAll = () => {
     refresh();
-    onDashboardRefresh();
   };
 
   const submitUpdate = async () => {
@@ -362,17 +359,6 @@ export function SupportManagementPage({
       </section>
 
       {error ? <Banner type="danger" title="客服接口错误" description={error} /> : null}
-
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          label="会话总数"
-          trend={`${totals.openCount} 个处理中`}
-          value={`${conversations.length}`}
-        />
-        <MetricCard label="未读消息" trend="待客服处理" value={`${totals.unread}`} />
-        <MetricCard label="紧急会话" trend="优先处理" value={`${totals.urgent}`} />
-        <MetricCard label="已解决" trend="已完成工单" value={`${totals.resolved}`} />
-      </section>
 
       {loading ? (
         <Card className="rounded-md border border-line">
@@ -837,23 +823,6 @@ function updatePayload(form: UpdateFormState): UpdateSupportConversationRequest 
     assignedAdminId: form.assignedAdminId || null,
     priority: form.priority,
     status: form.status,
-  };
-}
-
-function supportTotals(conversations: SupportConversation[]) {
-  return {
-    openCount: conversations.filter(
-      (conversation) =>
-        conversation.status === 'open' || conversation.status === 'pending',
-    ).length,
-    resolved: conversations.filter((conversation) => conversation.status === 'resolved')
-      .length,
-    unread: conversations.reduce(
-      (total, conversation) => total + conversation.unreadCount,
-      0,
-    ),
-    urgent: conversations.filter((conversation) => conversation.priority === 'urgent')
-      .length,
   };
 }
 
