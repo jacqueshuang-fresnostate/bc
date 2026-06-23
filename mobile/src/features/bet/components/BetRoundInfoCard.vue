@@ -6,10 +6,25 @@ const props = defineProps<{
   status: string
   countdownText: string
   latestIssue: string
-  latestNumbers: string[]
+  latestNumbers: string[] | string | null | undefined
 }>()
 
+function normalizeLatestNumbers(value: string[] | string | null | undefined) {
+  const rawItems = Array.isArray(value) ? value : [value]
+  return rawItems
+    .flatMap((item) => {
+      const text = String(item ?? '').trim()
+      if (!text) return []
+      if (/[，,\s|/]+/.test(text)) {
+        return text.split(/[，,\s|/]+/).map(part => part.trim()).filter(Boolean)
+      }
+      return Array.from(text)
+    })
+    .filter(Boolean)
+}
+
 const isOpening = computed(() => props.status === 'opening')
+const normalizedLatestNumbers = computed(() => normalizeLatestNumbers(props.latestNumbers))
 const roundIssueText = computed(() => {
   if (isOpening.value) return props.issue ? `第 ${props.issue} 期` : '开盘中'
   return `第 ${props.issue || '-'} 期`
@@ -35,8 +50,8 @@ const roundDeadlineText = computed(() => {
     <div class="latest-draw-row">
       <div class="latest-draw-label text-xs tracking-wider text-[#5a403e]">上期开奖 {{ latestIssue || '暂无' }} 期</div>
       <div class="latest-draw-numbers">
-        <span v-for="(number, index) in latestNumbers" :key="`${number}-${index}`" class="latest-draw-ball bg-gradient-to-br from-[#8c0a15] to-[#af2829] font-headline font-bold text-white">{{ number }}</span>
-        <span v-if="!latestNumbers.length" class="latest-draw-empty-dot inline-flex items-center rounded-full bg-[#f8f1ef] px-2.5 text-xs font-bold text-[#8e706d]">待开奖</span>
+        <span v-for="(number, index) in normalizedLatestNumbers" :key="`${number}-${index}`" class="latest-draw-ball bg-gradient-to-br from-[#8c0a15] to-[#af2829] font-headline font-bold text-white">{{ number }}</span>
+        <span v-if="!normalizedLatestNumbers.length" class="latest-draw-empty-dot inline-flex items-center rounded-full bg-[#f8f1ef] px-2.5 text-xs font-bold text-[#8e706d]">待开奖</span>
       </div>
     </div>
   </section>
@@ -88,6 +103,7 @@ const roundDeadlineText = computed(() => {
 
 .latest-draw-numbers {
   display: flex;
+  max-width: 9rem;
   max-width: min(9rem, 58%);
   min-width: 0;
   flex: 0 1 auto;
@@ -98,12 +114,17 @@ const roundDeadlineText = computed(() => {
 
 .latest-draw-ball {
   display: inline-flex;
+  width: 1.38rem;
   width: clamp(1.25rem, 6vw, 1.5rem);
+  height: 1.38rem;
   height: clamp(1.25rem, 6vw, 1.5rem);
+  flex: 0 0 1.38rem;
   flex: 0 0 clamp(1.25rem, 6vw, 1.5rem);
   align-items: center;
   justify-content: center;
   border-radius: 9999px;
+  background: #af2829;
+  font-size: 0.76rem;
   font-size: clamp(0.68rem, 3vw, 0.78rem);
   line-height: 1;
   letter-spacing: 0;

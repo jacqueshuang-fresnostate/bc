@@ -4848,3 +4848,10 @@
 - 解决问题：后端虽然已经按累计真实充值本金判断资格，但服务器旧库触发器、资金流水清理或重复确认已入账订单可能导致累计表没有被新充值修正；手机端聊天大厅也可能在进入页面后缓存旧的禁止发言状态。
 - 实施内容：充值确认事务末尾新增按用户已入账充值订单聚合校准 `user_withdrawal_turnovers` 的兜底逻辑，只补高不回退；新增迁移 `20260623170500_reconcile_chat_hall_recharge_turnover.sql`，部署时会再次按所有已支付充值单校准累计充值；手机端聊天大厅收到 `recharge_changed` / `balance_changed` 实时事件、页面回到前台或窗口重新获得焦点时，都会重新请求发言资格。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall_speaking_status -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml withdrawal_turnover_deltas_ignore_bonus_rebate_and_adjustment -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml store_calculates_withdrawal_turnover_from_ledger_entries -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml recharge_repository_confirms_customer_service_order_once -- --nocapture`、`pnpm --dir mobile build` 和 `git diff --check` 均通过；新增迁移已用本地 PostgreSQL 在事务回滚模式验证 SQL 可执行。
+
+## 2026-06-23 17:05 HKT 下注页上期开奖号码球显示加固
+
+- 完成任务：修复手机端下注页“上期开奖”右侧开奖结果数字球偶发不显示的问题。
+- 解决问题：不同接口版本或调试数据可能把最近开奖号码放在 `drawNumber`、`drawResult`、`openCode`、根级 `resultNumbers` 等字段中，组件层如果只信任已拆好的数组，旧包或旧 Android WebView 下容易出现只显示期号、不显示号码球。
+- 实施内容：下注页配置规范化增加最近开奖字段兜底；`BetRoundInfoCard` 对传入号码再次支持数组、单字符串、逗号、空白、斜杠、竖线和紧凑数字串拆分；号码球 CSS 增加非 `clamp()` / `min()` 的基础尺寸和背景色，旧 Android 不支持新 CSS 函数时也能显示红色号码球；同步更新前端组件规范。
+- 验证结果：`pnpm --dir mobile build`、Trellis 检查和 `git diff --check` 均通过。

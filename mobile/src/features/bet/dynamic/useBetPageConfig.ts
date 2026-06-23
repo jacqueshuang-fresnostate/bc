@@ -43,8 +43,13 @@ function latestDrawNumbers(latestDraw: any): string[] {
   return normalizeDrawNumbers(
     valueOf(latestDraw, 'resultNumbers', 'result_numbers')
       ?? valueOf(latestDraw, 'drawNumber', 'draw_number')
+      ?? valueOf(latestDraw, 'drawResult', 'draw_result')
+      ?? valueOf(latestDraw, 'resultNumber', 'result_number')
       ?? valueOf(latestDraw, 'result', 'result')
-      ?? valueOf(latestDraw, 'openNumber', 'open_number'),
+      ?? valueOf(latestDraw, 'openNumber', 'open_number')
+      ?? valueOf(latestDraw, 'openCode', 'open_code')
+      ?? valueOf(latestDraw, 'numbers', 'numbers')
+      ?? valueOf(latestDraw, 'number', 'number'),
   )
 }
 
@@ -170,6 +175,22 @@ function normalizePlay(item: any): DynamicBetPlay {
 export function normalizeBetPageConfig(data: any): BetPageConfig {
   // 页面配置拆成彩种、当前期、最新开奖和玩法清单，缺失字段都用安全默认值兜底。
   const latestDraw = valueOf(data, 'latestDraw', 'latest_draw')
+  const latestDrawNumbersFallback = normalizeDrawNumbers(
+    valueOf(data, 'latestDrawNumbers', 'latest_draw_numbers')
+      ?? valueOf(data, 'latestResultNumbers', 'latest_result_numbers')
+      ?? valueOf(data, 'latestDrawNumber', 'latest_draw_number')
+      ?? valueOf(data, 'drawNumber', 'draw_number')
+      ?? valueOf(data, 'resultNumbers', 'result_numbers'),
+  )
+  const normalizedLatestDrawNumbers = latestDrawNumbers(latestDraw)
+  const normalizedLatestDrawIssue = String(
+    latestDraw?.issue
+      ?? valueOf(latestDraw, 'issueNumber', 'issue_number')
+      ?? valueOf(data, 'latestIssue', 'latest_issue')
+      ?? valueOf(data, 'latestDrawIssue', 'latest_draw_issue')
+      ?? '',
+  )
+  const hasLatestDraw = Boolean(latestDraw) || normalizedLatestDrawNumbers.length > 0 || latestDrawNumbersFallback.length > 0 || normalizedLatestDrawIssue
   return {
     lottery: {
       code: String(data?.lottery?.code || ''),
@@ -189,9 +210,9 @@ export function normalizeBetPageConfig(data: any): BetPageConfig {
       scheduled_draw_at: valueOf(data?.round, 'scheduledDrawAt', 'scheduled_draw_at') == null ? null : String(valueOf(data?.round, 'scheduledDrawAt', 'scheduled_draw_at')),
       sale_stop_at: valueOf(data?.round, 'saleStopAt', 'sale_stop_at') == null ? null : String(valueOf(data?.round, 'saleStopAt', 'sale_stop_at')),
     },
-    latest_draw: latestDraw ? {
-      issue: String(latestDraw.issue || ''),
-      result_numbers: latestDrawNumbers(latestDraw),
+    latest_draw: hasLatestDraw ? {
+      issue: normalizedLatestDrawIssue,
+      result_numbers: normalizedLatestDrawNumbers.length ? normalizedLatestDrawNumbers : latestDrawNumbersFallback,
       opened_at: valueOf(latestDraw, 'openedAt', 'opened_at') == null ? null : String(valueOf(latestDraw, 'openedAt', 'opened_at')),
     } : null,
     plays: Array.isArray(data?.plays) ? data.plays.map(normalizePlay).filter((play: DynamicBetPlay) => play.code) : [],
