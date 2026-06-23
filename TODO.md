@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 12:12 HKT 聊天大厅发言资格超过门槛误判修复
+
+- 完成任务：排查线上用户累计充值已超过聊天大厅门槛但仍无法发言的问题，并加固后端发言资格判断。
+- 解决问题：线上接口返回 `requiredRechargeMinor=50000`、`currentRechargeMinor=400000`，但仍返回 `canSpeak=false` 且 `missingRechargeMinor=-350000`；根因是后端对有符号整数 `saturating_sub` 的语义理解不符合业务差额，它只在整数溢出时饱和，不会自动把负数归零，导致累计充值超过门槛时反而被误判无权限。
+- 实施内容：`chat_hall_speaking_status_from_amounts` 改为直接按 `requiredRechargeMinor == 0 || currentRechargeMinor >= requiredRechargeMinor` 判断发言资格，允许发言时 `missingRechargeMinor` 固定为 `0`，否则再计算正向差额；新增单元测试覆盖累计充值超过门槛时允许发言；同步更新聊天大厅接口契约和架构说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml chat_hall_speaking_status -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml` 和 `git diff --check` 均通过。
+
 ## 2026-06-23 11:58 HKT GHCR 镜像改用不可变版本标签
 
 - 完成任务：把 Docker 镜像发布和部署从漂移标签改为明确版本标签。

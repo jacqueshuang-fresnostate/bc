@@ -3326,8 +3326,13 @@ fn chat_hall_speaking_status_from_amounts(
 ) -> ChatHallSpeakingStatusResponse {
     let required_recharge_minor = required_recharge_minor.max(0);
     let current_recharge_minor = current_recharge_minor.max(0);
-    let missing_recharge_minor = required_recharge_minor.saturating_sub(current_recharge_minor);
-    let can_speak = required_recharge_minor == 0 || missing_recharge_minor == 0;
+    let can_speak =
+        required_recharge_minor == 0 || current_recharge_minor >= required_recharge_minor;
+    let missing_recharge_minor = if can_speak {
+        0
+    } else {
+        required_recharge_minor - current_recharge_minor
+    };
     let message = if can_speak {
         String::new()
     } else {
@@ -4059,6 +4064,10 @@ mod tests {
         assert_eq!(chat_hall_required_recharge_minor(&disabled_settings), 0);
         assert!(chat_hall_speaking_status_from_amounts(0, 0).can_speak);
         assert!(chat_hall_speaking_status_from_amounts(30_000, 30_000).can_speak);
+        let exceeded = chat_hall_speaking_status_from_amounts(30_000, 120_000);
+        assert!(exceeded.can_speak);
+        assert_eq!(exceeded.missing_recharge_minor, 0);
+        assert_eq!(exceeded.message, "");
     }
 
     #[test]

@@ -347,6 +347,7 @@ WebSocket 消息统一使用当前系统事件信封：
 - 聊天大厅消息必须写入 `chat_hall_messages` 表；`avatar_url` 保存发送人头像快照，用户更新头像后需要同步刷新该用户历史消息的头像快照。运行期只保留最近 200 条历史，接口返回最近 100 条。
 - 聊天大厅是所有登录用户可进入的公共大厅，不使用客服会话表，不允许把公共大厅消息写入 `support_conversations` 或 `support_messages`。
 - 聊天大厅发言门槛由系统设置 `chat_hall_speaking_min_recharge_minor` 控制，后台按元展示和编辑，后端内部按分保存，`0` 表示不限制；数据库模式必须读取 `user_withdrawal_turnovers.cumulative_recharge_minor` 判断当前用户真实充值本金累计金额，不计入 `rechargeBonusCredit` 赠送彩金、`rechargeRebateCredit` 代理返利、红包或手动调账，避免清理资金流水后误判用户没有充值。充值订单确认入账时需要按当前用户已入账充值单兜底校准累计表，只补高不回退，不能只依赖资金流水触发器。
+- `GET /api/user/chat-hall/speaking-status` 的 `canSpeak` 必须按 `requiredRechargeMinor == 0 || currentRechargeMinor >= requiredRechargeMinor` 判断；`missingRechargeMinor` 必须用不小于 0 的差额展示，当前累计充值超过门槛时必须返回 `0`，不得返回负数。
 - `POST /api/user/chat-hall/messages`、`POST /api/user/chat-hall/red-packets`、`POST /api/user/chat-hall/group-buy-plans` 必须在保存消息、扣款或广播前统一校验发言资格；未满足门槛时返回 403，并提示“抱歉，暂无发言权限，充值 ¥x 元即可参与群聊”。
 
 ### 4. 校验与错误矩阵
@@ -5072,6 +5073,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 
 - 后台系统设置 `chat_hall_speaking_min_recharge_minor` 使用元作为运营输入单位，保存时转换为分，`0` 表示所有登录用户都可发言。
 - `GET /api/user/chat-hall/speaking-status` 按当前用户真实充值本金累计金额判断资格；数据库模式读取 `user_withdrawal_turnovers.cumulative_recharge_minor`，并返回 `canSpeak`、`requiredRechargeMinor`、`currentRechargeMinor`、`missingRechargeMinor` 和中文 `message`。
+- `currentRechargeMinor >= requiredRechargeMinor` 时必须返回 `canSpeak=true`，并且 `missingRechargeMinor=0`；该判断不能依赖普通减法结果是否等于 0，避免用户累计充值超过门槛时被误判为无发言权限。
 - 发送文本、红包和合买分享都必须在业务执行前调用同一发言资格守卫；门槛不足时不扣款、不保存消息、不广播实时事件。
 
 发送红包请求体：
