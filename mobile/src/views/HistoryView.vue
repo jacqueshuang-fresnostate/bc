@@ -63,18 +63,18 @@ const {
 } = useBetOrders(router)
 const orderTabs: Array<{ key: BetOrderView; label: string; empty: string; more: string; done: string }> = [
   {
-    key: 'orders',
-    label: '我的注单',
-    empty: '暂无已下单注单',
-    more: '加载更多注单',
-    done: '已加载全部注单',
-  },
-  {
     key: 'groupBuy',
     label: '我的合买',
     empty: '暂无合买记录',
     more: '加载更多合买',
     done: '已加载全部合买',
+  },
+  {
+    key: 'orders',
+    label: '我的注单',
+    empty: '暂无已下单注单',
+    more: '加载更多注单',
+    done: '已加载全部注单',
   },
 ]
 const activeOrderTab = computed(

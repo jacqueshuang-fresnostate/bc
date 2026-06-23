@@ -4870,6 +4870,13 @@
 - 实施内容：充值确认事务末尾新增按用户已入账充值订单聚合校准 `user_withdrawal_turnovers` 的兜底逻辑，只补高不回退；新增迁移 `20260623170500_reconcile_chat_hall_recharge_turnover.sql`，部署时会再次按所有已支付充值单校准累计充值；手机端聊天大厅收到 `recharge_changed` / `balance_changed` 实时事件、页面回到前台或窗口重新获得焦点时，都会重新请求发言资格。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall_speaking_status -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml withdrawal_turnover_deltas_ignore_bonus_rebate_and_adjustment -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml store_calculates_withdrawal_turnover_from_ledger_entries -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml recharge_repository_confirms_customer_service_order_once -- --nocapture`、`pnpm --dir mobile build` 和 `git diff --check` 均通过；新增迁移已用本地 PostgreSQL 在事务回滚模式验证 SQL 可执行。
 
+# 2026-06-23 21:03 HKT 手机端我的记录 Tab 顺序调整
+
+- 完成任务：把手机端 `/orders` 页面里的“我的合买”和“我的注单”位置对调。
+- 解决问题：原来“我的注单”在左、“我的合买”在右，不符合当前用户希望优先看到合买入口的页面顺序。
+- 实施内容：调整 `HistoryView` 中订单记录 Tab 配置顺序，把“我的合买”放在前面，“我的注单”放在后面；接口、分页、默认选中视图和列表数据逻辑保持不变。
+- 验证结果：`pnpm --dir mobile build` 和 `git diff --check` 均通过。
+
 # 2026-06-23 20:08 HKT 资金流水统一数据库序列取号
 
 - 完成任务：统一数据库模式下资金流水 ID 生成规则，所有新增 `ledger_entries.id` 使用 `L + nextval('ledger_entry_id_sequence')`。
