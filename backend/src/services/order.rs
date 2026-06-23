@@ -42,6 +42,7 @@ use super::business_database::{
 const ODDS_SCALE_BASIS_POINTS: i64 = 10_000;
 const MONEY_MINOR_UNITS_PER_YUAN: i64 = 100;
 const PAYOUT_MINOR_DIVISOR: i64 = ODDS_SCALE_BASIS_POINTS / MONEY_MINOR_UNITS_PER_YUAN;
+const DEFAULT_BET_UNIT_AMOUNT_MINOR: i64 = 200;
 
 /// 校验期号与订单关联关系是否允许下单。
 pub fn validate_draw_issue_accepts_order(
@@ -2329,7 +2330,11 @@ impl OrderStore {
             } else {
                 0
             };
-            let payout_minor = payout_amount_minor(matched_bets.len(), odds_basis_points)?;
+            let payout_minor = payout_amount_minor(
+                matched_bets.len(),
+                odds_basis_points,
+                order.unit_amount_minor,
+            )?;
             let status = if is_winning {
                 OrderStatus::Won
             } else {
@@ -2603,17 +2608,36 @@ fn big_small_odd_even_position_key(position: &BigSmallOddEvenPosition) -> &'stat
     }
 }
 
-/// 按命中注数和玩法赔率快照计算派奖金额。
+/// 按命中注数、玩法赔率快照和投注倍数计算派奖金额。
 ///
-/// 业务公式里的中奖金额单位是“元”：命中注数 × oddsBasisPoints / 10000。
+/// 手机端当前会把“2 元基础单注 × 倍数”折进 `unitAmountMinor`，
+/// 结算时只能按 200 分基准反推倍数，不能把任意单注金额直接纳入派奖公式。
+/// 展示公式单位是“元”：命中注数 × oddsBasisPoints / 10000 × 倍数。
 /// 订单和资金流水保存的是“分”，因此这里需要再换算成最小货币单位。
-fn payout_amount_minor(matched_bet_count: usize, odds_basis_points: i64) -> ApiResult<i64> {
+fn payout_amount_minor(
+    matched_bet_count: usize,
+    odds_basis_points: i64,
+    combined_unit_amount_minor: i64,
+) -> ApiResult<i64> {
     let matched_bet_count = i64::try_from(matched_bet_count)
         .map_err(|_| ApiError::BadRequest("payout amount is too large".to_string()))?;
+    let multiplier = payout_multiplier_from_unit_amount(combined_unit_amount_minor);
     matched_bet_count
         .checked_mul(odds_basis_points)
+        .and_then(|amount| amount.checked_mul(multiplier))
         .map(|amount| amount / PAYOUT_MINOR_DIVISOR)
         .ok_or_else(|| ApiError::BadRequest("payout amount is too large".to_string()))
+}
+
+/// 从合并单注金额反推投注倍数；无法按默认 2 元基准整除时按 1 倍处理。
+fn payout_multiplier_from_unit_amount(combined_unit_amount_minor: i64) -> i64 {
+    if combined_unit_amount_minor >= DEFAULT_BET_UNIT_AMOUNT_MINOR
+        && combined_unit_amount_minor % DEFAULT_BET_UNIT_AMOUNT_MINOR == 0
+    {
+        combined_unit_amount_minor / DEFAULT_BET_UNIT_AMOUNT_MINOR
+    } else {
+        1
+    }
 }
 
 /// 生成当前本地时间字符串。
@@ -2902,6 +2926,47 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(settled.status, OrderStatus::Won);
         assert_eq!(account.available_balance_minor, 12_800);
+    }
+
+    #[tokio::test]
+    /// 开奖结算会从合并单注金额反推投注倍数并放大派奖。
+    async fn repository_settle_with_payouts_applies_multiplier_from_unit_amount() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let order = orders
+            .create_with_debit(
+                &finance,
+                &lottery,
+                direct_order_request("U10001", "2026156", 400),
+                OrderSource::Direct,
+            )
+            .await
+            .expect("order can be created with debit");
+
+        let (settlement, entries) = orders
+            .settle_with_payouts(
+                &finance,
+                &group_buys,
+                &draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")),
+            )
+            .await
+            .expect("drawn issue can settle with payout");
+        let settled = orders.get(&order.id).await.expect("order exists");
+        let account = finance
+            .accounts()
+            .await
+            .expect("accounts can list")
+            .into_iter()
+            .find(|account| account.user_id == "U10001")
+            .expect("seed account exists");
+
+        assert_eq!(settlement.winning_order_count, 1);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(settled.status, OrderStatus::Won);
+        assert_eq!(settled.payout_minor, 2_000);
+        assert_eq!(account.available_balance_minor, 13_600);
     }
 
     #[test]

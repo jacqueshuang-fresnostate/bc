@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 23:01 HKT 投注倍数参与派奖修复
+
+- 完成任务：修复中奖派奖没有按投注倍数放大的问题。
+- 解决问题：手机端下注会把“2 元基础单注 × 倍数”折算到 `unitAmountMinor`，但后端结算只按命中注数和玩法赔率快照计算派奖，导致 2 倍、3 倍等订单中奖后仍按 1 倍派奖。
+- 实施内容：后端结算从 `unitAmountMinor` 按 200 分基础单注反推投注倍数，派奖公式调整为“展示中奖金额 = 命中注数 × oddsBasisPoints / 10000 × 倍数”，入账保存为“命中注数 × oddsBasisPoints × 倍数 / 100 分”；新增 2 倍中奖回归测试，并同步更新订单领域注释、后端 API 契约和架构说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、新增 `repository_settle_with_payouts_applies_multiplier_from_unit_amount`、既有 `repository_settle_with_payouts_updates_order_and_balance`、`store_settles_drawn_issue_and_updates_order_statuses`、`automation_closes_draws_settles_and_credits_due_issue`、`cargo test --manifest-path backend/Cargo.toml order -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml --quiet` 和 `git diff --check` 均通过；后端全量 422 个测试成功。
+
 ## 2026-06-23 22:46 HKT GitHub Actions Docker 缓存导出失败降级
 
 - 完成任务：修复 GitHub Actions Docker 构建在“exporting to GitHub Actions Cache”阶段因缓存服务 503/超时而失败的问题。
@@ -11,14 +18,14 @@
 
 - 完成任务：修复独立下注中奖后派奖金额没有按预期增加到账户余额的问题。
 - 解决问题：上一轮把“命中注数 × 玩法赔率 / 10000”的业务公式直接写入 `payoutMinor` 分字段，导致应按元展示的中奖金额少乘了 100；部分赔率较低的玩法还可能因为整数截断得到 0 分，被资金服务跳过派奖流水。
-- 实施内容：后端派奖计算保留“展示中奖金额 = 命中注数 × oddsBasisPoints / 10000 元”的业务口径，入账保存时换算为“命中注数 × oddsBasisPoints / 100 分”；同步更新订单结算测试期望、后端 API 契约和架构说明，明确 `unitAmountMinor` 不参与派奖但元/分单位必须正确换算。
+- 实施内容：后端派奖计算保留“展示中奖金额 = 命中注数 × oddsBasisPoints / 10000 元”的业务口径，入账保存时换算为“命中注数 × oddsBasisPoints / 100 分”；同步更新订单结算测试期望、后端 API 契约和架构说明，明确 `unitAmountMinor` 不能按任意金额直接参与派奖但元/分单位必须正确换算。该条记录只处理元/分换算，最终倍数口径以 23:01 的“投注倍数参与派奖修复”为准。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml repository_settle_with_payouts_updates_order_and_balance -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml store_settles_drawn_issue_and_updates_order_statuses -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml automation_closes_draws_settles_and_credits_due_issue -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml order -- --nocapture` 和后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet` 均通过；后端全量 421 个测试成功。
 
 ## 2026-06-23 21:20 HKT 订单派奖公式调整
 
-- 完成任务：将订单中奖派奖公式调整为“命中注数 × 玩法赔率 / 10000”。
-- 解决问题：旧逻辑会把 `unitAmountMinor` 单注金额再次乘入派奖公式，导致派奖金额同时受投注单注金额和玩法赔率影响；当前业务要求单注金额只影响扣款，派奖只按命中注数和玩法赔率快照计算。
-- 实施内容：后端 `payout_amount_minor` 移除单注金额参数，结算时只传命中注数和订单 `oddsBasisPoints`；同步调整订单结算测试期望、后端 API 契约和架构说明，明确后续不能再把 `unitAmountMinor` 纳入派奖公式。
+- 完成任务：将订单中奖派奖公式从“直接乘单注金额”调整为“按命中注数和玩法赔率快照计算”。
+- 解决问题：旧逻辑会把 `unitAmountMinor` 单注金额再次乘入派奖公式，导致派奖金额同时受投注单注金额和玩法赔率影响；该阶段先拆除任意金额直接参与派奖的问题。
+- 实施内容：后端 `payout_amount_minor` 在该阶段移除单注金额参数，结算时只传命中注数和订单 `oddsBasisPoints`；后续 23:01 已补充按 200 分基础单注从 `unitAmountMinor` 反推投注倍数的最终口径。
 - 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml order -- --nocapture` 和后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet` 均通过；后端全量 421 个测试成功。
 
 ## 2026-06-23 19:14 HKT 我的合买认购中分页显示修复

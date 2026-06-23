@@ -864,8 +864,8 @@ const result = await evaluatePlayRule(payload);
 结算派奖必须使用订单上的赔率快照，不能重新读取当前彩种赔率。派奖公式：
 
 ```text
-展示中奖金额（元）= 命中投注数 × oddsBasisPoints / 10000
-入账派奖金额（分）= 命中投注数 × oddsBasisPoints / 100
+展示中奖金额（元）= 命中投注数 × oddsBasisPoints / 10000 × 投注倍数
+入账派奖金额（分）= 命中投注数 × oddsBasisPoints × 投注倍数 / 100
 ```
 
 ### 4. 校验与错误矩阵
@@ -915,10 +915,11 @@ let payout = matched_count * unit_amount * current_lottery_odds(rule_code);
 #### 正确
 
 ```rust
-let payout_minor = matched_count * order.odds_basis_points / 100;
+let multiplier = multiplier_from_unit_amount(order.unit_amount_minor);
+let payout_minor = matched_count * order.odds_basis_points * multiplier / 100;
 ```
 
-订单创建时保存赔率快照，结算时只读取订单自身的赔率；投注单注金额只影响扣款金额，不参与派奖金额计算。业务公式展示为元，后端保存和入账时必须换算成分。
+订单创建时保存赔率快照，结算时只读取订单自身的赔率。当前订单模型没有单独 `multiple` 字段，手机端会把 2 元基础单注和倍数合并到 `unitAmountMinor`；结算只能按 200 分基准从 `unitAmountMinor` 反推投注倍数，不能把任意单注金额整体纳入派奖金额。业务公式展示为元，后端保存和入账时必须换算成分。
 
 ---
 
@@ -1555,8 +1556,8 @@ POST /api/admin/settlements/draw-issues/D000000000001
   "drawNumber": "0,2,3",
   "settledOrderCount": 1,
   "winningOrderCount": 1,
-  "totalStakeAmountMinor": 200,
-  "totalPayoutMinor": 2000,
+  "totalStakeAmountMinor": 400,
+  "totalPayoutMinor": 2080,
   "createdAt": "unix:1780388582",
   "orders": [
     {
@@ -1565,7 +1566,7 @@ POST /api/admin/settlements/draw-issues/D000000000001
       "username": "demo_user",
       "ruleCode": "threeDirect",
       "stakeCount": 1,
-      "amountMinor": 200,
+      "amountMinor": 400,
       "isWinning": true,
       "matchedBets": ["023"],
       "oddsBasisPoints": 104000,
@@ -1611,7 +1612,7 @@ POST /api/admin/settlements/draw-issues/D000000000001
 
 ### 5. Good / Base / Bad Cases
 
-- Good：`fc3d` 期号开奖 `0,2,3`，同期开奖的 `threeDirect` 订单选号 `023`，订单赔率快照 `oddsBasisPoints=104000`，结算后订单状态为 `won`，`matchedBets=["023"]`，单注 `200` 分派发 `2080` 分。
+- Good：`fc3d` 期号开奖 `0,2,3`，同期开奖的 `threeDirect` 订单选号 `023`，订单赔率快照 `oddsBasisPoints=104000`，结算后订单状态为 `won`，`matchedBets=["023"]`，1 倍合并单注 `200` 分派发 `1040` 分，2 倍合并单注 `400` 分派发 `2080` 分。
 - Good：同期开奖的未命中订单结算后状态为 `lost`，`matchedBets=[]`，`payoutMinor=0`。
 - Good：同一期号存在已取消订单时，取消订单不参与结算且状态保持 `cancelled`。
 - Good：计奖派奖页面请求 `GET /api/admin/settlements?page=1&pageSize=20`，表格展示第一页结算批次，总数来自 `totalCount`。

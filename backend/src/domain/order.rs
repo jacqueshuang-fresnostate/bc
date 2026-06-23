@@ -79,7 +79,7 @@ pub struct CreateOrderRequest {
     pub rule_code: PlayRuleCode,
     /// 用户选择的投注号码结构。
     pub selection: PlaySelection,
-    /// 单注金额，单位为分。
+    /// 合并单注金额，单位为分；手机端会把基础单注金额和倍数折算到这里。
     pub unit_amount_minor: i64,
 }
 
@@ -119,7 +119,7 @@ pub struct OrderDetail {
     pub selection: PlaySelection,
     /// 投注注数。
     pub stake_count: u32,
-    /// 单注金额，单位为分。
+    /// 合并单注金额，单位为分；手机端会把基础单注金额和倍数折算到这里。
     pub unit_amount_minor: i64,
     /// 业务金额，单位为分。
     pub amount_minor: i64,
