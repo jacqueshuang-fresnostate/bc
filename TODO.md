@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 21:20 HKT 订单派奖公式调整
+
+- 完成任务：将订单中奖派奖公式调整为“命中注数 × 玩法赔率 / 10000”。
+- 解决问题：旧逻辑会把 `unitAmountMinor` 单注金额再次乘入派奖公式，导致派奖金额同时受投注单注金额和玩法赔率影响；当前业务要求单注金额只影响扣款，派奖只按命中注数和玩法赔率快照计算。
+- 实施内容：后端 `payout_amount_minor` 移除单注金额参数，结算时只传命中注数和订单 `oddsBasisPoints`；同步调整订单结算测试期望、后端 API 契约和架构说明，明确后续不能再把 `unitAmountMinor` 纳入派奖公式。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml order -- --nocapture` 和后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet` 均通过；后端全量 421 个测试成功。
+
 ## 2026-06-23 19:14 HKT 我的合买认购中分页显示修复
 
 - 完成任务：修复手机端“我的记录 / 我的合买”里“合买认购中”刷新后不显示、连续点击“加载更多合买”后才出现的问题。

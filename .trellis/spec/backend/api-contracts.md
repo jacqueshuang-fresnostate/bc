@@ -864,7 +864,7 @@ const result = await evaluatePlayRule(payload);
 结算派奖必须使用订单上的赔率快照，不能重新读取当前彩种赔率。派奖公式：
 
 ```text
-命中投注数 × 单注金额 × oddsBasisPoints / 10000
+命中投注数 × oddsBasisPoints / 10000
 ```
 
 ### 4. 校验与错误矩阵
@@ -909,15 +909,15 @@ const result = await evaluatePlayRule(payload);
 let payout = matched_count * unit_amount * current_lottery_odds(rule_code);
 ```
 
-这个写法会让后续调价影响历史订单。
+这个写法会让后续调价影响历史订单，并且把单注金额错误纳入派奖公式。
 
 #### 正确
 
 ```rust
-let payout = matched_count * order.unit_amount_minor * order.odds_basis_points / 10_000;
+let payout = matched_count * order.odds_basis_points / 10_000;
 ```
 
-订单创建时保存赔率快照，结算时只读取订单自身的赔率。
+订单创建时保存赔率快照，结算时只读取订单自身的赔率；投注单注金额只影响扣款金额，不参与派奖金额计算。
 
 ---
 
