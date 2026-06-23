@@ -1,6 +1,6 @@
 services:
   bc:
-    image: ghcr.io/sydneypoole/bc:${BC_IMAGE_TAG:?请设置 BC_IMAGE_TAG，例如 sha-fca561e 或 v2026.06.23-1}
+    image: ghcr.io/sydneypoole/bc:${BC_IMAGE_TAG:?请设置 BC_IMAGE_TAG，例如 latest、sha-fca561e 或 v2026.06.23-1}
     ports:
       - "${APP_PORT:-8080}:80"
     environment:

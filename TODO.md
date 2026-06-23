@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 12:40 HKT GHCR 恢复 latest 镜像标签
+
+- 完成任务：恢复 GitHub Actions 发布 `latest` Docker 镜像标签的打包方式。
+- 解决问题：此前为了固定版本部署移除了 `latest` 标签，服务器如果沿用旧的 `ghcr.io/sydneypoole/bc:latest` 拉取方式就无法获得最新镜像。
+- 实施内容：`.github/workflows/ci.yml` 在默认分支推送时显式发布 `latest`，同时继续发布 `sha-<提交短哈希>`；`v*` 标签推送继续发布版本标签和 `sha-<提交短哈希>`；同步更新 `docker-compose.ghcr.yml` 示例、部署说明、架构说明和 Trellis 容器部署规范，说明 `BC_IMAGE_TAG` 支持 `latest`、提交标签和版本标签。
+- 验证结果：`.github/workflows/ci.yml` YAML 解析通过；`BC_IMAGE_TAG=latest DATABASE_URL=postgresql://user:password@127.0.0.1:5432/bc docker compose -f docker-compose.ghcr.yml config` 渲染为 `ghcr.io/sydneypoole/bc:latest`；禁用 `latest` 的旧文案扫描无残留；`git diff --check` 通过。
+
 ## 2026-06-23 12:29 HKT 后台侧边栏分组折叠
 
 - 完成任务：让后台侧边栏“常用”和“不常用”分组支持折叠展开。
