@@ -40,6 +40,8 @@ use super::business_database::{
 };
 
 const ODDS_SCALE_BASIS_POINTS: i64 = 10_000;
+const MONEY_MINOR_UNITS_PER_YUAN: i64 = 100;
+const PAYOUT_MINOR_DIVISOR: i64 = ODDS_SCALE_BASIS_POINTS / MONEY_MINOR_UNITS_PER_YUAN;
 
 /// 校验期号与订单关联关系是否允许下单。
 pub fn validate_draw_issue_accepts_order(
@@ -2602,12 +2604,15 @@ fn big_small_odd_even_position_key(position: &BigSmallOddEvenPosition) -> &'stat
 }
 
 /// 按命中注数和玩法赔率快照计算派奖金额。
+///
+/// 业务公式里的中奖金额单位是“元”：命中注数 × oddsBasisPoints / 10000。
+/// 订单和资金流水保存的是“分”，因此这里需要再换算成最小货币单位。
 fn payout_amount_minor(matched_bet_count: usize, odds_basis_points: i64) -> ApiResult<i64> {
     let matched_bet_count = i64::try_from(matched_bet_count)
         .map_err(|_| ApiError::BadRequest("payout amount is too large".to_string()))?;
     matched_bet_count
         .checked_mul(odds_basis_points)
-        .map(|amount| amount / ODDS_SCALE_BASIS_POINTS)
+        .map(|amount| amount / PAYOUT_MINOR_DIVISOR)
         .ok_or_else(|| ApiError::BadRequest("payout amount is too large".to_string()))
 }
 
@@ -2896,7 +2901,7 @@ mod tests {
         assert_eq!(settlement.winning_order_count, 1);
         assert_eq!(entries.len(), 1);
         assert_eq!(settled.status, OrderStatus::Won);
-        assert_eq!(account.available_balance_minor, 11_810);
+        assert_eq!(account.available_balance_minor, 12_800);
     }
 
     #[test]
@@ -3067,7 +3072,7 @@ mod tests {
         assert_eq!(run.settled_order_count, 2);
         assert_eq!(run.winning_order_count, 1);
         assert_eq!(run.total_stake_amount_minor, 400);
-        assert_eq!(run.total_payout_minor, 10);
+        assert_eq!(run.total_payout_minor, 1000);
         assert_eq!(run.orders.len(), 2);
         assert_eq!(run.orders[0].odds_basis_points, 100_000);
 
@@ -3075,7 +3080,7 @@ mod tests {
         assert_eq!(winning.status, OrderStatus::Won);
         assert_eq!(winning.draw_number.as_deref(), Some("2,4,7"));
         assert_eq!(winning.matched_bets, vec!["247"]);
-        assert_eq!(winning.payout_minor, 10);
+        assert_eq!(winning.payout_minor, 1000);
         assert!(winning.settled_at.is_some());
 
         let losing = store.get(&losing.id).expect("losing order exists");
@@ -3207,7 +3212,7 @@ mod tests {
         assert_eq!(runs[0].settled_order_count, 1);
         assert_eq!(runs[0].winning_order_count, 1);
         assert_eq!(runs[0].total_stake_amount_minor, 200);
-        assert_eq!(runs[0].total_payout_minor, 10);
+        assert_eq!(runs[0].total_payout_minor, 1000);
         assert_eq!(runs[0].orders[0].order_id, real_order.id);
     }
 

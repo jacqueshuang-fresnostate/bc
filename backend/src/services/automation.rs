@@ -911,7 +911,7 @@ mod tests {
         assert_eq!(run.settlement_runs.len(), 1);
         assert_eq!(run.ledger_entries.len(), 1);
         assert_eq!(stored.status, DrawIssueStatus::Drawn);
-        assert_eq!(account.available_balance_minor, 12_001);
+        assert_eq!(account.available_balance_minor, 12_100);
         assert!(stored
             .draw_number
             .as_deref()

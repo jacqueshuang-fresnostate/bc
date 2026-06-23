@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 22:18 HKT 独立中奖派奖入账单位修复
+
+- 完成任务：修复独立下注中奖后派奖金额没有按预期增加到账户余额的问题。
+- 解决问题：上一轮把“命中注数 × 玩法赔率 / 10000”的业务公式直接写入 `payoutMinor` 分字段，导致应按元展示的中奖金额少乘了 100；部分赔率较低的玩法还可能因为整数截断得到 0 分，被资金服务跳过派奖流水。
+- 实施内容：后端派奖计算保留“展示中奖金额 = 命中注数 × oddsBasisPoints / 10000 元”的业务口径，入账保存时换算为“命中注数 × oddsBasisPoints / 100 分”；同步更新订单结算测试期望、后端 API 契约和架构说明，明确 `unitAmountMinor` 不参与派奖但元/分单位必须正确换算。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml repository_settle_with_payouts_updates_order_and_balance -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml store_settles_drawn_issue_and_updates_order_statuses -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml automation_closes_draws_settles_and_credits_due_issue -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml order -- --nocapture` 和后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet` 均通过；后端全量 421 个测试成功。
+
 ## 2026-06-23 21:20 HKT 订单派奖公式调整
 
 - 完成任务：将订单中奖派奖公式调整为“命中注数 × 玩法赔率 / 10000”。
