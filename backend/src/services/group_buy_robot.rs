@@ -18,7 +18,7 @@ use crate::{
             AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyPlan,
             GroupBuyPlanStatus,
         },
-        lottery::LotteryKind,
+        lottery::{LotteryKind, LotteryPlayConfig, LotteryPlayPositionSelectLimit},
         order::CreateOrderRequest,
         play::PlayRuleCode,
         robot::{
@@ -57,6 +57,11 @@ const ROBOT_FILL_STAGE_THREE_TARGET_PERCENT: i64 = 80;
 const ROBOT_FILL_FINAL_TARGET_PERCENT: i64 = 100;
 const ROBOT_FILL_STAGE_COUNT: i64 = 5;
 const ROBOT_CONCURRENT_JOB_LIMIT: usize = 8;
+const ROBOT_BASE_UNIT_AMOUNT_MINOR: i64 = 200;
+const ROBOT_MAX_MULTIPLE: usize = 20;
+const ROBOT_MAX_POSITION_DIGIT_COUNT: usize = 5;
+const ROBOT_MAX_NUMBER_POOL_COUNT: usize = 6;
+const ROBOT_MAX_BIG_SMALL_ATTRIBUTE_COUNT: usize = 3;
 const ROBOT_DISPLAY_NAME_FALLBACKS: [&str; 8] = [
     "林清远",
     "沈知安",
@@ -919,7 +924,7 @@ async fn attach_order_for_plan(
     Ok(())
 }
 
-/// 生成机器人计划请求，并选出当前彩种第一个可验证的启用玩法。
+/// 生成机器人计划请求，随机选择一个可验证的启用玩法、投注注数和隐含倍数。
 async fn build_robot_plan_request(
     robot: &RobotConfigSummary,
     lottery: &LotteryKind,
@@ -928,13 +933,8 @@ async fn build_robot_plan_request(
     robot_user: &UserSummary,
 ) -> ApiResult<CreateGroupBuyPlanRequest> {
     let mut skipped_reasons = Vec::new();
-    for (play_index, play) in lottery
-        .play_configs
-        .iter()
-        .filter(|play| play.enabled)
-        .enumerate()
-    {
-        let numbers = robot_numbers_for_rule(robot, lottery, issue, &play.rule_code, play_index);
+    for (play_index, play) in randomized_robot_play_candidates(robot, lottery, issue) {
+        let numbers = robot_numbers_for_play(robot, lottery, issue, play, play_index);
         let selection = match parse_group_buy_selection(&play.rule_code, &numbers) {
             Ok(selection) => selection,
             Err(error) => {
@@ -962,8 +962,10 @@ async fn build_robot_plan_request(
                 continue;
             }
         };
+        let unit_amount_minor =
+            robot_unit_amount_minor(robot, lottery, issue, &play.rule_code, play_index)?;
         let (total_amount_minor, initiator_amount_minor) =
-            robot_group_buy_amounts(lottery, i64::from(quote.stake_count))?;
+            robot_group_buy_amounts(lottery, i64::from(quote.stake_count), unit_amount_minor)?;
         let rule_code = enum_to_string(&play.rule_code)?;
 
         return Ok(CreateGroupBuyPlanRequest {
@@ -987,9 +989,16 @@ async fn build_robot_plan_request(
 }
 
 /// 计算机器人合买总额和发起人自购金额。
-fn robot_group_buy_amounts(lottery: &LotteryKind, stake_count: i64) -> ApiResult<(i64, i64)> {
+fn robot_group_buy_amounts(
+    lottery: &LotteryKind,
+    stake_count: i64,
+    unit_amount_minor: i64,
+) -> ApiResult<(i64, i64)> {
     if stake_count <= 0 {
         return Err(ApiError::BadRequest("机器人投注注数无效".to_string()));
+    }
+    if unit_amount_minor <= 0 {
+        return Err(ApiError::BadRequest("机器人投注倍数金额无效".to_string()));
     }
 
     let min_share = lottery.group_buy.min_share_amount_minor.max(1);
@@ -997,8 +1006,14 @@ fn robot_group_buy_amounts(lottery: &LotteryKind, stake_count: i64) -> ApiResult
         .group_buy
         .participant_min_amount_minor
         .max(min_share);
-    let total_unit = lcm(min_share, stake_count)?;
-    let mut total = round_up_to_multiple(participant_min * 2, total_unit)?;
+    let stake_unit = stake_count
+        .checked_mul(ROBOT_BASE_UNIT_AMOUNT_MINOR)
+        .ok_or_else(|| ApiError::BadRequest("机器人投注金额步进过大".to_string()))?;
+    let total_unit = lcm(min_share, stake_unit)?;
+    let target_total = stake_count
+        .checked_mul(unit_amount_minor)
+        .ok_or_else(|| ApiError::BadRequest("机器人合买金额过大".to_string()))?;
+    let mut total = round_up_to_multiple(target_total.max(participant_min * 2), total_unit)?;
     total = total.max(round_up_to_multiple(min_share * 10, total_unit)?);
     total = total.max(round_up_to_multiple(
         participant_min
@@ -1049,7 +1064,40 @@ async fn current_open_issue(
         }))
 }
 
+/// 按机器人、彩种和期号把启用玩法确定性打散，让发单玩法不再固定为第一个配置。
+fn randomized_robot_play_candidates<'a>(
+    robot: &RobotConfigSummary,
+    lottery: &'a LotteryKind,
+    issue: &DrawIssue,
+) -> Vec<(usize, &'a LotteryPlayConfig)> {
+    let mut candidates = lottery
+        .play_configs
+        .iter()
+        .enumerate()
+        .filter(|(_, play)| play.enabled)
+        .collect::<Vec<_>>();
+    let mut picker = RobotNumberPicker::for_purpose(robot, lottery, issue, "play-order");
+    for index in 0..candidates.len() {
+        let swap_index = index + picker.next_index(candidates.len() - index);
+        candidates.swap(index, swap_index);
+    }
+    candidates
+}
+
+/// 按机器人、彩种、期号和玩法配置派生一组可校验的随机投注文本。
+fn robot_numbers_for_play(
+    robot: &RobotConfigSummary,
+    lottery: &LotteryKind,
+    issue: &DrawIssue,
+    play: &LotteryPlayConfig,
+    play_index: usize,
+) -> String {
+    let mut picker = RobotNumberPicker::new(robot, lottery, issue, &play.rule_code, play_index);
+    robot_numbers_with_limits(&mut picker, &play.rule_code, &play.position_select_limits)
+}
+
 /// 按机器人、彩种、期号和玩法派生一组可校验的随机投注文本。
+#[cfg(test)]
 fn robot_numbers_for_rule(
     robot: &RobotConfigSummary,
     lottery: &LotteryKind,
@@ -1057,40 +1105,162 @@ fn robot_numbers_for_rule(
     rule_code: &PlayRuleCode,
     play_index: usize,
 ) -> String {
+    let mut picker = RobotNumberPicker::new(robot, lottery, issue, rule_code, play_index);
+    robot_numbers_with_limits(&mut picker, rule_code, &[])
+}
+
+/// 根据玩法和选号上限生成随机投注文本，改变选号数量即可改变真实注数。
+fn robot_numbers_with_limits(
+    picker: &mut RobotNumberPicker,
+    rule_code: &PlayRuleCode,
+    limits: &[LotteryPlayPositionSelectLimit],
+) -> String {
     use PlayRuleCode::*;
 
-    let mut picker = RobotNumberPicker::new(robot, lottery, issue, rule_code, play_index);
     match rule_code {
         ThreeDirect | FiveFrontDirect | FiveMiddleDirect | FiveBackDirect => {
-            format!("{}|{}|{}", picker.digit(), picker.digit(), picker.digit())
+            direct_robot_numbers(picker, rule_code, limits)
         }
         FiveFrontDirectCombination | FiveMiddleDirectCombination | FiveBackDirectCombination => {
-            join_digits(&picker.unique_digits(3))
+            let count =
+                robot_digit_count(picker, limits, "numbers", 3, ROBOT_MAX_NUMBER_POOL_COUNT);
+            join_digits(&picker.unique_digits(count))
         }
         ThreeGroupThree | FiveFrontGroupThree | FiveMiddleGroupThree | FiveBackGroupThree => {
-            join_digits(&picker.unique_digits(2))
+            let count =
+                robot_digit_count(picker, limits, "numbers", 2, ROBOT_MAX_NUMBER_POOL_COUNT);
+            join_digits(&picker.unique_digits(count))
         }
         ThreeGroupThreeBanker
         | FiveFrontGroupThreeBanker
         | FiveMiddleGroupThreeBanker
         | FiveBackGroupThreeBanker => {
-            let digits = picker.unique_digits(2);
-            format!("{}|{}", digits[0], digits[1])
+            let drag_count =
+                robot_digit_count(picker, limits, "drag", 1, ROBOT_MAX_NUMBER_POOL_COUNT);
+            let digits = picker.unique_digits(1 + drag_count);
+            format!("{}|{}", digits[0], join_digits(&digits[1..]))
         }
         ThreeGroupSix | FiveFrontGroupSix | FiveMiddleGroupSix | FiveBackGroupSix => {
-            join_digits(&picker.unique_digits(3))
+            let count =
+                robot_digit_count(picker, limits, "numbers", 3, ROBOT_MAX_NUMBER_POOL_COUNT);
+            join_digits(&picker.unique_digits(count))
         }
         ThreeGroupSixBanker
         | FiveFrontGroupSixBanker
         | FiveMiddleGroupSixBanker
-        | FiveBackGroupSixBanker => {
-            let digits = picker.unique_digits(3);
-            format!("{}|{},{}", digits[0], digits[1], digits[2])
-        }
+        | FiveBackGroupSixBanker => group_six_banker_robot_numbers(picker, limits),
         FiveBigSmallOddEven => {
-            format!("tens:{}|ones:{}", picker.attribute(), picker.attribute())
+            let tens_count = robot_digit_count(
+                picker,
+                limits,
+                "tens",
+                1,
+                ROBOT_MAX_BIG_SMALL_ATTRIBUTE_COUNT,
+            );
+            let ones_count = robot_digit_count(
+                picker,
+                limits,
+                "ones",
+                1,
+                ROBOT_MAX_BIG_SMALL_ATTRIBUTE_COUNT,
+            );
+            format!(
+                "tens:{}|ones:{}",
+                join_texts(&picker.unique_attributes(tens_count)),
+                join_texts(&picker.unique_attributes(ones_count))
+            )
         }
     }
+}
+
+/// 生成直选三位置随机号码，位置数量受后台最大可选数限制。
+fn direct_robot_numbers(
+    picker: &mut RobotNumberPicker,
+    rule_code: &PlayRuleCode,
+    limits: &[LotteryPlayPositionSelectLimit],
+) -> String {
+    crate::services::play_rules::play_position_select_limit_targets(rule_code)
+        .into_iter()
+        .take(3)
+        .map(|(key, _)| {
+            let count = robot_digit_count(picker, limits, key, 1, ROBOT_MAX_POSITION_DIGIT_COUNT);
+            join_digits(&picker.unique_digits(count))
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+/// 生成组六胆拖投注，胆码 1-2 个、拖码数量随机，仍保证至少可以组成一注。
+fn group_six_banker_robot_numbers(
+    picker: &mut RobotNumberPicker,
+    limits: &[LotteryPlayPositionSelectLimit],
+) -> String {
+    let banker_max = robot_max_count(limits, "banker", 2).clamp(1, 2);
+    let banker_count = picker.next_inclusive(1, banker_max);
+    let min_drag_count = 3usize.saturating_sub(banker_count).max(1);
+    let drag_count = robot_digit_count(
+        picker,
+        limits,
+        "drag",
+        min_drag_count,
+        ROBOT_MAX_NUMBER_POOL_COUNT,
+    );
+    let digits = picker.unique_digits(banker_count + drag_count);
+    format!(
+        "{}|{}",
+        join_digits(&digits[..banker_count]),
+        join_digits(&digits[banker_count..])
+    )
+}
+
+/// 读取位置最大选号数量，未配置时使用机器人默认上限。
+fn robot_max_count(
+    limits: &[LotteryPlayPositionSelectLimit],
+    position_key: &str,
+    default_max: usize,
+) -> usize {
+    limits
+        .iter()
+        .find(|limit| limit.position_key == position_key)
+        .map(|limit| limit.max_select_count as usize)
+        .unwrap_or(default_max)
+        .min(10)
+}
+
+/// 在最小可用数量和位置上限之间随机选择选号数量。
+fn robot_digit_count(
+    picker: &mut RobotNumberPicker,
+    limits: &[LotteryPlayPositionSelectLimit],
+    position_key: &str,
+    min_count: usize,
+    default_max: usize,
+) -> usize {
+    let max_count = robot_max_count(limits, position_key, default_max)
+        .min(default_max)
+        .max(min_count);
+    picker.next_inclusive(min_count, max_count)
+}
+
+/// 为机器人计划随机一个隐含投注倍数，最终会体现在合买总额和成单单注金额上。
+fn robot_unit_amount_minor(
+    robot: &RobotConfigSummary,
+    lottery: &LotteryKind,
+    issue: &DrawIssue,
+    rule_code: &PlayRuleCode,
+    play_index: usize,
+) -> ApiResult<i64> {
+    let mut picker = RobotNumberPicker::for_rule_purpose(
+        robot,
+        lottery,
+        issue,
+        rule_code,
+        play_index,
+        "unit-amount",
+    );
+    let multiplier = picker.next_inclusive(1, ROBOT_MAX_MULTIPLE) as i64;
+    ROBOT_BASE_UNIT_AMOUNT_MINOR
+        .checked_mul(multiplier)
+        .ok_or_else(|| ApiError::BadRequest("机器人投注倍数金额过大".to_string()))
 }
 
 /// 合买机器人选号器，按玩法生成合法随机投注内容。
@@ -1108,30 +1278,69 @@ impl RobotNumberPicker {
         rule_code: &PlayRuleCode,
         play_index: usize,
     ) -> Self {
-        let mut state = 0xcbf2_9ce4_8422_2325_u64;
         let rule_text = match enum_to_string(rule_code) {
             Ok(value) => value,
             Err(_) => format!("{rule_code:?}"),
         };
         let play_index_text = play_index.to_string();
-        for part in [
+        Self::from_seed_parts(&[
             robot.id.as_str(),
             lottery.id.as_str(),
             issue.issue.as_str(),
             rule_text.as_str(),
             play_index_text.as_str(),
-        ] {
+        ])
+    }
+
+    /// 为玩法之外的随机用途构造独立种子，例如玩法排序。
+    fn for_purpose(
+        robot: &RobotConfigSummary,
+        lottery: &LotteryKind,
+        issue: &DrawIssue,
+        purpose: &str,
+    ) -> Self {
+        Self::from_seed_parts(&[
+            robot.id.as_str(),
+            lottery.id.as_str(),
+            issue.issue.as_str(),
+            purpose,
+        ])
+    }
+
+    /// 为同一玩法下不同随机用途构造独立种子，例如隐含倍数。
+    fn for_rule_purpose(
+        robot: &RobotConfigSummary,
+        lottery: &LotteryKind,
+        issue: &DrawIssue,
+        rule_code: &PlayRuleCode,
+        play_index: usize,
+        purpose: &str,
+    ) -> Self {
+        let rule_text = match enum_to_string(rule_code) {
+            Ok(value) => value,
+            Err(_) => format!("{rule_code:?}"),
+        };
+        let play_index_text = play_index.to_string();
+        Self::from_seed_parts(&[
+            robot.id.as_str(),
+            lottery.id.as_str(),
+            issue.issue.as_str(),
+            rule_text.as_str(),
+            play_index_text.as_str(),
+            purpose,
+        ])
+    }
+
+    /// 用一组字符串种子片段初始化确定性随机状态。
+    fn from_seed_parts(parts: &[&str]) -> Self {
+        let mut state = 0xcbf2_9ce4_8422_2325_u64;
+        for part in parts {
             mix_seed_part(&mut state, part);
         }
         if state == 0 {
             state = 0x9e37_79b9_7f4a_7c15;
         }
         Self { state }
-    }
-
-    /// 生成 0-9 的单个数字。
-    fn digit(&mut self) -> u8 {
-        self.next_index(10) as u8
     }
 
     /// 从 0-9 中抽取不重复数字，保证组选和胆拖玩法可通过校验。
@@ -1145,10 +1354,23 @@ impl RobotNumberPicker {
         digits
     }
 
-    /// 返回大小单双属性文本，使用后端解析器支持的英文标准值。
-    fn attribute(&mut self) -> &'static str {
-        const ATTRIBUTES: [&str; 4] = ["big", "small", "odd", "even"];
-        ATTRIBUTES[self.next_index(ATTRIBUTES.len())]
+    /// 抽取不重复的大小单双属性，避免同一个位置重复选择同一个属性。
+    fn unique_attributes(&mut self, count: usize) -> Vec<&'static str> {
+        let mut attributes = ["big", "small", "odd", "even"].to_vec();
+        for index in 0..count.min(attributes.len()) {
+            let swap_index = index + self.next_index(attributes.len() - index);
+            attributes.swap(index, swap_index);
+        }
+        attributes.truncate(count.min(attributes.len()));
+        attributes
+    }
+
+    /// 返回指定闭区间里的随机整数。
+    fn next_inclusive(&mut self, min: usize, max: usize) -> usize {
+        if max <= min {
+            return min;
+        }
+        min + self.next_index(max - min + 1)
     }
 
     /// 返回指定长度范围内的随机索引。
@@ -1187,6 +1409,11 @@ fn join_digits(digits: &[u8]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(",")
+}
+
+/// 将文本列表格式化为逗号分隔内容。
+fn join_texts(values: &[&str]) -> String {
+    values.join(",")
 }
 
 /// 定位机器人系统账号，避免用不存在的用户创建合买。
@@ -1666,8 +1893,12 @@ mod tests {
             order::OrderSource,
         },
         services::{
-            draw::DrawRepository, finance::FinanceRepository, lottery::LotteryRepository,
-            play_rules::expanded_bets_for_rule, robot::RobotRepository,
+            draw::DrawRepository,
+            finance::FinanceRepository,
+            group_buy_flow::parse_group_buy_rule_code,
+            lottery::LotteryRepository,
+            play_rules::{expanded_bets_for_rule, number_type_for_rule},
+            robot::RobotRepository,
         },
     };
     /// 验证机器人号码匹配everysupported玩法玩法。
@@ -1708,6 +1939,70 @@ mod tests {
             numbers.iter().any(|numbers| numbers != "1|2|3"),
             "机器人直选投注内容不能总是固定的 1|2|3"
         );
+    }
+
+    /// 验证合买机器人发单时玩法、注数和隐含倍数都会随期号随机变化。
+    #[tokio::test]
+    async fn robot_plan_request_randomizes_play_rule_stake_count_and_multiplier() {
+        let robot = robot_test_config();
+        let mut lottery = robot_test_lottery();
+        let lottery_number_type = lottery.number_type.clone();
+        lottery.play_configs = robot_supported_play_rules()
+            .into_iter()
+            .filter(|rule_code| number_type_for_rule(rule_code) == lottery_number_type)
+            .map(|rule_code| crate::domain::lottery::LotteryPlayConfig {
+                rule_code,
+                enabled: true,
+                odds_basis_points: 95_000,
+                position_select_limits: Vec::new(),
+            })
+            .collect();
+        let orders = OrderRepository::memory();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let robot_user = robot_user(&access.users)
+            .expect("robot user exists")
+            .clone();
+        let mut rule_codes = std::collections::BTreeSet::new();
+        let mut stake_counts = std::collections::BTreeSet::new();
+        let mut multiples = std::collections::BTreeSet::new();
+
+        for index in 0..40 {
+            let issue = robot_test_issue(&format!("2026060521{index:04}"));
+            let request = build_robot_plan_request(&robot, &lottery, &issue, &orders, &robot_user)
+                .await
+                .expect("robot request can build");
+            let rule_code =
+                parse_group_buy_rule_code(&request.rule_code).expect("rule code can parse");
+            let selection = parse_group_buy_selection(&rule_code, &request.numbers)
+                .expect("selection can parse");
+            let quote = orders
+                .quote(
+                    &lottery,
+                    &CreateOrderRequest {
+                        user_id: robot_user.id.clone(),
+                        lottery_id: lottery.id.clone(),
+                        issue: issue.issue,
+                        rule_code,
+                        selection,
+                        unit_amount_minor: 1,
+                    },
+                )
+                .await
+                .expect("robot selection can quote");
+            let unit_amount_minor = request.total_amount_minor / i64::from(quote.stake_count);
+
+            rule_codes.insert(request.rule_code);
+            stake_counts.insert(quote.stake_count);
+            multiples.insert(unit_amount_minor / ROBOT_BASE_UNIT_AMOUNT_MINOR);
+            assert_eq!(unit_amount_minor % ROBOT_BASE_UNIT_AMOUNT_MINOR, 0);
+        }
+
+        assert!(rule_codes.len() > 1, "机器人发单玩法不能固定不变");
+        assert!(stake_counts.len() > 1, "机器人投注注数不能固定不变");
+        assert!(multiples.len() > 1, "机器人投注倍数不能固定不变");
     }
 
     /// 验证机器人展示名使用中文姓名且不暴露内部机器人痕迹。
@@ -1775,10 +2070,17 @@ mod tests {
     #[test]
     fn robot_amounts_keep_remaining_participation_valid() {
         let lottery = robot_test_lottery();
+        let stake_count = 3;
         let (total, initiator) =
-            robot_group_buy_amounts(&lottery, 1).expect("amount can calculate");
+            robot_group_buy_amounts(&lottery, stake_count, ROBOT_BASE_UNIT_AMOUNT_MINOR * 3)
+                .expect("amount can calculate");
 
         assert_eq!(total % lottery.group_buy.min_share_amount_minor, 0);
+        assert_eq!(
+            (total / stake_count) % ROBOT_BASE_UNIT_AMOUNT_MINOR,
+            0,
+            "机器人合买成单后的单注金额需要能换算为整数倍数"
+        );
         assert!(initiator >= lottery.group_buy.participant_min_amount_minor);
         assert!(total - initiator >= lottery.group_buy.participant_min_amount_minor);
         assert!(
@@ -2349,8 +2651,20 @@ mod tests {
         .expect("robot can create plan before threshold");
 
         assert_eq!(before_threshold_run.created_plans.len(), 1);
-        let plan_id = before_threshold_run.created_plans[0].id.clone();
-        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 1_000, 1, false).await;
+        let created_plan = &before_threshold_run.created_plans[0];
+        let plan_id = created_plan.id.clone();
+        let expected_total = created_plan.total_amount_minor;
+        let expected_initial_filled = created_plan.filled_amount_minor;
+        assert!(expected_total > expected_initial_filled);
+        assert_robot_plan_progress(
+            &group_buys,
+            &plan_id,
+            expected_total,
+            expected_initial_filled,
+            1,
+            false,
+        )
+        .await;
 
         let fill_run = run_group_buy_robots(
             &robots,
@@ -2367,7 +2681,15 @@ mod tests {
 
         assert_eq!(fill_run.filled_plans.len(), 1);
         assert_eq!(fill_run.created_orders.len(), 1);
-        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 5_000, 2, true).await;
+        assert_robot_plan_progress(
+            &group_buys,
+            &plan_id,
+            expected_total,
+            expected_total,
+            2,
+            true,
+        )
+        .await;
     }
     /// 验证补单机器人按开奖前策略补满用户发起的计划。
     #[tokio::test]

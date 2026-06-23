@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 14:04 HKT 合买机器人玩法倍数注数随机化
+
+- 完成任务：让合买机器人发起合买计划时随机选择玩法、随机生成真实投注注数，并随机生成隐含投注倍数。
+- 解决问题：合买机器人此前按彩种玩法配置顺序取第一个可用玩法，选号数量也偏固定，容易出现玩法、注数和倍数长期类似的问题，用户可以通过合买大厅记录观察出规律。
+- 实施内容：合买机器人发单前按机器人、彩种和期号确定性打散启用玩法；各玩法按类型随机选号数量，直选、组选、胆拖和大小单双都通过现有玩法解析与订单报价计算真实注数；合买总额按随机隐含倍数、注数、每份金额、最低认购和自购比例共同计算，保证满单后单注金额可按 2 元基础金额换算成整数倍数；新增单元测试覆盖多期号下玩法、注数和倍数都会变化；架构说明和 Trellis 后端契约同步记录规则。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml robot_plan_request_randomizes_play_rule_stake_count_and_multiplier -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml` 和 `git diff --check` 均通过。
+
 ## 2026-06-23 13:40 HKT 注册定位改为经纬度反查
 
 - 完成任务：将用户注册地采集改为 Android/iOS/H5 端获取经纬度，后端统一用 Nominatim 反查中文地址。
