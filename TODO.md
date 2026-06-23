@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 18:43 HKT 发起合买未成单可见性修复
+
+- 完成任务：修复用户发起合买后，在未满单、未成单阶段有时无法在“我的合买”看到计划的问题。
+- 解决问题：后端部分查询只按 `group_buy_participants` 参与记录判断“我的合买”，如果发起人参与行缺失或前端缓存尚未刷新，发起人会误以为计划只有成单后才出现。
+- 实施内容：合买仓储、用户注单接口和“我的合买”接口统一把 `initiatorUserId` 视为本人合买关联；历史数据缺少发起人参与行时，按已认购金额减去其他参与人金额推导发起人自购金额和份数；手机端发起成功后立即合并返回计划并刷新“我的合买”缓存；架构说明和 Trellis 前后端规范同步记录该口径。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、新增发起人未成单可见性测试、合买仓储未成单用户分页测试、`cargo test --manifest-path backend/Cargo.toml user_visible_bet_orders -- --nocapture`、`pnpm --dir mobile build` 和 `git diff --check` 均通过。
+
 ## 2026-06-23 16:49 HKT 合买主单重复展示和整单派奖保护
 
 - 完成任务：修复合买发起人“我的记录”里同时看到整单金额和个人认购金额的问题，并加固合买结算避免生成整单派奖流水。

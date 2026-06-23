@@ -118,12 +118,17 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
         return null
       }
       const res = await createGroupBuyPlan(payload)
+      const createdPlan = res.data || null
       showToast('发起成功')
       createVisible.value = false
       options.activeTab.value = 'hall'
+      if (createdPlan) {
+        myGroupBuys.value = sortByCreatedTimeDesc(mergePlans([createdPlan], myGroupBuys.value))
+        myGroupBuysPage.value = Math.max(myGroupBuysPage.value, 1)
+      }
       await loadBalance({ force: true, silent: true })
-      await options.loadHall()
-      return res.data || null
+      await Promise.all([options.loadHall(), loadMyGroupBuys()])
+      return createdPlan
     } catch (e: any) {
       showToast(errorMessage(e, '发起合买失败'))
       return null

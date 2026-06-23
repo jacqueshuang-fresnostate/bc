@@ -1083,7 +1083,7 @@ await createOrder({
 ### 2. 签名
 
 - `GET /api/user/bet/page-config/{lottery_id}`：读取当前销售彩种的下注页配置。
-- `GET /api/user/bet/orders`：读取当前登录用户自己的投注订单、当前用户参与且已满单成单的合买投注订单，以及当前用户已认购但尚未生成真实订单的合买记录；支持 `page/pageSize` 分页和 `view=orders|groupBuy` 分视图过滤。
+- `GET /api/user/bet/orders`：读取当前登录用户自己的投注订单、当前用户发起或参与且已满单成单的合买投注订单，以及当前用户发起或认购但尚未生成真实订单的合买记录；支持 `page/pageSize` 分页和 `view=orders|groupBuy` 分视图过滤。
 - `POST /api/user/bet/orders`：批量创建当前登录用户的投注订单。
 
 ### 3. 契约
@@ -1178,7 +1178,7 @@ await createOrder({
 
 - 不传 `view` 时返回独立下注、已成单合买订单和未成单合买认购的混合列表，保留旧调用兼容。
 - `view=orders` 只返回当前用户的独立下注订单，不包含已成单合买订单，也不包含 `GB-` 开头的未成单合买认购映射记录。
-- `view=groupBuy` 返回当前用户参与过的所有合买记录，包括已满单成单的合买投注订单、未满单、待成单或已取消但当前用户曾认购的合买计划。
+- `view=groupBuy` 返回当前用户发起或参与过的所有合买记录，包括已满单成单的合买投注订单、未满单、待成单或已取消但当前用户曾发起或认购的合买计划；历史数据缺少发起人参与行时，仍必须按 `initiatorUserId` 识别为本人合买。
 - 分页必须在 `view` 过滤之后执行，保证“我的注单”和“我的合买”两个 Tab 各自拥有稳定页码。
 
 ### 场景：用户注单与合买分账口径
@@ -1193,14 +1193,15 @@ await createOrder({
 
 #### 3. 契约
 - `view=orders`：只返回 `orderSource=direct` 且 `userId` 为当前登录用户的订单。
-- `view=groupBuy`：返回当前用户在 `group_buy_participants` 中参与过的已成单真实合买订单，以及 `GB-` 开头的未成单合买映射记录。
+- `view=groupBuy`：返回当前用户发起或在 `group_buy_participants` 中参与过的已成单真实合买订单，以及 `GB-` 开头的未成单合买映射记录。
 - 已成单合买必须返回 `groupBuyPlanId`、`participationAmountMinor`、`participationShareCount`；中奖后必须返回 `participationPayoutMinor`。
+- 如果发起人历史数据缺少 `group_buy_participants` 自购行，后端必须用 `filledAmountMinor - 其他参与人金额` 推导发起人的 `participationAmountMinor`，并用 `minShareAmountMinor` 推导 `participationShareCount`，避免“我的合买”只有成单后才可见。
 - 满单合买真实订单的资金来源是参与记录 `groupBuyDebit`，不能再次写普通 `orderDebit`。
 
 #### 4. 校验与错误矩阵
 - 满单创建订单但无法回写 `group_buy_plans.order_id` -> 整个订单合买事务失败，不保存孤立订单。
 - 结算中奖合买订单但找不到对应合买计划 -> 返回内部错误并中止派奖，不写普通整单 `payoutCredit`。
-- 当前用户不是合买参与人 -> 不返回该合买真实订单，即使真实订单 `userId` 是发起人。
+- 当前用户既不是发起人也不是合买参与人 -> 不返回该合买真实订单，即使真实订单 `userId` 碰巧指向该用户。
 
 #### 5. Good / Base / Bad
 - Good：发起人自购 69 元、方案总额 1372 元，中奖后只看到自己的参与金额和个人派奖金额。
@@ -1209,6 +1210,7 @@ await createOrder({
 
 #### 6. 必要测试
 - 覆盖 `view=orders` 排除已成单合买，`view=groupBuy` 包含已成单和未成单合买。
+- 覆盖发起人缺少参与人行时，`view=groupBuy` 和 `/api/user/group-buy/my` 仍返回该未成单计划，并返回推导出的本人自购金额和份数。
 - 覆盖缺失合买计划的中奖合买订单会中止结算且不生成普通整单 `payoutCredit`。
 - 覆盖合买分账 `referenceId` 使用结算、订单、参与记录三段组合。
 

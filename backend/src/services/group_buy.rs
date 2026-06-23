@@ -621,6 +621,15 @@ fn group_buy_participant_from_row(row: PgRow) -> ApiResult<(String, GroupBuyPart
     ))
 }
 
+/// 判断指定用户是否和合买计划有关联，发起人与跟单参与人都应进入“我的合买”。
+fn group_buy_plan_related_to_user(plan: &GroupBuyPlan, user_id: &str) -> bool {
+    plan.initiator_user_id == user_id
+        || plan
+            .participants
+            .iter()
+            .any(|participant| participant.user_id == user_id)
+}
+
 /// 数据库模式下分页读取合买摘要，避免后台合买列表先拉全量再裁剪。
 async fn query_group_buy_summary_page(
     database: &BusinessDatabase,
@@ -681,19 +690,22 @@ async fn query_group_buy_summary_page(
     Ok(ListPage::new(items, resolved))
 }
 
-/// 数据库模式下读取指定用户参与过的合买计划，并只加载这些计划的参与人。
+/// 数据库模式下读取指定用户发起或参与过的合买计划，并只加载这些计划的参与人。
 async fn query_group_buy_details_for_user(
     database: &BusinessDatabase,
     user_id: &str,
 ) -> ApiResult<Vec<GroupBuyPlan>> {
     let rows = sqlx::query(
-        "SELECT DISTINCT p.id, p.lottery_id, p.lottery_name, p.initiator_user_id, p.initiator_username,
+        "SELECT p.id, p.lottery_id, p.lottery_name, p.initiator_user_id, p.initiator_username,
                 p.order_id, p.issue, p.rule_code, p.title, p.numbers,
                 p.total_amount_minor, p.filled_amount_minor, p.min_share_amount_minor,
                 p.participant_min_amount_minor, p.share_count, p.status, p.note, p.created_at, p.updated_at
          FROM group_buy_plans p
-         INNER JOIN group_buy_participants gp ON gp.plan_id = p.id
-         WHERE gp.user_id = $1
+         WHERE p.initiator_user_id = $1
+            OR EXISTS (
+                SELECT 1 FROM group_buy_participants gp
+                WHERE gp.plan_id = p.id AND gp.user_id = $1
+            )
          ORDER BY p.issue DESC, p.created_at DESC, p.id DESC",
     )
     .bind(user_id)
@@ -769,7 +781,7 @@ async fn query_active_group_buy_details_for_participant_user_ids(
         .collect())
 }
 
-/// 数据库模式下分页读取用户参与但未成单的合买计划。
+/// 数据库模式下分页读取用户发起或参与但未成单的合买计划。
 async fn query_unformed_group_buy_details_for_user_page(
     database: &BusinessDatabase,
     user_id: &str,
@@ -779,9 +791,12 @@ async fn query_unformed_group_buy_details_for_user_page(
         "SELECT COUNT(*)
          FROM group_buy_plans p
          WHERE p.order_id IS NULL
-           AND EXISTS (
-               SELECT 1 FROM group_buy_participants gp
-               WHERE gp.plan_id = p.id AND gp.user_id = $1
+           AND (
+               p.initiator_user_id = $1
+               OR EXISTS (
+                   SELECT 1 FROM group_buy_participants gp
+                   WHERE gp.plan_id = p.id AND gp.user_id = $1
+               )
            )",
     )
     .bind(user_id)
@@ -798,9 +813,12 @@ async fn query_unformed_group_buy_details_for_user_page(
                 p.participant_min_amount_minor, p.share_count, p.status, p.note, p.created_at, p.updated_at
          FROM group_buy_plans p
          WHERE p.order_id IS NULL
-           AND EXISTS (
-               SELECT 1 FROM group_buy_participants gp
-               WHERE gp.plan_id = p.id AND gp.user_id = $1
+           AND (
+               p.initiator_user_id = $1
+               OR EXISTS (
+                   SELECT 1 FROM group_buy_participants gp
+                   WHERE gp.plan_id = p.id AND gp.user_id = $1
+               )
            )
          ORDER BY p.created_at DESC, p.id DESC
          LIMIT $2 OFFSET $3",
@@ -825,7 +843,7 @@ async fn query_unformed_group_buy_details_for_user_page(
     Ok(ListPage::new(items, resolved))
 }
 
-/// 数据库模式下读取用户参与过且已经形成真实订单的合买订单 ID。
+/// 数据库模式下读取用户发起或参与过且已经形成真实订单的合买订单 ID。
 async fn query_group_buy_order_ids_for_user(
     database: &BusinessDatabase,
     user_id: &str,
@@ -833,9 +851,14 @@ async fn query_group_buy_order_ids_for_user(
     let rows = sqlx::query(
         "SELECT DISTINCT p.order_id
          FROM group_buy_plans p
-         INNER JOIN group_buy_participants gp ON gp.plan_id = p.id
-         WHERE gp.user_id = $1
-           AND p.order_id IS NOT NULL
+         WHERE p.order_id IS NOT NULL
+           AND (
+               p.initiator_user_id = $1
+               OR EXISTS (
+                   SELECT 1 FROM group_buy_participants gp
+                   WHERE gp.plan_id = p.id AND gp.user_id = $1
+               )
+           )
          ORDER BY p.order_id DESC",
     )
     .bind(user_id)
@@ -1398,15 +1421,11 @@ impl GroupBuyStore {
             .collect()
     }
 
-    /// 返回指定用户参与过的合买计划列表。
+    /// 返回指定用户发起或参与过的合买计划列表。
     fn list_details_for_user(&self, user_id: &str) -> Vec<GroupBuyPlan> {
         sorted_group_buy_plans(self.plans.values())
             .into_iter()
-            .filter(|plan| {
-                plan.participants
-                    .iter()
-                    .any(|participant| participant.user_id == user_id)
-            })
+            .filter(|plan| group_buy_plan_related_to_user(plan, user_id))
             .cloned()
             .collect()
     }
@@ -2280,6 +2299,36 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["G-UNFORMED-NEWER", "G-UNFORMED-OLDER"]
         );
+    }
+
+    /// 验证发起人即使没有参与人行，也能在“我的合买”仓储查询中看到自己的未成单计划。
+    #[tokio::test]
+    async fn group_buy_repository_unformed_user_page_includes_initiator_owned_plan() {
+        let mut plan = seed_group_buy_plans()
+            .into_iter()
+            .next()
+            .expect("seed plan exists");
+        plan.id = "G-UNFORMED-INITIATOR".to_string();
+        plan.initiator_user_id = "U20002".to_string();
+        plan.order_id = None;
+        plan.participants.clear();
+        plan.filled_amount_minor = 10_000;
+
+        let repository = GroupBuyRepository {
+            inner: Arc::new(RwLock::new(GroupBuyStore {
+                plans: BTreeMap::from([(plan.id.clone(), plan)]),
+            })),
+            persistence: None,
+            mutation_lock: Arc::new(Mutex::new(())),
+        };
+
+        let page = repository
+            .list_unformed_details_for_user_page("U20002", PageRequest::new(Some(1), Some(10)))
+            .await
+            .expect("initiator unformed user page can load");
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, "G-UNFORMED-INITIATOR");
     }
 
     /// 验证合买合买仓储skips未结算计划whenclearing。

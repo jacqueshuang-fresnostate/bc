@@ -2006,11 +2006,7 @@ fn unformed_group_buy_order_response(
     plan: &GroupBuyPlan,
     lotteries: &[LotteryKind],
 ) -> ApiResult<Option<UserBetOrderDetailResponse>> {
-    if !plan
-        .participants
-        .iter()
-        .any(|participant| participant.user_id == user_id)
-    {
+    if !is_group_buy_plan_related_to_user(plan, user_id) {
         return Ok(None);
     }
 
@@ -2059,6 +2055,32 @@ fn unformed_group_buy_order_response(
         participation_share_count: Some(participation_share_count),
         participation_payout_minor: None,
     }))
+}
+
+/// 判断当前用户是否应看到该合买计划，发起人与跟单参与人都算本人合买。
+fn is_group_buy_plan_related_to_user(plan: &GroupBuyPlan, user_id: &str) -> bool {
+    plan.initiator_user_id == user_id
+        || plan
+            .participants
+            .iter()
+            .any(|participant| participant.user_id == user_id)
+}
+
+/// 当历史数据缺少发起人参与行时，根据已认购金额减去其他参与人金额推导发起人自购额。
+fn inferred_group_buy_initiator_amount_minor(plan: &GroupBuyPlan) -> ApiResult<i64> {
+    let other_participants_amount = plan
+        .participants
+        .iter()
+        .filter(|participant| participant.user_id != plan.initiator_user_id)
+        .try_fold(0_i64, |sum, participant| {
+            sum.checked_add(participant.amount_minor)
+                .ok_or_else(|| ApiError::Internal("合买其他参与金额汇总溢出".to_string()))
+        })?;
+    let inferred = plan
+        .filled_amount_minor
+        .saturating_sub(other_participants_amount)
+        .max(0);
+    Ok(inferred.min(plan.total_amount_minor.max(0)))
 }
 
 /// 按创建时间倒序稳定排列用户端注单，保证未成单合买和真实订单处于同一时间线。
@@ -2122,11 +2144,7 @@ fn user_group_buy_order_share(
     else {
         return Ok(None);
     };
-    if !plan
-        .participants
-        .iter()
-        .any(|participant| participant.user_id == user_id)
-    {
+    if !is_group_buy_plan_related_to_user(plan, user_id) {
         return Ok(None);
     }
 
@@ -2150,33 +2168,55 @@ fn user_group_buy_order_share(
 
 /// 汇总用户在同一合买计划里的多次认购金额。
 fn group_buy_user_participation_amount_minor(plan: &GroupBuyPlan, user_id: &str) -> ApiResult<i64> {
-    plan.participants
+    let direct_amount = plan
+        .participants
         .iter()
         .filter(|participant| participant.user_id == user_id)
         .try_fold(0_i64, |sum, participant| {
             sum.checked_add(participant.amount_minor)
                 .ok_or_else(|| ApiError::Internal("合买参与金额汇总溢出".to_string()))
-        })
+        })?;
+    if direct_amount > 0 {
+        return Ok(direct_amount);
+    }
+    if plan.initiator_user_id == user_id {
+        return inferred_group_buy_initiator_amount_minor(plan);
+    }
+    Ok(0)
 }
 
 /// 汇总用户在同一合买计划里的多次认购份数。
 fn group_buy_user_participation_share_count(plan: &GroupBuyPlan, user_id: &str) -> ApiResult<u32> {
-    plan.participants
+    let direct_share_count = plan
+        .participants
         .iter()
         .filter(|participant| participant.user_id == user_id)
         .try_fold(0_u32, |sum, participant| {
             sum.checked_add(participant.share_count)
                 .ok_or_else(|| ApiError::Internal("合买参与份数汇总溢出".to_string()))
-        })
+        })?;
+    if direct_share_count > 0 {
+        return Ok(direct_share_count);
+    }
+    if plan.initiator_user_id == user_id {
+        return amount_to_share_count(
+            inferred_group_buy_initiator_amount_minor(plan)?,
+            plan.min_share_amount_minor,
+        );
+    }
+    Ok(0)
 }
 
 /// 返回用户在某个合买计划里最后一次认购时间，用于我的注单时间线排序。
 fn group_buy_user_latest_participation_at(plan: &GroupBuyPlan, user_id: &str) -> Option<String> {
-    plan.participants
+    let latest_participation_at = plan
+        .participants
         .iter()
         .filter(|participant| participant.user_id == user_id)
         .map(|participant| participant.created_at.clone())
-        .max()
+        .max();
+    latest_participation_at
+        .or_else(|| (plan.initiator_user_id == user_id).then(|| plan.created_at.clone()))
 }
 
 /// 计算用户个人派奖金额，避免手机端把整张合买订单的奖金展示给每个参与人。
@@ -2266,6 +2306,21 @@ fn calculated_group_buy_user_payout_minor(
 ) -> ApiResult<i64> {
     if plan.total_amount_minor <= 0 {
         return Err(ApiError::BadRequest("合买总金额无效".to_string()));
+    }
+    let has_direct_user_participant = plan
+        .participants
+        .iter()
+        .any(|participant| participant.user_id == user_id && participant.amount_minor > 0);
+    if !has_direct_user_participant && plan.initiator_user_id == user_id {
+        let initiator_amount_minor = inferred_group_buy_initiator_amount_minor(plan)?;
+        if initiator_amount_minor <= 0 {
+            return Ok(0);
+        }
+        return proportional_minor(
+            order_payout_minor,
+            initiator_amount_minor,
+            plan.total_amount_minor,
+        );
     }
     let participants = plan
         .participants
@@ -3032,6 +3087,10 @@ fn user_group_buy_participation(
     {
         amount_minor = amount_minor.saturating_add(participant.amount_minor);
         share_count = share_count.saturating_add(participant.share_count);
+    }
+    if amount_minor == 0 && plan.initiator_user_id == user_id {
+        amount_minor = inferred_group_buy_initiator_amount_minor(plan).ok()?;
+        share_count = amount_to_share_count(amount_minor, plan.min_share_amount_minor).ok()?;
     }
     (amount_minor > 0).then_some(GroupBuyParticipationSummary {
         amount_minor,
@@ -4850,6 +4909,67 @@ mod tests {
             vec![vec![1], vec![2], vec![3]]
         );
         assert_eq!(visible[1].order.id, "O000000000007");
+    }
+
+    #[test]
+    /// 验证发起人缺少参与人行的异常历史数据也会显示在“我的合买”。
+    fn user_visible_bet_orders_include_unformed_initiator_plan_without_participant_row() {
+        let mut pending_plan = test_group_buy_plan(
+            "G-USER-PENDING-INITIATOR-001",
+            "20260605200100",
+            "regular_user",
+            "发起人未成单合买",
+        );
+        pending_plan.initiator_user_id = "U20002".to_string();
+        pending_plan.filled_amount_minor = 2_000;
+        pending_plan.participants.clear();
+
+        let visible = user_visible_bet_orders(
+            "U20002",
+            Vec::new(),
+            &[pending_plan],
+            &[],
+            &[test_group_buy_lottery()],
+        )
+        .expect("用户注单列表可以展示发起人未成单合买");
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].order.id, "GB-G-USER-PENDING-INITIATOR-001");
+        assert_eq!(
+            visible[0].group_buy_plan_id.as_deref(),
+            Some("G-USER-PENDING-INITIATOR-001")
+        );
+        assert_eq!(visible[0].participation_amount_minor, Some(2_000));
+        assert_eq!(visible[0].participation_share_count, Some(2));
+        assert!(visible[0].group_buy_pending_plan);
+    }
+
+    #[test]
+    /// 验证“我的合买”摘要会为发起人缺失参与行的数据补出本人自购信息。
+    fn user_group_buy_plan_infers_initiator_participation_without_participant_row() {
+        let mut pending_plan = test_group_buy_plan(
+            "G-USER-PENDING-INITIATOR-002",
+            "20260605200100",
+            "regular_user",
+            "发起人未成单合买",
+        );
+        pending_plan.initiator_user_id = "U20002".to_string();
+        pending_plan.filled_amount_minor = 2_000;
+        pending_plan.participants.clear();
+
+        let plan = user_group_buy_plan(
+            &pending_plan,
+            &[test_group_buy_lottery()],
+            Some("U20002"),
+            &[],
+            false,
+        )
+        .expect("用户端合买计划可以补出发起人自购信息");
+
+        assert_eq!(plan.id, "G-USER-PENDING-INITIATOR-002");
+        let participation = plan.my_participation.expect("发起人应有自购信息");
+        assert_eq!(participation.amount_minor, 2_000);
+        assert_eq!(participation.share_count, 2);
     }
 
     #[test]
