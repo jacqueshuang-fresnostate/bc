@@ -28,6 +28,7 @@ pub mod rebate;
 pub mod recharge;
 pub mod redis_runtime;
 pub mod robot;
+pub mod robot_scheduler;
 pub mod scheduler;
 pub mod support;
 pub mod support_notification;

@@ -93,6 +93,8 @@ import type {
   GroupBuyRobotRun,
   RobotConfigPayload,
   RobotConfigSummary,
+  RobotSchedulerConfig,
+  RobotSchedulerStatus,
   RobotStatusUpdateRequest,
 } from '../types/robots';
 import type {
@@ -897,6 +899,19 @@ export function setRobotStatus(id: string, payload: RobotStatusUpdateRequest) {
 export function runGroupBuyRobots() {
   return requestJson<GroupBuyRobotRun>('/api/admin/robots/run', {
     method: 'POST',
+  });
+}
+
+export function fetchRobotSchedulerStatus(signal?: AbortSignal) {
+  return requestJson<RobotSchedulerStatus>('/api/admin/robot-scheduler/status', {
+    signal,
+  });
+}
+
+export function updateRobotSchedulerConfig(payload: RobotSchedulerConfig) {
+  return requestJson<RobotSchedulerStatus>('/api/admin/robot-scheduler/config', {
+    body: payload,
+    method: 'PUT',
   });
 }
 

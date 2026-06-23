@@ -4708,3 +4708,31 @@
 - 解决问题：管理员登录成功后默认停留在“系统概览”，不符合客服优先处理的后台使用习惯。
 - 实施内容：管理端新增默认后台模块常量 `support`；没有历史页面记录时默认进入在线客服；管理员手动登录成功后强制切换到在线客服，同时仍保留浏览器刷新时恢复当前页面的能力。
 - 验证结果：`pnpm --dir admin build` 和 `git diff --check` 均通过，管理端构建仅保留既有大 chunk 提示。
+
+## 2026-06-23 06:59 HKT 机器人职责拆分简化
+
+- 完成任务：把机器人逻辑简化为“合买机器人只发单、补单机器人只补未满单”。
+- 解决问题：此前合买机器人同时发单和补单，后台仍显示“购彩机器人”，导致运营无法清楚区分发合买、补合买和普通购彩三类行为，也容易让补单策略错误挂在合买发单机器人上。
+- 实施内容：后端 `groupBuy` 机器人只创建合买计划，`purchase` 机器人改为补单机器人并负责扫描当前期所有未满单合买；调度器流单前兜底改用补单机器人；管理后台机器人页面、dashboard、OpenAPI、Trellis 契约和架构说明同步更新文案与配置规则；新增迁移更新内置机器人名称、说明和补单策略字段注释。
+- 验证结果：后续继续执行格式化、后端机器人/调度目标测试和管理端构建。
+
+## 2026-06-23 07:08 HKT 接口并发连接池与下注取号优化
+
+- 完成任务：优化后端高并发接口的数据库连接池和普通下注热路径取号方式。
+- 解决问题：业务数据库和彩种数据库连接池此前硬编码最大 5 个连接，并发请求容易排队；普通下注 PostgreSQL 事务仍通过 `order_runtime.next_sequence`、`finance_runtime.next_sequence` 行锁生成订单号和流水号，不同用户并发下注也会被序号锁串行化。
+- 实施内容：新增 `DATABASE_MAX_CONNECTIONS`、`DATABASE_MIN_CONNECTIONS`、`DATABASE_ACQUIRE_TIMEOUT_SECONDS` 连接池配置，默认最大连接数提升到 30；新增 PostgreSQL `order_id_sequence` 和 `ledger_entry_id_sequence`，按历史最大订单号、流水号和 runtime 值初始化；普通下注事务改用 `nextval()` 取号，只锁当前用户资金账户行，runtime 只在事务末尾用 `GREATEST` 做兼容同步；同步更新 `.env.example`、部署说明、架构说明和数据库规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml order -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml finance -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml redis -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet` 和 `git diff --check` 均通过；后端全量 406 个测试成功。
+
+## 2026-06-23 07:36 HKT 兼容写入路径去全表锁
+
+- 完成任务：继续优化普通下注之外的合买和资金兼容写入路径。
+- 解决问题：合买发起、合买认购、机器人补单、财务调账、合买退款等路径仍可能通过快照保存触发 `ACCESS EXCLUSIVE` 全表锁；并发请求上来时，即使不同用户或不同合买计划，也会被数据库全表锁串行化。
+- 实施内容：合买仓储普通写操作改为前后快照差异增量保存，只对变化的合买计划和参与记录执行 `upsert/delete`；资金仓储为兼容写入增加同进程串行保护，并把手工调账、合买扣款、合买退款、代理返利提现等路径改为资金快照差异增量保存；日常增量保存不再锁定整张 `ledger_entries`、`financial_accounts`、`finance_runtime`、`group_buy_plans`、`group_buy_participants` 表；同步更新架构说明和数据库规范。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml order -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml finance -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml group_buy -- --nocapture`、后端全量 `cargo test --manifest-path backend/Cargo.toml --quiet` 和 `git diff --check` 均通过；后端全量 406 个测试成功。
+
+## 2026-06-23 机器人独立调度器拆分
+
+- 完成任务：把常规合买机器人和补单机器人执行从开奖调度器中拆出，新增独立机器人调度器和后台启停配置。
+- 解决问题：常规机器人维护曾挂在开奖调度器后台循环中，机器人发单或补单耗时较长时，容易和开奖主链路争抢执行时间，让“封盘、开奖、开下一期”排查边界不清晰。
+- 实施内容：新增 `robot_scheduler` 服务、`robot_scheduler_config` / `robot_scheduler_runs` / `robot_scheduler_runtime` 持久化表和后台 `robot-scheduler` 状态/配置接口；开奖调度器删除常规机器人维护阶段，仅保留流单前兜底补满；管理后台机器人配置页新增“机器人独立调度”状态卡，可启动/关闭并编辑执行周期；同步更新 OpenAPI、Trellis 规范和架构说明。
+- 验证结果：后续继续执行格式化、后端检查、调度目标测试和管理端构建。

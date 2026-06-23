@@ -140,7 +140,7 @@ COMMENT ON COLUMN lotteries.logo_url IS '彩种 LOGO 链接地址';
 
 跨仓储写操作必须按业务热度选择以下两类模式：
 
-1. **数据库热路径模式**：普通下注这类高频路径在 PostgreSQL 模式下必须直接开启 SQLx 事务，锁定必要运行序号行和当前用户资金账户行，插入或更新本次变更行，提交成功后只把本次变更增量合并到内存快照。
+1. **数据库热路径模式**：普通下注这类高频路径在 PostgreSQL 模式下必须直接开启 SQLx 事务，使用 PostgreSQL sequence 生成业务编号，只锁定当前用户资金账户行，插入或更新本次变更行，提交成功后只把本次变更增量合并到内存快照。
 2. **快照协调模式**：内存模式、低频维护操作或尚未改造的跨仓储链路，可以从相关仓储读取并克隆当前快照，在快照上完成全部业务校验和状态变更；未配置 `DATABASE_URL` 时直接替换内存快照，配置 PostgreSQL 时用同一个 SQLx 事务按前后快照差异增量保存，提交成功后再替换运行时内存快照。
 3. **Redis 辅助模式**：Redis 只能用于分布式锁和热点缓存失效，不能作为订单、余额、流水或结算的最终账本；Redis 锁失败需要返回中文业务错误，数据库事务仍是资金一致性的最终保护。
 4. 任何热路径都不能每次清空并重插全量订单、资金流水或账户历史。
@@ -157,12 +157,13 @@ COMMENT ON COLUMN lotteries.logo_url IS '彩种 LOGO 链接地址';
 | 相关仓储持久化配置不一致 | 返回中文内部错误，不做半边保存 |
 | 批量下注中某一单扣款失败 | 整批订单不创建、不扣款 |
 | 同一用户并发普通下注 | Redis 启用时先被用户锁串行化；数据库层继续通过当前用户账户行锁兜底 |
-| 不同用户并发普通下注 | 只竞争运行序号和各自账户行，不允许因为资金全表锁互相长时间阻塞 |
+| 不同用户并发普通下注 | 使用 PostgreSQL sequence 取号，只竞争各自账户行和短暂 runtime 兼容同步，不允许因为资金全表锁或运行时序号行锁互相长时间阻塞 |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：普通批量下注第二单余额不足时，整批事务回滚，订单列表和资金流水都不会出现部分结果。
 - Good：PostgreSQL 普通下注只 `SELECT ... FOR UPDATE` 当前用户资金账户行，并只追加本次 `orderDebit` 流水。
+- Good：PostgreSQL 普通下注使用 `order_id_sequence` 和 `ledger_entry_id_sequence` 取号，允许回滚造成编号空洞，但不允许重复编号。
 - Good：客服直充确认成功后，充值订单状态和 `rechargeCredit` 同时可见。
 - Good：提现申请成功后，提现单和 `withdrawalFreeze` 同时可见。
 - Base：无数据库内存模式仍按同一事务协调入口替换内存快照，支持本地演示。
@@ -214,16 +215,17 @@ let order = orders
   - `ledger_entries`
   - `financial_accounts`
   - `finance_runtime`
-- 快照保存锁表 SQL：`LOCK TABLE ledger_entries, financial_accounts, finance_runtime IN ACCESS EXCLUSIVE MODE`
+- 维护性全量保存锁表 SQL：`LOCK TABLE ledger_entries, financial_accounts, finance_runtime IN ACCESS EXCLUSIVE MODE`
 - 普通下注行锁 SQL：`SELECT ... FROM financial_accounts WHERE user_id = $1 FOR UPDATE`
+- 普通下注取号 SQL：`SELECT nextval('order_id_sequence')`、`SELECT nextval('ledger_entry_id_sequence')`
 - 运行序号：`finance_runtime(key='next_sequence')`
 - 流水编号格式：`L000000000001`
 
 ### 3. 契约
 
-资金仓储保留快照式全量保存能力，用于初始化、维护性重载或单仓储清理等低频路径；普通下注扣款必须使用当前用户账户行级锁、当前事务追加流水和运行序号行锁，不再使用资金全表锁。取消退款、开奖派奖、合买结算、充值确认、提现流转和聊天红包等尚未行级化的跨仓储热路径必须使用前后快照差异增量保存，不能为了保存一笔流水或一个账户余额变化而清空并重插全量历史。
+资金仓储保留快照式全量保存能力，用于初始化、维护性重载或低频管理路径；普通下注扣款必须使用当前用户账户行级锁、当前事务追加流水和 PostgreSQL sequence 取号，不再使用资金全表锁或长时间锁定运行时序号行。取消退款、开奖派奖、合买结算、充值确认、提现流转和聊天红包等尚未完全行级化的跨仓储路径必须使用前后快照差异增量保存，不能为了保存一笔流水或一个账户余额变化而清空并重插全量历史。
 
-快照式全量或快照差异保存时，为了避免两个请求同时保存时出现“一个事务删除旧行，另一个事务插入同一批旧流水”或同一账户余额旧值覆盖新值，资金保存必须先在同一事务内锁定三张资金表。普通下注行级事务不得使用这个全表锁，而是锁定 `finance_runtime.next_sequence` 和当前用户账户行，流水按 append-only 追加。
+快照式全量保存只能用于初始化、维护性重载或明确的低频管理操作，允许短暂锁表以保证整表替换一致性；日常快照差异保存不得使用 `ACCESS EXCLUSIVE` 全表锁，必须依靠同进程写入串行保护、数据库事务、主键冲突更新和行级更新保证一致性。普通下注行级事务不得使用全表锁，也不得长时间锁定 `finance_runtime.next_sequence` 或 `order_runtime.next_sequence` 作为热路径取号方式；订单号和流水号应通过 PostgreSQL sequence 获取，事务内只锁定当前用户账户行，流水按 append-only 追加。
 
 启动加载资金仓储时，`next_sequence` 不能只相信 `finance_runtime`。后端必须同时扫描已有 `ledger_entries.id` 中符合 `L...` 格式的最大序号，并取 `max(finance_runtime.next_sequence, max_ledger_entry_sequence)` 作为下一笔流水的基准。如果发生校正，需要把校正后的运行序号持久化回数据库。
 
@@ -595,7 +597,7 @@ let lotteries = LotteryRepository::postgres(&database_url).await?;
 | 邀请返利 | `invite_records`、`rebate_policy` |
 | 机器人 | `robot_configs`、`robot_lottery_bindings` |
 | 客服 | `support_conversations`、`support_messages` |
-| 调度 | `draw_scheduler_config`、`draw_scheduler_runs`、`draw_scheduler_runtime` |
+| 调度 | `draw_scheduler_config`、`draw_scheduler_runs`、`draw_scheduler_runtime`、`robot_scheduler_config`、`robot_scheduler_runs`、`robot_scheduler_runtime` |
 
 合买模块仍使用运行时快照保存时，所有创建、认购、回滚、满单关联订单和结算回写都必须经过仓储级写操作锁；数据库保存前必须锁定 `group_buy_participants` 和 `group_buy_plans`，避免多个快照异步落库时旧数据覆盖新数据。参与记录写入失败时日志必须输出实际数据库错误、合买计划 ID、参与记录 ID、用户 ID、金额和份数，接口可以继续返回中文内部错误文案。
 

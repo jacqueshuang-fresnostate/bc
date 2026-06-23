@@ -26,6 +26,7 @@ import type {
   GroupBuyRobotRun,
   RobotConfigSummary,
   RobotConfigPayload,
+  RobotSchedulerStatus,
   RobotKind,
   RobotStatus,
 } from '../types/robots';
@@ -61,8 +62,11 @@ export function RobotManagementPage({
     remove,
     refresh,
     robots,
+    robotSchedulerSaving,
+    robotSchedulerStatus,
     running,
     save,
+    saveRobotSchedulerConfig,
     saving,
   } = useRobots();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -70,6 +74,7 @@ export function RobotManagementPage({
     kindForModule(activeModuleKey),
   );
   const [robotSheetVisible, setRobotSheetVisible] = useState(false);
+  const [robotSchedulerInterval, setRobotSchedulerInterval] = useState('5');
   const [form, setForm] = useState<RobotFormState>(() =>
     emptyRobotForm(kindForModule(activeModuleKey)),
   );
@@ -89,6 +94,12 @@ export function RobotManagementPage({
     setForm((current) => ({ ...current, kind: nextKind }));
     setRobotSheetVisible(false);
   }, [activeModuleKey]);
+
+  useEffect(() => {
+    if (robotSchedulerStatus) {
+      setRobotSchedulerInterval(String(robotSchedulerStatus.config.intervalSeconds));
+    }
+  }, [robotSchedulerStatus]);
 
   const refreshAll = () => {
     refresh();
@@ -110,7 +121,7 @@ export function RobotManagementPage({
   const submit = async () => {
     const payload = robotPayload(form);
     if (!payload) {
-      Toast.warning('开奖前补满秒数需要大于 0 且不超过 86400');
+      Toast.warning('补单机器人开奖前补满秒数需要大于 0 且不超过 86400');
       return;
     }
     const saved = await save(payload, editingId ?? undefined);
@@ -119,6 +130,17 @@ export function RobotManagementPage({
     setForm(robotFormFromSummary(saved));
     setRobotSheetVisible(false);
     onDashboardRefresh();
+  };
+
+  const saveScheduler = async (enabled = robotSchedulerStatus?.enabled ?? false) => {
+    const intervalSeconds = Number.parseInt(robotSchedulerInterval, 10);
+    if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+      Toast.warning('机器人调度周期必须大于 0 秒');
+      return;
+    }
+
+    await saveRobotSchedulerConfig({ enabled, intervalSeconds });
+    Toast.success(enabled ? '机器人独立调度已启用' : '机器人独立调度已关闭');
   };
 
   const deleteRobotConfig = async (robot: RobotConfigSummary) => {
@@ -150,7 +172,7 @@ export function RobotManagementPage({
         <div>
           <h1 className="text-xl font-semibold text-ink">机器人配置</h1>
           <p className="mt-1 text-sm text-slate-500">
-            维护合买机器人和购彩机器人适用彩种、状态和说明；普通配置可删除，核心内置配置只能暂停或禁用。
+            维护合买发单机器人和补单机器人适用彩种、状态和说明；普通配置可删除，核心内置配置只能暂停或禁用。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -161,18 +183,16 @@ export function RobotManagementPage({
           >
             新增配置
           </Button>
-          {filterKind === 'groupBuy' ? (
-            <Button
-              disabled={running}
-              icon={<PlayCircle size={16} />}
-              loading={running}
-              onClick={() =>
-                void executeGroupBuyRobots().then(onDashboardRefresh)
-              }
-            >
-              立即执行
-            </Button>
-          ) : null}
+          <Button
+            disabled={running}
+            icon={<PlayCircle size={16} />}
+            loading={running}
+            onClick={() =>
+              void executeGroupBuyRobots().then(onDashboardRefresh)
+            }
+          >
+            立即执行
+          </Button>
           <Button icon={<RefreshCcw size={16} />} onClick={refreshAll}>
             刷新
           </Button>
@@ -180,7 +200,15 @@ export function RobotManagementPage({
       </section>
 
       {error ? <Banner type="danger" title="机器人接口错误" description={error} /> : null}
-      {filterKind === 'groupBuy' && lastGroupBuyRun ? (
+      <RobotSchedulerPanel
+        interval={robotSchedulerInterval}
+        loading={loading}
+        saving={robotSchedulerSaving}
+        status={robotSchedulerStatus}
+        onIntervalChange={setRobotSchedulerInterval}
+        onSave={(enabled) => void saveScheduler(enabled)}
+      />
+      {lastGroupBuyRun ? (
         <GroupBuyRobotRunSummary run={lastGroupBuyRun} lotteries={lotteries} />
       ) : null}
 
@@ -188,12 +216,12 @@ export function RobotManagementPage({
         <MetricCard label="机器人总数" trend="内存配置" value={`${robots.length}`} />
         <MetricCard
           label="合买机器人"
-          trend="发起合买与满单辅助"
+          trend="只负责发单到合买大厅"
           value={`${totals.groupBuyCount}`}
         />
         <MetricCard
-          label="购彩机器人"
-          trend="模拟普通用户购彩"
+          label="补单机器人"
+          trend="只负责补未满单合买"
           value={`${totals.purchaseCount}`}
         />
         <MetricCard
@@ -224,7 +252,7 @@ export function RobotManagementPage({
             }
           }}
         >
-          购彩机器人
+          补单机器人
         </Button>
       </section>
 
@@ -251,7 +279,7 @@ export function RobotManagementPage({
                       <th className="py-2 pr-4 font-medium">机器人</th>
                       <th className="py-2 pr-4 font-medium">彩种</th>
                       <th className="py-2 pr-4 font-medium">状态</th>
-                      <th className="py-2 pr-4 font-medium">补满策略</th>
+                      <th className="py-2 pr-4 font-medium">职责 / 补单策略</th>
                       <th className="py-2 pr-4 font-medium">说明</th>
                       <th className="py-2 pr-4 font-medium">操作</th>
                     </tr>
@@ -290,8 +318,8 @@ export function RobotManagementPage({
                         </td>
                         <td className="py-3 pr-4 text-slate-600">
                           {robot.kind === 'groupBuy'
-                            ? groupBuyFillStrategyText(robot)
-                            : '-'}
+                            ? '只发合买'
+                            : groupBuyFillStrategyText(robot)}
                         </td>
                         <td className="py-3 pr-4 text-slate-600">
                           {robot.description}
@@ -403,7 +431,7 @@ export function RobotManagementPage({
                 }
               >
                 <Select.Option value="groupBuy">合买机器人</Select.Option>
-                <Select.Option value="purchase">购彩机器人</Select.Option>
+                <Select.Option value="purchase">补单机器人</Select.Option>
               </Select>
             </Field>
             <Field label="状态">
@@ -420,9 +448,9 @@ export function RobotManagementPage({
               </Select>
             </Field>
           </div>
-          {form.kind === 'groupBuy' ? (
+          {form.kind === 'purchase' ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-              <Field label="补满策略">
+              <Field label="补单策略">
                 <Select
                   className="form-input"
                   value={form.groupBuyFillStrategy}
@@ -539,7 +567,7 @@ function GroupBuyRobotRunSummary({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-sm font-semibold text-teal-900">
-            合买机器人执行结果
+            机器人执行结果
           </h2>
           <p className="mt-1 text-xs text-teal-700">执行时间：{run.now}</p>
         </div>
@@ -591,6 +619,106 @@ function GroupBuyRobotRunSummary({
   );
 }
 
+function RobotSchedulerPanel({
+  interval,
+  loading,
+  saving,
+  status,
+  onIntervalChange,
+  onSave,
+}: {
+  interval: string;
+  loading: boolean;
+  saving: boolean;
+  status: RobotSchedulerStatus | null;
+  onIntervalChange: (value: string) => void;
+  onSave: (enabled: boolean) => void;
+}) {
+  const lastRun = status?.lastRun ?? null;
+  return (
+    <Card className="rounded-md border border-line">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold text-ink">机器人独立调度</h2>
+            <Tag color={status?.enabled ? 'green' : 'grey'}>
+              {status?.enabled ? '已启用' : '已关闭'}
+            </Tag>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            常规合买发单和补单由这里独立执行；开奖调度只保留开奖前兜底满单，避免机器人慢任务拖住开盘。
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <Field label="执行周期（秒）">
+            <Input
+              className="form-input w-32"
+              disabled={loading || saving}
+              min={1}
+              type="number"
+              value={interval}
+              onChange={onIntervalChange}
+            />
+          </Field>
+          <Button
+            disabled={loading || saving}
+            loading={saving}
+            theme={status?.enabled ? 'light' : 'solid'}
+            onClick={() => onSave(!(status?.enabled ?? false))}
+          >
+            {status?.enabled ? '关闭调度' : '启动调度'}
+          </Button>
+          <Button
+            disabled={loading || saving}
+            loading={saving}
+            icon={<Save size={16} />}
+            onClick={() => onSave(status?.enabled ?? false)}
+          >
+            保存周期
+          </Button>
+        </div>
+      </div>
+      <div className="mt-3 grid gap-2 text-xs text-slate-500 md:grid-cols-5">
+        <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
+          <span className="block text-slate-400">最近执行</span>
+          <strong className="mt-1 block text-slate-700">
+            {lastRun?.finishedAt ?? '暂无记录'}
+          </strong>
+        </div>
+        <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
+          <span className="block text-slate-400">新增合买</span>
+          <strong className="mt-1 block text-slate-700">
+            {lastRun?.createdPlanCount ?? 0}
+          </strong>
+        </div>
+        <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
+          <span className="block text-slate-400">补满计划</span>
+          <strong className="mt-1 block text-slate-700">
+            {lastRun?.filledPlanCount ?? 0}
+          </strong>
+        </div>
+        <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
+          <span className="block text-slate-400">生成订单</span>
+          <strong className="mt-1 block text-slate-700">
+            {lastRun?.createdOrderCount ?? 0}
+          </strong>
+        </div>
+        <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
+          <span className="block text-slate-400">跳过明细</span>
+          <strong className="mt-1 block text-slate-700">
+            {lastRun?.skippedItemCount ?? 0}
+          </strong>
+        </div>
+      </div>
+      {lastRun?.error ? (
+        <div className="mt-3 rounded border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {lastRun.error}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 function Field({ children, label }: { children: ReactNode; label: string }) {
   return (
     <label className="block text-sm font-medium text-slate-600">
@@ -606,13 +734,16 @@ function kindForModule(moduleKey: string): RobotKind {
 
 function emptyRobotForm(kind: RobotKind): RobotFormState {
   return {
-    description: kind === 'groupBuy' ? '开盘期间发起合买并辅助满单' : '模拟用户购彩',
+    description:
+      kind === 'groupBuy'
+        ? '只负责发起合买计划到合买大厅'
+        : '只负责认购合买大厅未满单计划',
     groupBuyFillBeforeDrawSeconds: '15',
     groupBuyFillStrategy: 'rhythm',
     id: kind === 'groupBuy' ? 'R-GROUP-NEW' : 'R-BUY-NEW',
     kind,
     lotteryIds: [],
-    name: kind === 'groupBuy' ? '新合买机器人' : '新购彩机器人',
+    name: kind === 'groupBuy' ? '新合买机器人' : '新补单机器人',
     status: 'paused',
   };
 }
@@ -638,7 +769,7 @@ function robotPayload(form: RobotFormState): RobotConfigPayload | null {
     10,
   );
   if (
-    form.kind === 'groupBuy' &&
+    form.kind === 'purchase' &&
     form.groupBuyFillStrategy === 'beforeDraw' &&
     (!Number.isFinite(beforeDrawSeconds) ||
       beforeDrawSeconds <= 0 ||
@@ -654,7 +785,7 @@ function robotPayload(form: RobotFormState): RobotConfigPayload | null {
         ? beforeDrawSeconds
         : 15,
     groupBuyFillStrategy:
-      form.kind === 'groupBuy' ? form.groupBuyFillStrategy : 'rhythm',
+      form.kind === 'purchase' ? form.groupBuyFillStrategy : 'rhythm',
     id: form.id.trim(),
     kind: form.kind,
     lotteryIds: form.lotteryIds,
@@ -698,7 +829,7 @@ function lotteryName(id: string, lotteries: LotteryKind[]) {
 }
 
 function robotKindText(kind: RobotKind) {
-  return kind === 'groupBuy' ? '合买机器人' : '购彩机器人';
+  return kind === 'groupBuy' ? '合买机器人' : '补单机器人';
 }
 
 function groupBuyFillStrategyText(robot: RobotConfigSummary) {

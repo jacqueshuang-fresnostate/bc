@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, error::Error, sync::Arc};
 use chrono::NaiveTime;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
-use sqlx::{postgres::PgPoolOptions, PgPool, Row};
+use sqlx::{PgPool, Row};
 
 use crate::{
     domain::{
@@ -18,7 +18,7 @@ use crate::{
     },
     error::{ApiError, ApiResult},
     services::{
-        business_database::run_business_migrations,
+        business_database::{configured_pg_pool_options, run_business_migrations},
         draw_generation::normalize_issue_format_pattern,
         play_rules::{
             number_type_for_rule, play_category_for_rule, play_position_select_limit_targets,
@@ -52,10 +52,7 @@ impl LotteryRepository {
 
     /// 基于连接字符串创建数据库连接池并执行迁移。
     pub async fn postgres(database_url: &str) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let pool = PgPoolOptions::new()
-            .max_connections(5)
-            .connect(database_url)
-            .await?;
+        let pool = configured_pg_pool_options().connect(database_url).await?;
 
         run_business_migrations(&pool).await?;
 

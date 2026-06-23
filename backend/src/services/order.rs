@@ -393,16 +393,14 @@ impl OrderRepository {
             ApiError::Internal("普通下注数据库事务开启失败".to_string())
         })?;
 
-        let mut order_sequence = lock_order_next_sequence_in_transaction(&mut *tx).await?;
-        let mut finance_sequence = lock_finance_next_sequence_in_transaction(&mut *tx).await?;
         ensure_financial_account_row_in_transaction(&mut *tx, &user_id).await?;
         let mut account = lock_financial_account_in_transaction(&mut *tx, &user_id).await?;
 
         let mut created_orders = Vec::with_capacity(requests.len());
+        let mut max_order_sequence = 0_u64;
         for (lottery, payload) in requests {
-            order_sequence = order_sequence
-                .checked_add(1)
-                .ok_or_else(|| ApiError::Internal("订单运行序号过大".to_string()))?;
+            let order_sequence = next_order_sequence_in_transaction(&mut *tx).await?;
+            max_order_sequence = max_order_sequence.max(order_sequence);
             let order = build_order_detail_with_id(
                 &lottery,
                 payload,
@@ -414,6 +412,7 @@ impl OrderRepository {
         }
 
         let mut ledger_entries = Vec::with_capacity(created_orders.len());
+        let mut max_finance_sequence = 0_u64;
         for order in &created_orders {
             if account.available_balance_minor < order.amount_minor {
                 return Err(ApiError::BadRequest("余额不足".to_string()));
@@ -422,9 +421,8 @@ impl OrderRepository {
                 .available_balance_minor
                 .checked_sub(order.amount_minor)
                 .ok_or_else(|| ApiError::BadRequest("余额不足".to_string()))?;
-            finance_sequence = finance_sequence
-                .checked_add(1)
-                .ok_or_else(|| ApiError::Internal("资金流水序号过大".to_string()))?;
+            let finance_sequence = next_ledger_entry_sequence_in_transaction(&mut *tx).await?;
+            max_finance_sequence = max_finance_sequence.max(finance_sequence);
             let balance_after_minor = account
                 .available_balance_minor
                 .checked_add(account.frozen_balance_minor)
@@ -443,16 +441,20 @@ impl OrderRepository {
         for entry in &ledger_entries {
             insert_ledger_entry_in_transaction(&mut *tx, entry).await?;
         }
-        update_order_next_sequence_in_transaction(&mut *tx, order_sequence).await?;
-        update_finance_next_sequence_in_transaction(&mut *tx, finance_sequence).await?;
+        sync_order_next_sequence_in_transaction(&mut *tx, max_order_sequence).await?;
+        sync_finance_next_sequence_in_transaction(&mut *tx, max_finance_sequence).await?;
 
         tx.commit().await.map_err(|error| {
             tracing::error!(%error, user_id = user_id.as_str(), "普通下注数据库事务提交失败");
             ApiError::Internal("普通下注数据库事务提交失败".to_string())
         })?;
 
-        self.apply_persisted_created_orders(&created_orders, order_sequence)?;
-        finance.apply_persisted_order_debits(vec![account], ledger_entries, finance_sequence)?;
+        self.apply_persisted_created_orders(&created_orders, max_order_sequence)?;
+        finance.apply_persisted_order_debits(
+            vec![account],
+            ledger_entries,
+            max_finance_sequence,
+        )?;
         Ok(created_orders)
     }
 
@@ -1760,86 +1762,30 @@ async fn persist_order_finance_group_buy_stores(
     }
 }
 
-/// 读取并锁定订单运行序号，防止并发下注生成重复订单 ID。
-async fn lock_order_next_sequence_in_transaction(connection: &mut PgConnection) -> ApiResult<u64> {
-    sqlx::query(
-        "INSERT INTO order_runtime (key, value) VALUES ('next_sequence', 0)
-         ON CONFLICT (key) DO NOTHING",
-    )
-    .execute(&mut *connection)
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "订单运行序号初始化失败");
-        ApiError::Internal("订单运行序号初始化失败".to_string())
-    })?;
-
-    let runtime_sequence = sqlx::query_scalar::<_, i64>(
-        "SELECT value FROM order_runtime WHERE key = 'next_sequence' FOR UPDATE",
-    )
-    .fetch_one(&mut *connection)
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "订单运行序号锁定失败");
-        ApiError::Internal("订单运行序号锁定失败".to_string())
-    })?;
-    let max_order_id = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM orders WHERE id LIKE 'O%' ORDER BY id DESC LIMIT 1",
-    )
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "订单最大序号读取失败");
-        ApiError::Internal("订单最大序号读取失败".to_string())
-    })?;
-
-    Ok(u64::try_from(runtime_sequence).unwrap_or_default().max(
-        max_order_id
-            .as_deref()
-            .and_then(|id| sequence_from_prefixed_id(id, 'O'))
-            .unwrap_or_default(),
-    ))
+/// 使用 PostgreSQL 序列生成普通下注订单号，避免锁定运行时计数器行。
+async fn next_order_sequence_in_transaction(connection: &mut PgConnection) -> ApiResult<u64> {
+    let sequence = sqlx::query_scalar::<_, i64>("SELECT nextval('order_id_sequence')")
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "普通下注订单序列取号失败");
+            ApiError::Internal("普通下注订单序列取号失败".to_string())
+        })?;
+    u64::try_from(sequence).map_err(|_| ApiError::Internal("订单运行序号过大".to_string()))
 }
 
-/// 读取并锁定资金流水运行序号，防止并发扣款生成重复流水 ID。
-async fn lock_finance_next_sequence_in_transaction(
+/// 使用 PostgreSQL 序列生成普通下注资金流水号，避免锁定资金运行时计数器行。
+async fn next_ledger_entry_sequence_in_transaction(
     connection: &mut PgConnection,
 ) -> ApiResult<u64> {
-    sqlx::query(
-        "INSERT INTO finance_runtime (key, value) VALUES ('next_sequence', 0)
-         ON CONFLICT (key) DO NOTHING",
-    )
-    .execute(&mut *connection)
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "资金运行序号初始化失败");
-        ApiError::Internal("资金运行序号初始化失败".to_string())
-    })?;
-
-    let runtime_sequence = sqlx::query_scalar::<_, i64>(
-        "SELECT value FROM finance_runtime WHERE key = 'next_sequence' FOR UPDATE",
-    )
-    .fetch_one(&mut *connection)
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "资金运行序号锁定失败");
-        ApiError::Internal("资金运行序号锁定失败".to_string())
-    })?;
-    let max_ledger_id = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM ledger_entries WHERE id LIKE 'L%' ORDER BY id DESC LIMIT 1",
-    )
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "资金流水最大序号读取失败");
-        ApiError::Internal("资金流水最大序号读取失败".to_string())
-    })?;
-
-    Ok(u64::try_from(runtime_sequence).unwrap_or_default().max(
-        max_ledger_id
-            .as_deref()
-            .and_then(|id| sequence_from_prefixed_id(id, 'L'))
-            .unwrap_or_default(),
-    ))
+    let sequence = sqlx::query_scalar::<_, i64>("SELECT nextval('ledger_entry_id_sequence')")
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "普通下注资金流水序列取号失败");
+            ApiError::Internal("普通下注资金流水序列取号失败".to_string())
+        })?;
+    u64::try_from(sequence).map_err(|_| ApiError::Internal("资金流水序号过大".to_string()))
 }
 
 /// 确保用户资金账户行存在，后续才能用行级锁保护余额。
@@ -1950,14 +1896,15 @@ async fn insert_ledger_entry_in_transaction(
     Ok(())
 }
 
-/// 更新订单运行序号，提交后下一笔订单从新序号继续递增。
-async fn update_order_next_sequence_in_transaction(
+/// 同步订单运行序号，供快照恢复兼容；热路径真实取号已经由 PostgreSQL 序列负责。
+async fn sync_order_next_sequence_in_transaction(
     connection: &mut PgConnection,
     next_sequence: u64,
 ) -> ApiResult<()> {
     sqlx::query(
         "INSERT INTO order_runtime (key, value) VALUES ('next_sequence', $1)
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+         ON CONFLICT (key) DO UPDATE
+         SET value = GREATEST(order_runtime.value, EXCLUDED.value), updated_at = now()",
     )
     .bind(
         i64::try_from(next_sequence)
@@ -1966,20 +1913,21 @@ async fn update_order_next_sequence_in_transaction(
     .execute(&mut *connection)
     .await
     .map_err(|error| {
-        tracing::error!(%error, "订单运行序号保存失败");
-        ApiError::Internal("订单运行序号保存失败".to_string())
+        tracing::error!(%error, "订单运行序号同步失败");
+        ApiError::Internal("订单运行序号同步失败".to_string())
     })?;
     Ok(())
 }
 
-/// 更新资金流水运行序号，提交后下一笔流水从新序号继续递增。
-async fn update_finance_next_sequence_in_transaction(
+/// 同步资金流水运行序号，供快照恢复兼容；热路径真实取号已经由 PostgreSQL 序列负责。
+async fn sync_finance_next_sequence_in_transaction(
     connection: &mut PgConnection,
     next_sequence: u64,
 ) -> ApiResult<()> {
     sqlx::query(
         "INSERT INTO finance_runtime (key, value) VALUES ('next_sequence', $1)
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+         ON CONFLICT (key) DO UPDATE
+         SET value = GREATEST(finance_runtime.value, EXCLUDED.value), updated_at = now()",
     )
     .bind(
         i64::try_from(next_sequence)
@@ -1988,8 +1936,8 @@ async fn update_finance_next_sequence_in_transaction(
     .execute(&mut *connection)
     .await
     .map_err(|error| {
-        tracing::error!(%error, "资金运行序号保存失败");
-        ApiError::Internal("资金运行序号保存失败".to_string())
+        tracing::error!(%error, "资金运行序号同步失败");
+        ApiError::Internal("资金运行序号同步失败".to_string())
     })?;
     Ok(())
 }
@@ -2013,11 +1961,6 @@ fn direct_requests_user_id(requests: &[(LotteryKind, CreateOrderRequest)]) -> Ap
         resolved_user_id = Some(user_id.to_string());
     }
     resolved_user_id.ok_or_else(|| ApiError::BadRequest("请先选择投注内容".to_string()))
-}
-
-/// 从带固定前缀的业务 ID 中解析数字序号。
-fn sequence_from_prefixed_id(id: &str, prefix: char) -> Option<u64> {
-    id.strip_prefix(prefix)?.parse().ok()
 }
 
 /// 构造投注扣款流水，保持和内存财务仓储相同的业务说明。

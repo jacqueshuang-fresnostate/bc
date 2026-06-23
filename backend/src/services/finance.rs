@@ -8,6 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgRow, PgConnection, Row};
+use tokio::sync::Mutex;
 
 use crate::{
     domain::{
@@ -34,6 +35,8 @@ pub struct FinanceRepository {
     pub(crate) inner: Arc<RwLock<FinanceStore>>,
     /// 可选数据库持久化句柄；内存模式下为空。
     pub(crate) persistence: Option<BusinessDatabase>,
+    /// 串行化兼容层资金写操作，避免异步增量落库时旧快照覆盖新快照。
+    pub(crate) mutation_lock: Arc<Mutex<()>>,
 }
 
 /// 资金账户和资金流水仓储，负责该模块数据读取、业务变更和持久化协调。
@@ -43,6 +46,7 @@ impl FinanceRepository {
         Self {
             inner: Arc::new(RwLock::new(FinanceStore::seeded())),
             persistence: None,
+            mutation_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -52,6 +56,7 @@ impl FinanceRepository {
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
+            mutation_lock: Arc::new(Mutex::new(())),
         })
     }
 
@@ -162,6 +167,7 @@ impl FinanceRepository {
 
     /// 一键清除资金流水历史；只清除审计列表，不回滚账户余额也不重置流水序号。
     pub async fn clear_ledger_entries(&self) -> ApiResult<usize> {
+        let _mutation_guard = self.mutation_lock.lock().await;
         if let Some(persistence) = &self.persistence {
             let deleted_count = clear_ledger_entries_in_database(persistence).await?;
             let mut store = self
@@ -355,15 +361,17 @@ impl FinanceRepository {
 
     /// 获取用户资金账户，不存在时自动创建默认账户后返回。
     pub async fn account_or_create(&self, user_id: &str) -> ApiResult<FinancialAccountSummary> {
-        let (result, snapshot) = {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, previous, snapshot) = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let previous = store.clone();
             let result = store.account_or_create(user_id)?;
-            (result, store.clone())
+            (result, previous, store.clone())
         };
-        self.persist(&snapshot).await?;
+        self.persist_incremental(&previous, &snapshot).await?;
 
         Ok(result)
     }
@@ -373,15 +381,17 @@ impl FinanceRepository {
         &self,
         payload: ManualBalanceAdjustmentRequest,
     ) -> ApiResult<LedgerEntry> {
-        let (result, snapshot) = {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, previous, snapshot) = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let previous = store.clone();
             let result = store.manual_adjust(payload)?;
-            (result, store.clone())
+            (result, previous, store.clone())
         };
-        self.persist(&snapshot).await?;
+        self.persist_incremental(&previous, &snapshot).await?;
         Ok(result)
     }
 
@@ -394,20 +404,22 @@ impl FinanceRepository {
         rebate_amount_minor: i64,
         recharge_order_id: &str,
     ) -> ApiResult<LedgerEntry> {
-        let (result, snapshot) = {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, previous, snapshot) = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let previous = store.clone();
             let result = store.credit_recharge_rebate(
                 agent_user_id,
                 invitee_user_id,
                 rebate_amount_minor,
                 recharge_order_id,
             )?;
-            (result, store.clone())
+            (result, previous, store.clone())
         };
-        self.persist(&snapshot).await?;
+        self.persist_incremental(&previous, &snapshot).await?;
         Ok(result)
     }
 
@@ -418,15 +430,17 @@ impl FinanceRepository {
         amount_minor: i64,
         description: &str,
     ) -> ApiResult<LedgerEntry> {
-        let (result, snapshot) = {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, previous, snapshot) = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let previous = store.clone();
             let result = store.withdraw_agent_rebate(agent_user_id, amount_minor, description)?;
-            (result, store.clone())
+            (result, previous, store.clone())
         };
-        self.persist(&snapshot).await?;
+        self.persist_incremental(&previous, &snapshot).await?;
         Ok(result)
     }
 
@@ -438,15 +452,17 @@ impl FinanceRepository {
         participant_id: &str,
         plan_id: &str,
     ) -> ApiResult<LedgerEntry> {
-        let (result, snapshot) = {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, previous, snapshot) = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let previous = store.clone();
             let result = store.debit_group_buy(user_id, amount_minor, participant_id, plan_id)?;
-            (result, store.clone())
+            (result, previous, store.clone())
         };
-        self.persist(&snapshot).await?;
+        self.persist_incremental(&previous, &snapshot).await?;
         Ok(result)
     }
 
@@ -456,21 +472,44 @@ impl FinanceRepository {
         plan: &GroupBuyPlan,
         reason: &str,
     ) -> ApiResult<Vec<LedgerEntry>> {
-        let (result, snapshot) = {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, previous, snapshot) = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+            let previous = store.clone();
             let result = store.refund_group_buy_plan(plan, reason)?;
-            (result, store.clone())
+            (result, previous, store.clone())
         };
-        self.persist(&snapshot).await?;
+        self.persist_incremental(&previous, &snapshot).await?;
         Ok(result)
     }
     /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &FinanceStore) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
             save_finance_store(persistence, store).await?;
+        }
+
+        Ok(())
+    }
+
+    /// 把资金快照差异增量保存到持久化存储，避免手工调账、合买扣款等路径重写全量流水。
+    async fn persist_incremental(
+        &self,
+        previous: &FinanceStore,
+        store: &FinanceStore,
+    ) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            let mut tx = persistence
+                .pool()
+                .begin()
+                .await
+                .map_err(|_| ApiError::Internal("资金事务开启失败".to_string()))?;
+            save_finance_store_incremental_in_transaction(&mut *tx, previous, store).await?;
+            tx.commit()
+                .await
+                .map_err(|_| ApiError::Internal("资金事务提交失败".to_string()))?;
         }
 
         Ok(())
@@ -1141,16 +1180,6 @@ pub(crate) async fn save_finance_store_incremental_in_transaction(
     previous: &FinanceStore,
     store: &FinanceStore,
 ) -> ApiResult<()> {
-    sqlx::query(
-        "LOCK TABLE ledger_entries, financial_accounts, finance_runtime IN ACCESS EXCLUSIVE MODE",
-    )
-    .execute(&mut *connection)
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "资金表锁定失败");
-        ApiError::Internal("资金表锁定失败".to_string())
-    })?;
-
     for user_id in previous
         .accounts
         .keys()

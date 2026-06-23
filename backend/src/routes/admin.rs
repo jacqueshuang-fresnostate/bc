@@ -105,6 +105,7 @@ use crate::{
         },
         rebate::recharge_rebate_credit_for_order,
         recharge::recharge_settings_from_system_settings,
+        robot_scheduler::{RobotSchedulerConfig, RobotSchedulerStatus},
         scheduler::DrawSchedulerConfig,
         scheduler::DrawSchedulerStatus,
     },
@@ -243,6 +244,11 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/robots", get(list_robots).post(create_robot))
         .route("/robots/run", post(run_group_buy_robots_request))
+        .route("/robot-scheduler/status", get(get_robot_scheduler_status))
+        .route(
+            "/robot-scheduler/config",
+            put(update_robot_scheduler_config),
+        )
         .route(
             "/robots/{id}",
             get(get_robot).put(update_robot).delete(delete_robot),
@@ -753,6 +759,18 @@ fn required_permission_for_request(method: &Method, path: &str) -> Option<&'stat
             _ => None,
         };
     }
+    if path == "robot-scheduler/status" {
+        return match method.clone() {
+            Method::GET => Some("robot.read"),
+            _ => None,
+        };
+    }
+    if path == "robot-scheduler/config" {
+        return match method.clone() {
+            Method::PUT => Some("robot.write"),
+            _ => None,
+        };
+    }
     if path.starts_with("robots/") && path.ends_with("/status") {
         return match method.clone() {
             Method::PATCH => Some("robot.write"),
@@ -1228,6 +1246,25 @@ async fn update_draw_scheduler_config(
     Json(payload): Json<DrawSchedulerConfig>,
 ) -> ApiResult<Json<ApiEnvelope<DrawSchedulerStatus>>> {
     let status = state.scheduler.update_config(payload).await?;
+
+    Ok(Json(ApiEnvelope::success(status)))
+}
+
+/// 返回机器人调度器当前配置、运行状态和最近执行记录。
+async fn get_robot_scheduler_status(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<RobotSchedulerStatus>>> {
+    let status = state.robot_scheduler.status()?;
+
+    Ok(Json(ApiEnvelope::success(status)))
+}
+
+/// 后台保存机器人调度配置，启停常规发单和补单的独立调度。
+async fn update_robot_scheduler_config(
+    State(state): State<AppState>,
+    Json(payload): Json<RobotSchedulerConfig>,
+) -> ApiResult<Json<ApiEnvelope<RobotSchedulerStatus>>> {
+    let status = state.robot_scheduler.update_config(payload).await?;
 
     Ok(Json(ApiEnvelope::success(status)))
 }
@@ -4864,6 +4901,7 @@ mod tests {
             recharge::RechargeRepository,
             redis_runtime::RedisRuntime,
             robot::RobotRepository,
+            robot_scheduler::{RobotSchedulerConfig, RobotSchedulerRepository},
             scheduler::{DrawSchedulerConfig, DrawSchedulerRepository},
             support::SupportRepository,
             withdrawal::WithdrawalRepository,
@@ -5613,6 +5651,7 @@ mod tests {
             redis: RedisRuntime::disabled(),
             recharges: RechargeRepository::memory(),
             robots: RobotRepository::memory_seeded(),
+            robot_scheduler: RobotSchedulerRepository::new(RobotSchedulerConfig::default()),
             scheduler: DrawSchedulerRepository::new(DrawSchedulerConfig {
                 enabled: false,
                 interval_seconds: 5,

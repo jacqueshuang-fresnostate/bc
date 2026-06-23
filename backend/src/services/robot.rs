@@ -280,7 +280,7 @@ async fn save_robot_store(database: &BusinessDatabase, store: &RobotStore) -> Ap
         .bind(enum_to_string(&robot.group_buy_fill_strategy)?)
         .bind(
             i32::try_from(robot.group_buy_fill_before_draw_seconds)
-                .map_err(|_| ApiError::BadRequest("合买机器人开奖前补满秒数过大".to_string()))?,
+                .map_err(|_| ApiError::BadRequest("补单机器人开奖前补满秒数过大".to_string()))?,
         )
         .execute(&mut *tx)
         .await
@@ -442,9 +442,9 @@ fn normalize_robot(
     Ok(robot)
 }
 
-/// 规范合买机器人补满策略，避免无效秒数导致调度无法判断触发窗口。
+/// 规范补单机器人补满策略，避免无效秒数导致调度无法判断触发窗口。
 fn normalize_group_buy_fill_config(robot: &mut RobotConfigSummary) -> ApiResult<()> {
-    if robot.kind != RobotKind::GroupBuy {
+    if robot.kind != RobotKind::Purchase {
         robot.group_buy_fill_strategy = default_group_buy_fill_strategy();
         robot.group_buy_fill_before_draw_seconds = default_group_buy_fill_before_draw_seconds();
         return Ok(());
@@ -452,12 +452,12 @@ fn normalize_group_buy_fill_config(robot: &mut RobotConfigSummary) -> ApiResult<
 
     if robot.group_buy_fill_before_draw_seconds == 0 {
         return Err(ApiError::BadRequest(
-            "合买机器人开奖前补满秒数必须大于 0".to_string(),
+            "补单机器人开奖前补满秒数必须大于 0".to_string(),
         ));
     }
     if robot.group_buy_fill_before_draw_seconds > 86_400 {
         return Err(ApiError::BadRequest(
-            "合买机器人开奖前补满秒数不能超过 86400".to_string(),
+            "补单机器人开奖前补满秒数不能超过 86400".to_string(),
         ));
     }
 
@@ -485,22 +485,22 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
     vec![
         RobotConfigSummary {
             id: "R-GROUP-001".to_string(),
-            name: "合买补单机器人".to_string(),
+            name: "合买发单机器人".to_string(),
             kind: RobotKind::GroupBuy,
             lottery_ids: vec!["fc3d".to_string(), "ssc60".to_string()],
             status: RobotStatus::Enabled,
-            description: "开盘期间发起合买并辅助满单".to_string(),
+            description: "只负责发起合买计划到合买大厅".to_string(),
             group_buy_fill_strategy: default_group_buy_fill_strategy(),
             group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(),
             deletable: false,
         },
         RobotConfigSummary {
             id: "R-BUY-001".to_string(),
-            name: "购彩模拟机器人".to_string(),
+            name: "合买补单机器人".to_string(),
             kind: RobotKind::Purchase,
             lottery_ids: vec!["ssc60".to_string()],
-            status: RobotStatus::Paused,
-            description: "按彩种开盘时间模拟普通用户购彩".to_string(),
+            status: RobotStatus::Enabled,
+            description: "只负责认购合买大厅未满单计划".to_string(),
             group_buy_fill_strategy: default_group_buy_fill_strategy(),
             group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(),
             deletable: false,
@@ -532,7 +532,7 @@ mod tests {
             .create(
                 RobotConfigSummary {
                     id: " R-NEW ".to_string(),
-                    name: "新购彩机器人".to_string(),
+                    name: "新补单机器人".to_string(),
                     kind: RobotKind::Purchase,
                     lottery_ids: vec!["fc3d".to_string(), "fc3d".to_string()],
                     status: RobotStatus::Paused,

@@ -1,6 +1,6 @@
 //! 业务数据库封装，负责连接池与迁移执行
 
-use std::{error::Error, io};
+use std::{error::Error, io, time::Duration};
 
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -44,10 +44,7 @@ pub struct BusinessDatabase {
 impl BusinessDatabase {
     /// 基于连接字符串创建数据库连接池并执行迁移。
     pub async fn postgres(database_url: &str) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let pool = PgPoolOptions::new()
-            .max_connections(5)
-            .connect(database_url)
-            .await?;
+        let pool = configured_pg_pool_options().connect(database_url).await?;
 
         run_business_migrations(&pool).await?;
 
@@ -58,6 +55,56 @@ impl BusinessDatabase {
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
+}
+
+/// 读取数据库连接池配置，避免并发请求被过小的默认连接池卡住。
+pub(crate) fn configured_pg_pool_options() -> PgPoolOptions {
+    let max_connections = env_u32("DATABASE_MAX_CONNECTIONS", 30).max(1);
+    let min_connections = env_u32("DATABASE_MIN_CONNECTIONS", 2).min(max_connections);
+    let acquire_timeout_seconds = env_u64("DATABASE_ACQUIRE_TIMEOUT_SECONDS", 10).max(1);
+
+    PgPoolOptions::new()
+        .max_connections(max_connections)
+        .min_connections(min_connections)
+        .acquire_timeout(Duration::from_secs(acquire_timeout_seconds))
+}
+
+/// 读取无符号整数环境变量；非法值回退默认值并输出中文告警。
+fn env_u32(key: &str, default_value: u32) -> u32 {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| match value.trim().parse::<u32>() {
+            Ok(parsed) => Some(parsed),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    配置键 = key,
+                    默认值 = default_value,
+                    "数据库连接池整数配置无效，已使用默认值"
+                );
+                None
+            }
+        })
+        .unwrap_or(default_value)
+}
+
+/// 读取无符号长整数环境变量；非法值回退默认值并输出中文告警。
+fn env_u64(key: &str, default_value: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| match value.trim().parse::<u64>() {
+            Ok(parsed) => Some(parsed),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    配置键 = key,
+                    默认值 = default_value,
+                    "数据库连接池时间配置无效，已使用默认值"
+                );
+                None
+            }
+        })
+        .unwrap_or(default_value)
 }
 
 /// 统一执行后端业务迁移，并对已知历史迁移校验冲突做受控修复。

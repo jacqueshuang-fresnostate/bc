@@ -28,6 +28,7 @@ use crate::{
         recharge::RechargeRepository,
         redis_runtime::RedisRuntime,
         robot::RobotRepository,
+        robot_scheduler::{spawn_robot_scheduler, RobotSchedulerConfig, RobotSchedulerRepository},
         scheduler::{spawn_draw_scheduler, DrawSchedulerConfig, DrawSchedulerRepository},
         support::SupportRepository,
         withdrawal::WithdrawalRepository,
@@ -67,6 +68,8 @@ pub struct AppState {
     pub recharges: RechargeRepository,
     /// robots字段。
     pub robots: RobotRepository,
+    /// 机器人独立调度器，用于常规发单和补单，不阻塞开奖调度。
+    pub robot_scheduler: RobotSchedulerRepository,
     /// 调度器字段。
     pub scheduler: DrawSchedulerRepository,
     /// 客服字段。
@@ -125,7 +128,11 @@ impl MemoryCacheReloadResult {
 /// 应用状态构造和环境初始化方法。
 impl AppState {
     /// 创建内存模式应用状态，主要用于未配置数据库的本地开发和测试。
-    fn new_with_scheduler(scheduler: DrawSchedulerRepository, redis: RedisRuntime) -> Self {
+    fn new_with_schedulers(
+        scheduler: DrawSchedulerRepository,
+        robot_scheduler: RobotSchedulerRepository,
+        redis: RedisRuntime,
+    ) -> Self {
         Self {
             access: AccessRepository::memory_seeded(),
             advertisements: AdvertisementRepository::memory(),
@@ -142,6 +149,7 @@ impl AppState {
             redis,
             recharges: RechargeRepository::memory(),
             robots: RobotRepository::memory_seeded(),
+            robot_scheduler,
             scheduler,
             support: SupportRepository::memory_seeded(),
             withdrawals: WithdrawalRepository::memory(),
@@ -149,13 +157,14 @@ impl AppState {
     }
 
     /// 从环境变量初始化应用并根据配置加载调度器与业务服务。
-    pub async fn from_env_with_scheduler(
+    pub async fn from_env_with_schedulers(
         scheduler: DrawSchedulerRepository,
+        robot_scheduler: RobotSchedulerRepository,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let redis = RedisRuntime::from_env().await?;
         let Some(database_url) = database_url_from_env()? else {
             tracing::info!("未配置 DATABASE_URL，使用内存业务仓储");
-            return Ok(Self::new_with_scheduler(scheduler, redis));
+            return Ok(Self::new_with_schedulers(scheduler, robot_scheduler, redis));
         };
 
         let lotteries = LotteryRepository::postgres(&database_url).await?;
@@ -165,6 +174,11 @@ impl AppState {
         let scheduler =
             DrawSchedulerRepository::persistent(scheduler.config()?, business_database.clone())
                 .await?;
+        let robot_scheduler = RobotSchedulerRepository::persistent(
+            robot_scheduler.config()?,
+            business_database.clone(),
+        )
+        .await?;
 
         tracing::info!("已配置 DATABASE_URL，使用 PostgreSQL 持久化所有后台业务仓储");
         Ok(Self {
@@ -188,6 +202,7 @@ impl AppState {
             redis,
             recharges: RechargeRepository::persistent(business_database.clone()).await?,
             robots: RobotRepository::persistent(business_database.clone()).await?,
+            robot_scheduler,
             scheduler,
             support: SupportRepository::persistent(business_database.clone()).await?,
             withdrawals: WithdrawalRepository::persistent(business_database).await?,
@@ -221,6 +236,10 @@ impl AppState {
         result.record_reload("邀请返利策略", self.rebates.reload_from_database().await?);
         result.record_reload("充值订单", self.recharges.reload_from_database().await?);
         result.record_reload("机器人配置", self.robots.reload_from_database().await?);
+        result.record_reload(
+            "机器人调度配置",
+            self.robot_scheduler.reload_from_database().await?,
+        );
         result.record_reload("开奖调度配置", self.scheduler.reload_from_database().await?);
         result.record_reload("客服会话", self.support.reload_from_database().await?);
         result.record_reload("提现申请", self.withdrawals.reload_from_database().await?);
@@ -277,7 +296,8 @@ fn normalize_database_url_value(value: &str) -> Result<Option<String>, io::Error
 /// 读取环境变量并返回可启动的应用路由实例。
 pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
     let scheduler = DrawSchedulerRepository::new(DrawSchedulerConfig::default());
-    let state = AppState::from_env_with_scheduler(scheduler).await?;
+    let robot_scheduler = RobotSchedulerRepository::new(RobotSchedulerConfig::default());
+    let state = AppState::from_env_with_schedulers(scheduler, robot_scheduler).await?;
     let scheduler_config = state.scheduler.config()?;
     spawn_draw_scheduler(
         state.access.clone(),
@@ -290,6 +310,19 @@ pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
         state.realtime.clone(),
         scheduler_config,
         state.scheduler.clone(),
+    );
+    let robot_scheduler_config = state.robot_scheduler.config()?;
+    spawn_robot_scheduler(
+        state.access.clone(),
+        state.draws.clone(),
+        state.lotteries.clone(),
+        state.orders.clone(),
+        state.finance.clone(),
+        state.group_buys.clone(),
+        state.robots.clone(),
+        state.realtime.clone(),
+        robot_scheduler_config,
+        state.robot_scheduler.clone(),
     );
 
     Ok(router_with_state(state))

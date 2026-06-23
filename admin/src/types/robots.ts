@@ -37,3 +37,35 @@ export interface GroupBuyRobotRun {
   ledgerEntries: LedgerEntry[];
   skippedItems: GroupBuyRobotSkippedItem[];
 }
+
+export type RobotSchedulerRunStatus = 'success' | 'failed';
+export type RobotSchedulerRunTrigger = 'automatic';
+
+export interface RobotSchedulerConfig {
+  enabled: boolean;
+  intervalSeconds: number;
+}
+
+export interface RobotSchedulerRunRecord {
+  id: string;
+  trigger: RobotSchedulerRunTrigger;
+  status: RobotSchedulerRunStatus;
+  startedAt: string;
+  finishedAt: string;
+  now: string;
+  error: string | null;
+  createdPlanCount: number;
+  filledPlanCount: number;
+  createdOrderCount: number;
+  ledgerEntryCount: number;
+  skippedItemCount: number;
+  skippedItems: GroupBuyRobotSkippedItem[];
+}
+
+export interface RobotSchedulerStatus {
+  enabled: boolean;
+  config: RobotSchedulerConfig;
+  runCount: number;
+  lastRun: RobotSchedulerRunRecord | null;
+  recentRuns: RobotSchedulerRunRecord[];
+}

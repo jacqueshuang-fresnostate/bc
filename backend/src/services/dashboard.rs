@@ -421,18 +421,18 @@ fn module_groups() -> Vec<ModuleGroup> {
         ModuleGroup {
             key: "automation".to_string(),
             title: "机器人".to_string(),
-            description: "自动发起合买与模拟购彩".to_string(),
+            description: "自动发起合买与补未满单".to_string(),
             modules: vec![
                 module(
                     "group-buy-robot",
                     "合买机器人",
-                    "发起合买和满单辅助",
+                    "只负责发起合买计划",
                     ModuleStatus::Scaffolded,
                 ),
                 module(
                     "purchase-robot",
-                    "购彩机器人",
-                    "开盘期间模拟购彩",
+                    "补单机器人",
+                    "只负责补未满单合买",
                     ModuleStatus::Scaffolded,
                 ),
             ],
@@ -663,11 +663,11 @@ mod tests {
             },
             vec![RobotConfigSummary {
                 id: "RB-1".to_string(),
-                name: "合买机器人".to_string(),
+                name: "合买发单机器人".to_string(),
                 kind: RobotKind::GroupBuy,
                 lottery_ids: vec!["fc3d".to_string()],
                 status: RobotStatus::Enabled,
-                description: "测试机器人".to_string(),
+                description: "只负责发起合买计划".to_string(),
                 group_buy_fill_strategy: crate::domain::robot::GroupBuyRobotFillStrategy::Rhythm,
                 group_buy_fill_before_draw_seconds: 15,
                 deletable: true,

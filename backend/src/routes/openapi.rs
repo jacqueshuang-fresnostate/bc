@@ -716,7 +716,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/robots",
         "机器人配置",
         "机器人列表",
-        "返回合买机器人和购彩机器人配置，合买机器人包含补满策略与开奖前补满秒数。",
+        "返回合买机器人和补单机器人配置，合买机器人只负责发单，补单机器人包含补单策略与开奖前补满秒数。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -725,7 +725,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/robots",
         "机器人配置",
         "新增机器人",
-        "创建机器人配置，合买机器人可选择阶段性补单或开奖前补满策略。",
+        "创建机器人配置，补单机器人可选择阶段性补单或开奖前补满策略。",
         AuthMode::Admin,
         RequestBodyKind::Json,
     ),
@@ -733,10 +733,28 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "post",
         "/admin/robots/run",
         "机器人配置",
-        "执行合买机器人",
-        "立即执行已启用的合买机器人，返回创建合买、满单、订单、流水和跳过原因。",
+        "执行机器人",
+        "立即执行已启用的合买机器人和补单机器人，返回创建合买、满单、订单、流水和跳过原因。",
         AuthMode::Admin,
         RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/admin/robot-scheduler/status",
+        "机器人配置",
+        "读取机器人调度状态",
+        "返回机器人独立调度器配置、启停状态和最近执行记录。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "put",
+        "/admin/robot-scheduler/config",
+        "机器人配置",
+        "更新机器人调度配置",
+        "修改机器人独立调度器开关和自动执行周期，常规发单和补单由该调度器负责。",
+        AuthMode::Admin,
+        RequestBodyKind::Json,
     ),
     doc(
         "get",
@@ -752,7 +770,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/robots/{id}",
         "机器人配置",
         "更新机器人",
-        "更新机器人名称、类型、状态、彩种范围和合买补满策略。",
+        "更新机器人名称、类型、状态、彩种范围和补单策略。",
         AuthMode::Admin,
         RequestBodyKind::Json,
     ),
@@ -1960,7 +1978,7 @@ fn openapi_tags() -> Value {
         { "name": "合买管理", "description": "合买计划和参与人管理。" },
         { "name": "邀请返利", "description": "代理邀请关系和返利策略。" },
         { "name": "在线客服", "description": "客服会话与消息回复。" },
-        { "name": "机器人配置", "description": "合买机器人和购彩机器人配置。" },
+        { "name": "机器人配置", "description": "合买机器人和补单机器人配置。" },
         { "name": "彩种管理", "description": "彩种、分类、玩法赔率和销售状态。" },
         { "name": "开奖期号", "description": "期号创建、封盘、开奖和取消。" },
         { "name": "开奖源与调度", "description": "开奖源、控制号码和自动调度。" },
@@ -2066,6 +2084,8 @@ mod tests {
             document["paths"]["/admin/group-buy/plans/robot-records/clear"]["delete"].is_object()
         );
         assert!(document["paths"]["/admin/draw-scheduler/config"]["put"].is_object());
+        assert!(document["paths"]["/admin/robot-scheduler/status"]["get"].is_object());
+        assert!(document["paths"]["/admin/robot-scheduler/config"]["put"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["get"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["put"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["delete"].is_object());

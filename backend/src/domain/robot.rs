@@ -6,7 +6,7 @@ use crate::domain::{finance::LedgerEntry, group_buy::GroupBuyPlan, order::OrderD
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 机器人类型，当前主要用于合买自动发起和自动认购。
+/// 机器人类型：合买机器人只负责发单，补单机器人只负责认购未满单合买。
 pub enum RobotKind {
     GroupBuy,
     Purchase,
@@ -23,7 +23,7 @@ pub enum RobotStatus {
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 合买机器人补满策略，控制机器人按阶段补单或在开奖前一次性补满。
+/// 补单机器人补满策略，控制补单机器人按阶段补单或在开奖前一次性补满。
 pub enum GroupBuyRobotFillStrategy {
     Rhythm,
     BeforeDraw,
@@ -45,10 +45,10 @@ pub struct RobotConfigSummary {
     pub status: RobotStatus,
     /// 配置或记录的中文说明。
     pub description: String,
-    /// 合买机器人补满策略。
+    /// 补单机器人补满策略，字段名沿用历史接口。
     #[serde(default = "default_group_buy_fill_strategy")]
     pub group_buy_fill_strategy: GroupBuyRobotFillStrategy,
-    /// 开奖前兜底补满提前秒数。
+    /// 补单机器人开奖前兜底补满提前秒数，字段名沿用历史接口。
     #[serde(default = "default_group_buy_fill_before_draw_seconds")]
     pub group_buy_fill_before_draw_seconds: u32,
     /// 后台是否允许删除该配置。
@@ -56,12 +56,12 @@ pub struct RobotConfigSummary {
     pub deletable: bool,
 }
 
-/// 返回合买机器人默认补满策略，兼容历史配置和旧接口请求。
+/// 返回补单机器人默认补满策略，兼容历史配置和旧接口请求。
 pub fn default_group_buy_fill_strategy() -> GroupBuyRobotFillStrategy {
     GroupBuyRobotFillStrategy::Rhythm
 }
 
-/// 返回合买机器人默认开奖前补满秒数，只有策略为开奖前补满时生效。
+/// 返回补单机器人默认开奖前补满秒数，只有策略为开奖前补满时生效。
 pub fn default_group_buy_fill_before_draw_seconds() -> u32 {
     15
 }
@@ -74,7 +74,7 @@ pub struct RobotStatusRequest {
     pub status: RobotStatus,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 /// 合买机器人本轮跳过的彩种或期号及原因。
 pub struct GroupBuyRobotSkippedItem {
@@ -92,7 +92,7 @@ pub struct GroupBuyRobotSkippedItem {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 合买机器人单轮执行结果，汇总创建计划、认购订单和资金流水。
+/// 机器人单轮执行结果，汇总合买发单、补单满单、成单和资金流水。
 pub struct GroupBuyRobotRun {
     /// 当前业务时间字符串。
     pub now: String,

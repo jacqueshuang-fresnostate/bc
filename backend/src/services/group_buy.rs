@@ -425,7 +425,7 @@ impl GroupBuyRepository {
         };
 
         if should_persist {
-            if let Err(error) = self.persist(&snapshot).await {
+            if let Err(error) = self.persist_incremental(&previous, &snapshot).await {
                 self.replace_store(previous)?;
                 return Err(error);
             }
@@ -433,10 +433,22 @@ impl GroupBuyRepository {
 
         Ok(result)
     }
-    /// 把当前仓储快照同步保存到持久化存储。
-    async fn persist(&self, store: &GroupBuyStore) -> ApiResult<()> {
+    /// 把合买快照差异增量保存到持久化存储，避免普通写操作重写整张合买表。
+    async fn persist_incremental(
+        &self,
+        previous: &GroupBuyStore,
+        store: &GroupBuyStore,
+    ) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            save_group_buy_store(persistence, store).await?;
+            let mut tx = persistence
+                .pool()
+                .begin()
+                .await
+                .map_err(|_| ApiError::Internal("合买事务开启失败".to_string()))?;
+            save_group_buy_store_incremental_in_transaction(&mut *tx, previous, store).await?;
+            tx.commit()
+                .await
+                .map_err(|_| ApiError::Internal("合买事务提交失败".to_string()))?;
         }
 
         Ok(())
@@ -1172,14 +1184,6 @@ pub(crate) async fn save_group_buy_store_incremental_in_transaction(
     previous: &GroupBuyStore,
     store: &GroupBuyStore,
 ) -> ApiResult<()> {
-    sqlx::query("LOCK TABLE group_buy_participants, group_buy_plans IN ACCESS EXCLUSIVE MODE")
-        .execute(&mut *connection)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "合买数据表锁定失败");
-            ApiError::Internal("合买数据表锁定失败".to_string())
-        })?;
-
     for plan_id in previous
         .plans
         .keys()

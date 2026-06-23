@@ -3,16 +3,20 @@ import {
   createRobot,
   deleteRobot,
   fetchLotteries,
+  fetchRobotSchedulerStatus,
   fetchRobots,
   runGroupBuyRobots,
   setRobotStatus,
   updateRobot,
+  updateRobotSchedulerConfig,
 } from '../api/client';
 import type { LotteryKind } from '../types/dashboard';
 import type {
   GroupBuyRobotRun,
   RobotConfigPayload,
   RobotConfigSummary,
+  RobotSchedulerConfig,
+  RobotSchedulerStatus,
   RobotStatus,
 } from '../types/robots';
 
@@ -23,6 +27,9 @@ export function useRobots() {
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [lastGroupBuyRun, setLastGroupBuyRun] = useState<GroupBuyRobotRun | null>(null);
+  const [robotSchedulerStatus, setRobotSchedulerStatus] =
+    useState<RobotSchedulerStatus | null>(null);
+  const [robotSchedulerSaving, setRobotSchedulerSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -36,10 +43,15 @@ export function useRobots() {
     setLoading(true);
     setError(null);
 
-    Promise.all([fetchRobots(controller.signal), fetchLotteries(controller.signal)])
-      .then(([nextRobots, nextLotteries]) => {
+    Promise.all([
+      fetchRobots(controller.signal),
+      fetchLotteries(controller.signal),
+      fetchRobotSchedulerStatus(controller.signal),
+    ])
+      .then(([nextRobots, nextLotteries, nextRobotSchedulerStatus]) => {
         setRobots(nextRobots);
         setLotteries(nextLotteries);
+        setRobotSchedulerStatus(nextRobotSchedulerStatus);
       })
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) {
@@ -123,6 +135,24 @@ export function useRobots() {
     }
   }, [refresh]);
 
+  const saveRobotSchedulerConfig = useCallback(
+    async (payload: RobotSchedulerConfig) => {
+      setRobotSchedulerSaving(true);
+      setError(null);
+      try {
+        const status = await updateRobotSchedulerConfig(payload);
+        setRobotSchedulerStatus(status);
+        return status;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setRobotSchedulerSaving(false);
+      }
+    },
+    [],
+  );
+
   return {
     changeStatus,
     error,
@@ -133,8 +163,11 @@ export function useRobots() {
     remove,
     refresh,
     robots,
+    robotSchedulerSaving,
+    robotSchedulerStatus,
     running,
     save,
+    saveRobotSchedulerConfig,
     saving,
   };
 }
