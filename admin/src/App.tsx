@@ -40,8 +40,6 @@ const COMMON_NAVIGATION_ORDER = [
   'group-buy',
   'orders',
   'lottery-console',
-  'settlements',
-  'invite',
   'rebate',
 ];
 
