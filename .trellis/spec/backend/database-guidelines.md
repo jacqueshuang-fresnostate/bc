@@ -217,13 +217,16 @@ let order = orders
   - `finance_runtime`
 - 维护性全量保存锁表 SQL：`LOCK TABLE ledger_entries, financial_accounts, finance_runtime IN ACCESS EXCLUSIVE MODE`
 - 普通下注行锁 SQL：`SELECT ... FROM financial_accounts WHERE user_id = $1 FOR UPDATE`
-- 普通下注取号 SQL：`SELECT nextval('order_id_sequence')`、`SELECT nextval('ledger_entry_id_sequence')`
+- 普通下注订单取号 SQL：`SELECT nextval('order_id_sequence')`
+- 数据库模式资金流水取号 SQL：`SELECT nextval('ledger_entry_id_sequence')`
 - 运行序号：`finance_runtime(key='next_sequence')`
 - 流水编号格式：`L000000000001`
 
 ### 3. 契约
 
 资金仓储保留快照式全量保存能力，用于初始化、维护性重载或低频管理路径；普通下注扣款必须使用当前用户账户行级锁、当前事务追加流水和 PostgreSQL sequence 取号，不再使用资金全表锁或长时间锁定运行时序号行。取消退款、开奖派奖、合买结算、充值确认、提现流转和聊天红包等尚未完全行级化的跨仓储路径必须使用前后快照差异增量保存，不能为了保存一笔流水或一个账户余额变化而清空并重插全量历史。
+
+数据库模式下所有新增 `ledger_entries.id` 都必须统一使用 `L + nextval('ledger_entry_id_sequence')` 生成。`FinanceStore.next_sequence` 只作为内存模式和历史快照兼容字段，不得在 PostgreSQL 持久化时直接作为最终流水 ID；增量保存时如果业务快照已经生成了临时 `L...`，必须在入库前替换为数据库序列 ID，并把映射回写到内存快照和接口返回的 `LedgerEntry`。
 
 快照式全量保存只能用于初始化、维护性重载或明确的低频管理操作，允许短暂锁表以保证整表替换一致性；日常快照差异保存不得使用 `ACCESS EXCLUSIVE` 全表锁，必须依靠同进程写入串行保护、数据库事务、主键冲突更新和行级更新保证一致性。普通下注行级事务不得使用全表锁，也不得长时间锁定 `finance_runtime.next_sequence` 或 `order_runtime.next_sequence` 作为热路径取号方式；订单号和流水号应通过 PostgreSQL sequence 获取，事务内只锁定当前用户账户行，流水按 append-only 追加。
 
@@ -239,6 +242,7 @@ let order = orders
 | 跨仓储热路径只新增一笔资金流水 | 只插入新增流水并更新受影响账户，不重写全部 `ledger_entries` |
 | 聊天红包发送或领取保存失败 | 不替换聊天大厅或资金内存快照，不出现内存已扣款但数据库未保存 |
 | `finance_runtime.next_sequence` 小于已有最大流水编号 | 启动时按已有流水编号校正并持久化 |
+| `ledger_entry_id_sequence` 小于已有最大流水编号 | 启动和迁移时按已有流水编号校正，后续 `nextval` 不得返回已存在的流水 ID |
 | 已有流水 ID 不符合 `L...` 格式 | 跳过该 ID，不影响合法流水序号恢复 |
 | 锁表失败 | 返回 `资金表锁定失败`，不继续删除或插入 |
 | 流水插入失败 | 日志记录具体数据库错误和流水上下文，API 返回 `资金流水数据保存失败` |

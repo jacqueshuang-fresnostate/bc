@@ -25,7 +25,9 @@ use crate::{
 
 use super::{
     business_database::{enum_from_string, enum_to_string, to_json, BusinessDatabase},
-    finance::{save_finance_store_incremental_in_transaction, FinanceRepository},
+    finance::{
+        save_finance_store_incremental_in_transaction, FinanceRepository, LedgerEntryIdRemap,
+    },
 };
 
 const CHAT_HALL_HISTORY_LIMIT: usize = 200;
@@ -127,7 +129,7 @@ impl ChatHallRepository {
             finance,
             &chat_snapshot,
             &previous_finance_store,
-            &finance_snapshot,
+            &mut finance_snapshot,
         )
         .await?;
         self.replace_store(chat_snapshot)?;
@@ -166,7 +168,7 @@ impl ChatHallRepository {
             finance,
             &chat_snapshot,
             &previous_finance_store,
-            &finance_snapshot,
+            &mut finance_snapshot,
         )
         .await?;
         self.replace_store(chat_snapshot)?;
@@ -244,8 +246,8 @@ impl ChatHallRepository {
         finance: &FinanceRepository,
         chat_store: &ChatHallStore,
         previous_finance_store: &crate::services::finance::FinanceStore,
-        finance_store: &crate::services::finance::FinanceStore,
-    ) -> ApiResult<()> {
+        finance_store: &mut crate::services::finance::FinanceStore,
+    ) -> ApiResult<LedgerEntryIdRemap> {
         match (&self.persistence, &finance.persistence) {
             (Some(persistence), Some(_)) => {
                 let mut tx = persistence
@@ -254,7 +256,7 @@ impl ChatHallRepository {
                     .await
                     .map_err(|_| ApiError::Internal("聊天红包资金事务开启失败".to_string()))?;
                 save_chat_hall_store_in_transaction(&mut *tx, chat_store).await?;
-                save_finance_store_incremental_in_transaction(
+                let id_remap = save_finance_store_incremental_in_transaction(
                     &mut *tx,
                     previous_finance_store,
                     finance_store,
@@ -263,16 +265,15 @@ impl ChatHallRepository {
                 tx.commit()
                     .await
                     .map_err(|_| ApiError::Internal("聊天红包资金事务提交失败".to_string()))?;
+                Ok(id_remap)
             }
-            (None, None) => {}
+            (None, None) => Ok(LedgerEntryIdRemap::default()),
             _ => {
                 return Err(ApiError::Internal(
                     "聊天大厅和资金持久化配置不一致".to_string(),
                 ))
             }
         }
-
-        Ok(())
     }
 
     /// 克隆当前聊天大厅快照，供写操作先在临时快照中完成校验和变更。

@@ -24,7 +24,9 @@ use crate::{
     error::{ApiError, ApiResult},
     services::{
         business_database::BusinessDatabase,
-        finance::{save_finance_store_incremental_in_transaction, FinanceRepository},
+        finance::{
+            save_finance_store_incremental_in_transaction, FinanceRepository, LedgerEntryIdRemap,
+        },
         pagination::{ListPage, PageRequest},
         rebate::RechargeRebateCredit,
     },
@@ -384,16 +386,17 @@ impl RechargeRepository {
                 credit_recharge_rebate_for_order(&mut finance_store, &order, rebate_credit)?;
         }
 
-        persist_recharge_finance_stores(
+        let id_remap = persist_recharge_finance_stores(
             self,
             finance,
             &previous_recharge_store,
             &recharge_store,
             &previous_finance_store,
-            &finance_store,
+            &mut finance_store,
             Some(&order),
         )
         .await?;
+        id_remap.apply_to_optional_entry(&mut rebate_entry);
         self.replace_store(recharge_store)?;
         finance.replace_store(finance_store)?;
         Ok(RechargeConfirmResult {
@@ -448,16 +451,17 @@ impl RechargeRepository {
                 credit_recharge_rebate_for_order(&mut finance_store, &order, rebate_credit)?;
         }
 
-        persist_recharge_finance_stores(
+        let id_remap = persist_recharge_finance_stores(
             self,
             finance,
             &previous_recharge_store,
             &recharge_store,
             &previous_finance_store,
-            &finance_store,
+            &mut finance_store,
             Some(&order),
         )
         .await?;
+        id_remap.apply_to_optional_entry(&mut rebate_entry);
         self.replace_store(recharge_store)?;
         finance.replace_store(finance_store)?;
         Ok(RechargeConfirmResult {
@@ -500,9 +504,9 @@ async fn persist_recharge_finance_stores(
     previous_recharge_store: &RechargeStore,
     recharge_store: &RechargeStore,
     previous_finance_store: &super::finance::FinanceStore,
-    finance_store: &super::finance::FinanceStore,
+    finance_store: &mut super::finance::FinanceStore,
     confirmed_order: Option<&RechargeOrderSummary>,
-) -> ApiResult<()> {
+) -> ApiResult<LedgerEntryIdRemap> {
     match (&recharges.persistence, &finance.persistence) {
         (Some(database), Some(_)) => {
             let mut tx = database
@@ -516,7 +520,7 @@ async fn persist_recharge_finance_stores(
                 recharge_store,
             )
             .await?;
-            save_finance_store_incremental_in_transaction(
+            let id_remap = save_finance_store_incremental_in_transaction(
                 &mut *tx,
                 previous_finance_store,
                 finance_store,
@@ -527,9 +531,10 @@ async fn persist_recharge_finance_stores(
             }
             tx.commit()
                 .await
-                .map_err(|_| ApiError::Internal("充值资金事务提交失败".to_string()))
+                .map_err(|_| ApiError::Internal("充值资金事务提交失败".to_string()))?;
+            Ok(id_remap)
         }
-        (None, None) => Ok(()),
+        (None, None) => Ok(LedgerEntryIdRemap::default()),
         _ => Err(ApiError::Internal("充值和资金持久化配置不一致".to_string())),
     }
 }

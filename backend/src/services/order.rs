@@ -23,7 +23,9 @@ use crate::{
     },
     error::{ApiError, ApiResult},
     services::{
-        finance::{save_finance_store_incremental_in_transaction, FinanceRepository},
+        finance::{
+            save_finance_store_incremental_in_transaction, FinanceRepository, LedgerEntryIdRemap,
+        },
         group_buy::{save_group_buy_store_incremental_in_transaction, GroupBuyRepository},
         pagination::{ListPage, PageRequest},
         play_rules::{
@@ -409,7 +411,7 @@ impl OrderRepository {
             &previous_order_store,
             &order_store,
             &previous_finance_store,
-            &finance_store,
+            &mut finance_store,
         )
         .await?;
         self.replace_store(order_store)?;
@@ -558,7 +560,7 @@ impl OrderRepository {
             &previous_order_store,
             &order_store,
             &previous_finance_store,
-            &finance_store,
+            &mut finance_store,
         )
         .await?;
         self.replace_store(order_store)?;
@@ -780,22 +782,23 @@ impl OrderRepository {
                 missing_group_buy_order_ids.join(",")
             )));
         }
-        let ledger_entries =
+        let mut ledger_entries =
             finance_store.credit_settlement_with_group_buys(&settlement, &group_buy_plans)?;
         group_buy_store.mark_settled_by_order_ids(&order_ids);
 
-        persist_order_finance_group_buy_stores(
+        let id_remap = persist_order_finance_group_buy_stores(
             self,
             finance,
             group_buys,
             &previous_order_store,
             &order_store,
             &previous_finance_store,
-            &finance_store,
+            &mut finance_store,
             &previous_group_buy_store,
             &group_buy_store,
         )
         .await?;
+        id_remap.apply_to_entries(&mut ledger_entries);
         self.replace_store(order_store)?;
         finance.replace_store(finance_store)?;
         group_buys.replace_store(group_buy_store)?;
@@ -1714,8 +1717,8 @@ async fn persist_order_finance_stores(
     previous_order_store: &OrderStore,
     order_store: &OrderStore,
     previous_finance_store: &super::finance::FinanceStore,
-    finance_store: &super::finance::FinanceStore,
-) -> ApiResult<()> {
+    finance_store: &mut super::finance::FinanceStore,
+) -> ApiResult<LedgerEntryIdRemap> {
     match (&orders.persistence, &finance.persistence) {
         (Some(database), Some(_)) => {
             let mut tx = database
@@ -1729,7 +1732,7 @@ async fn persist_order_finance_stores(
                 order_store,
             )
             .await?;
-            save_finance_store_incremental_in_transaction(
+            let id_remap = save_finance_store_incremental_in_transaction(
                 &mut *tx,
                 previous_finance_store,
                 finance_store,
@@ -1737,9 +1740,10 @@ async fn persist_order_finance_stores(
             .await?;
             tx.commit()
                 .await
-                .map_err(|_| ApiError::Internal("订单资金事务提交失败".to_string()))
+                .map_err(|_| ApiError::Internal("订单资金事务提交失败".to_string()))?;
+            Ok(id_remap)
         }
-        (None, None) => Ok(()),
+        (None, None) => Ok(LedgerEntryIdRemap::default()),
         _ => Err(ApiError::Internal("订单和资金持久化配置不一致".to_string())),
     }
 }
@@ -1789,10 +1793,10 @@ async fn persist_order_finance_group_buy_stores(
     previous_order_store: &OrderStore,
     order_store: &OrderStore,
     previous_finance_store: &super::finance::FinanceStore,
-    finance_store: &super::finance::FinanceStore,
+    finance_store: &mut super::finance::FinanceStore,
     previous_group_buy_store: &super::group_buy::GroupBuyStore,
     group_buy_store: &super::group_buy::GroupBuyStore,
-) -> ApiResult<()> {
+) -> ApiResult<LedgerEntryIdRemap> {
     match (
         &orders.persistence,
         &finance.persistence,
@@ -1810,7 +1814,7 @@ async fn persist_order_finance_group_buy_stores(
                 order_store,
             )
             .await?;
-            save_finance_store_incremental_in_transaction(
+            let id_remap = save_finance_store_incremental_in_transaction(
                 &mut *tx,
                 previous_finance_store,
                 finance_store,
@@ -1824,9 +1828,10 @@ async fn persist_order_finance_group_buy_stores(
             .await?;
             tx.commit()
                 .await
-                .map_err(|_| ApiError::Internal("订单资金合买事务提交失败".to_string()))
+                .map_err(|_| ApiError::Internal("订单资金合买事务提交失败".to_string()))?;
+            Ok(id_remap)
         }
-        (None, None, None) => Ok(()),
+        (None, None, None) => Ok(LedgerEntryIdRemap::default()),
         _ => Err(ApiError::Internal(
             "订单、资金和合买持久化配置不一致".to_string(),
         )),

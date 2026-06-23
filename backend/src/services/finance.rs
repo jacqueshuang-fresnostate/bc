@@ -362,16 +362,18 @@ impl FinanceRepository {
     /// 获取用户资金账户，不存在时自动创建默认账户后返回。
     pub async fn account_or_create(&self, user_id: &str) -> ApiResult<FinancialAccountSummary> {
         let _mutation_guard = self.mutation_lock.lock().await;
-        let (result, previous, snapshot) = {
-            let mut store = self
+        let (result, previous, mut snapshot) = {
+            let previous = self
                 .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let previous = store.clone();
-            let result = store.account_or_create(user_id)?;
-            (result, previous, store.clone())
+                .read()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+                .clone();
+            let mut snapshot = previous.clone();
+            let result = snapshot.account_or_create(user_id)?;
+            (result, previous, snapshot)
         };
-        self.persist_incremental(&previous, &snapshot).await?;
+        self.persist_incremental(&previous, &mut snapshot).await?;
+        self.replace_store(snapshot)?;
 
         Ok(result)
     }
@@ -382,16 +384,19 @@ impl FinanceRepository {
         payload: ManualBalanceAdjustmentRequest,
     ) -> ApiResult<LedgerEntry> {
         let _mutation_guard = self.mutation_lock.lock().await;
-        let (result, previous, snapshot) = {
-            let mut store = self
+        let (mut result, previous, mut snapshot) = {
+            let previous = self
                 .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let previous = store.clone();
-            let result = store.manual_adjust(payload)?;
-            (result, previous, store.clone())
+                .read()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+                .clone();
+            let mut snapshot = previous.clone();
+            let result = snapshot.manual_adjust(payload)?;
+            (result, previous, snapshot)
         };
-        self.persist_incremental(&previous, &snapshot).await?;
+        let id_remap = self.persist_incremental(&previous, &mut snapshot).await?;
+        id_remap.apply_to_entry(&mut result);
+        self.replace_store(snapshot)?;
         Ok(result)
     }
 
@@ -405,21 +410,24 @@ impl FinanceRepository {
         recharge_order_id: &str,
     ) -> ApiResult<LedgerEntry> {
         let _mutation_guard = self.mutation_lock.lock().await;
-        let (result, previous, snapshot) = {
-            let mut store = self
+        let (mut result, previous, mut snapshot) = {
+            let previous = self
                 .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let previous = store.clone();
-            let result = store.credit_recharge_rebate(
+                .read()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+                .clone();
+            let mut snapshot = previous.clone();
+            let result = snapshot.credit_recharge_rebate(
                 agent_user_id,
                 invitee_user_id,
                 rebate_amount_minor,
                 recharge_order_id,
             )?;
-            (result, previous, store.clone())
+            (result, previous, snapshot)
         };
-        self.persist_incremental(&previous, &snapshot).await?;
+        let id_remap = self.persist_incremental(&previous, &mut snapshot).await?;
+        id_remap.apply_to_entry(&mut result);
+        self.replace_store(snapshot)?;
         Ok(result)
     }
 
@@ -431,16 +439,20 @@ impl FinanceRepository {
         description: &str,
     ) -> ApiResult<LedgerEntry> {
         let _mutation_guard = self.mutation_lock.lock().await;
-        let (result, previous, snapshot) = {
-            let mut store = self
+        let (mut result, previous, mut snapshot) = {
+            let previous = self
                 .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let previous = store.clone();
-            let result = store.withdraw_agent_rebate(agent_user_id, amount_minor, description)?;
-            (result, previous, store.clone())
+                .read()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+                .clone();
+            let mut snapshot = previous.clone();
+            let result =
+                snapshot.withdraw_agent_rebate(agent_user_id, amount_minor, description)?;
+            (result, previous, snapshot)
         };
-        self.persist_incremental(&previous, &snapshot).await?;
+        let id_remap = self.persist_incremental(&previous, &mut snapshot).await?;
+        id_remap.apply_to_entry(&mut result);
+        self.replace_store(snapshot)?;
         Ok(result)
     }
 
@@ -453,16 +465,20 @@ impl FinanceRepository {
         plan_id: &str,
     ) -> ApiResult<LedgerEntry> {
         let _mutation_guard = self.mutation_lock.lock().await;
-        let (result, previous, snapshot) = {
-            let mut store = self
+        let (mut result, previous, mut snapshot) = {
+            let previous = self
                 .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let previous = store.clone();
-            let result = store.debit_group_buy(user_id, amount_minor, participant_id, plan_id)?;
-            (result, previous, store.clone())
+                .read()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+                .clone();
+            let mut snapshot = previous.clone();
+            let result =
+                snapshot.debit_group_buy(user_id, amount_minor, participant_id, plan_id)?;
+            (result, previous, snapshot)
         };
-        self.persist_incremental(&previous, &snapshot).await?;
+        let id_remap = self.persist_incremental(&previous, &mut snapshot).await?;
+        id_remap.apply_to_entry(&mut result);
+        self.replace_store(snapshot)?;
         Ok(result)
     }
 
@@ -473,16 +489,19 @@ impl FinanceRepository {
         reason: &str,
     ) -> ApiResult<Vec<LedgerEntry>> {
         let _mutation_guard = self.mutation_lock.lock().await;
-        let (result, previous, snapshot) = {
-            let mut store = self
+        let (mut result, previous, mut snapshot) = {
+            let previous = self
                 .inner
-                .write()
-                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-            let previous = store.clone();
-            let result = store.refund_group_buy_plan(plan, reason)?;
-            (result, previous, store.clone())
+                .read()
+                .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+                .clone();
+            let mut snapshot = previous.clone();
+            let result = snapshot.refund_group_buy_plan(plan, reason)?;
+            (result, previous, snapshot)
         };
-        self.persist_incremental(&previous, &snapshot).await?;
+        let id_remap = self.persist_incremental(&previous, &mut snapshot).await?;
+        id_remap.apply_to_entries(&mut result);
+        self.replace_store(snapshot)?;
         Ok(result)
     }
     /// 把当前仓储快照同步保存到持久化存储。
@@ -498,21 +517,23 @@ impl FinanceRepository {
     async fn persist_incremental(
         &self,
         previous: &FinanceStore,
-        store: &FinanceStore,
-    ) -> ApiResult<()> {
+        store: &mut FinanceStore,
+    ) -> ApiResult<LedgerEntryIdRemap> {
         if let Some(persistence) = &self.persistence {
             let mut tx = persistence
                 .pool()
                 .begin()
                 .await
                 .map_err(|_| ApiError::Internal("资金事务开启失败".to_string()))?;
-            save_finance_store_incremental_in_transaction(&mut *tx, previous, store).await?;
+            let id_remap =
+                save_finance_store_incremental_in_transaction(&mut *tx, previous, store).await?;
             tx.commit()
                 .await
                 .map_err(|_| ApiError::Internal("资金事务提交失败".to_string()))?;
+            return Ok(id_remap);
         }
 
-        Ok(())
+        Ok(LedgerEntryIdRemap::default())
     }
 
     /// 从数据库重新加载资金账户和资金流水快照，供后台缓存维护使用。
@@ -598,6 +619,42 @@ pub(crate) struct FinanceStore {
     accounts: BTreeMap<String, FinancialAccountSummary>,
     ledger_entries: Vec<LedgerEntry>,
     next_sequence: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// 数据库持久化时的资金流水 ID 映射，用于把快照临时 ID 回写为 PostgreSQL 序列 ID。
+pub(crate) struct LedgerEntryIdRemap {
+    ids: BTreeMap<String, String>,
+}
+
+impl LedgerEntryIdRemap {
+    /// 记录一次流水 ID 替换；相同 ID 不需要写入映射。
+    fn insert(&mut self, old_id: String, new_id: String) {
+        if old_id != new_id {
+            self.ids.insert(old_id, new_id);
+        }
+    }
+
+    /// 把映射应用到单条流水，确保接口返回和内存快照里的 ID 一致。
+    pub(crate) fn apply_to_entry(&self, entry: &mut LedgerEntry) {
+        if let Some(new_id) = self.ids.get(&entry.id) {
+            entry.id = new_id.clone();
+        }
+    }
+
+    /// 把映射应用到多条流水，供批量退款或派奖结果回写。
+    pub(crate) fn apply_to_entries(&self, entries: &mut [LedgerEntry]) {
+        for entry in entries {
+            self.apply_to_entry(entry);
+        }
+    }
+
+    /// 把映射应用到可选流水，供充值返利这类可选入账结果回写。
+    pub(crate) fn apply_to_optional_entry(&self, entry: &mut Option<LedgerEntry>) {
+        if let Some(entry) = entry {
+            self.apply_to_entry(entry);
+        }
+    }
 }
 
 /// 从数据库加载资金账户和资金流水运行时快照，空库时按模块规则初始化。
@@ -691,6 +748,8 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
         ledger_entries,
         next_sequence,
     };
+
+    sync_ledger_entry_database_sequence(database, next_sequence).await?;
 
     if reconciled_missing_accounts || reconciled_next_sequence {
         save_finance_store(database, &store).await?;
@@ -1190,6 +1249,8 @@ pub(crate) async fn save_finance_store_in_transaction(
             ApiError::Internal("资金运行数据保存失败".to_string())
         })?;
 
+    sync_ledger_entry_database_sequence_in_transaction(connection, store.next_sequence).await?;
+
     Ok(())
 }
 
@@ -1275,8 +1336,10 @@ async fn ensure_withdrawal_turnover_event_in_transaction(
 pub(crate) async fn save_finance_store_incremental_in_transaction(
     connection: &mut PgConnection,
     previous: &FinanceStore,
-    store: &FinanceStore,
-) -> ApiResult<()> {
+    store: &mut FinanceStore,
+) -> ApiResult<LedgerEntryIdRemap> {
+    let id_remap = assign_database_ledger_entry_ids(connection, previous, store).await?;
+
     for user_id in previous
         .accounts
         .keys()
@@ -1405,7 +1468,98 @@ pub(crate) async fn save_finance_store_incremental_in_transaction(
         ApiError::Internal("资金运行数据保存失败".to_string())
     })?;
 
+    Ok(id_remap)
+}
+
+/// 在启动加载时把 PostgreSQL 流水序列校准到当前快照最大值，修复历史库序列落后问题。
+async fn sync_ledger_entry_database_sequence(
+    database: &BusinessDatabase,
+    next_sequence: u64,
+) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("资金流水数据库序列同步事务开启失败".to_string()))?;
+    sync_ledger_entry_database_sequence_in_transaction(&mut *tx, next_sequence).await?;
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("资金流水数据库序列同步事务提交失败".to_string()))
+}
+
+/// 把 PostgreSQL 流水序列至少推进到指定值，绝不向后回退。
+async fn sync_ledger_entry_database_sequence_in_transaction(
+    connection: &mut PgConnection,
+    next_sequence: u64,
+) -> ApiResult<()> {
+    let sequence = i64::try_from(next_sequence)
+        .map_err(|_| ApiError::Internal("资金流水序号过大".to_string()))?;
+    sqlx::query(
+        "SELECT setval(
+            'ledger_entry_id_sequence',
+            GREATEST($1::BIGINT, COALESCE((SELECT last_value FROM ledger_entry_id_sequence), 0)),
+            true
+        )",
+    )
+    .bind(sequence)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "资金流水数据库序列同步失败");
+        ApiError::Internal("资金流水数据库序列同步失败".to_string())
+    })?;
     Ok(())
+}
+
+/// 为本次新增的资金流水分配 PostgreSQL 序列 ID，避免快照临时序号和普通下注序列撞号。
+async fn assign_database_ledger_entry_ids(
+    connection: &mut PgConnection,
+    previous: &FinanceStore,
+    store: &mut FinanceStore,
+) -> ApiResult<LedgerEntryIdRemap> {
+    let previous_entry_ids = previous
+        .ledger_entries
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut id_remap = LedgerEntryIdRemap::default();
+    let mut max_sequence = store.next_sequence;
+
+    for entry in &mut store.ledger_entries {
+        if previous_entry_ids.contains(entry.id.as_str()) {
+            max_sequence = max_sequence.max(sequence_from_ledger_entry_id(&entry.id).unwrap_or(0));
+            continue;
+        }
+
+        let old_id = entry.id.clone();
+        let sequence = next_ledger_entry_sequence_in_transaction(connection).await?;
+        let new_id = ledger_entry_id_from_sequence(sequence);
+        entry.id = new_id.clone();
+        max_sequence = max_sequence.max(sequence);
+        id_remap.insert(old_id, new_id);
+    }
+
+    store.next_sequence = store.next_sequence.max(max_sequence);
+    Ok(id_remap)
+}
+
+/// 从 PostgreSQL sequence 取资金流水序号，所有数据库模式新增流水都必须走这里。
+async fn next_ledger_entry_sequence_in_transaction(
+    connection: &mut PgConnection,
+) -> ApiResult<u64> {
+    let sequence = sqlx::query_scalar::<_, i64>("SELECT nextval('ledger_entry_id_sequence')")
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "资金流水数据库序列取号失败");
+            ApiError::Internal("资金流水数据库序列取号失败".to_string())
+        })?;
+    u64::try_from(sequence).map_err(|_| ApiError::Internal("资金流水序号过大".to_string()))
+}
+
+/// 把数字序号格式化为统一的资金流水 ID。
+fn ledger_entry_id_from_sequence(sequence: u64) -> String {
+    format!("L{sequence:012}")
 }
 
 /// 资金账户和资金流水运行时数据快照，用于内存模式和数据库持久化前的业务校验。

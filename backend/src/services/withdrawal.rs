@@ -19,7 +19,9 @@ use crate::{
     error::{ApiError, ApiResult},
     services::{
         business_database::BusinessDatabase,
-        finance::{save_finance_store_incremental_in_transaction, FinanceRepository},
+        finance::{
+            save_finance_store_incremental_in_transaction, FinanceRepository, LedgerEntryIdRemap,
+        },
         pagination::{ListPage, PageRequest},
     },
 };
@@ -232,7 +234,7 @@ impl WithdrawalRepository {
             &previous_withdrawal_store,
             &withdrawal_store,
             &previous_finance_store,
-            &finance_store,
+            &mut finance_store,
         )
         .await?;
         self.replace_store(withdrawal_store)?;
@@ -269,7 +271,7 @@ impl WithdrawalRepository {
             &previous_withdrawal_store,
             &withdrawal_store,
             &previous_finance_store,
-            &finance_store,
+            &mut finance_store,
         )
         .await?;
         self.replace_store(withdrawal_store)?;
@@ -306,7 +308,7 @@ impl WithdrawalRepository {
             &previous_withdrawal_store,
             &withdrawal_store,
             &previous_finance_store,
-            &finance_store,
+            &mut finance_store,
         )
         .await?;
         self.replace_store(withdrawal_store)?;
@@ -356,8 +358,8 @@ async fn persist_withdrawal_finance_stores(
     previous_withdrawal_store: &WithdrawalStore,
     withdrawal_store: &WithdrawalStore,
     previous_finance_store: &super::finance::FinanceStore,
-    finance_store: &super::finance::FinanceStore,
-) -> ApiResult<()> {
+    finance_store: &mut super::finance::FinanceStore,
+) -> ApiResult<LedgerEntryIdRemap> {
     match (&withdrawals.persistence, &finance.persistence) {
         (Some(database), Some(_)) => {
             let mut tx = database
@@ -371,7 +373,7 @@ async fn persist_withdrawal_finance_stores(
                 withdrawal_store,
             )
             .await?;
-            save_finance_store_incremental_in_transaction(
+            let id_remap = save_finance_store_incremental_in_transaction(
                 &mut *tx,
                 previous_finance_store,
                 finance_store,
@@ -379,9 +381,10 @@ async fn persist_withdrawal_finance_stores(
             .await?;
             tx.commit()
                 .await
-                .map_err(|_| ApiError::Internal("提现资金事务提交失败".to_string()))
+                .map_err(|_| ApiError::Internal("提现资金事务提交失败".to_string()))?;
+            Ok(id_remap)
         }
-        (None, None) => Ok(()),
+        (None, None) => Ok(LedgerEntryIdRemap::default()),
         _ => Err(ApiError::Internal("提现和资金持久化配置不一致".to_string())),
     }
 }
