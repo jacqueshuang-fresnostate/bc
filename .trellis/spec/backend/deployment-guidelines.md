@@ -188,6 +188,7 @@ cargo run
 - `main` 分支 push 时使用 `secrets.GITHUB_TOKEN` 登录 GHCR，并只推送 `sha-<提交短哈希>` 镜像标签。
 - `v*` Git tag push 时使用 `secrets.GITHUB_TOKEN` 登录 GHCR，并推送同名版本镜像标签和 `sha-<提交短哈希>` 标签。
 - CI 和部署文档不得发布或引用 `latest` 镜像标签；生产部署必须使用 `sha-<提交短哈希>` 或 `v*` 版本标签。
+- `docker/metadata-action` 必须显式配置 `flavor: latest=false`，避免 tag 发布事件自动补出 `latest` 标签。
 
 ### 4. Validation & Error Matrix
 
