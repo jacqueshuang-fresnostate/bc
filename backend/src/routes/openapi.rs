@@ -1256,7 +1256,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/user/register",
         "用户端账户",
         "用户注册",
-        "支持用户名注册或邮箱注册，并按策略处理代理邀请码。",
+        "支持用户名注册或邮箱注册，并按策略处理代理邀请码；Android、iOS 和 H5 可提交 registrationPosition 经纬度，后端统一用 Nominatim 反查中文注册地。",
         AuthMode::None,
         RequestBodyKind::Json,
     ),

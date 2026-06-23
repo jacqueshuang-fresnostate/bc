@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile-geolocation",
+  "description": "允许 Android 和 iOS 主窗口在用户注册时读取当前位置经纬度。",
+  "windows": ["main"],
+  "platforms": ["iOS", "android"],
+  "permissions": [
+    "geolocation:allow-check-permissions",
+    "geolocation:allow-request-permissions",
+    "geolocation:allow-get-current-position"
+  ]
+}

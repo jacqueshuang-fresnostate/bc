@@ -25,6 +25,13 @@ export type UserRegistrationLocation = {
   source: 'client' | 'gps' | 'ip' | 'unknown' | string
 }
 
+export type UserRegistrationPosition = {
+  latitude: number
+  longitude: number
+  accuracy?: number
+  source: 'tauri' | 'h5' | string
+}
+
 export type UserSummary = {
   id: string
   username: string
@@ -441,6 +448,7 @@ type RegisterPayload = {
   password: string
   inviteCode?: string
   registrationLocation?: Partial<UserRegistrationLocation>
+  registrationPosition?: UserRegistrationPosition
 }
 
 function isEnvelope<T>(payload: unknown): payload is ApiEnvelope<T> {

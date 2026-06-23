@@ -3772,7 +3772,7 @@ if !session.scopes.contains(&required_scope) {
 
 用户登录 token 必须和管理员登录 token 使用同一安全策略：返回给客户端的是 `bcst_` 前缀 opaque Bearer token，不能包含用户 ID、用户名、邮箱、时间戳或计数器；内存会话索引和数据库 `user_sessions.token` 只能保存 `sha256:` 摘要。上线迁移清理旧明文会话后，用户端历史登录态需要重新登录。
 
-用户注册来源审计字段 `registrationLocation` 只允许后端服务端识别到的请求 IP 作为默认事实来源；手机端不得再用浏览器语言、系统国家或时区推断注册地。客户端只有在真实定位来源可用并标记为 `gps` 时才允许上报粗粒度地区字段；否则注册请求不传 `registrationLocation`，由后端从 `cf-connecting-ip`、`true-client-ip`、`x-forwarded-for`、`Forwarded`、`x-real-ip` 或 `x-client-ip` 中提取 IP，且 Cloudflare 专用头优先级最高。Cloudflare 开启 IP Geolocation 并传入 `CF-IPCountry` 时，后端可以保留国家或地区字段；后端读取到 `source=client` 或未知来源时必须清空国家、省份和城市字段，避免把语言/时区误展示成 IP 定位结果。
+用户注册来源审计字段 `registrationLocation` 只允许后端服务端识别到的请求 IP 作为默认事实来源；手机端不得再用浏览器语言、系统国家或时区推断注册地。Android/iOS Tauri App 注册时可通过 `@tauri-apps/plugin-geolocation` 获取经纬度，H5 注册时可通过浏览器 `navigator.geolocation` 获取经纬度，并统一以 `registrationPosition: { latitude, longitude, accuracy, source }` 提交；后端收到合法经纬度后调用 Nominatim `reverse?format=jsonv2&lat=...&lon=...&accept-language=zh-CN` 反查中文粗粒度地址，再写入现有 `registrationLocation`。定位失败、用户拒绝授权、Nominatim 请求失败或经纬度无效时，注册不得失败，由后端从 `cf-connecting-ip`、`true-client-ip`、`x-forwarded-for`、`Forwarded`、`x-real-ip` 或 `x-client-ip` 中提取 IP 兜底，且 Cloudflare 专用头优先级最高。后端仍不直接持久化精确经纬度，只保存国家、省市、注册 IP 和来源；后端读取到 `source=client` 或未知来源时必须清空国家、省份和城市字段，避免把语言/时区误展示成 IP 定位结果。
 
 ### 4. 校验与错误矩阵
 
@@ -3797,6 +3797,85 @@ if !session.scopes.contains(&required_scope) {
 - 后端测试需要覆盖用户登录 token 不包含用户 ID，且仓储或数据库只保存摘要。
 - 后端测试需要覆盖用户登出后同 token 失效。
 - API 冒烟需要确认无 token 为 401、有效 token 可访问用户资料、余额、资金流水、充值和提现接口。
+
+---
+
+## 场景：用户注册经纬度反查地址
+
+### 1. 范围 / 触发条件
+
+- 触发条件：用户端注册页提交用户名或邮箱注册，且 Android、iOS 或 H5 能读取到用户授权后的经纬度。
+- 范围：手机端定位采集、`POST /api/user/register` 请求体、后端 Nominatim 反查、现有 `registrationLocation` 落库和后台用户注册地展示。
+
+### 2. 签名
+
+- 注册接口：`POST /api/user/register`
+- 新增请求字段：`registrationPosition?: { latitude: number, longitude: number, accuracy?: number, source?: "tauri" | "h5" | string }`
+- 后端反查接口：`GET https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=<latitude>&lon=<longitude>&accept-language=zh-CN`
+
+### 3. 契约
+
+- 手机端只提交经纬度和来源，不提交自行拼接的国家、省市；`registrationLocation` 仍由后端生成或从请求 IP 兜底。
+- 后端只接受有限经纬度：`latitude` 必须在 `-90..=90`，`longitude` 必须在 `-180..=180`，且二者都必须是有限数字。
+- Nominatim 请求必须设置明确 `User-Agent`、超时和 `accept-language=zh-CN`，避免无限等待和非中文地址。
+- Nominatim 地址字段映射为：`country` -> 国家，`state/province/region/county` -> 省份或区域，`city/municipality/town/village/city_district/suburb` -> 城市。
+- 后端不持久化精确经纬度，只持久化现有 `registeredIp/country/region/city/source`，成功反查时 `source=gps`。
+- 服务端请求 IP 仍写入 `registeredIp`；GPS 地址成功时不得被 Cloudflare IP 地区覆盖。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| 未提交 `registrationPosition` | 正常注册，使用请求 IP 兜底 |
+| 经纬度越界或不是有限数字 | 正常注册，记录中文 warning，使用请求 IP 兜底 |
+| 用户拒绝定位授权 | 手机端不提交定位，正常注册 |
+| H5 非 HTTPS 导致浏览器定位失败 | 手机端不提交定位，正常注册 |
+| Nominatim 超时、HTTP 错误或解析失败 | 正常注册，记录中文 warning，使用请求 IP 兜底 |
+| Nominatim 返回空地址 | 正常注册，记录中文 warning，使用请求 IP 兜底 |
+| Nominatim 返回有效地址 | 写入粗粒度中文注册地，来源为 `gps` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：iOS 用户授权定位，提交 `registrationPosition` 后后端写入“中国 / 广东 / 深圳 / gps”，并保留注册 IP。
+- Base：H5 用户拒绝定位，注册成功，后台只显示请求 IP 或 Cloudflare 可信地区。
+- Bad：手机端用浏览器语言或时区生成 `registrationLocation` 并提交，后端不得信任这些客户端拼接地区。
+- Bad：Nominatim 慢或失败时直接让注册接口失败，导致用户无法注册。
+
+### 6. 必要测试
+
+- 后端需要覆盖经纬度范围校验，无效坐标不能触发反查。
+- 后端需要覆盖 Nominatim 地址字段映射，确认省市字段能从不同层级提取。
+- 手机端需要运行 `pnpm --dir mobile build`，确认 Tauri 插件动态导入和 H5 fallback 类型可编译。
+- Tauri 原生层需要运行 `cargo check --manifest-path mobile/src-tauri/Cargo.toml`，确认移动端专用 capability 不影响桌面目标检查。
+
+### 7. Wrong vs Correct
+
+#### 错误
+
+```json
+{
+  "registrationLocation": {
+    "country": "zh-CN",
+    "region": "Asia/Shanghai",
+    "source": "client"
+  }
+}
+```
+
+#### 正确
+
+```json
+{
+  "registrationPosition": {
+    "latitude": 22.5431,
+    "longitude": 114.0579,
+    "accuracy": 30,
+    "source": "tauri"
+  }
+}
+```
+
+后端根据经纬度反查地址，失败时使用服务端请求 IP 兜底。
 
 ---
 

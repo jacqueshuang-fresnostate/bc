@@ -127,6 +127,13 @@ pub fn run() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .setup(|_app| {
+            #[cfg(mobile)]
+            {
+                _app.handle().plugin(tauri_plugin_geolocation::init())?;
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_system_info,
             cache_avatar_image

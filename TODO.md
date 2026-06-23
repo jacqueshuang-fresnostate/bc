@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 13:40 HKT 注册定位改为经纬度反查
+
+- 完成任务：将用户注册地采集改为 Android/iOS/H5 端获取经纬度，后端统一用 Nominatim 反查中文地址。
+- 解决问题：仅依赖 IP 或 Cloudflare 头时，注册地经常只能识别到国家，或者在代理、IPv6、小黄云场景下省市不准确；手机端自行推断语言/时区又容易显示错误地区。
+- 实施内容：手机端新增注册定位采集工具，Tauri App 使用 `@tauri-apps/plugin-geolocation`，H5 使用 `navigator.geolocation`，注册请求新增 `registrationPosition`；Tauri 原生层注册 geolocation 插件并补充 Android/iOS 权限；后端注册路由接收经纬度、调用 Nominatim 中文反查地址、写入现有 `registrationLocation`，失败时继续用请求 IP 兜底；OpenAPI、架构说明和 Trellis 规范同步更新。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo fmt --manifest-path mobile/src-tauri/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml registration_position -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml nominatim_response_maps_to_registration_location -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml registration_client_info -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml access_repository_keeps_gps_registration_location -- --nocapture`、`cargo check --manifest-path mobile/src-tauri/Cargo.toml`、`pnpm --dir mobile build` 和 `git diff --check` 均通过。
+
 ## 2026-06-23 13:05 HKT 彩种避奖入口迁移到控制台
 
 - 完成任务：把彩种“避奖”从彩种管理移动到彩种控制台。

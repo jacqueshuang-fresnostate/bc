@@ -9,6 +9,7 @@ import { showToast } from 'vant'
 import { errorMessage, fetchRegisterOptions, loginUser, registerUser } from '../api/user'
 import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
 import LoginPageSkeleton from '../components/mobile/LoginPageSkeleton.vue'
+import { collectRegistrationPosition } from '../utils/registrationPosition'
 
 const route = useRoute()
 const router = useRouter()
@@ -90,20 +91,23 @@ async function doRegister() {
   if (!password.value || password.value.length < 8) { showToast('请输入至少8位密码'); return }
   loading.value = true
   try {
+    const registrationPosition = await collectRegistrationPosition()
+    const basePayload = {
+      contactQq: qq || undefined,
+      password: password.value,
+      inviteCode: invite || undefined,
+      registrationPosition,
+    }
     if (regType.value === 'email') {
       await registerUser({
-        contactQq: qq || undefined,
+        ...basePayload,
         email: email.value.trim(),
-        password: password.value,
-        inviteCode: invite || undefined,
       })
       account.value = email.value
     } else {
       await registerUser({
-        contactQq: qq || undefined,
+        ...basePayload,
         username: account.value.trim(),
-        password: password.value,
-        inviteCode: invite || undefined,
       })
     }
     await doLogin()

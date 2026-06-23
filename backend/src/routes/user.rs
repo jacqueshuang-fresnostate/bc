@@ -59,8 +59,9 @@ use crate::{
         UserForgotPasswordResponse, UserInvitationBetLotterySummary, UserInvitationBetPlaySummary,
         UserInvitationBetSource, UserInvitationDirectUser, UserInvitationLatestBet,
         UserInvitationSummaryResponse, UserKind, UserLoginRequest, UserLogoutResponse,
-        UserProfileResponse, UserRegisterRequest, UserResetPasswordRequest,
-        UserResetPasswordResponse, UserStatus, UserSummary, WithdrawalMethodRequest,
+        UserProfileResponse, UserRegisterRequest, UserRegistrationLocation,
+        UserResetPasswordRequest, UserResetPasswordResponse, UserStatus, UserSummary,
+        WithdrawalMethodRequest,
     },
     domain::withdrawal::{CreateWithdrawalOrderRequest, WithdrawalOrderSummary},
     error::{ApiError, ApiResult},
@@ -97,6 +98,9 @@ use crate::{
 
 const MAX_USER_BET_BATCH_SIZE: usize = 50;
 const REALTIME_HEARTBEAT_SECONDS: u64 = 30;
+const NOMINATIM_REVERSE_URL: &str = "https://nominatim.openstreetmap.org/reverse";
+const NOMINATIM_TIMEOUT_SECONDS: u64 = 8;
+const NOMINATIM_USER_AGENT: &str = "bc-backend/0.1 registration-location";
 const CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY: &str = "chat_hall_speaking_min_recharge_minor";
 const ROBOT_GROUP_BUY_PLAN_PREFIX: &str = "G-ROBOT-";
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -545,8 +549,13 @@ fn config_value(settings: &[SystemSetting], key: &str) -> Option<String> {
 async fn register_user(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(mut payload): Json<UserRegisterRequest>,
+    Json(request): Json<UserRegisterApiRequest>,
 ) -> ApiResult<Json<ApiEnvelope<UserSummary>>> {
+    let UserRegisterApiRequest {
+        mut payload,
+        registration_position,
+    } = request;
+    attach_registration_position_location(&mut payload, registration_position).await;
     attach_registration_client_info(
         &mut payload,
         registration_client_info_from_headers(&headers),
@@ -556,6 +565,181 @@ async fn register_user(
     let user = user_with_account_balance(user, Some(&account));
 
     Ok(Json(ApiEnvelope::success(user)))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 用户端注册接口请求体，额外接收 App/H5 采集到的经纬度用于服务端反查中文地址。
+struct UserRegisterApiRequest {
+    #[serde(flatten)]
+    payload: UserRegisterRequest,
+    #[serde(default)]
+    registration_position: Option<UserRegistrationPosition>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 用户端注册时采集到的经纬度；地址反查统一在后端完成，避免信任客户端拼接的地区。
+struct UserRegistrationPosition {
+    /// 纬度，取值范围 -90 到 90。
+    latitude: f64,
+    /// 经度，取值范围 -180 到 180。
+    longitude: f64,
+    /// 定位精度，单位米；只用于后续排查，不参与地址反查。
+    #[serde(default)]
+    accuracy: Option<f64>,
+    /// 定位来源，当前支持 tauri 和 h5。
+    #[serde(default)]
+    source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+/// Nominatim 反查接口响应，仅解析注册地需要的地址部分。
+struct NominatimReverseResponse {
+    address: Option<NominatimAddress>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+/// Nominatim 地址字段，不同国家地区返回的行政层级字段并不完全一致。
+struct NominatimAddress {
+    country: Option<String>,
+    state: Option<String>,
+    province: Option<String>,
+    region: Option<String>,
+    county: Option<String>,
+    city: Option<String>,
+    municipality: Option<String>,
+    town: Option<String>,
+    village: Option<String>,
+    city_district: Option<String>,
+    suburb: Option<String>,
+}
+
+/// 根据注册经纬度反查中文地址并写入注册请求；外部接口失败时只记录日志并保留 IP 兜底。
+async fn attach_registration_position_location(
+    payload: &mut UserRegisterRequest,
+    position: Option<UserRegistrationPosition>,
+) {
+    let Some(position) = position else {
+        return;
+    };
+    let position_source = position.source.as_deref().unwrap_or("unknown");
+    let accuracy = position.accuracy.unwrap_or_default();
+    if !valid_registration_position(&position) {
+        tracing::warn!(
+            latitude = position.latitude,
+            longitude = position.longitude,
+            accuracy,
+            position_source,
+            "注册定位经纬度无效，已改用请求 IP 兜底"
+        );
+        return;
+    }
+
+    match reverse_registration_position(&position).await {
+        Ok(Some(location)) => {
+            payload.registration_location = Some(location);
+        }
+        Ok(None) => {
+            tracing::warn!(
+                latitude = position.latitude,
+                longitude = position.longitude,
+                accuracy,
+                position_source,
+                "注册定位反查地址为空，已改用请求 IP 兜底"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(
+                latitude = position.latitude,
+                longitude = position.longitude,
+                accuracy,
+                position_source,
+                error = %error,
+                "注册定位反查地址失败，已改用请求 IP 兜底"
+            );
+        }
+    }
+}
+
+/// 校验客户端传入的经纬度是否在可反查范围内。
+fn valid_registration_position(position: &UserRegistrationPosition) -> bool {
+    position.latitude.is_finite()
+        && position.longitude.is_finite()
+        && (-90.0..=90.0).contains(&position.latitude)
+        && (-180.0..=180.0).contains(&position.longitude)
+}
+
+/// 调用 Nominatim 反查经纬度，统一要求中文地址返回。
+async fn reverse_registration_position(
+    position: &UserRegistrationPosition,
+) -> Result<Option<UserRegistrationLocation>, reqwest::Error> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(NOMINATIM_TIMEOUT_SECONDS))
+        .user_agent(NOMINATIM_USER_AGENT)
+        .build()?;
+    let latitude = position.latitude.to_string();
+    let longitude = position.longitude.to_string();
+    let response = client
+        .get(NOMINATIM_REVERSE_URL)
+        .query(&[
+            ("format", "jsonv2"),
+            ("lat", latitude.as_str()),
+            ("lon", longitude.as_str()),
+            ("accept-language", "zh-CN"),
+        ])
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<NominatimReverseResponse>()
+        .await?;
+
+    Ok(nominatim_registration_location_from_response(response))
+}
+
+/// 从 Nominatim 响应中提取后台可展示的国家、省市信息。
+fn nominatim_registration_location_from_response(
+    response: NominatimReverseResponse,
+) -> Option<UserRegistrationLocation> {
+    let address = response.address?;
+    let country = cleaned_first([address.country.as_deref()]);
+    let region = cleaned_first([
+        address.state.as_deref(),
+        address.province.as_deref(),
+        address.region.as_deref(),
+        address.county.as_deref(),
+    ]);
+    let city = cleaned_first([
+        address.city.as_deref(),
+        address.municipality.as_deref(),
+        address.town.as_deref(),
+        address.village.as_deref(),
+        address.city_district.as_deref(),
+        address.suburb.as_deref(),
+    ]);
+
+    if country.is_empty() && region.is_empty() && city.is_empty() {
+        return None;
+    }
+
+    Some(UserRegistrationLocation {
+        registered_ip: String::new(),
+        country,
+        region,
+        city,
+        source: "gps".to_string(),
+    })
+}
+
+/// 返回第一个非空白字段，用于兼容 Nominatim 不同国家的地址层级字段。
+fn cleaned_first<const N: usize>(values: [Option<&str>; N]) -> String {
+    values
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .unwrap_or_default()
+        .to_string()
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -3744,6 +3928,49 @@ mod tests {
         assert_eq!(client_info.cloudflare_country, Some("BR".to_string()));
         assert_eq!(client_info.cloudflare_region, Some("São Paulo".to_string()));
         assert_eq!(client_info.cloudflare_city, Some("São Paulo".to_string()));
+    }
+
+    #[test]
+    /// 验证注册经纬度范围校验，避免无效坐标触发外部反查请求。
+    fn registration_position_validator_rejects_invalid_coordinates() {
+        assert!(valid_registration_position(&UserRegistrationPosition {
+            latitude: 41.01384,
+            longitude: 28.94966,
+            accuracy: Some(20.0),
+            source: Some("h5".to_string()),
+        }));
+        assert!(!valid_registration_position(&UserRegistrationPosition {
+            latitude: 91.0,
+            longitude: 28.94966,
+            accuracy: None,
+            source: Some("tauri".to_string()),
+        }));
+        assert!(!valid_registration_position(&UserRegistrationPosition {
+            latitude: 41.01384,
+            longitude: 181.0,
+            accuracy: None,
+            source: None,
+        }));
+    }
+
+    #[test]
+    /// 验证 Nominatim 地址会收敛为后台注册地字段。
+    fn nominatim_response_maps_to_registration_location() {
+        let location = nominatim_registration_location_from_response(NominatimReverseResponse {
+            address: Some(NominatimAddress {
+                country: Some("土耳其".to_string()),
+                province: Some("伊斯坦布尔".to_string()),
+                city: Some("法蒂赫".to_string()),
+                ..NominatimAddress::default()
+            }),
+        })
+        .expect("nominatim address should be mapped");
+
+        assert_eq!(location.registered_ip, "");
+        assert_eq!(location.country, "土耳其");
+        assert_eq!(location.region, "伊斯坦布尔");
+        assert_eq!(location.city, "法蒂赫");
+        assert_eq!(location.source, "gps");
     }
 
     #[test]
