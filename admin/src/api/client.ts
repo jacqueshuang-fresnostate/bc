@@ -984,6 +984,19 @@ export function setLotterySaleStatus(id: string, saleEnabled: boolean) {
   );
 }
 
+export function setLotteryAvoidWinningStatus(
+  id: string,
+  avoidWinningEnabled: boolean,
+) {
+  return requestJson<LotteryKind>(
+    `/api/admin/lotteries/${encodeURIComponent(id)}/avoid-winning`,
+    {
+      body: { avoidWinningEnabled },
+      method: 'PATCH',
+    },
+  );
+}
+
 export function syncLotteryDrawSource(id: string) {
   return requestJson<DrawSourceSyncResult>(
     `/api/admin/lotteries/${encodeURIComponent(id)}/sync-draw-source`,

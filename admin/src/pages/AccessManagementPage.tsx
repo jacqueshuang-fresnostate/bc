@@ -261,7 +261,7 @@ const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
   { group: '彩种管理', key: 'lottery.read', label: '查看彩种', scope: 'lotteries', sensitive: false },
   { group: '彩种管理', key: 'lottery.write', label: '新增或编辑彩种', scope: 'lotteries', sensitive: true },
   { group: '彩种管理', key: 'lottery.sale.toggle', label: '切换销售状态', scope: 'lotteries', sensitive: true },
-  { group: '彩种控制台', key: 'lottery.draw.control', label: '控制开奖号码', scope: 'lotteries', sensitive: true },
+  { group: '彩种控制台', key: 'lottery.draw.control', label: '控制开奖与避奖', scope: 'lotteries', sensitive: true },
   { group: '期号管理', key: 'lottery.issue.write', label: '维护期号', scope: 'lotteries', sensitive: true },
   { group: '开奖源', key: 'lottery.source.manage', label: '维护开奖源', scope: 'lotteries', sensitive: true },
   { group: '开奖源', key: 'lottery.source.sync', label: '同步开奖源', scope: 'lotteries', sensitive: true },

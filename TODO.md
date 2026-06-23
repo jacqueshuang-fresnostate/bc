@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 13:05 HKT 彩种避奖入口迁移到控制台
+
+- 完成任务：把彩种“避奖”从彩种管理移动到彩种控制台。
+- 解决问题：避奖属于开奖风控策略，放在彩种管理列表和新增/编辑基础资料抽屉里，容易和普通彩种资料维护混在一起；运营控奖时还需要在彩种管理和控制台之间来回切换。
+- 实施内容：后端新增 `PATCH /api/admin/lotteries/{id}/avoid-winning` 只切换 `avoidWinningEnabled`，权限归到 `lottery.draw.control`；彩种控制台当前彩种详情面板新增“避奖策略”开关；彩种管理列表移除“避奖”列，新增/编辑 SideSheet 移除“避开中奖开关”；角色权限文案改为“控制开奖与避奖”；OpenAPI、架构说明和前端规范同步更新。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml required_permission_maps_sensitive_admin_paths -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、`pnpm --dir admin build` 和 `git diff --check` 均通过；管理后台构建仍保留既有大 chunk 提示。
+
 ## 2026-06-23 12:40 HKT GHCR 恢复 latest 镜像标签
 
 - 完成任务：恢复 GitHub Actions 发布 `latest` Docker 镜像标签的打包方式。

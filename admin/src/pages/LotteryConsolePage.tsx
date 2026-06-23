@@ -5,6 +5,7 @@ import {
   Card,
   Select,
   Spin,
+  Switch,
   Tag,
   Toast,
 } from '@douyinfe/semi-ui';
@@ -79,6 +80,7 @@ export function LotteryConsolePage({
     orders,
     refresh,
     schedulerStatus,
+    setAvoidWinningStatus,
     saveDrawControl,
     syncDrawSource,
   } = useLotteryConsole();
@@ -92,6 +94,9 @@ export function LotteryConsolePage({
   const [controlSaving, setControlSaving] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
   const [syncingLotteryId, setSyncingLotteryId] = useState<string | null>(null);
+  const [avoidSavingLotteryId, setAvoidSavingLotteryId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -224,6 +229,35 @@ export function LotteryConsolePage({
     }
   };
 
+  const toggleAvoidWinning = async (
+    item: LotteryConsoleItem,
+    avoidWinningEnabled: boolean,
+  ) => {
+    setAvoidSavingLotteryId(item.lottery.id);
+    try {
+      const updated = await setAvoidWinningStatus(
+        item.lottery.id,
+        avoidWinningEnabled,
+      );
+      setSelectedControlItem((current) =>
+        current?.lottery.id === updated.id
+          ? {
+              ...current,
+              lottery: updated,
+            }
+          : current,
+      );
+      Toast.success(avoidWinningEnabled ? '避奖已开启' : '避奖已关闭');
+      onDashboardRefresh();
+    } catch (requestError) {
+      Toast.error(errorMessage(requestError));
+    } finally {
+      setAvoidSavingLotteryId((current) =>
+        current === item.lottery.id ? null : current,
+      );
+    }
+  };
+
   const refreshAll = () => {
     refresh();
     onDashboardRefresh();
@@ -305,10 +339,16 @@ export function LotteryConsolePage({
           now={now}
           playRules={playRules}
           refreshing={loading || controlGroupBuyLoading}
+          savingAvoidWinning={
+            avoidSavingLotteryId === selectedControlItem.lottery.id
+          }
           saving={controlSaving}
           schedulerStatus={schedulerStatus}
           syncingSource={syncingLotteryId === selectedControlItem.lottery.id}
           onChange={setControlForm}
+          onAvoidWinningChange={(checked) =>
+            void toggleAvoidWinning(selectedControlItem, checked)
+          }
           onRefreshOrders={refreshControlData}
           onSubmit={() => void submitDrawControl()}
           onSyncSource={(nextItem) => void syncLotterySource(nextItem)}
@@ -370,11 +410,13 @@ function LotteryConsoleControlPanel({
   groupBuyPlans,
   item,
   onChange,
+  onAvoidWinningChange,
   onRefreshOrders,
   onSubmit,
   onSyncSource,
   playRules,
   refreshing,
+  savingAvoidWinning,
   saving,
   schedulerStatus,
   syncingSource,
@@ -388,11 +430,13 @@ function LotteryConsoleControlPanel({
   groupBuyPlans: GroupBuyPlan[];
   item: LotteryConsoleItem;
   onChange: (form: LotteryDrawControlFormState) => void;
+  onAvoidWinningChange: (checked: boolean) => void;
   onRefreshOrders: () => void;
   onSubmit: () => void;
   onSyncSource: (item: LotteryConsoleItem) => void;
   playRules: PlayRuleSummary[];
   refreshing: boolean;
+  savingAvoidWinning: boolean;
   saving: boolean;
   schedulerStatus: DrawSchedulerStatus | null;
   syncingSource: boolean;
@@ -442,6 +486,37 @@ function LotteryConsoleControlPanel({
               label="最近开奖"
               value={drawNumber || '待开奖'}
             />
+          </section>
+
+          <section
+            className={`rounded-md border px-3 py-3 ${
+              lottery.avoidWinningEnabled
+                ? 'border-orange-200 bg-orange-50'
+                : 'border-line bg-white'
+            }`}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-ink">避奖策略</h3>
+                  <Tag color={lottery.avoidWinningEnabled ? 'orange' : 'grey'}>
+                    {lottery.avoidWinningEnabled ? '已开启避奖' : '正常开奖'}
+                  </Tag>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  开启后，开奖前会尝试生成不命中当前待开奖订单的号码；关闭后按平台、API、手动或控制号码正常开奖。
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-slate-600">
+                <Switch
+                  checked={lottery.avoidWinningEnabled}
+                  disabled={saving || savingAvoidWinning}
+                  loading={savingAvoidWinning}
+                  onChange={onAvoidWinningChange}
+                />
+                <span>{lottery.avoidWinningEnabled ? '开启' : '关闭'}</span>
+              </div>
+            </div>
           </section>
 
           <section className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">

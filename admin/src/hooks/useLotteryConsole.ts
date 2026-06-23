@@ -5,6 +5,7 @@ import {
   fetchLotteries,
   fetchLotteryDrawControls,
   fetchOrders,
+  setLotteryAvoidWinningStatus,
   saveLotteryDrawControl,
   syncLotteryDrawSource,
 } from '../api/client';
@@ -134,6 +135,20 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
     [],
   );
 
+  const setAvoidWinningStatus = useCallback(
+    async (lotteryId: string, avoidWinningEnabled: boolean) => {
+      const updated = await setLotteryAvoidWinningStatus(
+        lotteryId,
+        avoidWinningEnabled,
+      );
+      setLotteries((current) =>
+        current.map((lottery) => (lottery.id === lotteryId ? updated : lottery)),
+      );
+      return updated;
+    },
+    [],
+  );
+
   const syncDrawSource = useCallback(async (lotteryId: string) => {
     const result = await syncLotteryDrawSource(lotteryId);
     refresh();
@@ -149,6 +164,7 @@ export function useLotteryConsole(pollIntervalMs = 10_000) {
     orders,
     refresh,
     schedulerStatus,
+    setAvoidWinningStatus,
     saveDrawControl,
     syncDrawSource,
   };

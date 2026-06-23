@@ -187,6 +187,25 @@ impl LotteryRepository {
         }
     }
 
+    /// 更新彩种自动避开中奖开关，供彩种控制台按彩种快速切换。
+    pub async fn set_avoid_winning_enabled(
+        &self,
+        id: &str,
+        avoid_winning_enabled: bool,
+    ) -> ApiResult<LotteryKind> {
+        match self.inner.as_ref() {
+            LotteryRepositoryKind::Memory(store) => store
+                .write()
+                .map_err(|_| ApiError::Internal("lottery store lock poisoned".to_string()))?
+                .set_avoid_winning_enabled(id, avoid_winning_enabled),
+            LotteryRepositoryKind::Postgres(store) => {
+                store
+                    .set_avoid_winning_enabled(id, avoid_winning_enabled)
+                    .await
+            }
+        }
+    }
+
     /// 返回彩种仓储是否已经使用数据库直读模式，直读模式无需额外刷新内存快照。
     pub fn is_database_backed(&self) -> bool {
         matches!(self.inner.as_ref(), LotteryRepositoryKind::Postgres(_))
@@ -301,6 +320,21 @@ impl LotteryStore {
             .ok_or_else(|| ApiError::NotFound(format!("lottery `{id}` not found")))?;
 
         lottery.sale_enabled = sale_enabled;
+        Ok(lottery.clone())
+    }
+
+    /// 更新彩种自动避开中奖开关。
+    pub fn set_avoid_winning_enabled(
+        &mut self,
+        id: &str,
+        avoid_winning_enabled: bool,
+    ) -> ApiResult<LotteryKind> {
+        let lottery = self
+            .lotteries
+            .get_mut(id)
+            .ok_or_else(|| ApiError::NotFound(format!("lottery `{id}` not found")))?;
+
+        lottery.avoid_winning_enabled = avoid_winning_enabled;
         Ok(lottery.clone())
     }
 
@@ -694,6 +728,31 @@ impl PostgresLotteryStore {
         )
         .bind(id)
         .bind(sale_enabled)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(database_error)?;
+
+        updated
+            .map(lottery_from_row)
+            .transpose()?
+            .ok_or_else(|| ApiError::NotFound(format!("lottery `{id}` not found")))
+    }
+
+    /// 更新彩种自动避开中奖开关。
+    async fn set_avoid_winning_enabled(
+        &self,
+        id: &str,
+        avoid_winning_enabled: bool,
+    ) -> ApiResult<LotteryKind> {
+        let updated = sqlx::query(
+            "UPDATE lotteries
+             SET avoid_winning_enabled = $2,
+                 updated_at = now()
+             WHERE id = $1
+             RETURNING id, name, category, logo_url, number_type, draw_mode, api_draw_delay_seconds, draw_control_enabled, avoid_winning_enabled, issue_format, sale_close_lead_seconds, schedule, sale_enabled, group_buy, play_categories, play_configs",
+        )
+        .bind(id)
+        .bind(avoid_winning_enabled)
         .fetch_optional(&self.pool)
         .await
         .map_err(database_error)?;

@@ -318,6 +318,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/lotteries/{id}/sale", patch(set_lottery_sale))
         .route(
+            "/lotteries/{id}/avoid-winning",
+            patch(set_lottery_avoid_winning),
+        )
+        .route(
             "/lotteries/{id}/sync-draw-source",
             post(sync_lottery_draw_source),
         )
@@ -923,6 +927,12 @@ fn required_permission_for_request(method: &Method, path: &str) -> Option<&'stat
     if path.starts_with("lotteries/") && path.ends_with("/sale") {
         return match method.clone() {
             Method::PATCH => Some("lottery.sale.toggle"),
+            _ => None,
+        };
+    }
+    if path.starts_with("lotteries/") && path.ends_with("/avoid-winning") {
+        return match method.clone() {
+            Method::PATCH => Some("lottery.draw.control"),
             _ => None,
         };
     }
@@ -4706,6 +4716,20 @@ async fn set_lottery_sale(
     Ok(Json(ApiEnvelope::success(lottery)))
 }
 
+/// 后台彩种控制台切换彩种自动避开中奖策略。
+async fn set_lottery_avoid_winning(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<AvoidWinningStatusRequest>,
+) -> ApiResult<Json<ApiEnvelope<LotteryKind>>> {
+    let lottery = state
+        .lotteries
+        .set_avoid_winning_enabled(&id, payload.avoid_winning_enabled)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(lottery)))
+}
+
 /// 手动按 API 开奖源校准指定彩种的下一期开奖期号。
 async fn sync_lottery_draw_source(
     State(state): State<AppState>,
@@ -4839,6 +4863,13 @@ async fn align_draw_issue_plan_after_sale_on(
 /// 后台切换彩种销售状态时提交的请求。
 struct SaleStatusRequest {
     sale_enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台彩种控制台切换自动避奖策略时提交的请求。
+struct AvoidWinningStatusRequest {
+    avoid_winning_enabled: bool,
 }
 
 #[cfg(test)]
@@ -4998,6 +5029,10 @@ mod tests {
         );
         assert_eq!(
             required_permission_for_request(&Method::PUT, "/draw-controls/au5"),
+            Some("lottery.draw.control")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::PATCH, "/lotteries/au5/avoid-winning"),
             Some("lottery.draw.control")
         );
         assert_eq!(
