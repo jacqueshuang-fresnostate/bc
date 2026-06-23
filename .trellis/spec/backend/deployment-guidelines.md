@@ -189,6 +189,7 @@ cargo run
 - `v*` Git tag push 时使用 `secrets.GITHUB_TOKEN` 登录 GHCR，并推送同名版本镜像标签和 `sha-<提交短哈希>` 标签。
 - CI 和部署文档可以引用 `latest` 镜像标签用于快速跟随主分支；需要精确追溯的生产部署建议使用 `sha-<提交短哈希>` 或 `v*` 版本标签。
 - `docker/metadata-action` 必须显式配置 `flavor: latest=false`，并通过 `type=raw,value=latest,enable={{is_default_branch}}` 只在默认分支发布 `latest`，避免 tag 发布事件自动补出 `latest` 标签。
+- `docker/build-push-action` 可以使用 `type=gha` 加速 Docker 层缓存，但 `cache-to` 必须带 `ignore-error=true`。GitHub Actions Cache 服务偶发 503、超时或返回非 JSON 错误时，只允许影响缓存写入，不能阻断镜像构建和 GHCR 推送。
 
 ### 4. Validation & Error Matrix
 
@@ -196,11 +197,13 @@ cargo run
 - PR 触发时执行登录或推送 -> fork/权限场景容易失败，也可能把未合并代码发布到镜像仓库。
 - `docker` job 不依赖 `quality` -> 可能把格式、类型检查或前端构建失败的代码发布为镜像。
 - 只发布 `latest` 而不发布 `sha-<提交短哈希>` -> 无法确认当前容器对应的代码提交，容易被缓存或后续推送覆盖。
+- `cache-to=type=gha` 未设置 `ignore-error=true` -> GitHub 缓存服务 503 或连接超时时，buildx 可能在导出缓存阶段失败，导致镜像已构建但发布流程整体失败。
 - 使用已提示 Node.js 20 deprecation 的旧 action 版本 -> 2026-06-16 后可能被 GitHub 强制切换运行时并产生兼容风险。
 
 ### 5. Good/Base/Bad Cases
 
 - Good: `main` push 先通过格式检查、类型检查和前端构建，再推送 `latest` 和 `sha-xxxxxxx`，GitHub 打包阶段不运行 `cargo test`。
+- Good: Docker 构建配置 `cache-from: type=gha` 和 `cache-to: type=gha,mode=max,ignore-error=true`，缓存服务异常时仍继续发布镜像。
 - Good: `git tag v2026.06.23-1 && git push origin v2026.06.23-1` 触发版本镜像发布，GHCR 生成 `v2026.06.23-1` 和 `sha-xxxxxxx`。
 - Base: PR 触发构建检查和 Docker 构建，但 `push=false`，不发布镜像。
 - Bad: 所有分支 push 都发布 `latest`，导致测试分支覆盖生产候选镜像。
@@ -210,6 +213,7 @@ cargo run
 - 本地修改后端业务逻辑时仍建议运行 `cargo fmt --check`、`cargo check`、`cargo test` 和 `npm run build`；仅修改 GitHub 打包流程时至少检查 YAML、运行差异检查，并确认 workflow 中没有恢复 `cargo test`。
 - 本地运行 `docker build -t bc-platform:local .` 确认 Dockerfile 仍能构建。
 - 修改 workflow 后检查 YAML 缩进、触发条件、权限、推送条件和镜像标签。
+- 修改 buildx 缓存配置后检查 `cache-to` 仍包含 `ignore-error=true`，避免 GitHub Actions Cache 临时故障阻断发布。
 - 推送后在 GitHub Actions 页面确认 workflow 运行通过，并在 GHCR 包页面确认镜像标签存在。
 
 ### 7. Wrong vs Correct

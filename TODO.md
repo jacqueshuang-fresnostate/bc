@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 22:46 HKT GitHub Actions Docker 缓存导出失败降级
+
+- 完成任务：修复 GitHub Actions Docker 构建在“exporting to GitHub Actions Cache”阶段因缓存服务 503/超时而失败的问题。
+- 解决问题：buildx 镜像构建本身已经完成，但 `cache-to=type=gha` 导出缓存时 GitHub 缓存服务返回 `upstream connect error` 非 JSON 文本，buildx 解析失败后让整个 workflow 失败。
+- 实施内容：`.github/workflows/ci.yml` 保留 `cache-from: type=gha` 继续读取缓存，将 `cache-to` 调整为 `type=gha,mode=max,ignore-error=true`，让缓存导出失败只影响下次构建速度，不阻断镜像发布；同步更新架构说明和 Trellis 容器部署规范。
+- 验证结果：`ruby -e "require 'yaml'; YAML.load_file('.github/workflows/ci.yml')"` 成功解析 workflow；`rg "cache-to: type=gha|ignore-error=true"` 确认缓存导出配置已带降级参数；`git diff --check` 通过。本机 Ruby 仅提示既有 `ffi` 扩展未构建警告，不影响 YAML 解析结果。
+
 ## 2026-06-23 22:18 HKT 独立中奖派奖入账单位修复
 
 - 完成任务：修复独立下注中奖后派奖金额没有按预期增加到账户余额的问题。
