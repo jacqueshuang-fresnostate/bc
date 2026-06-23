@@ -1649,6 +1649,16 @@ struct AdminLedgerEntry {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 后台客服会话展示结构，在会话基础上补充用户上级代理信息。
+struct AdminSupportConversation {
+    #[serde(flatten)]
+    conversation: SupportConversation,
+    agent_id: Option<String>,
+    agent_username: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 /// 后台充值订单展示结构，在订单摘要外补充上级代理信息，便于财务核对代理归属。
 struct AdminRechargeOrderSummary {
     #[serde(flatten)]
@@ -2714,8 +2724,10 @@ async fn update_invitation(
 /// 返回后台客服会话列表。
 async fn list_support_conversations(
     State(state): State<AppState>,
-) -> ApiResult<Json<ApiEnvelope<Vec<SupportConversation>>>> {
+) -> ApiResult<Json<ApiEnvelope<Vec<AdminSupportConversation>>>> {
     let conversations = state.support.list().await?;
+    let conversations =
+        admin_support_conversations_with_agent_display(&state, conversations).await?;
 
     Ok(Json(ApiEnvelope::success(conversations)))
 }
@@ -2724,8 +2736,9 @@ async fn list_support_conversations(
 async fn get_support_conversation(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminSupportConversation>>> {
     let conversation = state.support.get(&id).await?;
+    let conversation = admin_support_conversation_with_agent_display(&state, conversation).await?;
 
     Ok(Json(ApiEnvelope::success(conversation)))
 }
@@ -2734,10 +2747,11 @@ async fn get_support_conversation(
 async fn create_support_conversation(
     State(state): State<AppState>,
     Json(payload): Json<CreateSupportConversationRequest>,
-) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminSupportConversation>>> {
     let access = state.access.snapshot().await?;
     let conversation = state.support.create(payload, &access.users).await?;
     publish_support_message_created(&state, &conversation);
+    let conversation = admin_support_conversation_with_agent_display(&state, conversation).await?;
 
     Ok(Json(ApiEnvelope::success(conversation)))
 }
@@ -2747,10 +2761,11 @@ async fn update_support_conversation(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(payload): Json<UpdateSupportConversationRequest>,
-) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminSupportConversation>>> {
     let access = state.access.snapshot().await?;
     let conversation = state.support.update(&id, payload, &access.admins).await?;
     publish_support_conversation_updated(&state, &conversation);
+    let conversation = admin_support_conversation_with_agent_display(&state, conversation).await?;
 
     Ok(Json(ApiEnvelope::success(conversation)))
 }
@@ -2759,9 +2774,10 @@ async fn update_support_conversation(
 async fn delete_support_conversation(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminSupportConversation>>> {
     let conversation = state.support.delete_resolved(&id).await?;
     publish_support_conversation_deleted(&state, &conversation);
+    let conversation = admin_support_conversation_with_agent_display(&state, conversation).await?;
 
     Ok(Json(ApiEnvelope::success(conversation)))
 }
@@ -2771,10 +2787,11 @@ async fn reply_support_conversation(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(payload): Json<SupportReplyRequest>,
-) -> ApiResult<Json<ApiEnvelope<SupportConversation>>> {
+) -> ApiResult<Json<ApiEnvelope<AdminSupportConversation>>> {
     let access = state.access.snapshot().await?;
     let conversation = state.support.reply(&id, payload, &access.admins).await?;
     publish_support_message_created(&state, &conversation);
+    let conversation = admin_support_conversation_with_agent_display(&state, conversation).await?;
 
     Ok(Json(ApiEnvelope::success(conversation)))
 }
@@ -3031,6 +3048,52 @@ async fn finance_user_displays_for_ids(
             )
         })
         .collect())
+}
+
+/// 批量为后台客服会话补充上级代理信息，避免客服列表每行重复读取用户资料。
+async fn admin_support_conversations_with_agent_display(
+    state: &AppState,
+    conversations: Vec<SupportConversation>,
+) -> ApiResult<Vec<AdminSupportConversation>> {
+    let user_ids = conversations
+        .iter()
+        .map(|conversation| conversation.user_id.clone())
+        .collect::<Vec<_>>();
+    let displays = finance_user_displays_for_ids(state, &user_ids).await?;
+
+    Ok(conversations
+        .into_iter()
+        .map(|conversation| admin_support_conversation_with_user_display(conversation, &displays))
+        .collect())
+}
+
+/// 为单条后台客服会话补充上级代理信息，供详情、回复和状态更新响应复用。
+async fn admin_support_conversation_with_agent_display(
+    state: &AppState,
+    conversation: SupportConversation,
+) -> ApiResult<AdminSupportConversation> {
+    let displays = finance_user_displays_for_ids(state, &[conversation.user_id.clone()]).await?;
+
+    Ok(admin_support_conversation_with_user_display(
+        conversation,
+        &displays,
+    ))
+}
+
+/// 使用已加载的用户展示映射包装客服会话。
+fn admin_support_conversation_with_user_display(
+    conversation: SupportConversation,
+    displays: &BTreeMap<String, AdminFinanceUserDisplay>,
+) -> AdminSupportConversation {
+    let display = displays
+        .get(&conversation.user_id)
+        .cloned()
+        .unwrap_or_default();
+    AdminSupportConversation {
+        conversation,
+        agent_id: display.agent_id,
+        agent_username: display.agent_username,
+    }
 }
 
 /// 使用已加载的当前页用户展示映射包装充值订单。
@@ -4876,11 +4939,12 @@ struct AvoidWinningStatusRequest {
 mod tests {
     use super::{
         admin_login_audit_context_from_headers, admin_recharge_order_with_user_display,
-        admin_user_summary_with_usernames, admin_withdrawal_order_with_user_display,
-        agent_rebate_records_from_data, agent_rebate_summary_from_data,
-        align_draw_issue_plan_after_sale_on, filter_users_by_status, filter_users_by_username,
-        finance_overview_for_query, first_admin_audit_ip, normalize_admin_draw_control_target,
-        page_items, required_permission_for_request, required_scope_for_path,
+        admin_support_conversation_with_user_display, admin_user_summary_with_usernames,
+        admin_withdrawal_order_with_user_display, agent_rebate_records_from_data,
+        agent_rebate_summary_from_data, align_draw_issue_plan_after_sale_on,
+        filter_users_by_status, filter_users_by_username, finance_overview_for_query,
+        first_admin_audit_ip, normalize_admin_draw_control_target, page_items,
+        required_permission_for_request, required_scope_for_path,
         should_align_draw_issue_plan_after_sale_on, should_include_robot_initiated_group_buy_plan,
         should_include_user_scoped_record, should_match_user_filter,
         sort_agent_rebate_records_by_time_desc, sort_financial_accounts_by_latest_user_desc,
@@ -4905,6 +4969,7 @@ mod tests {
             permission::PermissionScope,
             play::{PlayRuleCode, PlaySelection},
             recharge::{RechargeChannel, RechargeOrderStatus, RechargeOrderSummary},
+            support::{SupportConversation, SupportConversationStatus, SupportPriority},
             user::{UserKind, UserStatus, UserSummary, WithdrawalMethodType},
             withdrawal::{WithdrawalOrderStatus, WithdrawalOrderSummary},
         },
@@ -5243,6 +5308,25 @@ mod tests {
         assert_eq!(recharge.agent_username.as_deref(), Some("agent_alpha"));
         assert_eq!(withdrawal.agent_id.as_deref(), Some("U90001"));
         assert_eq!(withdrawal.agent_username.as_deref(), Some("agent_alpha"));
+    }
+
+    #[test]
+    /// 后台客服会话会补充用户上级代理信息，方便客服处理会话时识别代理归属。
+    fn support_conversation_wrapper_includes_agent_display() {
+        let displays = BTreeMap::from([(
+            "U10001".to_string(),
+            AdminFinanceUserDisplay {
+                agent_id: Some("U90001".to_string()),
+                agent_username: Some("agent_alpha".to_string()),
+                username: Some("alice".to_string()),
+            },
+        )]);
+
+        let conversation =
+            admin_support_conversation_with_user_display(test_support_conversation(), &displays);
+
+        assert_eq!(conversation.agent_id.as_deref(), Some("U90001"));
+        assert_eq!(conversation.agent_username.as_deref(), Some("agent_alpha"));
     }
 
     #[test]
@@ -5761,6 +5845,24 @@ mod tests {
             frozen_balance_minor: 0,
             user_id: user_id.to_string(),
             username: Some(format!("user_{user_id}")),
+        }
+    }
+    /// 构造测试用客服会话。
+    fn test_support_conversation() -> SupportConversation {
+        SupportConversation {
+            assigned_admin_id: None,
+            assigned_admin_name: None,
+            created_at: "2026-06-23 18:00:00".to_string(),
+            id: "S10001".to_string(),
+            messages: Vec::new(),
+            priority: SupportPriority::Normal,
+            status: SupportConversationStatus::Open,
+            subject: "测试会话".to_string(),
+            unread_count: 1,
+            updated_at: "2026-06-23 18:01:00".to_string(),
+            user_id: "U10001".to_string(),
+            user_unread_count: 0,
+            username: "alice".to_string(),
         }
     }
     /// 构造测试用充值订单。

@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 18:56 HKT 后台客服显示上级代理
+
+- 完成任务：后台在线客服会话列表和详情增加用户上级代理展示。
+- 解决问题：客服处理用户会话时只能看到用户名和用户 ID，无法直接识别该用户归属的上级代理，需要切换到用户管理或财务页面核对。
+- 实施内容：后端后台客服接口增加 `agentId/agentUsername` 展示包装；管理后台客服表格新增“上级代理”列，详情头部同步展示代理信息；实时客服事件合并时保留已有代理字段，避免新消息推送后代理列被清空；架构说明和 Trellis 前后端契约同步更新。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml support_conversation_wrapper_includes_agent_display -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、`pnpm --dir admin exec tsc -b`、`pnpm --dir admin build` 均通过；管理后台构建仍保留既有大 chunk 提示。
+
 ## 2026-06-23 18:43 HKT 发起合买未成单可见性修复
 
 - 完成任务：修复用户发起合买后，在未满单、未成单阶段有时无法在“我的合买”看到计划的问题。

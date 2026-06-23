@@ -18,6 +18,8 @@ export interface SupportConversation {
   id: string;
   userId: string;
   username: string;
+  agentId?: string | null;
+  agentUsername?: string | null;
   subject: string;
   status: SupportConversationStatus;
   priority: SupportPriority;

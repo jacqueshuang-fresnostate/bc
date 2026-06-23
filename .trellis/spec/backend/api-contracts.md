@@ -2829,6 +2829,15 @@ await updateInvitePolicy({
 }
 ```
 
+管理后台客服接口在会话字段外额外返回上级代理展示字段；用户端客服接口不返回这两个后台字段：
+
+```json
+{
+  "agentId": "U90001",
+  "agentUsername": "agent_alpha"
+}
+```
+
 创建请求字段：
 
 ```json
@@ -2895,6 +2904,7 @@ await updateInvitePolicy({
 12. 用户侧已读接口必须校验会话归属，归属不匹配时返回 404；该接口只清理用户侧未读，不影响后台客服侧 `unreadCount`。
 13. 后台客服会话列表必须按处理优先级返回：`unreadCount > 0` 的会话排在最前，其次按最后一条消息时间、更新时间、创建时间倒序，最后按会话 ID 倒序兜底。
 14. 后台删除客服会话只允许 `resolved` 状态；删除成功后必须发布 `support.conversation_deleted`，事件只携带 `conversationId` 和 `userId`，用于客户端移除本地会话。
+15. 后台客服 HTTP 响应必须补充 `agentId` 和 `agentUsername`；用户没有上级代理时两个字段为 `null`，有上级代理但用户名缺失时保留 `agentId` 并让前端显示“未知代理”。实时客服事件仍可只携带原始会话字段，前端收到事件时必须保留已有 `agentId/agentUsername`，不能因为消息推送把代理列清空。
 
 ### 4. 校验与错误矩阵
 
@@ -2908,6 +2918,8 @@ await updateInvitePolicy({
 | 首条消息为空 | HTTP 400，返回 `support message content is required` |
 | 更新时分配管理员不存在 | HTTP 404，返回管理员不存在 |
 | 回复时管理员 ID 为空 | HTTP 400，返回 `support reply admin id is required` |
+| 后台客服会话用户没有上级代理 | HTTP 200，`agentId=null`、`agentUsername=null` |
+| 后台客服会话用户有上级代理 | HTTP 200，返回上级代理 ID 和用户名 |
 | 回复时管理员不存在 | HTTP 404，返回管理员不存在 |
 | 文本回复内容为空 | HTTP 400，返回 `support reply content is required` |
 | 图片回复缺少图片链接 | HTTP 400，返回客服图片链接不能为空 |
@@ -2926,16 +2938,19 @@ await updateInvitePolicy({
 - Good：后台上传图床图片后用 `messageType=image` 和 `imageUrl` 发送，后台和手机端历史消息都展示图片缩略图。
 - Good：用户发送新客服消息后，该会话的 `unreadCount` 递增，并在后台会话列表移动到未读队列前列。
 - Good：客服把会话保存为已解决后，后台点击“删除会话”，接口删除该会话并广播 `support.conversation_deleted`。
+- Good：后台客服列表和详情里的会话响应补充 `agentId/agentUsername`，客服可以直接识别用户上级代理；后续 WebSocket 消息到达时页面仍保留已有代理显示。
 - Base：无数据库环境下使用内存客服仓储，服务重启后恢复种子会话。
 - Bad：前端直接提交 `username` 或 `assignedAdminName` 并让后端信任，会导致用户/管理员改名后数据漂移。
 - Bad：只把图片 URL 拼进文本内容，导致手机端无法按图片消息渲染，也无法区分图片说明文字。
 - Bad：允许删除处理中会话，会导致客服工单和用户沟通记录在未完成时丢失。
+- Bad：实时事件不带代理字段时，前端直接用事件会话覆盖列表项，导致“上级代理”列从代理名变成空。
 
 ### 6. 必要测试
 
 - 后端需要覆盖创建、更新分配和后台回复。
 - 后端需要覆盖后台图片回复保存 `messageType=image` 和 `imageUrl`。
 - 后端需要覆盖客服回复增加 `userUnreadCount`，用户标记已读只清理用户侧未读并保留后台侧 `unreadCount`。
+- 后端需要覆盖后台客服会话包装会补充用户上级代理 ID 和用户名。
 - 后端需要覆盖创建时用户不存在拒绝。
 - 后端需要覆盖分配管理员不存在拒绝。
 - 后端需要覆盖空回复拒绝。

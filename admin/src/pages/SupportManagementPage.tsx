@@ -401,6 +401,7 @@ export function SupportManagementPage({
                   <tr>
                     <th className="py-2 pr-4 font-medium">主题</th>
                     <th className="py-2 pr-4 font-medium">用户</th>
+                    <th className="py-2 pr-4 font-medium">上级代理</th>
                     <th className="py-2 pr-4 font-medium">状态</th>
                     <th className="py-2 pr-4 font-medium">优先级</th>
                     <th className="py-2 pr-4 font-medium">未读</th>
@@ -440,6 +441,12 @@ export function SupportManagementPage({
                           {conversation.userId}
                         </div>
                       </td>
+                      <td className="py-3 pr-4 text-slate-600">
+                        <AgentCell
+                          agentId={conversation.agentId}
+                          agentUsername={conversation.agentUsername}
+                        />
+                      </td>
                       <td className="py-3 pr-4">
                         <Tag color={statusColor(conversation.status)}>
                           {statusText(conversation.status)}
@@ -466,7 +473,7 @@ export function SupportManagementPage({
                   ))}
                   {visibleConversations.length === 0 ? (
                     <tr>
-                      <td className="py-8 text-center text-sm text-slate-500" colSpan={5}>
+                      <td className="py-8 text-center text-sm text-slate-500" colSpan={6}>
                         当前状态下暂无客服会话。
                       </td>
                     </tr>
@@ -488,6 +495,13 @@ export function SupportManagementPage({
                       <p className="mt-1 text-sm text-slate-500">
                         {selectedConversation.username} · {selectedConversation.id}
                       </p>
+                      <div className="mt-2 text-sm text-slate-600">
+                        <span className="mr-2 text-slate-400">上级代理</span>
+                        <AgentInline
+                          agentId={selectedConversation.agentId}
+                          agentUsername={selectedConversation.agentUsername}
+                        />
+                      </div>
                     </div>
                     <Tag color={statusColor(selectedConversation.status)}>
                       {statusText(selectedConversation.status)}
@@ -791,6 +805,39 @@ interface EmojiSelection {
 interface FieldProps {
   children: ReactNode;
   label: string;
+}
+
+interface AgentDisplayProps {
+  agentId?: string | null;
+  agentUsername?: string | null;
+}
+
+function AgentCell({ agentId, agentUsername }: AgentDisplayProps) {
+  if (!agentId) {
+    return <span className="text-slate-400">无</span>;
+  }
+  return (
+    <div>
+      <div className="font-medium text-slate-700">
+        {agentUsername ?? '未知代理'}
+      </div>
+      <div className="mt-1 font-mono text-xs text-slate-400">{agentId}</div>
+    </div>
+  );
+}
+
+function AgentInline({ agentId, agentUsername }: AgentDisplayProps) {
+  if (!agentId) {
+    return <span className="text-slate-400">无</span>;
+  }
+  return (
+    <span>
+      <span className="font-medium text-slate-700">
+        {agentUsername ?? '未知代理'}
+      </span>
+      <span className="ml-1 font-mono text-xs text-slate-400">{agentId}</span>
+    </span>
+  );
 }
 
 function Field({ children, label }: FieldProps) {

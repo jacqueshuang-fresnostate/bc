@@ -280,9 +280,15 @@ function upsertVisibleConversation(
   items: SupportConversation[],
   conversation: SupportConversation,
 ) {
+  const previous = items.find((current) => current.id === conversation.id);
+  const nextConversation = {
+    ...conversation,
+    agentId: conversation.agentId ?? previous?.agentId ?? null,
+    agentUsername: conversation.agentUsername ?? previous?.agentUsername ?? null,
+  };
   const nextItems = items.filter((current) => current.id !== conversation.id);
-  return isVisibleSupportConversation(conversation)
-    ? sortSupportConversations([...nextItems, conversation])
+  return isVisibleSupportConversation(nextConversation)
+    ? sortSupportConversations([...nextItems, nextConversation])
     : sortSupportConversations(nextItems);
 }
 
