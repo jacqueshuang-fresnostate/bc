@@ -1938,6 +1938,8 @@ async fn list_user_bet_orders(
 
     let filtered = filter_user_bet_orders_by_view(orders, query.view);
     let filtered = if matches!(query.view, Some(UserBetOrderView::GroupBuy)) {
+        let mut filtered = filtered;
+        sort_group_buy_bet_order_responses_for_user_view(&mut filtered);
         query.paginate(filtered)
     } else {
         filtered
@@ -2092,6 +2094,27 @@ fn sort_user_bet_order_responses_by_created_at_desc(items: &mut [UserBetOrderDet
             .cmp(&left.order.created_at)
             .then_with(|| right.order.id.cmp(&left.order.id))
     });
+}
+
+/// “我的合买”优先展示仍在认购中的记录，再按创建时间倒序展示历史合买。
+fn sort_group_buy_bet_order_responses_for_user_view(items: &mut [UserBetOrderDetailResponse]) {
+    items.sort_by(|left, right| {
+        group_buy_in_progress_rank(left)
+            .cmp(&group_buy_in_progress_rank(right))
+            .then_with(|| right.order.created_at.cmp(&left.order.created_at))
+            .then_with(|| right.order.id.cmp(&left.order.id))
+    });
+}
+
+/// 认购中且未取消的合买排在“我的合买”前面，避免分页第一页被历史已成单记录挤掉。
+fn group_buy_in_progress_rank(item: &UserBetOrderDetailResponse) -> u8 {
+    if item.group_buy_pending_plan
+        && item.group_buy_plan_status.as_ref() != Some(&GroupBuyPlanStatus::Cancelled)
+    {
+        0
+    } else {
+        1
+    }
 }
 
 /// 根据手机端 Tab 过滤注单：独立下注和合买认购/已成单合买分别展示。
@@ -5020,6 +5043,61 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(group_buy_ids.contains(&"O000000000009"));
         assert!(group_buy_ids.contains(&"GB-G-USER-PENDING-001"));
+    }
+
+    #[test]
+    /// 验证“我的合买”分页第一页优先保留认购中的未成单记录，避免刷新后被历史合买挤到后续页。
+    fn group_buy_view_first_page_prioritizes_pending_participation() {
+        let mut orders = Vec::new();
+        let mut plans = Vec::new();
+        for index in 0..20 {
+            let order_id = format!("O-GROUP-FORMED-{index:03}");
+            let plan_id = format!("G-GROUP-FORMED-{index:03}");
+            let mut order = test_order(&order_id, "U10001", OrderSource::GroupBuy);
+            order.created_at = format!("2026-06-05 20:{index:02}:00");
+            let mut plan = test_group_buy_plan_with_order(
+                &plan_id,
+                &order_id,
+                vec![test_group_buy_participant_with_amount(
+                    &format!("{plan_id}-P001"),
+                    "U20002",
+                    2_000,
+                )],
+            );
+            plan.created_at = order.created_at.clone();
+            orders.push(order);
+            plans.push(plan);
+        }
+        let mut pending_plan = test_group_buy_plan(
+            "G-USER-PENDING-PAGE-001",
+            "20260605200100",
+            "regular_user",
+            "未满单合买",
+        );
+        pending_plan.created_at = "2026-06-05 19:00:00".to_string();
+        pending_plan.participants = vec![test_group_buy_participant_with_amount(
+            "G-USER-PENDING-PAGE-001-P001",
+            "U20002",
+            2_000,
+        )];
+        plans.push(pending_plan);
+
+        let visible =
+            user_visible_bet_orders("U20002", orders, &plans, &[], &[test_group_buy_lottery()])
+                .expect("用户注单列表可以合并合买记录");
+        let mut group_buy_view =
+            filter_user_bet_orders_by_view(visible, Some(UserBetOrderView::GroupBuy));
+        sort_group_buy_bet_order_responses_for_user_view(&mut group_buy_view);
+        let first_page = UserPageQuery {
+            page: Some(1),
+            page_size: Some(20),
+            view: Some(UserBetOrderView::GroupBuy),
+        }
+        .paginate(group_buy_view);
+
+        assert_eq!(first_page.len(), 20);
+        assert_eq!(first_page[0].order.id, "GB-G-USER-PENDING-PAGE-001");
+        assert!(first_page[0].group_buy_pending_plan);
     }
 
     #[test]

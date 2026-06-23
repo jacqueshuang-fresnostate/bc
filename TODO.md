@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 19:14 HKT 我的合买认购中分页显示修复
+
+- 完成任务：修复手机端“我的记录 / 我的合买”里“合买认购中”刷新后不显示、连续点击“加载更多合买”后才出现的问题。
+- 解决问题：根因是后端 `GET /api/user/bet/orders?view=groupBuy` 在合并已成单合买和未成单合买认购后按纯创建时间分页，历史已成单合买较多时会把仍在认购中的未成单记录挤到后续页；前端刷新只加载第一页，因此看起来像刷新后消失。
+- 实施内容：后端在 `view=groupBuy` 分页前增加“认购中且未取消优先，再按创建时间倒序”的排序规则，并新增回归测试覆盖 20 条历史合买挤压 1 条认购中记录的场景；手机端 `useBetOrders` 追加/刷新“我的合买”后使用同样的本地合并排序，避免前端用纯时间倒序打乱后端优先级；架构说明和 Trellis 前后端契约同步更新。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml group_buy_view_first_page_prioritizes_pending_participation -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml user_visible_bet_orders -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、`pnpm --dir mobile build` 均通过。
+
 ## 2026-06-23 18:56 HKT 后台客服显示上级代理
 
 - 完成任务：后台在线客服会话列表和详情增加用户上级代理展示。

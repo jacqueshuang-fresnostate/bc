@@ -3,7 +3,7 @@ import type { Router } from 'vue-router'
 import { fetchUserBetOrders } from '../api/bet'
 import { fetchGroupBuyDetail } from '../features/group-buy/api'
 import { orderDrawNumbers, orderNumber } from '../utils/lotteryFormat'
-import { sortByCreatedTimeDesc } from '../utils/timeSort'
+import { compareCreatedTimeDesc, sortByCreatedTimeDesc } from '../utils/timeSort'
 
 const ORDER_PAGE_SIZE = 20
 export type BetOrderView = 'groupBuy' | 'orders'
@@ -54,8 +54,9 @@ export function useBetOrders(router: Router) {
       const scopedOrders = filterOrdersByView(nextOrders, view)
       ordersByView.value = {
         ...ordersByView.value,
-        [view]: sortByCreatedTimeDesc(
+        [view]: sortOrdersForView(
           append ? mergeOrders(ordersByView.value[view], scopedOrders) : scopedOrders,
+          view,
         ),
       }
       ordersPageByView.value = {
@@ -97,6 +98,20 @@ export function useBetOrders(router: Router) {
 
   function filterOrdersByView(items: any[], view: BetOrderView) {
     return items.filter(order => view === 'groupBuy' ? isGroupBuyOrder(order) : !isGroupBuyOrder(order))
+  }
+
+  function sortOrdersForView(items: any[], view: BetOrderView) {
+    if (view !== 'groupBuy') return sortByCreatedTimeDesc(items)
+    return [...items].sort((left, right) =>
+      groupBuyInProgressRank(left) - groupBuyInProgressRank(right)
+        || compareCreatedTimeDesc(left, right),
+    )
+  }
+
+  function groupBuyInProgressRank(order: any) {
+    const status = String(order?.groupBuyPlanStatus || order?.group_buy_plan_status || '').toLowerCase()
+    const pending = Boolean(order?.groupBuyPendingPlan || order?.group_buy_pending_plan)
+    return pending && status !== 'cancelled' ? 0 : 1
   }
 
   function isGroupBuyOrder(order: any) {
