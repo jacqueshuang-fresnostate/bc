@@ -2223,6 +2223,78 @@
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
         },
         {
+          "description": "Enables the check_permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:allow-check-permissions",
+          "markdownDescription": "Enables the check_permissions command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the clear_permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:allow-clear-permissions",
+          "markdownDescription": "Enables the clear_permissions command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the clear_watch command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:allow-clear-watch",
+          "markdownDescription": "Enables the clear_watch command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_current_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:allow-get-current-position",
+          "markdownDescription": "Enables the get_current_position command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:allow-request-permissions",
+          "markdownDescription": "Enables the request_permissions command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the watch_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:allow-watch-position",
+          "markdownDescription": "Enables the watch_position command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:deny-check-permissions",
+          "markdownDescription": "Denies the check_permissions command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:deny-clear-permissions",
+          "markdownDescription": "Denies the clear_permissions command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_watch command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:deny-clear-watch",
+          "markdownDescription": "Denies the clear_watch command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_current_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:deny-get-current-position",
+          "markdownDescription": "Denies the get_current_position command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:deny-request-permissions",
+          "markdownDescription": "Denies the request_permissions command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the watch_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:deny-watch-position",
+          "markdownDescription": "Denies the watch_position command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures what kind of\noperations are available from the store plugin.\n\n#### Granted Permissions\n\nAll operations are enabled by default.\n\n\n#### This default permission set includes:\n\n- `allow-load`\n- `allow-get-store`\n- `allow-set`\n- `allow-get`\n- `allow-has`\n- `allow-delete`\n- `allow-clear`\n- `allow-reset`\n- `allow-keys`\n- `allow-values`\n- `allow-entries`\n- `allow-length`\n- `allow-reload`\n- `allow-save`",
           "type": "string",
           "const": "store:default",
