@@ -1177,11 +1177,46 @@ await createOrder({
 用户注单列表的 `view` 查询参数用于手机端 `/orders` 页面分组：
 
 - 不传 `view` 时返回独立下注、已成单合买订单和未成单合买认购的混合列表，保留旧调用兼容。
-- `view=orders` 只返回真实已下单注单，包括独立下注订单和已满单成单的合买投注订单，不包含 `GB-` 开头的未成单合买认购映射记录。
-- `view=groupBuy` 只返回未形成真实投注订单的合买认购记录，包括未满单、待成单或已取消但当前用户曾认购的合买计划。
+- `view=orders` 只返回当前用户的独立下注订单，不包含已成单合买订单，也不包含 `GB-` 开头的未成单合买认购映射记录。
+- `view=groupBuy` 返回当前用户参与过的所有合买记录，包括已满单成单的合买投注订单、未满单、待成单或已取消但当前用户曾认购的合买计划。
 - 分页必须在 `view` 过滤之后执行，保证“我的注单”和“我的合买”两个 Tab 各自拥有稳定页码。
 
-“我的合买”接口仍然负责展示计划进度和大厅/我的合买视图；“我的注单”负责展示用户资金已经参与的下注或认购时间线，两者不是互斥关系。
+### 场景：用户注单与合买分账口径
+
+#### 1. 范围 / 触发
+- 触发：手机端 `/orders` 分组、合买满单成单、开奖结算派奖、资金流水展示。
+
+#### 2. 签名
+- `GET /api/user/bet/orders?page=<usize>&pageSize=<usize>&view=orders|groupBuy`
+- `OrderRepository::create_group_buy_order_and_attach(group_buys, lottery, payload, plan_id)`
+- `OrderRepository::settle_with_payouts(finance, group_buys, draw_issue)`
+
+#### 3. 契约
+- `view=orders`：只返回 `orderSource=direct` 且 `userId` 为当前登录用户的订单。
+- `view=groupBuy`：返回当前用户在 `group_buy_participants` 中参与过的已成单真实合买订单，以及 `GB-` 开头的未成单合买映射记录。
+- 已成单合买必须返回 `groupBuyPlanId`、`participationAmountMinor`、`participationShareCount`；中奖后必须返回 `participationPayoutMinor`。
+- 满单合买真实订单的资金来源是参与记录 `groupBuyDebit`，不能再次写普通 `orderDebit`。
+
+#### 4. 校验与错误矩阵
+- 满单创建订单但无法回写 `group_buy_plans.order_id` -> 整个订单合买事务失败，不保存孤立订单。
+- 结算中奖合买订单但找不到对应合买计划 -> 返回内部错误并中止派奖，不写普通整单 `payoutCredit`。
+- 当前用户不是合买参与人 -> 不返回该合买真实订单，即使真实订单 `userId` 是发起人。
+
+#### 5. Good / Base / Bad
+- Good：发起人自购 69 元、方案总额 1372 元，中奖后只看到自己的参与金额和个人派奖金额。
+- Base：独立下注仍在“我的注单”，普通中奖仍按订单用户写一条 `payoutCredit`。
+- Bad：把已成单合买主单放到“我的注单”，展示 1372 元下注金额或 3900 元整单奖金。
+
+#### 6. 必要测试
+- 覆盖 `view=orders` 排除已成单合买，`view=groupBuy` 包含已成单和未成单合买。
+- 覆盖缺失合买计划的中奖合买订单会中止结算且不生成普通整单 `payoutCredit`。
+- 覆盖合买分账 `referenceId` 使用结算、订单、参与记录三段组合。
+
+#### 7. Wrong vs Correct
+- Wrong：`orders.user_id = 当前用户 OR order_id IN 用户参与合买订单`，会让发起人直接看到整单主单。
+- Correct：独立订单按 `userId` 可见；合买订单只能通过当前用户参与记录关联的 `orderId` 可见，并展示个人参与金额和个人派奖金额。
+
+`/api/user/group-buy/*` 接口仍然负责展示计划进度、合买大厅和我的合买计划管理视图；`/api/user/bet/orders?view=groupBuy` 负责注单时间线里的个人合买认购结果；`view=orders` 只负责独立下注注单。
 
 手机端注单记录必须按该字段展示“独立下单”或“合买下单”，不能只用订单号、资金流水或旧系统 `source_name` 猜测。
 
@@ -1233,8 +1268,10 @@ await createOrder({
 - 后端测试需要覆盖普通订单来源为 `direct`，合买满单生成订单来源为 `groupBuy`。
 - 后端测试需要覆盖用户参与别人发起的合买计划后，满单生成的真实投注订单会出现在该用户注单列表。
 - 后端测试需要覆盖用户参与未满单合买计划后，该计划会以 `groupBuyPendingPlan=true` 出现在用户注单列表。
+- 后端测试需要覆盖 `view=orders` 排除已成单合买，`view=groupBuy` 同时包含已成单合买和未成单合买认购。
 - 后端测试需要覆盖合买注单返回当前用户 `participationAmountMinor`，多条参与记录需要累加。
 - 后端测试需要覆盖合买注单返回当前用户 `participationPayoutMinor`，并确认有资金流水时优先按实际入账金额展示。
+- 后端测试需要覆盖合买订单缺少对应合买计划时，结算会中止并且不会生成普通整单 `payoutCredit`。
 - OpenAPI 测试必须包含 `/user/bet/page-config/{lottery_id}` 和 `/user/bet/orders`。
 - 手机端运行 `cd mobile && npm run build`，确认下注页 API 客户端、动态配置归一化和批量提交类型通过。
 
@@ -1708,8 +1745,9 @@ let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
 
 1. 开奖结算必须通过 `OrderRepository::settle_with_payouts` 同时生成结算批次、回写订单状态、写入 `payoutCredit` 并标记合买计划结算状态。
 2. 资金仓储只对 `isWinning=true` 且 `payoutMinor > 0` 的订单写入 `payoutCredit`。
-3. `payoutCredit` 的 `referenceId` 使用结算批次和订单组合，避免重复入账。
+3. 普通订单 `payoutCredit` 的 `referenceId` 使用结算批次和订单组合；合买分账 `referenceId` 必须使用结算批次、订单和参与记录三段组合，避免整单与个人分账混淆。
 4. PostgreSQL 模式下订单、资金和合买计划结算状态必须使用同一个 SQLx 事务保存。
+5. 如果 `orderSource=groupBuy` 的中奖订单找不到对应 `group_buy_plans.order_id`，结算必须中止并返回错误，不能按普通订单给订单 `userId` 发放整单奖金。
 
 ### 4. 校验与错误矩阵
 
@@ -3269,11 +3307,11 @@ await createInvitation({
 8. `issue` 必须是当前彩种处于 `open` 状态的期号，`ruleCode` 必须对应当前彩种已启用玩法。
 9. `numbers` 是当前合买投注内容，后端必须通过 `group_buy_flow` 转换为当前订单引擎的 `PlaySelection`；支持直选位置 `1|2|3`、单注逗号 `1,2,3`、组合 `1,2,3`、胆拖 `1|2,3,4` 和大小单双 `tens:big|ones:odd` / 中文“大、小、单、双”。
 10. 发起或参与合买扣款成功后必须写入 `ledger_entries.kind=groupBuyDebit`，并通过实时事件推送余额变化。
-11. 当 `filledAmountMinor == totalAmountMinor` 时，后端必须立即创建一张真实投注订单，并通过 `group_buy_plans.order_id` 关联；该真实订单不能再次执行普通订单扣款，合买参与扣款才是资金来源。
+11. 当 `filledAmountMinor == totalAmountMinor` 时，后端必须在同一个订单合买事务中立即创建一张真实投注订单，并通过 `group_buy_plans.order_id` 关联；该真实订单不能再次执行普通订单扣款，合买参与扣款才是资金来源。
 12. 封盘时仍未满员的 `draft/open` 计划不能立刻自动取消；调度慢阶段必须先对已封盘但尚未写入开奖结果的用户合买计划执行兜底补满，兜底失败后才允许取消并按参与记录写入幂等的 `groupBuyRefund` 资金流水。
 13. 如果调度晚于计划开奖时间执行，但期号仍为 `closed` 且 `drawNumber` 为空，仍视为“开奖前业务修复窗口”，允许补满用户合买和为已满单计划补建真实合买订单；已经写入开奖结果后禁止事后补单或补建订单。
 14. `filled` 且 `orderId` 为空的非机器人合买计划必须在流单退款和开奖结算前补建真实投注订单。该修复不额外扣款，只回写 `group_buy_plans.order_id`，因为参与人的认购扣款已经发生在发起或参与阶段。
-15. 开奖结算时，如果中奖订单属于合买计划，派奖必须按参与金额占计划总金额的比例拆给参与人；除最后一名参与人外向下取整，最后一名承接余数，随后把计划标记为 `settled`。
+15. 开奖结算时，如果中奖订单属于合买计划，派奖必须按参与金额占计划总金额的比例拆给参与人；除最后一名参与人外向下取整，最后一名承接余数，随后把计划标记为 `settled`。如果合买订单缺失对应计划，必须停止派奖，不能退化成普通订单整单派奖。
 16. 后台计划列表不传 `page/pageSize` 时允许返回全量列表，用于内部调试；管理后台页面必须显式传入分页参数。
 17. 用户端 `/api/user/group-buy/plans`、`/api/user/group-buy/plans/{id}` 和 `/api/user/group-buy/my` 返回的 `initiatorDisplay` 必须是脱敏展示名：普通用户和机器人计划都只保留首尾字符，中间用 `*` 替代；后台合买管理、资金流水和审计仍保留真实 `initiatorUserId/initiatorUsername`。
 18. 用户端合买计划响应必须返回 `participantMinAmountMinor`，手机端认购金额用它和 `shareAmountMinor` 共同校正最小可认购金额。

@@ -150,7 +150,7 @@ impl UserPageQuery {
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 用户端注单列表视图，用于把真实注单和未成单合买认购分开分页。
+/// 用户端注单列表视图，用于把独立注单和合买认购/已成单合买分开分页。
 enum UserBetOrderView {
     Orders,
     GroupBuy,
@@ -1886,46 +1886,38 @@ async fn list_user_bet_orders(
     Extension(session): Extension<UserAuthSession>,
     Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<UserBetOrderDetailResponse>>>> {
-    if matches!(query.view, Some(UserBetOrderView::GroupBuy)) {
-        let lotteries = state.lotteries.list().await?;
-        let plans = state
+    let include_group_buy = !matches!(query.view, Some(UserBetOrderView::Orders));
+    let group_buy_order_ids = if include_group_buy {
+        state
             .group_buys
-            .list_unformed_details_for_user_page(
-                &session.user.id,
-                PageRequest::new(query.page, query.page_size),
-            )
+            .order_ids_for_user(&session.user.id)
             .await?
-            .items;
-        let mut orders = Vec::new();
-        for plan in &plans {
-            if let Some(order) =
-                unformed_group_buy_order_response(&session.user.id, plan, &lotteries)?
-            {
-                orders.push(order);
-            }
-        }
-
-        return Ok(Json(ApiEnvelope::success(orders)));
-    }
-
-    let group_buy_order_ids = state
-        .group_buys
-        .order_ids_for_user(&session.user.id)
-        .await?;
+    } else {
+        Vec::new()
+    };
+    let order_page_request = if matches!(query.view, Some(UserBetOrderView::GroupBuy)) {
+        PageRequest::default()
+    } else {
+        PageRequest::new(query.page, query.page_size)
+    };
     let orders = state
         .orders
-        .list_user_visible_page(
-            &session.user.id,
-            &group_buy_order_ids,
-            PageRequest::new(query.page, query.page_size),
-        )
+        .list_user_visible_page(&session.user.id, &group_buy_order_ids, order_page_request)
         .await?
         .items;
     let order_ids = orders
         .iter()
         .map(|order| order.id.clone())
         .collect::<Vec<_>>();
-    let group_buy_plans = state.group_buys.plans_for_order_ids(&order_ids).await?;
+    let mut group_buy_plans = state.group_buys.plans_for_order_ids(&order_ids).await?;
+    if include_group_buy {
+        let mut unformed_plans = state
+            .group_buys
+            .list_unformed_details_for_user_page(&session.user.id, PageRequest::default())
+            .await?
+            .items;
+        group_buy_plans.append(&mut unformed_plans);
+    }
     let lotteries = state.lotteries.list().await?;
     let ledger_entries = state
         .finance
@@ -1944,9 +1936,14 @@ async fn list_user_bet_orders(
         &lotteries,
     )?;
 
-    Ok(Json(ApiEnvelope::success(filter_user_bet_orders_by_view(
-        orders, query.view,
-    ))))
+    let filtered = filter_user_bet_orders_by_view(orders, query.view);
+    let filtered = if matches!(query.view, Some(UserBetOrderView::GroupBuy)) {
+        query.paginate(filtered)
+    } else {
+        filtered
+    };
+
+    Ok(Json(ApiEnvelope::success(filtered)))
 }
 
 /// 合并本人独立下注订单、本人参与且已经成单的合买投注订单，以及尚未生成真实订单的合买认购。
@@ -1964,7 +1961,11 @@ fn user_visible_bet_orders(
         } else {
             None
         };
-        if order.user_id == user_id || group_buy_share.is_some() {
+        let is_visible_direct =
+            matches!(order.order_source, OrderSource::Direct) && order.user_id == user_id;
+        let is_visible_group_buy =
+            matches!(order.order_source, OrderSource::GroupBuy) && group_buy_share.is_some();
+        if is_visible_direct || is_visible_group_buy {
             let group_buy_plan_id = group_buy_share.as_ref().map(|share| share.plan_id.clone());
             let group_buy_plan_status = group_buy_share
                 .as_ref()
@@ -2071,7 +2072,7 @@ fn sort_user_bet_order_responses_by_created_at_desc(items: &mut [UserBetOrderDet
     });
 }
 
-/// 根据手机端 Tab 过滤注单：真实已下单订单和未成单合买认购分别分页。
+/// 根据手机端 Tab 过滤注单：独立下注和合买认购/已成单合买分别展示。
 fn filter_user_bet_orders_by_view(
     items: Vec<UserBetOrderDetailResponse>,
     view: Option<UserBetOrderView>,
@@ -2079,21 +2080,18 @@ fn filter_user_bet_orders_by_view(
     match view {
         Some(UserBetOrderView::Orders) => items
             .into_iter()
-            .filter(|item| !is_unformed_group_buy_order(item))
+            .filter(|item| !is_group_buy_bet_order(item))
             .collect(),
-        Some(UserBetOrderView::GroupBuy) => items
-            .into_iter()
-            .filter(is_unformed_group_buy_order)
-            .collect(),
+        Some(UserBetOrderView::GroupBuy) => {
+            items.into_iter().filter(is_group_buy_bet_order).collect()
+        }
         None => items,
     }
 }
 
-/// 判断是否是尚未形成真实投注订单的合买认购记录，取消的未成单计划也归入“我的合买”。
-fn is_unformed_group_buy_order(item: &UserBetOrderDetailResponse) -> bool {
-    item.order.order_source == OrderSource::GroupBuy
-        && item.group_buy_plan_id.is_some()
-        && (item.group_buy_pending_plan || item.order.id.starts_with("GB-"))
+/// 判断是否是用户参与的合买记录，已成单和未成单都归入“我的合买”。
+fn is_group_buy_bet_order(item: &UserBetOrderDetailResponse) -> bool {
+    item.order.order_source == OrderSource::GroupBuy && item.group_buy_plan_id.is_some()
 }
 
 /// 获取合买计划对应彩种号码类型；彩种配置缺失时按玩法编码做保守推断。
@@ -4778,6 +4776,31 @@ mod tests {
     }
 
     #[test]
+    /// 验证合买主单如果没有当前用户参与份额，不会因为发起人是本人而展示整单金额。
+    fn user_visible_bet_orders_hides_group_buy_total_without_user_share() {
+        let group_order = test_order("O000000000008", "U10001", OrderSource::GroupBuy);
+        let plan = test_group_buy_plan_with_order(
+            "G-USER-ORDER-008",
+            "O000000000008",
+            vec![test_group_buy_participant(
+                "G-USER-ORDER-008-P001",
+                "U20002",
+            )],
+        );
+
+        let visible = user_visible_bet_orders(
+            "U10001",
+            vec![group_order],
+            &[plan],
+            &[],
+            &[test_group_buy_lottery()],
+        )
+        .expect("用户注单列表可以过滤缺少参与份额的合买主单");
+
+        assert!(visible.is_empty());
+    }
+
+    #[test]
     /// 验证用户端注单列表会包含本人已经认购但尚未满单生成真实订单的合买计划。
     fn user_visible_bet_orders_include_unformed_group_buy_participation() {
         let direct_order = test_order("O000000000007", "U20002", OrderSource::Direct);
@@ -4830,9 +4853,19 @@ mod tests {
     }
 
     #[test]
-    /// 验证用户端注单视图可以把真实已下单订单和未成单合买认购分开分页。
+    /// 验证用户端注单视图可以把独立下注和合买记录分开分页。
     fn user_bet_order_view_filter_splits_orders_and_group_buy_participations() {
         let direct_order = test_order("O000000000007", "U20002", OrderSource::Direct);
+        let formed_group_order = test_order("O000000000009", "U10001", OrderSource::GroupBuy);
+        let formed_plan = test_group_buy_plan_with_order(
+            "G-USER-FORMED-001",
+            "O000000000009",
+            vec![test_group_buy_participant_with_amount(
+                "G-USER-FORMED-001-P001",
+                "U20002",
+                2_000,
+            )],
+        );
         let mut pending_plan = test_group_buy_plan(
             "G-USER-PENDING-001",
             "20260605200100",
@@ -4846,12 +4879,12 @@ mod tests {
 
         let visible = user_visible_bet_orders(
             "U20002",
-            vec![direct_order],
-            &[pending_plan],
+            vec![direct_order, formed_group_order],
+            &[formed_plan, pending_plan],
             &[],
             &[test_group_buy_lottery()],
         )
-        .expect("用户注单列表可以合并未成单合买认购");
+        .expect("用户注单列表可以合并已成单和未成单合买认购");
 
         let order_view =
             filter_user_bet_orders_by_view(visible.clone(), Some(UserBetOrderView::Orders));
@@ -4860,8 +4893,13 @@ mod tests {
 
         assert_eq!(order_view.len(), 1);
         assert_eq!(order_view[0].order.id, "O000000000007");
-        assert_eq!(group_buy_view.len(), 1);
-        assert_eq!(group_buy_view[0].order.id, "GB-G-USER-PENDING-001");
+        assert_eq!(group_buy_view.len(), 2);
+        let group_buy_ids = group_buy_view
+            .iter()
+            .map(|item| item.order.id.as_str())
+            .collect::<Vec<_>>();
+        assert!(group_buy_ids.contains(&"O000000000009"));
+        assert!(group_buy_ids.contains(&"GB-G-USER-PENDING-001"));
     }
 
     #[test]

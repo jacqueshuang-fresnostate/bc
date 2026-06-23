@@ -320,12 +320,6 @@ impl GroupBuyRepository {
             .await
     }
 
-    /// 满单后把合买计划关联到真实投注订单。
-    pub async fn attach_order(&self, id: &str, order_id: &str) -> ApiResult<GroupBuyPlan> {
-        self.mutate_and_persist(|store| store.attach_order(id, order_id))
-            .await
-    }
-
     /// 封盘时取消未满单的合买计划，返回需要退款的计划。
     pub async fn cancel_unfilled_for_issue(
         &self,

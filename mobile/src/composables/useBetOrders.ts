@@ -96,19 +96,19 @@ export function useBetOrders(router: Router) {
   }
 
   function filterOrdersByView(items: any[], view: BetOrderView) {
-    return items.filter(order => view === 'groupBuy' ? isUnformedGroupBuyOrder(order) : !isUnformedGroupBuyOrder(order))
+    return items.filter(order => view === 'groupBuy' ? isGroupBuyOrder(order) : !isGroupBuyOrder(order))
   }
 
-  function isUnformedGroupBuyOrder(order: any) {
+  function isGroupBuyOrder(order: any) {
     const source = order?.orderSource || order?.order_source || order?.source_name || ''
     return Boolean(
-      source === 'groupBuy'
-        && (
-          order?.groupBuyPendingPlan
-          || order?.group_buy_pending_plan
-          || order?.status === 'groupBuyPending'
-          || String(order?.id || '').startsWith('GB-')
-        ),
+      order?.is_group_buy
+        || source === 'groupBuy'
+        || source === 'group_buy'
+        || String(source).startsWith('group_buy:')
+        || String(order?.id || '').startsWith('GB-')
+        || order?.group_buy_plan_id
+        || order?.groupBuyPlanId,
     )
   }
 

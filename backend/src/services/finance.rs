@@ -2611,6 +2611,9 @@ mod tests {
         assert_eq!(entries[0].kind, LedgerEntryKind::PayoutCredit);
         assert_eq!(entries[0].amount_minor, 1_000);
         assert_eq!(entries[1].amount_minor, 2_000);
+        assert!(entries
+            .iter()
+            .all(|entry| entry.reference_id.as_deref() != Some("S000000000001:O000000000001")));
         assert_eq!(agent.available_balance_minor, 521_000);
         assert_eq!(user.available_balance_minor, 14_000);
     }

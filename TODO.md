@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 16:49 HKT 合买主单重复展示和整单派奖保护
+
+- 完成任务：修复合买发起人“我的记录”里同时看到整单金额和个人认购金额的问题，并加固合买结算避免生成整单派奖流水。
+- 解决问题：已成单合买真实订单的 `userId` 是发起人时，用户端订单列表可能把合买主单当作发起人的独立注单展示；如果结算链路没能找到对应合买计划，还可能按普通订单给发起人发放整单奖金。
+- 实施内容：后端满单合买改为在同一个订单合买事务中创建真实订单并回写合买计划 `orderId`；结算时遇到缺少合买计划的合买订单会直接中止派奖；用户注单接口改为“我的注单”只返回独立下注，“我的合买”返回已成单和未成单合买记录；手机端本地兜底过滤同步改为所有合买记录都归入“我的合买”；架构说明和 Trellis 规范同步更新。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml repository_rejects_group_buy_payout_without_plan -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml user_bet_order_view_filter_splits_orders_and_group_buy_participations -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml user_visible_bet_orders -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml store_credits_group_buy_settlement_by_participant_share -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、`pnpm --dir mobile build` 和 `git diff --check` 均通过。
+
 ## 2026-06-23 14:04 HKT 合买机器人玩法倍数注数随机化
 
 - 完成任务：让合买机器人发起合买计划时随机选择玩法、随机生成真实投注注数，并随机生成隐含投注倍数。

@@ -72,7 +72,7 @@ const orderTabs: Array<{ key: BetOrderView; label: string; empty: string; more: 
   {
     key: 'groupBuy',
     label: '我的合买',
-    empty: '暂无未成单合买',
+    empty: '暂无合买记录',
     more: '加载更多合买',
     done: '已加载全部合买',
   },

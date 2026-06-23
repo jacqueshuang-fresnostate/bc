@@ -250,7 +250,11 @@ impl OrderRepository {
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
             .list()
             .into_iter()
-            .filter(|order| order.user_id == user_id || group_buy_order_ids.contains(&order.id))
+            .filter(|order| {
+                matches!(order.order_source, OrderSource::Direct) && order.user_id == user_id
+                    || matches!(order.order_source, OrderSource::GroupBuy)
+                        && group_buy_order_ids.contains(&order.id)
+            })
             .collect::<Vec<_>>();
         Ok(ListPage::from_all(orders, page))
     }
@@ -282,7 +286,8 @@ impl OrderRepository {
         Ok(result)
     }
 
-    /// 校验入参并按指定来源创建一条新记录。
+    #[cfg(test)]
+    /// 测试辅助：校验入参并按指定来源创建一条未扣款记录。
     pub async fn create_with_source(
         &self,
         lottery: &LotteryKind,
@@ -299,6 +304,46 @@ impl OrderRepository {
         };
         self.persist(&snapshot).await?;
         Ok(result)
+    }
+
+    /// 满单合买生成真实投注订单，并在同一个订单合买事务里回写计划订单号。
+    pub async fn create_group_buy_order_and_attach(
+        &self,
+        group_buys: &GroupBuyRepository,
+        lottery: &LotteryKind,
+        payload: CreateOrderRequest,
+        plan_id: &str,
+    ) -> ApiResult<(OrderDetail, GroupBuyPlan)> {
+        let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
+        let previous_order_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .clone();
+        let mut order_store = previous_order_store.clone();
+        let previous_group_buy_store = group_buys
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
+            .clone();
+        let mut group_buy_store = previous_group_buy_store.clone();
+
+        let order = order_store.create_with_source(lottery, payload, OrderSource::GroupBuy)?;
+        let attached_plan = group_buy_store.attach_order(plan_id, &order.id)?;
+
+        persist_order_group_buy_stores(
+            self,
+            group_buys,
+            &previous_order_store,
+            &order_store,
+            &previous_group_buy_store,
+            &group_buy_store,
+        )
+        .await?;
+        self.replace_store(order_store)?;
+        group_buys.replace_store(group_buy_store)?;
+
+        Ok((order, attached_plan))
     }
 
     /// 在同一个业务事务中创建订单并扣减用户余额。
@@ -717,6 +762,24 @@ impl OrderRepository {
             .map(|order| order.order_id.clone())
             .collect::<Vec<_>>();
         let group_buy_plans = group_buy_store.plans_for_order_ids(&order_ids);
+        let missing_group_buy_order_ids = settlement
+            .orders
+            .iter()
+            .filter_map(|settlement_order| {
+                let order = order_store.orders.get(&settlement_order.order_id)?;
+                (matches!(order.order_source, OrderSource::GroupBuy)
+                    && !group_buy_plans.iter().any(|plan| {
+                        plan.order_id.as_deref() == Some(settlement_order.order_id.as_str())
+                    }))
+                .then(|| settlement_order.order_id.clone())
+            })
+            .collect::<Vec<_>>();
+        if !missing_group_buy_order_ids.is_empty() {
+            return Err(ApiError::Internal(format!(
+                "合买订单缺少对应合买计划，已阻止按普通订单派奖：{}",
+                missing_group_buy_order_ids.join(",")
+            )));
+        }
         let ledger_entries =
             finance_store.credit_settlement_with_group_buys(&settlement, &group_buy_plans)?;
         group_buy_store.mark_settled_by_order_ids(&order_ids);
@@ -1142,12 +1205,17 @@ async fn query_user_visible_order_page(
     page: PageRequest,
 ) -> ApiResult<ListPage<OrderDetail>> {
     let group_buy_order_ids = group_buy_order_ids.to_vec();
+    let direct_order_source = enum_to_string(&OrderSource::Direct)?;
+    let group_buy_order_source = enum_to_string(&OrderSource::GroupBuy)?;
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
          FROM orders
-         WHERE user_id = $1 OR id = ANY($2)",
+         WHERE (order_source = $2 AND user_id = $1)
+            OR (order_source = $3 AND id = ANY($4))",
     )
     .bind(user_id)
+    .bind(&direct_order_source)
+    .bind(&group_buy_order_source)
     .bind(&group_buy_order_ids)
     .fetch_one(database.pool())
     .await
@@ -1160,11 +1228,14 @@ async fn query_user_visible_order_page(
                 stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
                 draw_number, matched_bets, payout_minor, status, settled_at, created_at
          FROM orders
-         WHERE user_id = $1 OR id = ANY($2)
+         WHERE (order_source = $2 AND user_id = $1)
+            OR (order_source = $3 AND id = ANY($4))
          ORDER BY created_at DESC, id DESC
-         LIMIT $3 OFFSET $4",
+         LIMIT $5 OFFSET $6",
     )
     .bind(user_id)
+    .bind(&direct_order_source)
+    .bind(&group_buy_order_source)
     .bind(&group_buy_order_ids)
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
@@ -2858,6 +2929,37 @@ mod tests {
 
         assert_eq!(order.order_source, OrderSource::GroupBuy);
         assert_eq!(order.summary().order_source, OrderSource::GroupBuy);
+    }
+
+    #[tokio::test]
+    /// 验证合买订单如果缺少对应计划，结算时不能退化成普通订单给发起人整单派奖。
+    async fn repository_rejects_group_buy_payout_without_plan() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        orders
+            .create_with_source(
+                &lottery,
+                direct_order_request("U10001", "2026156", 200),
+                OrderSource::GroupBuy,
+            )
+            .await
+            .expect("测试合买订单可以创建");
+
+        let error = orders
+            .settle_with_payouts(
+                &finance,
+                &group_buys,
+                &draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")),
+            )
+            .await
+            .expect_err("缺少合买计划时必须拒绝整单派奖");
+        assert!(error.to_string().contains("合买订单缺少对应合买计划"));
+        let entries = finance.ledger_entries().await.expect("流水可以读取");
+        assert!(entries
+            .iter()
+            .all(|entry| entry.kind != LedgerEntryKind::PayoutCredit));
     }
 
     #[test]

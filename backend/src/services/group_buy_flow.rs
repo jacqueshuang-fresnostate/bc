@@ -4,7 +4,7 @@ use crate::{
     domain::{
         group_buy::{GroupBuyPlan, GroupBuyPlanStatus},
         lottery::LotteryKind,
-        order::{CreateOrderRequest, OrderDetail, OrderSource},
+        order::{CreateOrderRequest, OrderDetail},
         play::{
             BigSmallOddEvenPick, BigSmallOddEvenPosition, DigitAttribute, PlayRuleCode,
             PlaySelection,
@@ -176,22 +176,10 @@ pub async fn create_order_for_filled_group_buy(
     }
 
     let payload = build_group_buy_order_request_from_plan(draws, orders, lottery, plan).await?;
-    let order = orders
-        .create_with_source(lottery, payload, OrderSource::GroupBuy)
-        .await?;
-    match group_buys.attach_order(&plan.id, &order.id).await {
-        Ok(attached_plan) => Ok(Some((order, attached_plan))),
-        Err(error) => {
-            if let Err(rollback_error) = orders.remove_unfunded(&order.id).await {
-                tracing::error!(
-                    order_id = %order.id,
-                    error = %rollback_error.log_message(),
-                    "合买满单关联订单失败后移除未入账订单失败"
-                );
-            }
-            Err(error)
-        }
-    }
+    orders
+        .create_group_buy_order_and_attach(group_buys, lottery, payload, &plan.id)
+        .await
+        .map(Some)
 }
 
 /// 封盘后开奖前的兜底成单入口，只允许已存在的满单合买补建真实投注订单。
@@ -219,22 +207,10 @@ pub async fn create_order_for_filled_group_buy_before_draw_guard(
         GroupBuyOrderIssuePolicy::AllowClosedBeforeDraw,
     )
     .await?;
-    let order = orders
-        .create_with_source(lottery, payload, OrderSource::GroupBuy)
-        .await?;
-    match group_buys.attach_order(&plan.id, &order.id).await {
-        Ok(attached_plan) => Ok(Some((order, attached_plan))),
-        Err(error) => {
-            if let Err(rollback_error) = orders.remove_unfunded(&order.id).await {
-                tracing::error!(
-                    order_id = %order.id,
-                    error = %rollback_error.log_message(),
-                    "合买兜底成单关联订单失败后移除未入账订单失败"
-                );
-            }
-            Err(error)
-        }
-    }
+    orders
+        .create_group_buy_order_and_attach(group_buys, lottery, payload, &plan.id)
+        .await
+        .map(Some)
 }
 
 /// 解析合买玩法编码为当前后端玩法枚举。
