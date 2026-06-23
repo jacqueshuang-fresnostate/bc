@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 11:58 HKT GHCR 镜像改用不可变版本标签
+
+- 完成任务：把 Docker 镜像发布和部署从漂移标签改为明确版本标签。
+- 解决问题：服务器继续使用 `latest` 时，容易因为缓存、多架构索引或重复发布导致实际运行版本不清楚；排查线上问题时也难以确认容器对应的代码提交。
+- 实施内容：GitHub Actions 删除 `latest` 发布规则，`main` 分支只发布 `sha-<提交短哈希>`，推送 `v*` Git tag 时额外发布同名版本镜像；新增 `docker-compose.ghcr.yml`，要求服务器通过 `BC_IMAGE_TAG` 显式指定镜像版本；本地 Compose 镜像标签改为 `bc-platform:local`；同步更新 `部署说明.md`、`架构设计.md` 和 Trellis 容器部署规范。
+- 验证结果：`.github/workflows/ci.yml`、`docker-compose.yml` 和 `docker-compose.ghcr.yml` 的 YAML 解析通过；`BC_IMAGE_TAG=sha-fca561e DATABASE_URL=postgresql://user:password@127.0.0.1:5432/bc docker compose -f docker-compose.ghcr.yml config` 渲染出明确 GHCR 镜像标签；`docker compose config` 渲染本地 Compose 标签为 `bc-platform:local`；`git diff --check` 通过。
+
 ## 2026-06-23 11:09 HKT 后台侧边栏常用分组调整
 
 - 完成任务：将后台侧边栏中的“计奖派奖”和“邀请管理”移入“不常用”分组。

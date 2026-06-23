@@ -17,7 +17,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: bc-platform:latest
+    image: bc-platform:local
     depends_on:
       postgres:
         condition: service_healthy
