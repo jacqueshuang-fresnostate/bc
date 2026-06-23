@@ -60,6 +60,7 @@ const messageListRef = ref<HTMLElement | null>(null)
 const messageInputRef = ref<HTMLInputElement | null>(null)
 const emojiPickerHostRef = ref<HTMLElement | null>(null)
 let emojiPickerElement: HTMLElement | null = null
+let speakingStatusRefreshTimer: number | undefined
 const currentUserId = computed(() => auth.user?.id || '')
 const hasMessages = computed(() => messages.value.length > 0)
 const canSpeak = computed(() => !loadingSpeakingStatus.value && speakingStatus.value?.canSpeak !== false)
@@ -263,6 +264,16 @@ async function loadSpeakingStatus() {
   } finally {
     loadingSpeakingStatus.value = false
   }
+}
+
+function scheduleSpeakingStatusRefresh() {
+  if (speakingStatusRefreshTimer !== undefined) {
+    window.clearTimeout(speakingStatusRefreshTimer)
+  }
+  speakingStatusRefreshTimer = window.setTimeout(() => {
+    speakingStatusRefreshTimer = undefined
+    void loadSpeakingStatus()
+  }, 250)
 }
 
 function ensureCanSpeak() {
@@ -607,15 +618,32 @@ watch(() => props.wsMessage, (message) => {
   if (message?.event === 'chat_hall_messages_cleared') {
     messages.value = []
     newMessageCount.value = 0
+    return
+  }
+  if (message?.event === 'recharge_changed' || message?.event === 'balance_changed') {
+    scheduleSpeakingStatusRefresh()
   }
 })
+
+function handleSpeakingStatusVisibilityChange() {
+  if (document.visibilityState !== 'visible') return
+  scheduleSpeakingStatusRefresh()
+}
 
 onMounted(() => {
   void loadMessages()
   void loadSpeakingStatus()
+  document.addEventListener('visibilitychange', handleSpeakingStatusVisibilityChange)
+  window.addEventListener('focus', scheduleSpeakingStatusRefresh)
 })
 
 onBeforeUnmount(() => {
+  if (speakingStatusRefreshTimer !== undefined) {
+    window.clearTimeout(speakingStatusRefreshTimer)
+    speakingStatusRefreshTimer = undefined
+  }
+  document.removeEventListener('visibilitychange', handleSpeakingStatusVisibilityChange)
+  window.removeEventListener('focus', scheduleSpeakingStatusRefresh)
   emojiPickerElement?.remove()
   emojiPickerElement = null
 })

@@ -4771,3 +4771,10 @@
 - 解决问题：直属下级卡片直接展示“邀请已生效、返利开启”和最近投注详情，信息过密且一屏可见下级数量下降；用户要求这些状态不显示，最近投注通过弹窗查看。
 - 实施内容：`InvitationCenterView` 移除邀请状态和返利状态标签；下级卡片只保留余额、充值、提现、累计投注和“查看最近投注”按钮；新增底部弹窗展示最近投注彩种、玩法、期号、金额、号码、合买跟单信息和玩法汇总；同步更新手机端前端规范和架构说明。
 - 验证结果：`pnpm --dir mobile build` 和 `git diff --check` 均通过；已确认 `InvitationCenterView` 不再残留“邀请已生效”“返利开启”“返利关闭”等直接展示文案。
+
+## 2026-06-23 聊天大厅充值后发言资格实时解锁
+
+- 完成任务：继续修复服务器部署后，用户已经通过客服直充重新充值但聊天大厅仍不能发言的问题。
+- 解决问题：后端虽然已经按累计真实充值本金判断资格，但服务器旧库触发器、资金流水清理或重复确认已入账订单可能导致累计表没有被新充值修正；手机端聊天大厅也可能在进入页面后缓存旧的禁止发言状态。
+- 实施内容：充值确认事务末尾新增按用户已入账充值订单聚合校准 `user_withdrawal_turnovers` 的兜底逻辑，只补高不回退；新增迁移 `20260623170500_reconcile_chat_hall_recharge_turnover.sql`，部署时会再次按所有已支付充值单校准累计充值；手机端聊天大厅收到 `recharge_changed` / `balance_changed` 实时事件、页面回到前台或窗口重新获得焦点时，都会重新请求发言资格。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml chat_hall_speaking_status -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml withdrawal_turnover_deltas_ignore_bonus_rebate_and_adjustment -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml store_calculates_withdrawal_turnover_from_ledger_entries -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml recharge_repository_confirms_customer_service_order_once -- --nocapture`、`pnpm --dir mobile build` 和 `git diff --check` 均通过；新增迁移已用本地 PostgreSQL 在事务回滚模式验证 SQL 可执行。

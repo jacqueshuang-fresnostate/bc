@@ -370,6 +370,7 @@ impl RechargeRepository {
             &recharge_store,
             &previous_finance_store,
             &finance_store,
+            Some(&order),
         )
         .await?;
         self.replace_store(recharge_store)?;
@@ -433,6 +434,7 @@ impl RechargeRepository {
             &recharge_store,
             &previous_finance_store,
             &finance_store,
+            Some(&order),
         )
         .await?;
         self.replace_store(recharge_store)?;
@@ -478,6 +480,7 @@ async fn persist_recharge_finance_stores(
     recharge_store: &RechargeStore,
     previous_finance_store: &super::finance::FinanceStore,
     finance_store: &super::finance::FinanceStore,
+    confirmed_order: Option<&RechargeOrderSummary>,
 ) -> ApiResult<()> {
     match (&recharges.persistence, &finance.persistence) {
         (Some(database), Some(_)) => {
@@ -498,6 +501,9 @@ async fn persist_recharge_finance_stores(
                 finance_store,
             )
             .await?;
+            if let Some(order) = confirmed_order {
+                ensure_paid_recharge_turnover_from_orders_in_transaction(&mut *tx, order).await?;
+            }
             tx.commit()
                 .await
                 .map_err(|_| ApiError::Internal("充值资金事务提交失败".to_string()))
@@ -505,6 +511,72 @@ async fn persist_recharge_finance_stores(
         (None, None) => Ok(()),
         _ => Err(ApiError::Internal("充值和资金持久化配置不一致".to_string())),
     }
+}
+
+/// 按用户已入账充值单兜底校准累计充值表，保证聊天大厅发言门槛不依赖资金流水是否仍存在。
+///
+/// 正常路径由 `ledger_entries` 触发器和资金补偿事件维护累计表；这里在充值确认事务末尾再次按
+/// `recharge_orders.status=paid` 聚合当前用户的真实充值本金，用 `GREATEST` 只补高不回退。这样即使
+/// 服务器旧库缺少触发器、资金流水被清理、或重复确认已入账订单时没有新流水，也能让发言资格恢复。
+async fn ensure_paid_recharge_turnover_from_orders_in_transaction(
+    connection: &mut PgConnection,
+    order: &RechargeOrderSummary,
+) -> ApiResult<()> {
+    if order.status != RechargeOrderStatus::Paid {
+        return Ok(());
+    }
+    sqlx::query(
+        "WITH paid_recharge_totals AS (
+            SELECT
+                user_id,
+                COALESCE(SUM(amount_minor), 0)::BIGINT AS cumulative_recharge_minor
+            FROM recharge_orders
+            WHERE user_id = $1
+              AND status = 'paid'
+              AND amount_minor > 0
+            GROUP BY user_id
+         )
+         INSERT INTO user_withdrawal_turnovers (
+            user_id,
+            cumulative_recharge_minor,
+            required_effective_bet_minor,
+            completed_effective_bet_minor,
+            created_at,
+            updated_at
+         )
+         SELECT
+            user_id,
+            cumulative_recharge_minor,
+            cumulative_recharge_minor,
+            0,
+            now(),
+            now()
+         FROM paid_recharge_totals
+         WHERE cumulative_recharge_minor > 0
+         ON CONFLICT (user_id) DO UPDATE SET
+            cumulative_recharge_minor = GREATEST(
+                user_withdrawal_turnovers.cumulative_recharge_minor,
+                EXCLUDED.cumulative_recharge_minor
+            ),
+            required_effective_bet_minor = GREATEST(
+                user_withdrawal_turnovers.required_effective_bet_minor,
+                EXCLUDED.required_effective_bet_minor
+            ),
+            updated_at = now()",
+    )
+    .bind(&order.user_id)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| {
+        tracing::error!(
+            %error,
+            user_id = order.user_id.as_str(),
+            recharge_order_id = order.id.as_str(),
+            "用户累计充值资格校准失败"
+        );
+        ApiError::Internal("用户累计充值资格校准失败".to_string())
+    })?;
+    Ok(())
 }
 
 /// 按充值赠送活动配置给用户补送彩金，未开启或未命中档位时静默跳过。
