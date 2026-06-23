@@ -4,6 +4,8 @@ import {
   Bot,
   Calculator,
   ChartNoAxesCombined,
+  ChevronDown,
+  ChevronRight,
   CircleDollarSign,
   ClipboardList,
   Gauge,
@@ -16,7 +18,7 @@ import {
   UserRound,
   UsersRound,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { AdminAuthSession } from '../types/auth';
 
 export interface NavigationItem {
@@ -58,6 +60,11 @@ const iconByKey: Record<string, ReactNode> = {
   rebate: <Banknote size={18} />,
 };
 
+const DEFAULT_GROUP_EXPANDED: Record<string, boolean> = {
+  常用: true,
+  不常用: false,
+};
+
 export function AppShell({
   activeKey,
   children,
@@ -66,10 +73,59 @@ export function AppShell({
   onLogout,
   onNavigate,
 }: AppShellProps) {
-  const groups = items.reduce<Record<string, NavigationItem[]>>((acc, item) => {
-    acc[item.group] = [...(acc[item.group] ?? []), item];
-    return acc;
-  }, {});
+  const groups = useMemo(
+    () =>
+      Object.entries(
+        items.reduce<Record<string, NavigationItem[]>>((acc, item) => {
+          acc[item.group] = [...(acc[item.group] ?? []), item];
+          return acc;
+        }, {}),
+      ).map(([group, groupItems]) => ({
+        group,
+        items: groupItems,
+      })),
+    [items],
+  );
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
+    () => ({ ...DEFAULT_GROUP_EXPANDED }),
+  );
+
+  useEffect(() => {
+    setExpandedGroups((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const { group } of groups) {
+        if (next[group] === undefined) {
+          next[group] = DEFAULT_GROUP_EXPANDED[group] ?? true;
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [groups]);
+
+  useEffect(() => {
+    const activeGroup = groups.find(({ items: groupItems }) =>
+      groupItems.some((item) => item.key === activeKey),
+    )?.group;
+
+    if (!activeGroup) {
+      return;
+    }
+
+    setExpandedGroups((current) =>
+      current[activeGroup] ? current : { ...current, [activeGroup]: true },
+    );
+  }, [activeKey, groups]);
+
+  const toggleGroup = (group: string) => {
+    setExpandedGroups((current) => ({
+      ...current,
+      [group]: !(current[group] ?? true),
+    }));
+  };
 
   return (
     <div className="flex min-h-screen bg-panel text-ink">
@@ -78,35 +134,59 @@ export function AppShell({
           <div className="text-lg font-semibold"></div>
         </div>
         <nav className="space-y-5">
-          {Object.entries(groups).map(([group, groupItems]) => (
-            <div key={group}>
-              <div className="mb-2 px-2 text-xs font-semibold text-slate-400">
-                {group}
+          {groups.map(({ group, items: groupItems }, groupIndex) => {
+            const isExpanded = expandedGroups[group] ?? true;
+            const contentId = `admin-nav-group-${groupIndex}`;
+
+            return (
+              <div key={group}>
+                <button
+                  type="button"
+                  className="mb-2 flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-xs font-semibold text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+                  aria-controls={contentId}
+                  aria-expanded={isExpanded}
+                  onClick={() => toggleGroup(group)}
+                >
+                  <span>{group}</span>
+                  <span className="grid h-4 w-4 place-items-center">
+                    {isExpanded ? (
+                      <ChevronDown size={14} />
+                    ) : (
+                      <ChevronRight size={14} />
+                    )}
+                  </span>
+                </button>
+                {isExpanded ? (
+                  <div id={contentId} className="space-y-1">
+                    {groupItems.map((item) => {
+                      const isActive = activeKey === item.key;
+                      return (
+                        <button
+                          key={item.key}
+                          className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition ${
+                            isActive
+                              ? 'bg-teal-50 font-semibold text-accent'
+                              : 'text-slate-600 hover:bg-slate-100 hover:text-ink'
+                          }`}
+                          type="button"
+                          onClick={() => onNavigate(item.key)}
+                        >
+                          <span className="grid h-5 w-5 place-items-center">
+                            {iconByKey[item.key] ?? (
+                              <LayoutDashboard size={18} />
+                            )}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">
+                            {item.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
-              <div className="space-y-1">
-                {groupItems.map((item) => {
-                  const isActive = activeKey === item.key;
-                  return (
-                    <button
-                      key={item.key}
-                      className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition ${
-                        isActive
-                          ? 'bg-teal-50 font-semibold text-accent'
-                          : 'text-slate-600 hover:bg-slate-100 hover:text-ink'
-                      }`}
-                      type="button"
-                      onClick={() => onNavigate(item.key)}
-                    >
-                      <span className="grid h-5 w-5 place-items-center">
-                        {iconByKey[item.key] ?? <LayoutDashboard size={18} />}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </nav>
       </aside>
       <main className="min-w-0 flex-1">
