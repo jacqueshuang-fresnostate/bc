@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-23 11:02 HKT 下注页上期开奖球恢复
+
+- 完成任务：修复手机端下注页面“上期开奖”的开奖号码球不显示问题。
+- 解决问题：下注页配置接口只读取当前彩种最近 120 条期号后再从中查找最近已开奖；当数据库里待开奖、销售中或未来期号数量较多时，最近已开奖期号可能不在当前分页里，导致前端拿到的 `latestDraw` 为空或号码数组为空。同时前端只识别 `resultNumbers/result_numbers` 数组，对逗号字符串缺少兜底解析。
+- 实施内容：`GET /api/user/bet/page-config/{lottery_id}` 在原期号窗口外，额外通过开奖仓储专用查询合并当前彩种最近一期已开奖数据；手机端下注配置规范化增加开奖号码解析兜底，兼容数组、逗号/空白分隔字符串和紧凑数字串。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml mobile_bet_page_config_uses_current_round_and_enabled_plays --bin bc-backend` 和 `pnpm --dir mobile build` 均通过。
+
 ## 2026-06-23 06:08 HKT 在线客服统计卡片网格移除
 
 - 完成任务：删除后台“在线客服”页面顶部 `grid gap-3 sm:grid-cols-2 xl:grid-cols-4` 统计卡片区。

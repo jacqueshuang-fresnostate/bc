@@ -207,7 +207,7 @@ async function submitApplication() {
     </header>
 
     <main class="agent-center-main mx-auto max-w-lg space-y-4 px-3 pt-4">
-      <section class="rounded-[1.75rem] bg-gradient-to-br from-red-800 to-red-950 p-5 text-white shadow-xl shadow-red-950/15">
+      <section class="agent-invite-card rounded-[1.75rem] p-5 text-white shadow-xl shadow-red-950/15">
         <p class="text-xs text-white/70">我的邀请码</p>
         <div class="mt-3 flex items-center justify-between gap-3">
           <div>
@@ -319,7 +319,7 @@ async function submitApplication() {
                   </p>
                 </div>
                 <button
-                  class="shrink-0 rounded-full bg-red-900 px-3 py-1.5 text-[11px] font-bold text-white active:scale-95 disabled:bg-stone-200 disabled:text-stone-400"
+                  class="agent-recent-bet-button shrink-0 rounded-full bg-red-900 px-3 py-1.5 text-[11px] font-bold active:scale-95 disabled:bg-stone-200 disabled:text-stone-400"
                   type="button"
                   :disabled="!hasBetProfile(item)"
                   @click="openBetDetail(item)"
@@ -405,5 +405,20 @@ async function submitApplication() {
 
 .agent-center-main {
   padding-bottom: calc(var(--mobile-bottom-nav-space) + 1rem);
+}
+
+.agent-invite-card {
+  background-color: #8f101b;
+  background-image:
+    radial-gradient(circle at 88% 8%, rgba(255, 255, 255, 0.18), transparent 30%),
+    linear-gradient(135deg, #b81224 0%, #8f101b 52%, #570711 100%);
+}
+
+.agent-recent-bet-button {
+  color: #fff !important;
+}
+
+.agent-recent-bet-button:disabled {
+  color: rgba(120, 113, 108, 0.86) !important;
 }
 </style>

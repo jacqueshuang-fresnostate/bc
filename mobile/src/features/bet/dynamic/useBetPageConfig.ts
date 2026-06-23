@@ -22,6 +22,32 @@ function valueOf(source: any, camelKey: string, snakeKey: string = camelKey) {
   return source?.[camelKey] ?? source?.[snakeKey]
 }
 
+function normalizeDrawNumbers(value: any): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map(item => String(item).trim())
+      .filter(Boolean)
+  }
+  const text = String(value ?? '').trim()
+  if (!text) return []
+  if (/[，,\s|/]+/.test(text)) {
+    return text
+      .split(/[，,\s|/]+/)
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
+  return Array.from(text)
+}
+
+function latestDrawNumbers(latestDraw: any): string[] {
+  return normalizeDrawNumbers(
+    valueOf(latestDraw, 'resultNumbers', 'result_numbers')
+      ?? valueOf(latestDraw, 'drawNumber', 'draw_number')
+      ?? valueOf(latestDraw, 'result', 'result')
+      ?? valueOf(latestDraw, 'openNumber', 'open_number'),
+  )
+}
+
 function normalizeOptionGroups(value: any): DynamicBetOptionGroup[] {
   if (!Array.isArray(value)) return []
   return value.map((group: any) => {
@@ -143,6 +169,7 @@ function normalizePlay(item: any): DynamicBetPlay {
 
 export function normalizeBetPageConfig(data: any): BetPageConfig {
   // 页面配置拆成彩种、当前期、最新开奖和玩法清单，缺失字段都用安全默认值兜底。
+  const latestDraw = valueOf(data, 'latestDraw', 'latest_draw')
   return {
     lottery: {
       code: String(data?.lottery?.code || ''),
@@ -162,10 +189,10 @@ export function normalizeBetPageConfig(data: any): BetPageConfig {
       scheduled_draw_at: valueOf(data?.round, 'scheduledDrawAt', 'scheduled_draw_at') == null ? null : String(valueOf(data?.round, 'scheduledDrawAt', 'scheduled_draw_at')),
       sale_stop_at: valueOf(data?.round, 'saleStopAt', 'sale_stop_at') == null ? null : String(valueOf(data?.round, 'saleStopAt', 'sale_stop_at')),
     },
-    latest_draw: valueOf(data, 'latestDraw', 'latest_draw') ? {
-      issue: String(valueOf(data, 'latestDraw', 'latest_draw').issue || ''),
-      result_numbers: Array.isArray(valueOf(valueOf(data, 'latestDraw', 'latest_draw'), 'resultNumbers', 'result_numbers')) ? valueOf(valueOf(data, 'latestDraw', 'latest_draw'), 'resultNumbers', 'result_numbers').map(String) : [],
-      opened_at: valueOf(valueOf(data, 'latestDraw', 'latest_draw'), 'openedAt', 'opened_at') == null ? null : String(valueOf(valueOf(data, 'latestDraw', 'latest_draw'), 'openedAt', 'opened_at')),
+    latest_draw: latestDraw ? {
+      issue: String(latestDraw.issue || ''),
+      result_numbers: latestDrawNumbers(latestDraw),
+      opened_at: valueOf(latestDraw, 'openedAt', 'opened_at') == null ? null : String(valueOf(latestDraw, 'openedAt', 'opened_at')),
     } : null,
     plays: Array.isArray(data?.plays) ? data.plays.map(normalizePlay).filter((play: DynamicBetPlay) => play.code) : [],
   }

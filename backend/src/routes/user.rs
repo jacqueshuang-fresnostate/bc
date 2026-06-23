@@ -1638,7 +1638,7 @@ async fn get_user_bet_page_config(
     if !lottery.sale_enabled {
         return Err(ApiError::BadRequest("彩种已停售".to_string()));
     }
-    let issues = state
+    let mut issues = state
         .draws
         .list_page(
             Some(&lottery.id),
@@ -1647,6 +1647,15 @@ async fn get_user_bet_page_config(
         )
         .await?
         .items;
+    let latest_drawn_issues = state
+        .draws
+        .list_latest_drawn_issues_for_lotteries(std::slice::from_ref(&lottery.id))
+        .await?;
+    for latest_issue in latest_drawn_issues {
+        if !issues.iter().any(|issue| issue.id == latest_issue.id) {
+            issues.push(latest_issue);
+        }
+    }
     let config = build_mobile_bet_page_config(&lottery, issues);
 
     Ok(Json(ApiEnvelope::success(config)))
@@ -3291,6 +3300,10 @@ async fn chat_hall_speaking_status(
         return Ok(chat_hall_speaking_status_from_amounts(0, 0));
     }
 
+    state
+        .recharges
+        .reconcile_paid_recharge_turnover_for_user(user_id)
+        .await?;
     let current_recharge_minor = state.finance.total_recharge_credit_minor(user_id).await?;
     Ok(chat_hall_speaking_status_from_amounts(
         required_recharge_minor,

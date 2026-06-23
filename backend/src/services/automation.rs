@@ -1007,8 +1007,8 @@ mod tests {
                 SaveLotteryDrawControlRequest {
                     enabled: true,
                     draw_number: Some("2,4,7".to_string()),
-                    target_scope: DrawControlTargetScope::Lottery,
-                    target_issue: None,
+                    target_scope: DrawControlTargetScope::Issue,
+                    target_issue: Some("MANUAL20260602002".to_string()),
                     target_order_id: None,
                 },
             )

@@ -276,7 +276,9 @@ function scheduleSpeakingStatusRefresh() {
   }, 250)
 }
 
-function ensureCanSpeak() {
+async function ensureCanSpeak() {
+  if (canSpeak.value) return true
+  await loadSpeakingStatus()
   if (canSpeak.value) return true
   showToast(speakingLimitMessage.value)
   return false
@@ -293,7 +295,7 @@ function showSendError(error: unknown, fallback: string) {
 async function sendMessage() {
   const content = draft.value.trim()
   if (!content || sending.value) return
-  if (!ensureCanSpeak()) return
+  if (!await ensureCanSpeak()) return
   sending.value = true
   try {
     const message = await sendChatHallMessage(content)
@@ -310,7 +312,7 @@ async function sendMessage() {
 }
 
 async function toggleEmojiPicker() {
-  if (!ensureCanSpeak()) return
+  if (!await ensureCanSpeak()) return
   emojiPickerVisible.value = !emojiPickerVisible.value
   if (emojiPickerVisible.value) attachmentVisible.value = false
   if (emojiPickerVisible.value) {
@@ -318,21 +320,21 @@ async function toggleEmojiPicker() {
   }
 }
 
-function toggleAttachmentMenu() {
-  if (!ensureCanSpeak()) return
+async function toggleAttachmentMenu() {
+  if (!await ensureCanSpeak()) return
   attachmentVisible.value = !attachmentVisible.value
   if (attachmentVisible.value) emojiPickerVisible.value = false
 }
 
-function openRedPacketDialog() {
-  if (!ensureCanSpeak()) return
+async function openRedPacketDialog() {
+  if (!await ensureCanSpeak()) return
   attachmentVisible.value = false
   redPacketDialogVisible.value = true
 }
 
 async function submitRedPacket() {
   if (sendingRedPacket.value) return
-  if (!ensureCanSpeak()) return
+  if (!await ensureCanSpeak()) return
   const amountMinor = moneyToMinor(redPacketAmount.value)
   const claimCount = Math.trunc(Number(redPacketCount.value || 0))
   if (amountMinor <= 0) {
@@ -439,7 +441,7 @@ function selectedRedPacketClaimCount() {
 }
 
 async function openGroupBuyDialog() {
-  if (!ensureCanSpeak()) return
+  if (!await ensureCanSpeak()) return
   attachmentVisible.value = false
   groupBuyDialogVisible.value = true
   if (!myGroupBuyPlans.value.length) {
@@ -461,7 +463,7 @@ async function loadMyGroupBuyPlans() {
 
 async function shareGroupBuy(plan: GroupBuyPlan) {
   if (sharingGroupBuyId.value) return
-  if (!ensureCanSpeak()) return
+  if (!await ensureCanSpeak()) return
   sharingGroupBuyId.value = plan.id
   try {
     const message = await shareChatHallGroupBuyPlan(plan.id)

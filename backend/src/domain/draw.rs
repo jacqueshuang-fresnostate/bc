@@ -191,7 +191,7 @@ pub struct DrawIssueResultRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 开奖控制范围，支持按彩种、指定期号或指定订单所在期号生效。
+/// 开奖控制范围。后台当前固定使用指定期号，旧范围值仅用于兼容历史数据读取。
 pub enum DrawControlTargetScope {
     Lottery,
     Issue,
@@ -200,9 +200,9 @@ pub enum DrawControlTargetScope {
 
 /// 开奖控制范围的默认值实现。
 impl Default for DrawControlTargetScope {
-    /// 默认沿用旧版本按彩种整体生效的控制范围。
+    /// 默认按指定期号生效，避免控制配置误作用到后续期号。
     fn default() -> Self {
-        Self::Lottery
+        Self::Issue
     }
 }
 
@@ -215,13 +215,13 @@ pub struct SaveLotteryDrawControlRequest {
     /// 开奖号码，使用英文逗号分隔。
     #[serde(default)]
     pub draw_number: Option<String>,
-    /// 控奖生效范围。
+    /// 控奖生效范围，后台保存时会统一归一为指定期号。
     #[serde(default)]
     pub target_scope: DrawControlTargetScope,
     /// 本次校准匹配到的本地期号。
     #[serde(default)]
     pub target_issue: Option<String>,
-    /// 指定控单时关联的订单 ID。
+    /// 兼容旧版指定控单字段，后台保存后会清空。
     #[serde(default)]
     pub target_order_id: Option<String>,
 }
@@ -240,11 +240,11 @@ pub struct LotteryDrawControl {
     pub enabled: bool,
     /// 开奖号码，使用英文逗号分隔。
     pub draw_number: Option<String>,
-    /// 控奖生效范围。
+    /// 控奖生效范围，后台展示固定为指定期号。
     pub target_scope: DrawControlTargetScope,
     /// 本次校准匹配到的本地期号。
     pub target_issue: Option<String>,
-    /// 指定控单时关联的订单 ID。
+    /// 兼容旧版指定控单字段，当前返回为空。
     pub target_order_id: Option<String>,
     /// 最后更新时间。
     pub updated_at: Option<String>,

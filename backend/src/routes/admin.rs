@@ -1426,7 +1426,7 @@ async fn normalize_admin_draw_control_target(
     payload: &mut SaveLotteryDrawControlRequest,
 ) -> ApiResult<()> {
     if !payload.enabled {
-        payload.target_scope = DrawControlTargetScope::Lottery;
+        payload.target_scope = DrawControlTargetScope::Issue;
         payload.target_issue = None;
         payload.target_order_id = None;
         return Ok(());
@@ -1435,59 +1435,50 @@ async fn normalize_admin_draw_control_target(
         return Err(ApiError::BadRequest("该彩种未开启开奖号码控制".to_string()));
     }
 
-    match payload.target_scope {
-        DrawControlTargetScope::Lottery => {
-            payload.target_issue = None;
-            payload.target_order_id = None;
-            Ok(())
-        }
-        DrawControlTargetScope::Issue => {
-            let issue = required_admin_control_value(payload.target_issue.as_deref(), "控制期号")?;
-            let draw_issue = state
-                .draws
-                .get_by_lottery_issue(&lottery.id, &issue)
-                .await?;
-            if matches!(
-                draw_issue.status,
-                DrawIssueStatus::Drawn | DrawIssueStatus::Cancelled
-            ) {
-                payload.enabled = false;
-                payload.target_scope = DrawControlTargetScope::Lottery;
-                payload.target_issue = None;
-                payload.target_order_id = None;
-                return Ok(());
-            }
-            payload.target_issue = Some(issue);
-            payload.target_order_id = None;
-            Ok(())
-        }
-        DrawControlTargetScope::Order => {
-            let order_id =
-                required_admin_control_value(payload.target_order_id.as_deref(), "目标订单")?;
-            let order = state.orders.get(&order_id).await?;
-            if order.lottery_id != lottery.id {
-                return Err(ApiError::BadRequest("目标订单不属于当前彩种".to_string()));
-            }
-            if order.status != OrderStatus::PendingDraw {
-                return Err(ApiError::BadRequest("只能控制待开奖订单".to_string()));
-            }
-            if let Some(target_issue) = payload
-                .target_issue
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                if target_issue != order.issue {
-                    return Err(ApiError::BadRequest(
-                        "目标订单期号与控制期号不一致".to_string(),
-                    ));
+    let issue = if let Some(issue) = payload
+        .target_issue
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        issue.to_string()
+    } else {
+        match payload.target_scope {
+            DrawControlTargetScope::Order => {
+                let order_id =
+                    required_admin_control_value(payload.target_order_id.as_deref(), "目标订单")?;
+                let order = state.orders.get(&order_id).await?;
+                if order.lottery_id != lottery.id {
+                    return Err(ApiError::BadRequest("目标订单不属于当前彩种".to_string()));
                 }
+                if order.status != OrderStatus::PendingDraw {
+                    return Err(ApiError::BadRequest("只能控制待开奖订单".to_string()));
+                }
+                order.issue
             }
-            payload.target_issue = Some(order.issue);
-            payload.target_order_id = Some(order.id);
-            Ok(())
+            DrawControlTargetScope::Lottery | DrawControlTargetScope::Issue => {
+                required_admin_control_value(payload.target_issue.as_deref(), "控制期号")?
+            }
         }
+    };
+    let draw_issue = state
+        .draws
+        .get_by_lottery_issue(&lottery.id, &issue)
+        .await?;
+    if matches!(
+        draw_issue.status,
+        DrawIssueStatus::Drawn | DrawIssueStatus::Cancelled
+    ) {
+        payload.enabled = false;
+        payload.target_scope = DrawControlTargetScope::Issue;
+        payload.target_issue = None;
+        payload.target_order_id = None;
+        return Ok(());
     }
+    payload.target_scope = DrawControlTargetScope::Issue;
+    payload.target_issue = Some(issue);
+    payload.target_order_id = None;
+    Ok(())
 }
 
 /// 读取后台开奖控制目标字段，启用对应范围时不能为空。
@@ -5512,6 +5503,19 @@ mod tests {
         let state = test_state();
         let mut lottery = state.lotteries.get("ssc60").await.expect("lottery exists");
         lottery.sale_enabled = true;
+        state
+            .draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "202606052200".to_string(),
+                    scheduled_at: "2026-06-05 22:00:00".to_string(),
+                    sale_closed_at: "2026-06-05 21:59:30".to_string(),
+                },
+            )
+            .await
+            .expect("draw issue can be created");
         let order = state
             .orders
             .create(
@@ -5542,8 +5546,9 @@ mod tests {
             .await
             .expect("order target can be normalized");
 
+        assert_eq!(payload.target_scope, DrawControlTargetScope::Issue);
         assert_eq!(payload.target_issue.as_deref(), Some("202606052200"));
-        assert_eq!(payload.target_order_id.as_deref(), Some(order.id.as_str()));
+        assert_eq!(payload.target_order_id, None);
     }
 
     #[tokio::test]
@@ -5587,7 +5592,7 @@ mod tests {
             .expect("drawn issue target can be normalized");
 
         assert!(!payload.enabled);
-        assert_eq!(payload.target_scope, DrawControlTargetScope::Lottery);
+        assert_eq!(payload.target_scope, DrawControlTargetScope::Issue);
         assert_eq!(payload.target_issue, None);
         assert_eq!(payload.target_order_id, None);
     }
@@ -5628,7 +5633,7 @@ mod tests {
             .expect("cancelled issue target can be normalized");
 
         assert!(!payload.enabled);
-        assert_eq!(payload.target_scope, DrawControlTargetScope::Lottery);
+        assert_eq!(payload.target_scope, DrawControlTargetScope::Issue);
         assert_eq!(payload.target_issue, None);
         assert_eq!(payload.target_order_id, None);
     }

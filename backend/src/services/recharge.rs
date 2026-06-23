@@ -231,6 +231,27 @@ impl RechargeRepository {
         Ok(deleted_count)
     }
 
+    /// 按指定用户已入账充值订单校准累计充值表，供聊天大厅发言资格和提现流水门槛读取。
+    ///
+    /// 正常确认充值时已经会写入累计表；这里作为读取资格前的兜底校准，专门处理旧版本确认过的充值、
+    /// 迁移未及时补齐或服务器中途升级导致累计表低于充值订单总额的情况。内存模式没有数据库累计表，直接返回。
+    pub async fn reconcile_paid_recharge_turnover_for_user(&self, user_id: &str) -> ApiResult<()> {
+        let user_id = required_trimmed(user_id, "用户 ID")?;
+        let Some(database) = &self.persistence else {
+            return Ok(());
+        };
+
+        let mut tx = database
+            .pool()
+            .begin()
+            .await
+            .map_err(|_| ApiError::Internal("用户累计充值资格校准事务开启失败".to_string()))?;
+        reconcile_paid_recharge_turnover_for_user_in_transaction(&mut *tx, &user_id).await?;
+        tx.commit()
+            .await
+            .map_err(|_| ApiError::Internal("用户累计充值资格校准事务提交失败".to_string()))
+    }
+
     /// 返回指定用户充值订单。
     pub async fn list_for_user(&self, user_id: &str) -> ApiResult<Vec<RechargeOrderSummary>> {
         let user_id = required_trimmed(user_id, "user id")?;
@@ -525,6 +546,14 @@ async fn ensure_paid_recharge_turnover_from_orders_in_transaction(
     if order.status != RechargeOrderStatus::Paid {
         return Ok(());
     }
+    reconcile_paid_recharge_turnover_for_user_in_transaction(connection, &order.user_id).await
+}
+
+/// 在同一个数据库事务内按用户 paid 充值订单重算累计充值，并只补高不回退。
+async fn reconcile_paid_recharge_turnover_for_user_in_transaction(
+    connection: &mut PgConnection,
+    user_id: &str,
+) -> ApiResult<()> {
     sqlx::query(
         "WITH paid_recharge_totals AS (
             SELECT
@@ -564,14 +593,13 @@ async fn ensure_paid_recharge_turnover_from_orders_in_transaction(
             ),
             updated_at = now()",
     )
-    .bind(&order.user_id)
+    .bind(user_id)
     .execute(&mut *connection)
     .await
     .map_err(|error| {
         tracing::error!(
             %error,
-            user_id = order.user_id.as_str(),
-            recharge_order_id = order.id.as_str(),
+            user_id,
             "用户累计充值资格校准失败"
         );
         ApiError::Internal("用户累计充值资格校准失败".to_string())

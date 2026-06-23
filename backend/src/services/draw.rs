@@ -1512,17 +1512,38 @@ impl DrawControlStore {
     /// 按彩种组装后台控奖配置摘要。
     fn summary_for(&self, lottery: &LotteryKind) -> LotteryDrawControl {
         let config = self.controls.get(&lottery.id);
+        let enabled = config.is_some_and(|value| {
+            value.enabled
+                && matches!(value.target_scope, DrawControlTargetScope::Issue)
+                && value
+                    .target_issue
+                    .as_deref()
+                    .is_some_and(|issue| !issue.trim().is_empty())
+        });
         LotteryDrawControl {
             lottery_id: lottery.id.clone(),
             lottery_name: lottery.name.clone(),
             number_type: lottery.number_type.clone(),
-            enabled: config.is_some_and(|value| value.enabled),
-            draw_number: config.and_then(|value| value.draw_number.clone()),
+            enabled,
+            draw_number: config.and_then(|value| {
+                if enabled {
+                    value.draw_number.clone()
+                } else {
+                    None
+                }
+            }),
             target_scope: config
                 .map(|value| value.target_scope.clone())
-                .unwrap_or_default(),
-            target_issue: config.and_then(|value| value.target_issue.clone()),
-            target_order_id: config.and_then(|value| value.target_order_id.clone()),
+                .filter(|scope| matches!(scope, DrawControlTargetScope::Issue))
+                .unwrap_or(DrawControlTargetScope::Issue),
+            target_issue: config.and_then(|value| {
+                if enabled {
+                    value.target_issue.clone()
+                } else {
+                    None
+                }
+            }),
+            target_order_id: None,
             updated_at: config.map(|value| value.updated_at.clone()),
         }
     }
@@ -1537,7 +1558,7 @@ impl DrawControlConfig {
         }
 
         match self.target_scope {
-            DrawControlTargetScope::Lottery => true,
+            DrawControlTargetScope::Lottery => false,
             DrawControlTargetScope::Issue | DrawControlTargetScope::Order => self
                 .target_issue
                 .as_deref()
@@ -1602,19 +1623,21 @@ fn normalize_control_target(
     payload: &SaveLotteryDrawControlRequest,
 ) -> ApiResult<(DrawControlTargetScope, Option<String>, Option<String>)> {
     if !payload.enabled {
-        return Ok((DrawControlTargetScope::Lottery, None, None));
+        return Ok((DrawControlTargetScope::Issue, None, None));
     }
 
     match payload.target_scope {
-        DrawControlTargetScope::Lottery => Ok((DrawControlTargetScope::Lottery, None, None)),
+        DrawControlTargetScope::Lottery => {
+            let issue = required_control_target(payload.target_issue.as_deref(), "控制期号")?;
+            Ok((DrawControlTargetScope::Issue, Some(issue), None))
+        }
         DrawControlTargetScope::Issue => {
             let issue = required_control_target(payload.target_issue.as_deref(), "控制期号")?;
             Ok((DrawControlTargetScope::Issue, Some(issue), None))
         }
         DrawControlTargetScope::Order => {
             let issue = required_control_target(payload.target_issue.as_deref(), "目标订单期号")?;
-            let order_id = required_control_target(payload.target_order_id.as_deref(), "目标订单")?;
-            Ok((DrawControlTargetScope::Order, Some(issue), Some(order_id)))
+            Ok((DrawControlTargetScope::Issue, Some(issue), None))
         }
     }
 }
@@ -2077,8 +2100,8 @@ mod tests {
                 SaveLotteryDrawControlRequest {
                     enabled: true,
                     draw_number: Some("2,4,7".to_string()),
-                    target_scope: DrawControlTargetScope::Lottery,
-                    target_issue: None,
+                    target_scope: DrawControlTargetScope::Issue,
+                    target_issue: Some("2026143".to_string()),
                     target_order_id: None,
                 },
             )
@@ -2149,13 +2172,13 @@ mod tests {
                 SaveLotteryDrawControlRequest {
                     enabled: true,
                     draw_number: Some("2,4,7".to_string()),
-                    target_scope: DrawControlTargetScope::Order,
+                    target_scope: DrawControlTargetScope::Issue,
                     target_issue: Some("2026143".to_string()),
-                    target_order_id: Some("O000000000001".to_string()),
+                    target_order_id: None,
                 },
             )
             .await
-            .expect("order control can be saved");
+            .expect("issue control can be saved");
         let issue = repository
             .create(&lottery, create_request("2026143"))
             .await
@@ -2164,7 +2187,7 @@ mod tests {
         let drawn = repository
             .draw(&issue.id, DrawIssueResultRequest::default())
             .await
-            .expect("order scoped control can override api draw");
+            .expect("issue scoped control can override api draw");
 
         assert_eq!(drawn.draw_number.as_deref(), Some("2,4,7"));
     }
@@ -2180,8 +2203,8 @@ mod tests {
                 SaveLotteryDrawControlRequest {
                     enabled: true,
                     draw_number: Some("2,4,7".to_string()),
-                    target_scope: DrawControlTargetScope::Lottery,
-                    target_issue: None,
+                    target_scope: DrawControlTargetScope::Issue,
+                    target_issue: Some("2026143".to_string()),
                     target_order_id: None,
                 },
             )
@@ -2227,8 +2250,8 @@ mod tests {
                 SaveLotteryDrawControlRequest {
                     enabled: true,
                     draw_number: Some("2,4,7".to_string()),
-                    target_scope: DrawControlTargetScope::Lottery,
-                    target_issue: None,
+                    target_scope: DrawControlTargetScope::Issue,
+                    target_issue: Some("2026143".to_string()),
                     target_order_id: None,
                 },
             )

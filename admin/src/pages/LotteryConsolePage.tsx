@@ -5,7 +5,6 @@ import {
   Card,
   Select,
   Spin,
-  Switch,
   Tag,
   Toast,
 } from '@douyinfe/semi-ui';
@@ -39,7 +38,6 @@ import {
   lotteryNumberTypeText as numberTypeText,
 } from '../utils/lotteries';
 import {
-  formatBetInfoSummary,
   formatGroupBuyNumbersSelection,
 } from '../utils/orderBetInfo';
 import { formatPlayRuleLabel } from '../utils/playRules';
@@ -135,8 +133,6 @@ export function LotteryConsolePage({
     [
       selectedControlItem,
       controlForm.targetIssue,
-      controlForm.targetOrderId,
-      controlForm.targetScope,
     ],
   );
   const {
@@ -213,11 +209,11 @@ export function LotteryConsolePage({
       }
       const trimmedDrawNumber = normalizedForm.drawNumber.trim();
       await saveDrawControl(selectedControlItem.lottery.id, {
-        enabled: normalizedForm.enabled,
-        drawNumber: normalizedForm.enabled ? trimmedDrawNumber || null : null,
-        targetIssue: normalizedForm.enabled ? normalizedForm.targetIssue.trim() || null : null,
-        targetOrderId: normalizedForm.enabled ? normalizedForm.targetOrderId.trim() || null : null,
-        targetScope: normalizedForm.targetScope,
+        enabled: true,
+        drawNumber: trimmedDrawNumber || null,
+        targetIssue: normalizedForm.targetIssue.trim() || null,
+        targetOrderId: null,
+        targetScope: 'issue',
       });
       Toast.success('开奖号码控制已保存');
       refresh();
@@ -405,17 +401,14 @@ function LotteryConsoleControlPanel({
   const lottery = item.lottery;
   const inputMeta = drawNumberInputMeta(lottery.numberType);
   const controlIssues = controlCandidateIssues(item);
-  const controlOrders = controlCandidateOrders(item);
   const visibleOrders = visibleConsoleOrders(item, form);
   const groupBuyRows = groupBuyInitiatorParticipantRows(groupBuyPlans);
   const targetIssueInactive = controlFormTargetsInactiveIssue(item, form);
-  const targetSelectDisabled = !form.enabled && !targetIssueInactive;
   const saveDisabled =
     saving ||
-    (form.enabled &&
-      (!form.drawNumber.trim() ||
-        (form.targetScope === 'issue' && !form.targetIssue.trim()) ||
-        (form.targetScope === 'order' && !form.targetOrderId.trim())));
+    targetIssueInactive ||
+    !form.drawNumber.trim() ||
+    !form.targetIssue.trim();
 
   const currentIssue = item.currentIssue;
   const recentDrawnIssue = item.recentDrawnIssue;
@@ -451,79 +444,14 @@ function LotteryConsoleControlPanel({
             />
           </section>
 
-          <section className="grid gap-3 lg:grid-cols-[1fr_1.1fr_1.35fr_1.25fr]">
+          <section className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
             <div className="rounded-md border border-line bg-white p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-xs font-medium text-slate-500">
-                    总开关（是/否）
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-ink">
-                    {form.enabled ? '已启用控制开奖' : '未启用控制开奖'}
-                  </div>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">
-                    开启后按下方号码开奖。
-                  </p>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-2">
-                  <Switch
-                    checked={form.enabled}
-                    disabled={targetIssueInactive}
-                    onChange={(checked) =>
-                      onChange(
-                        normalizeControlFormForIssueStatus(item, {
-                          ...form,
-                          enabled: checked,
-                        }),
-                      )
-                    }
-                  />
-                  <Tag color={form.enabled ? 'red' : 'grey'}>
-                    {form.enabled ? '是' : '否'}
-                  </Tag>
-                </div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-medium text-slate-500">控制期号</div>
+                <Tag color="blue">指定期号</Tag>
               </div>
-              {targetIssueInactive ? (
-                <Banner
-                  className="mt-3"
-                  type="warning"
-                  title="指定期号已结束"
-                  description="已开奖或已取消期号不能继续启用开奖号码控制，系统已自动取消勾选。请选择未结束期号后再启用。"
-                />
-              ) : null}
-            </div>
-
-            <div className="rounded-md border border-line bg-white p-3">
-              <div className="text-xs font-medium text-slate-500">控制范围</div>
               <Select
                 className="mt-2 w-full"
-                disabled={targetSelectDisabled}
-                value={form.targetScope}
-                onChange={(value) => {
-                  onChange(
-                    controlFormWithScope(
-                      item,
-                      form,
-                      String(value) as DrawControlTargetScope,
-                    ),
-                  );
-                  onRefreshOrders();
-                }}
-              >
-                <Select.Option value="lottery">整个彩种后续开奖</Select.Option>
-                <Select.Option value="issue">指定期号</Select.Option>
-                <Select.Option value="order">指定订单所在期号</Select.Option>
-              </Select>
-            </div>
-
-            <div className="rounded-md border border-line bg-white p-3">
-              <div className="text-xs font-medium text-slate-500">
-                {form.targetScope === 'order' ? '指定订单' : '控制期号'}
-              </div>
-              {form.targetScope === 'issue' ? (
-              <Select
-                className="mt-2 w-full"
-                disabled={targetSelectDisabled}
                 placeholder="请选择要控制的期号"
                 value={form.targetIssue || undefined}
                 onChange={(value) => {
@@ -537,43 +465,16 @@ function LotteryConsoleControlPanel({
                   </Select.Option>
                 ))}
               </Select>
-              ) : null}
-              {form.targetScope === 'order' ? (
-              <Select
-                className="mt-2 w-full"
-                disabled={targetSelectDisabled}
-                placeholder="请选择要控制的订单"
-                value={form.targetOrderId || undefined}
-                onChange={(value) => {
-                  const order = controlOrders.find(
-                    (item) => item.id === String(value ?? ''),
-                  );
-                  onChange({
-                    ...form,
-                    targetIssue: order?.issue ?? '',
-                    targetOrderId: order?.id ?? '',
-                  });
-                  onRefreshOrders();
-                }}
-              >
-                {controlOrders.map((order) => (
-                  <Select.Option key={order.id} value={order.id}>
-                    <div className="min-w-0">
-                      <div className="truncate">
-                        {order.id} · 用户 {formatOrderUser(order)} · 第 {order.issue} 期 · {formatMoney(order.amountMinor)}
-                      </div>
-                      <div className="truncate text-xs text-slate-500">
-                        {formatBetInfoSummary(order.selection, order.expandedBets)}
-                      </div>
-                    </div>
-                  </Select.Option>
-                ))}
-              </Select>
-              ) : null}
-              {form.targetScope === 'lottery' ? (
-                <div className="mt-2 rounded border border-dashed border-line bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                  当前设置将作用于该彩种后续所有未开奖期号。
-                </div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                默认选择当前销售中的期号；已开奖、已取消或已经过去的期号不会显示。
+              </p>
+              {targetIssueInactive ? (
+                <Banner
+                  className="mt-3"
+                  type="warning"
+                  title="指定期号已结束"
+                  description="当前期号已经结束，控制配置已在页面上自动切回销售中期号。"
+                />
               ) : null}
             </div>
 
@@ -583,7 +484,6 @@ function LotteryConsoleControlPanel({
               </div>
               <Input
                 className="form-input mt-2 font-mono text-lg font-semibold"
-                disabled={!form.enabled}
                 maxLength={inputMeta?.maxLength}
                 placeholder={inputMeta?.placeholder}
                 value={form.drawNumber}
@@ -600,7 +500,7 @@ function LotteryConsoleControlPanel({
               <div>
                 <h3 className="text-sm font-semibold text-ink">用户下单信息</h3>
                 <p className="mt-1 text-xs text-slate-500">
-                  默认显示当前控制范围相关订单，订单控制只匹配该订单所在期号。
+                  默认显示当前指定期号相关订单。
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -679,12 +579,12 @@ function LotteryConsoleControlPanel({
                                 ...form,
                                 enabled: true,
                                 targetIssue: order.issue,
-                                targetOrderId: order.id,
-                                targetScope: 'order',
+                                targetOrderId: '',
+                                targetScope: 'issue',
                               })
                             }
                           >
-                            控制此单
+                            控制本期
                           </Button>
                         </td>
                       </tr>
@@ -986,58 +886,23 @@ function drawControlFormFromControl(
   control: LotteryDrawControl | null,
   item: LotteryConsoleItem | null,
 ): LotteryDrawControlFormState {
-  const targetScope = control?.enabled ? control.targetScope ?? 'issue' : 'issue';
-  const targetOrder = item?.orders.find((order) => order.id === control?.targetOrderId);
   const defaultIssue = sellingIssueForControl(item);
+  const controlTargetIssue = control?.targetIssue?.trim() || '';
+  const controlStillTargetsCurrentIssue =
+    Boolean(control?.enabled) &&
+    control?.targetScope === 'issue' &&
+    controlTargetIssue !== '' &&
+    controlIssueIsCurrent(item, controlTargetIssue);
+  const activeTargetIssue = controlStillTargetsCurrentIssue
+    ? controlTargetIssue
+    : defaultIssue;
 
   return {
-    enabled: control?.enabled ?? false,
-    drawNumber: control?.drawNumber ?? '',
-    targetIssue:
-      targetScope === 'lottery'
-        ? ''
-        : control?.targetIssue ?? targetOrder?.issue ?? defaultIssue,
-    targetOrderId: targetScope === 'order' ? control?.targetOrderId ?? '' : '',
-    targetScope,
-  };
-}
-
-function controlFormWithScope(
-  item: LotteryConsoleItem | null,
-  form: LotteryDrawControlFormState,
-  targetScope: DrawControlTargetScope,
-): LotteryDrawControlFormState {
-  if (targetScope === 'lottery') {
-    return {
-      ...form,
-      targetIssue: '',
-      targetOrderId: '',
-      targetScope,
-    };
-  }
-  if (targetScope === 'issue') {
-    return normalizeControlFormForIssueStatus(item, {
-      ...form,
-      targetIssue: form.targetIssue || sellingIssueForControl(item),
-      targetOrderId: '',
-      targetScope,
-    });
-  }
-
-  const defaultIssue = sellingIssueForControl(item);
-  const candidateOrders = controlCandidateOrders(item);
-  const order =
-    item?.orders.find((order) => order.id === form.targetOrderId) ??
-    candidateOrders.find((order) => order.issue === defaultIssue) ??
-    candidateOrders.find((order) => order.issue === item?.currentIssue?.issue) ??
-    candidateOrders[0] ??
-    null;
-
-  return {
-    ...form,
-    targetIssue: order?.issue ?? '',
-    targetOrderId: order?.id ?? '',
-    targetScope,
+    enabled: Boolean(activeTargetIssue),
+    drawNumber: controlStillTargetsCurrentIssue ? control?.drawNumber ?? '' : '',
+    targetIssue: activeTargetIssue,
+    targetOrderId: '',
+    targetScope: 'issue',
   };
 }
 
@@ -1050,6 +915,7 @@ function controlFormWithIssue(
     ...form,
     targetIssue,
     targetOrderId: '',
+    targetScope: 'issue',
   });
 }
 
@@ -1057,13 +923,43 @@ function normalizeControlFormForIssueStatus(
   item: LotteryConsoleItem | null,
   form: LotteryDrawControlFormState,
 ): LotteryDrawControlFormState {
-  if (!form.enabled || !controlFormTargetsInactiveIssue(item, form)) {
-    return form;
+  const sellingIssue = sellingIssueForControl(item);
+  const normalizedScopeForm = {
+    ...form,
+    targetOrderId: '',
+    targetScope: 'issue' as DrawControlTargetScope,
+  };
+  if (
+    !normalizedScopeForm.targetIssue.trim() &&
+    sellingIssue
+  ) {
+    return {
+      ...normalizedScopeForm,
+      enabled: true,
+      targetIssue: sellingIssue,
+    };
+  }
+  if (
+    normalizedScopeForm.enabled &&
+    normalizedScopeForm.targetIssue.trim() &&
+    !controlIssueIsCurrent(item, normalizedScopeForm.targetIssue)
+  ) {
+    return {
+      ...normalizedScopeForm,
+      enabled: Boolean(sellingIssue),
+      drawNumber: '',
+      targetIssue: sellingIssue,
+    };
+  }
+  if (!controlFormTargetsInactiveIssue(item, normalizedScopeForm)) {
+    return normalizedScopeForm;
   }
 
   return {
-    ...form,
-    enabled: false,
+    ...normalizedScopeForm,
+    enabled: Boolean(sellingIssue),
+    drawNumber: '',
+    targetIssue: sellingIssue,
   };
 }
 
@@ -1079,7 +975,7 @@ function controlFormTargetsInactiveIssue(
     return false;
   }
   const status = issueStatusForControl(item, targetIssue);
-  return status === 'drawn' || status === 'cancelled';
+  return status === 'drawn' || status === 'cancelled' || !controlIssueIsCurrent(item, targetIssue);
 }
 
 function issueStatusForControl(
@@ -1093,12 +989,8 @@ function issueStatusForControl(
 
 function controlCandidateIssues(item: LotteryConsoleItem | null) {
   return [...(item?.issues ?? [])]
-    .filter((issue) => issue.status === 'open' || issue.status === 'closed')
+    .filter((issue) => issue.status === 'open')
     .sort((left, right) => issueTimeValue(left) - issueTimeValue(right));
-}
-
-function controlCandidateOrders(item: LotteryConsoleItem | null) {
-  return (item?.orders ?? []).filter((order) => order.status === 'pendingDraw');
 }
 
 function sellingIssueForControl(item: LotteryConsoleItem | null | undefined) {
@@ -1117,17 +1009,26 @@ function sellingIssueForControl(item: LotteryConsoleItem | null | undefined) {
   const latestKnownIssue = candidateIssues.sort(
     (left, right) => issueTimeValue(right) - issueTimeValue(left),
   )[0];
-  return item?.currentIssue?.issue ?? latestKnownIssue?.issue ?? '';
+  return latestKnownIssue?.issue ?? '';
+}
+
+function controlIssueIsCurrent(
+  item: LotteryConsoleItem | null | undefined,
+  targetIssue: string,
+) {
+  const normalizedIssue = targetIssue.trim();
+  if (!normalizedIssue) {
+    return false;
+  }
+  const currentSellingIssue = sellingIssueForControl(item);
+  return currentSellingIssue !== '' && normalizedIssue === currentSellingIssue;
 }
 
 function visibleConsoleOrders(
   item: LotteryConsoleItem,
   form: LotteryDrawControlFormState,
 ) {
-  if (form.targetScope === 'order' && form.targetOrderId.trim()) {
-    return item.orders.filter((order) => order.id === form.targetOrderId.trim());
-  }
-  if (form.targetScope === 'issue' && form.targetIssue.trim()) {
+  if (form.targetIssue.trim()) {
     return item.orders.filter((order) => order.issue === form.targetIssue.trim());
   }
   if (item.currentIssueOrders.length > 0) {
@@ -1140,11 +1041,7 @@ function groupBuyIssueForControl(
   item: LotteryConsoleItem,
   form: LotteryDrawControlFormState,
 ) {
-  if (form.targetScope === 'order' && form.targetOrderId.trim()) {
-    const order = item.orders.find((order) => order.id === form.targetOrderId.trim());
-    return order?.issue ?? form.targetIssue.trim();
-  }
-  if (form.targetScope === 'issue' && form.targetIssue.trim()) {
+  if (form.targetIssue.trim()) {
     return form.targetIssue.trim();
   }
   return sellingIssueForControl(item);
