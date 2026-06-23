@@ -38,15 +38,7 @@ const inviterText = computed(() => {
   return `${inviter.username}（${profile.value?.used_invitation_code || inviter.invitation_code}）`
 })
 
-const accountItems = computed(() => [
-  { key: 'security', label: '安全中心与密码', icon: 'shield_lock', value: profile.value?.email ? '已绑定' : '未绑定', hint: profile.value?.email || '' },
-  { key: 'orders', label: '我的注单', icon: 'receipt_text', hint: '查看独立下注与合买注单' },
-  { key: 'ledger', label: '资金流水', icon: 'payments', hint: '查看充值、投注、提现与派奖记录' },
-  { key: 'withdrawal', label: '提现管理', icon: 'account_balance', hint: '管理收款信息' },
-])
-
-const supportItems = computed(() => [
-  { key: 'chatHall', label: '聊天大厅', icon: 'chat', value: '会员交流' },
+const primaryItems = computed(() => [
   {
     key: 'support',
     label: '在线客服',
@@ -55,10 +47,7 @@ const supportItems = computed(() => [
     unread: hasSupportUnread.value,
     badgeCount: supportUnreadTotal.value,
   },
-  { key: 'help', label: '帮助中心', icon: 'help', hint: '查看常见问题' },
-])
-
-const inviteItems = computed(() => [
+  { key: 'orders', label: '我的注单', icon: 'receipt_text', hint: '查看独立下注与合买注单' },
   {
     key: 'agentCenter',
     label: '代理中心',
@@ -66,6 +55,14 @@ const inviteItems = computed(() => [
     value: canInvite.value ? inviteText.value : '申请代理',
     hint: canInvite.value ? '查看直属下级充值与返利' : '申请成为代理后可邀请下级',
   },
+  { key: 'ledger', label: '资金流水', icon: 'payments', hint: '查看充值、投注、提现与派奖记录' },
+  { key: 'withdrawal', label: '提现管理', icon: 'account_balance', hint: '管理收款信息' },
+  { key: 'chatHall', label: '聊天大厅', icon: 'chat', value: '会员交流' },
+])
+
+const secondaryItems = computed(() => [
+  { key: 'security', label: '安全中心与密码', icon: 'shield_lock', value: profile.value?.email ? '已绑定' : '未绑定', hint: profile.value?.email || '' },
+  { key: 'help', label: '帮助中心', icon: 'help', hint: '查看常见问题' },
   { key: 'inviter', label: '邀请人', icon: 'group', value: inviterText.value },
 ])
 
@@ -88,15 +85,12 @@ function statusText(status: string) {
   return statusTextMap[status] || status || '-'
 }
 
-function onAccountItem(item: { key: string }) {
+function onProfileItem(item: { key: string }) {
   if (item.key === 'security') router.push('/security-center')
   if (item.key === 'orders') router.push('/orders')
   if (item.key === 'agentCenter') router.push('/agent-center')
   if (item.key === 'ledger') router.push('/ledger')
   if (item.key === 'withdrawal') router.push('/withdrawal-methods')
-}
-
-function onSupportItem(item: { key: string }) {
   if (item.key === 'chatHall') router.push('/chat-hall')
   if (item.key === 'support') router.push('/support')
   if (item.key === 'help') showToast('帮助中心建设中')
@@ -217,9 +211,8 @@ async function logout() {
       </section>
 
       <section class="space-y-3">
-        <SettingsListGroup :items="accountItems" @select="onAccountItem" />
-        <SettingsListGroup :items="supportItems" @select="onSupportItem" />
-        <SettingsListGroup :items="inviteItems" @select="onAccountItem" />
+        <SettingsListGroup :items="primaryItems" @select="onProfileItem" />
+        <SettingsListGroup :items="secondaryItems" @select="onProfileItem" />
 
         <button class="flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-xs font-bold text-primary transition-colors active:bg-red-50" @click="logout">
           <LucideIcon name="logout" class="h-4 w-4" />

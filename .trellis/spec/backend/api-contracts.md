@@ -346,7 +346,7 @@ WebSocket 消息统一使用当前系统事件信封：
 - `GET /api/user/chat-hall/red-packets/{id}/claims` 返回指定红包的领取进度和领取人列表，字段使用 `camelCase`，`claims` 中包含领取用户名、用户 ID、领取金额和领取时间；红包不存在时返回业务错误，不泄露资金表内部信息。
 - 聊天大厅消息必须写入 `chat_hall_messages` 表；`avatar_url` 保存发送人头像快照，用户更新头像后需要同步刷新该用户历史消息的头像快照。运行期只保留最近 200 条历史，接口返回最近 100 条。
 - 聊天大厅是所有登录用户可进入的公共大厅，不使用客服会话表，不允许把公共大厅消息写入 `support_conversations` 或 `support_messages`。
-- 聊天大厅发言门槛由系统设置 `chat_hall_speaking_min_recharge_minor` 控制，后台按元展示和编辑，后端内部按分保存，`0` 表示不限制；门槛统计只计算当前用户正向 `rechargeCredit` 充值本金流水，不计入 `rechargeBonusCredit` 赠送彩金、`rechargeRebateCredit` 代理返利、红包或手动调账。
+- 聊天大厅发言门槛由系统设置 `chat_hall_speaking_min_recharge_minor` 控制，后台按元展示和编辑，后端内部按分保存，`0` 表示不限制；数据库模式必须读取 `user_withdrawal_turnovers.cumulative_recharge_minor` 判断当前用户真实充值本金累计金额，不计入 `rechargeBonusCredit` 赠送彩金、`rechargeRebateCredit` 代理返利、红包或手动调账，避免清理资金流水后误判用户没有充值。
 - `POST /api/user/chat-hall/messages`、`POST /api/user/chat-hall/red-packets`、`POST /api/user/chat-hall/group-buy-plans` 必须在保存消息、扣款或广播前统一校验发言资格；未满足门槛时返回 403，并提示“抱歉，暂无发言权限，充值 ¥x 元即可参与群聊”。
 
 ### 4. 校验与错误矩阵
@@ -5071,7 +5071,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 聊天大厅发言资格：
 
 - 后台系统设置 `chat_hall_speaking_min_recharge_minor` 使用元作为运营输入单位，保存时转换为分，`0` 表示所有登录用户都可发言。
-- `GET /api/user/chat-hall/speaking-status` 按当前用户正向 `rechargeCredit` 本金流水累计金额判断资格，并返回 `canSpeak`、`requiredRechargeMinor`、`currentRechargeMinor`、`missingRechargeMinor` 和中文 `message`。
+- `GET /api/user/chat-hall/speaking-status` 按当前用户真实充值本金累计金额判断资格；数据库模式读取 `user_withdrawal_turnovers.cumulative_recharge_minor`，并返回 `canSpeak`、`requiredRechargeMinor`、`currentRechargeMinor`、`missingRechargeMinor` 和中文 `message`。
 - 发送文本、红包和合买分享都必须在业务执行前调用同一发言资格守卫；门槛不足时不扣款、不保存消息、不广播实时事件。
 
 发送红包请求体：

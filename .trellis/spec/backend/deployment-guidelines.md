@@ -20,6 +20,7 @@
 
 - `BACKEND_PORT`：可选，容器内后端监听端口，默认 `8080`，必须是纯数字。
 - `BACKEND_STARTUP_TIMEOUT_SECONDS`：可选，入口脚本等待后端健康检查通过的最长秒数，默认 `60`，必须是纯数字。
+- `BACKEND_STARTUP_LOG_INTERVAL_SECONDS`：可选，入口脚本等待后端健康检查期间输出进度日志的间隔秒数，默认 `2`，必须是大于 `0` 的纯数字。
 - `APP_PORT`：可选，Compose 模式下宿主机暴露端口，默认 `8080`。
 - `RUST_LOG`：可选，后端日志级别，默认 `info`。
 - `DATABASE_URL`：可选，配置后后端使用 PostgreSQL；未配置时使用内存演示仓储。非空时必须以 `postgres://` 或 `postgresql://` 开头。
@@ -30,6 +31,7 @@
 - Nginx 代理 `/api/` 时必须保留 WebSocket Upgrade 能力，至少包含 `proxy_http_version 1.1`、`Upgrade`、`Connection` 请求头转发，以及覆盖实时心跳间隔的 `proxy_read_timeout`；否则 `GET /api/user/realtime` 会连接失败或无法持续接收开奖推送。
 - Nginx 可以开启 gzip 压缩静态文本资源；哈希静态资源目录 `/assets/` 必须使用长期 immutable 缓存，`/index.html` 与 SPA fallback 必须使用 `no-store`，避免手机端加载旧入口文件和新资源文件不匹配。
 - 入口脚本必须先启动后端并等待 `http://127.0.0.1:${BACKEND_PORT}/api/health` 通过，再启动 Nginx；后端启动失败时容器必须失败退出，不能只留下 Nginx 返回 502。
+- 入口脚本等待健康检查期间必须持续输出中文启动进度，至少包含已等待秒数、剩余秒数、curl 退出码、HTTP 状态和后端进程状态；不得只输出一次“等待后端健康检查通过”后静默等待。
 - 入口脚本启动 Nginx 后必须持续监控后端进程；后端退出时需要关闭 Nginx 并让容器退出。
 - 非 `/api/` 路径必须使用 SPA fallback 到 `/index.html`。
 
@@ -37,6 +39,7 @@
 
 - `BACKEND_PORT` 为空或包含非数字字符 -> 入口脚本输出中文错误并退出。
 - `BACKEND_STARTUP_TIMEOUT_SECONDS` 为空或包含非数字字符 -> 入口脚本输出中文错误并退出。
+- `BACKEND_STARTUP_LOG_INTERVAL_SECONDS` 为空、包含非数字字符或等于 `0` -> 入口脚本输出中文错误并退出。
 - 后端未能启动 -> `/api/health` 失败，Docker healthcheck 变为 unhealthy。
 - 后端启动失败或运行后退出 -> 容器失败退出，不能继续由 Nginx 对外返回 502。
 - Nginx 未按 `BACKEND_PORT` 渲染代理端口 -> 首页可能正常但 `/api/health` 失败。
@@ -51,6 +54,7 @@
 - Good: `BACKEND_PORT=18080 docker run --rm -p 8080:80 bc-platform:latest`，Nginx 代理到容器内 `18080`，`/api/health` 成功。
 - Base: 不传环境变量，后端监听 `8080`，Nginx 对外服务 `80`，`/` 与 `/api/health` 均成功。
 - Bad: `BACKEND_PORT=abc docker run ...`，入口脚本拒绝启动并输出 `BACKEND_PORT 必须是数字`。
+- Good: 后端连接数据库较慢时，容器日志每 2 秒输出一次健康检查进度和后端进程状态，便于判断是数据库迁移慢、端口未监听还是进程已退出。
 - Compose Good: `docker compose up --build` 同时启动 PostgreSQL 和应用，应用日志显示已配置 `DATABASE_URL`。
 - Compose Good: `APP_PORT=18081 docker compose up --build` 可在宿主机端口冲突时切换对外端口，容器内仍由 Nginx 监听 `80`。
 - Good: 通过容器访问 `ws://127.0.0.1:<host-port>/api/user/realtime` 可以成功升级连接，并持续接收后端公开开奖事件。
@@ -172,8 +176,8 @@ cargo run
 
 - Workflow 顶层权限必须包含 `contents: read` 和 `packages: write`。
 - Workflow 应使用当前支持 Node.js 24 action runtime 的 action 版本，或显式设置 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`。
-- `quality` job 必须运行 `cargo fmt --check`、`cargo check`、`cargo test` 和 `npm run build`。
-- `docker` job 必须依赖 `quality` job，避免质量检查失败仍发布镜像。
+- `quality` job 必须运行 `cargo fmt --check`、`cargo check` 和 `npm run build`；GitHub 打包流程按当前发布效率要求跳过 `cargo test`。
+- `docker` job 必须依赖 `quality` job，避免格式、类型检查或前端构建失败仍发布镜像。
 - PR 触发时只能构建镜像，不能登录 GHCR 或推送镜像。
 - `main` 分支 push 时使用 `secrets.GITHUB_TOKEN` 登录 GHCR，并推送镜像。
 
@@ -181,19 +185,19 @@ cargo run
 
 - `packages: write` 缺失 -> GHCR 推送失败。
 - PR 触发时执行登录或推送 -> fork/权限场景容易失败，也可能把未合并代码发布到镜像仓库。
-- `docker` job 不依赖 `quality` -> 可能把测试失败的代码发布为镜像。
+- `docker` job 不依赖 `quality` -> 可能把格式、类型检查或前端构建失败的代码发布为镜像。
 - 标签只使用 `latest` -> 无法按提交回滚。
 - 使用已提示 Node.js 20 deprecation 的旧 action 版本 -> 2026-06-16 后可能被 GitHub 强制切换运行时并产生兼容风险。
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `main` push 先通过质量检查，再推送 `latest` 和 `sha-xxxxxxx`。
-- Base: PR 触发质量检查和 Docker 构建，但 `push=false`，不发布镜像。
+- Good: `main` push 先通过格式检查、类型检查和前端构建，再推送 `latest` 和 `sha-xxxxxxx`，GitHub 打包阶段不运行 `cargo test`。
+- Base: PR 触发构建检查和 Docker 构建，但 `push=false`，不发布镜像。
 - Bad: 所有分支 push 都发布 `latest`，导致测试分支覆盖生产候选镜像。
 
 ### 6. Tests Required
 
-- 本地至少运行 `cargo fmt --check`、`cargo check`、`cargo test`、`npm run build`。
+- 本地修改后端业务逻辑时仍建议运行 `cargo fmt --check`、`cargo check`、`cargo test` 和 `npm run build`；仅修改 GitHub 打包流程时至少检查 YAML、运行差异检查，并确认 workflow 中没有恢复 `cargo test`。
 - 本地运行 `docker build -t bc-platform:latest .` 确认 Dockerfile 仍能构建。
 - 修改 workflow 后检查 YAML 缩进、触发条件、权限、推送条件和镜像标签。
 - 推送后在 GitHub Actions 页面确认 workflow 运行通过，并在 GHCR 包页面确认镜像标签存在。

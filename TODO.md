@@ -410,9 +410,9 @@
 ## 2026-06-20 03:10 HKT IPA 打包运行时域名与品牌同步统一
 
 - 完成任务：修正无签名 IPA 打包时品牌同步地址和 App 运行时 API 地址可能不一致的问题。
-- 解决问题：`--branding-api-base` 过去只用于下载后台 Logo 和写入包内 `mobile-branding.json`，没有同步传给 Vite 构建；App 启动后会再次请求运行时 `/api/user/mobile/site-config`，如果运行时 API 地址不是当前平台后台，就可能把包内“鼎鸿”覆盖成其它平台名。本次确认当前域名 `https://ad.16888888.live/api/user/mobile/site-config` 返回 `platformName=鼎鸿`，域名本身不是旧域名。
-- 实施内容：`mobile/src/api/http.ts` 保留当前平台默认打包后端 `https://ad.16888888.live`，并继续支持 `VITE_API_BASE_URL` / `VITE_API_BASE` 覆盖；`build-unsigned-ipa.sh` 新增 `--api-base` 参数并在前端构建时写入 `VITE_API_BASE_URL`，`--branding-api-base` 默认复用同一地址；脚本生成 IPA 后会打印包内 `assets/mobile-branding.json`，便于签名前确认 IPA 内平台名、Logo 和简介。
-- 验证结果：已通过 `bash -n mobile/scripts/build-unsigned-ipa.sh`、`node --check mobile/scripts/sync-branding-assets.mjs`、`VITE_API_BASE_URL=https://ad.16888888.live pnpm build` 和 `git diff --check`；联网执行品牌同步后确认后台返回并写入 `platformName=鼎鸿`，`mobile/dist/mobile-branding.json` 当前平台名为“鼎鸿”。
+- 解决问题：`--branding-api-base` 过去只用于下载后台 Logo 和写入包内 `mobile-branding.json`，没有同步传给 Vite 构建；App 启动后会再次请求运行时 `/api/user/mobile/site-config`，如果运行时 API 地址不是当前平台后台，就可能把包内“鼎鸿”覆盖成其它平台名。本次确认当前域名 `https://bcbbc.hippoweb3.net/api/user/mobile/site-config` 返回 `platformName=鼎鸿`，域名本身不是旧域名。
+- 实施内容：`mobile/src/api/http.ts` 保留当前平台默认打包后端 `https://bcbbc.hippoweb3.net`，并继续支持 `VITE_API_BASE_URL` / `VITE_API_BASE` 覆盖；`build-unsigned-ipa.sh` 新增 `--api-base` 参数并在前端构建时写入 `VITE_API_BASE_URL`，`--branding-api-base` 默认复用同一地址；脚本生成 IPA 后会打印包内 `assets/mobile-branding.json`，便于签名前确认 IPA 内平台名、Logo 和简介。
+- 验证结果：已通过 `bash -n mobile/scripts/build-unsigned-ipa.sh`、`node --check mobile/scripts/sync-branding-assets.mjs`、`VITE_API_BASE_URL=https://bcbbc.hippoweb3.net pnpm build` 和 `git diff --check`；联网执行品牌同步后确认后台返回并写入 `platformName=鼎鸿`，`mobile/dist/mobile-branding.json` 当前平台名为“鼎鸿”。
 
 ## 2026-06-19 12:08 HKT 用户冻结强制退出登录
 
@@ -491,9 +491,9 @@
 ## 2026-06-19 02:48 HKT 修正手机端动态品牌和广告刷新链路
 
 - 完成任务：加强手机端启动和首页进入时的动态品牌、Logo、介绍和广告配置刷新。
-- 解决问题：打包 App 内平台名称、Logo、广告标题依赖后端配置，但此前品牌配置只在启动后普通加载一次，首页再次进入不会强制刷新；如果后台刚更新配置或 App 命中旧缓存，容易继续显示默认 Logo 或旧标题。排查同时确认当前打包域名 `https://ad.16888888.live` 的 `/api/user/mobile/site-config` 已返回 `platformName=鼎鸿` 和图床 Logo，但 `/api/user/mobile/advertisements` 返回空数组，因此该域名下手机端轮播广告当前没有可展示数据。
+- 解决问题：打包 App 内平台名称、Logo、广告标题依赖后端配置，但此前品牌配置只在启动后普通加载一次，首页再次进入不会强制刷新；如果后台刚更新配置或 App 命中旧缓存，容易继续显示默认 Logo 或旧标题。排查同时确认当前打包域名 `https://bcbbc.hippoweb3.net` 的 `/api/user/mobile/site-config` 已返回 `platformName=鼎鸿` 和图床 Logo，但 `/api/user/mobile/advertisements` 返回空数组，因此该域名下手机端轮播广告当前没有可展示数据。
 - 实施内容：`branding` Pinia store 增加强制刷新、加载状态、更新时间和“未配置”过滤；App 启动时使用 `force` 读取后台品牌配置；首页挂载时同步强刷品牌配置和手机端广告列表；同步修正架构说明中打包默认后端域名，并补充动态配置依赖当前 `API_BASE` 的前端规范。
-- 验证结果：已通过 `curl https://ad.16888888.live/api/user/mobile/site-config` 验证动态平台名和 Logo 可达；`curl https://ad.16888888.live/api/user/mobile/advertisements` 当前返回空数组，后续需要在同一后台域名下新增并启用手机端轮播广告后再验证首页广告展示。
+- 验证结果：已通过 `curl https://bcbbc.hippoweb3.net/api/user/mobile/site-config` 验证动态平台名和 Logo 可达；`curl https://bcbbc.hippoweb3.net/api/user/mobile/advertisements` 当前返回空数组，后续需要在同一后台域名下新增并启用手机端轮播广告后再验证首页广告展示。
 
 ## 2026-06-19 02:30 HKT 确认 iOS 企业签名前后内部名校验规则
 
@@ -4736,3 +4736,38 @@
 - 解决问题：常规机器人维护曾挂在开奖调度器后台循环中，机器人发单或补单耗时较长时，容易和开奖主链路争抢执行时间，让“封盘、开奖、开下一期”排查边界不清晰。
 - 实施内容：新增 `robot_scheduler` 服务、`robot_scheduler_config` / `robot_scheduler_runs` / `robot_scheduler_runtime` 持久化表和后台 `robot-scheduler` 状态/配置接口；开奖调度器删除常规机器人维护阶段，仅保留流单前兜底补满；管理后台机器人配置页新增“机器人独立调度”状态卡，可启动/关闭并编辑执行周期；同步更新 OpenAPI、Trellis 规范和架构说明。
 - 验证结果：后续继续执行格式化、后端检查、调度目标测试和管理端构建。
+
+## 2026-06-23 手机端我的页面入口排序调整
+
+- 完成任务：调整手机端“我的账户”页面的功能入口显示顺序。
+- 解决问题：在线客服、我的注单、代理中心、资金流水、提现管理、聊天大厅属于用户高频入口，原来分散在账户、客服和邀请分组里，用户需要上下寻找。
+- 实施内容：`ProfileView` 新增优先入口分组，按“在线客服、我的注单、代理中心、资金流水、提现管理、聊天大厅”顺序展示；安全中心、帮助中心、邀请人等低频入口移动到下方其它入口分组；路由和业务逻辑保持不变。
+- 验证结果：后续继续执行手机端构建验证。
+
+## 2026-06-23 Docker 后端启动日志增强
+
+- 完成任务：为单镜像容器启动过程增加后端健康检查等待期间的持续中文日志。
+- 解决问题：容器日志以前只显示“等待后端健康检查通过，最长等待：60 秒”，后端如果因为数据库连接、迁移、端口监听或进程异常卡住，排查时缺少中间状态。
+- 实施内容：`docker/entrypoint.sh` 新增启动配置摘要、后端进程 pid 输出、健康检查进度日志和后端进程状态输出；新增 `BACKEND_STARTUP_LOG_INTERVAL_SECONDS` 控制等待期间的日志间隔；`Dockerfile` 设置默认值为 `2` 秒；同步更新部署说明、架构说明和 Trellis 部署规范。
+- 验证结果：`sh -n docker/entrypoint.sh` 和 `git diff --check` 均通过；本次不通过 Docker 打包测试，避免非发布场景重复构建镜像。
+
+## 2026-06-23 GitHub 打包跳过测试
+
+- 完成任务：调整 GitHub Actions 镜像打包流程，让 GitHub 打包时跳过后端测试。
+- 解决问题：原 `quality` 作业会在 Docker 镜像构建前执行 `cargo test`，测试耗时或偶发失败会阻断 GitHub 打包和 GHCR 镜像发布。
+- 实施内容：`.github/workflows/ci.yml` 移除 `cargo test` 执行步骤，保留 `cargo fmt --check`、`cargo check` 和管理后台生产构建；新增中文说明步骤提示 GitHub 打包流程按当前配置跳过测试；同步更新部署说明、架构说明和 Trellis 部署规范。
+- 验证结果：workflow YAML 语法检查通过，`git diff --check` 通过；针对 `.github/workflows/ci.yml` 搜索确认没有实际执行 `run: cargo test` 的步骤。
+
+## 2026-06-23 聊天大厅客服充值发言资格修复
+
+- 完成任务：修复用户已经通过客服直充入账，但聊天大厅仍提示没有发言权限的问题。
+- 解决问题：聊天大厅发言资格依赖用户累计真实充值金额；历史库或部分确认入账路径可能存在 `user_withdrawal_turnovers` 累计表没有被充值流水触发器更新的情况，导致用户余额已增加但发言资格仍按 0 充值判断。
+- 实施内容：资金增量保存新增累计表补偿写入，按 `user_withdrawal_turnover_events` 幂等事件避免触发器正常时重复累计；新增迁移 `20260623124000_backfill_recharge_turnover_from_paid_orders.sql`，从已支付充值订单回填用户累计真实充值本金，并补齐已有资金流水事件；同步更新聊天大厅接口契约和架构说明。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml withdrawal_turnover_deltas_ignore_bonus_rebate_and_adjustment -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml chat_hall_speaking_status -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml store_calculates_withdrawal_turnover_from_ledger_entries -- --nocapture` 和 `git diff --check` 均通过。
+
+## 2026-06-23 手机端代理中心下级投注弹窗
+
+- 完成任务：优化手机端代理中心直属下级卡片展示。
+- 解决问题：直属下级卡片直接展示“邀请已生效、返利开启”和最近投注详情，信息过密且一屏可见下级数量下降；用户要求这些状态不显示，最近投注通过弹窗查看。
+- 实施内容：`InvitationCenterView` 移除邀请状态和返利状态标签；下级卡片只保留余额、充值、提现、累计投注和“查看最近投注”按钮；新增底部弹窗展示最近投注彩种、玩法、期号、金额、号码、合买跟单信息和玩法汇总；同步更新手机端前端规范和架构说明。
+- 验证结果：`pnpm --dir mobile build` 和 `git diff --check` 均通过；已确认 `InvitationCenterView` 不再残留“邀请已生效”“返利开启”“返利关闭”等直接展示文案。

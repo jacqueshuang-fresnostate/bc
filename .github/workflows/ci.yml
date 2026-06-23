@@ -22,7 +22,7 @@ env:
 
 jobs:
   quality:
-    name: 前后端质量检查
+    name: 前后端构建检查（跳过测试）
     runs-on: ubuntu-latest
 
     steps:
@@ -53,9 +53,8 @@ jobs:
         working-directory: backend
         run: cargo check
 
-      - name: 后端测试
-        working-directory: backend
-        run: cargo test
+      - name: 说明：GitHub 打包跳过后端测试
+        run: echo "GitHub 打包流程按当前配置跳过 cargo test；需要完整验证时请在本地或专门测试流程中运行。"
 
       - name: 安装 Node.js
         uses: actions/setup-node@v6

@@ -32,6 +32,7 @@ COPY --from=backend-build /workspace/backend/target/release/bc-backend /usr/loca
 
 ENV BACKEND_PORT=8080
 ENV BACKEND_STARTUP_TIMEOUT_SECONDS=60
+ENV BACKEND_STARTUP_LOG_INTERVAL_SECONDS=2
 ENV RUST_LOG=info
 
 EXPOSE 80

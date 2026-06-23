@@ -1032,6 +1032,23 @@ fn withdrawal_turnover_summary(
     })
 }
 
+/// 根据资金流水类型计算提现流水累计表需要追加的充值和有效投注变化量。
+fn withdrawal_turnover_deltas_for_ledger_entry(
+    kind: &LedgerEntryKind,
+    amount_minor: i64,
+) -> Option<(i64, i64)> {
+    match kind {
+        LedgerEntryKind::RechargeCredit if amount_minor > 0 => Some((amount_minor, 0)),
+        LedgerEntryKind::OrderDebit | LedgerEntryKind::GroupBuyDebit if amount_minor < 0 => {
+            Some((0, amount_minor.checked_neg()?))
+        }
+        LedgerEntryKind::OrderRefund | LedgerEntryKind::GroupBuyRefund if amount_minor > 0 => {
+            Some((0, amount_minor.checked_neg()?))
+        }
+        _ => None,
+    }
+}
+
 /// 数据库模式下按用户集合聚合充值本金，避免代理中心扫描无关用户资金流水。
 ///
 /// 只读取累计表，缺失累计行的用户按 0 处理。
@@ -1158,6 +1175,8 @@ pub(crate) async fn save_finance_store_in_transaction(
             );
             ApiError::Internal("资金流水数据保存失败".to_string())
         })?;
+
+        ensure_withdrawal_turnover_event_in_transaction(&mut *connection, entry).await?;
     }
 
     let next_sequence = i64::try_from(store.next_sequence)
@@ -1170,6 +1189,84 @@ pub(crate) async fn save_finance_store_in_transaction(
             tracing::error!(%error, "资金运行数据保存失败");
             ApiError::Internal("资金运行数据保存失败".to_string())
         })?;
+
+    Ok(())
+}
+
+/// 在资金流水写入后补偿维护用户累计充值和有效投注表。
+///
+/// 正常情况下数据库触发器会先处理新增流水；这里再次按事件表幂等写入，
+/// 可以兼容旧库触发器缺失、迁移前数据异常或 `ON CONFLICT DO UPDATE` 没有触发新增事件的场景。
+async fn ensure_withdrawal_turnover_event_in_transaction(
+    connection: &mut PgConnection,
+    entry: &LedgerEntry,
+) -> ApiResult<()> {
+    let Some((recharge_delta, effective_delta)) =
+        withdrawal_turnover_deltas_for_ledger_entry(&entry.kind, entry.amount_minor)
+    else {
+        return Ok(());
+    };
+    let kind = enum_to_string(&entry.kind)?;
+    let inserted = sqlx::query(
+        "INSERT INTO user_withdrawal_turnover_events
+         (ledger_entry_id, user_id, kind, amount_minor, created_at)
+         VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT (ledger_entry_id) DO NOTHING
+         RETURNING ledger_entry_id",
+    )
+    .bind(&entry.id)
+    .bind(&entry.user_id)
+    .bind(&kind)
+    .bind(entry.amount_minor)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| {
+        tracing::error!(
+            %error,
+            entry_id = entry.id.as_str(),
+            user_id = entry.user_id.as_str(),
+            "用户累计充值事件补偿写入失败"
+        );
+        ApiError::Internal("用户累计充值事件补偿写入失败".to_string())
+    })?;
+
+    if inserted.is_none() {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "INSERT INTO user_withdrawal_turnovers (
+            user_id,
+            cumulative_recharge_minor,
+            required_effective_bet_minor,
+            completed_effective_bet_minor,
+            created_at,
+            updated_at
+         )
+         VALUES ($1, $2, $2, GREATEST(0::BIGINT, $3), now(), now())
+         ON CONFLICT (user_id) DO UPDATE SET
+            cumulative_recharge_minor = user_withdrawal_turnovers.cumulative_recharge_minor + EXCLUDED.cumulative_recharge_minor,
+            required_effective_bet_minor = user_withdrawal_turnovers.required_effective_bet_minor + EXCLUDED.required_effective_bet_minor,
+            completed_effective_bet_minor = GREATEST(
+                0,
+                user_withdrawal_turnovers.completed_effective_bet_minor + $3
+            ),
+            updated_at = now()",
+    )
+    .bind(&entry.user_id)
+    .bind(recharge_delta)
+    .bind(effective_delta)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| {
+        tracing::error!(
+            %error,
+            entry_id = entry.id.as_str(),
+            user_id = entry.user_id.as_str(),
+            "用户累计充值金额补偿更新失败"
+        );
+        ApiError::Internal("用户累计充值金额补偿更新失败".to_string())
+    })?;
 
     Ok(())
 }
@@ -1290,6 +1387,8 @@ pub(crate) async fn save_finance_store_incremental_in_transaction(
             );
             ApiError::Internal("资金流水数据保存失败".to_string())
         })?;
+
+        ensure_withdrawal_turnover_event_in_transaction(&mut *connection, entry).await?;
     }
 
     let next_sequence = i64::try_from(store.next_sequence)
@@ -2654,6 +2753,60 @@ mod tests {
         assert_eq!(totals.get("U10001").copied(), Some(3_500));
         assert!(!totals.contains_key("U10002"));
         assert!(!totals.contains_key("U10003"));
+    }
+
+    #[test]
+    /// 验证数据库累计表补偿逻辑只把真实充值本金和有效投注写入资格累计。
+    fn withdrawal_turnover_deltas_ignore_bonus_rebate_and_adjustment() {
+        assert_eq!(
+            super::withdrawal_turnover_deltas_for_ledger_entry(
+                &LedgerEntryKind::RechargeCredit,
+                50_000
+            ),
+            Some((50_000, 0))
+        );
+        assert_eq!(
+            super::withdrawal_turnover_deltas_for_ledger_entry(
+                &LedgerEntryKind::OrderDebit,
+                -2_000
+            ),
+            Some((0, 2_000))
+        );
+        assert_eq!(
+            super::withdrawal_turnover_deltas_for_ledger_entry(
+                &LedgerEntryKind::GroupBuyDebit,
+                -3_000
+            ),
+            Some((0, 3_000))
+        );
+        assert_eq!(
+            super::withdrawal_turnover_deltas_for_ledger_entry(
+                &LedgerEntryKind::OrderRefund,
+                1_000
+            ),
+            Some((0, -1_000))
+        );
+        assert_eq!(
+            super::withdrawal_turnover_deltas_for_ledger_entry(
+                &LedgerEntryKind::RechargeBonusCredit,
+                500
+            ),
+            None
+        );
+        assert_eq!(
+            super::withdrawal_turnover_deltas_for_ledger_entry(
+                &LedgerEntryKind::RechargeRebateCredit,
+                500
+            ),
+            None
+        );
+        assert_eq!(
+            super::withdrawal_turnover_deltas_for_ledger_entry(
+                &LedgerEntryKind::ManualAdjustment,
+                50_000
+            ),
+            None
+        );
     }
 
     #[test]

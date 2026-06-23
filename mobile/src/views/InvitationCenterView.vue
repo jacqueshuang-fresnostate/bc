@@ -10,7 +10,6 @@ import {
   submitAgentApplication,
   type AgentApplication,
   type AgentApplicationStatus,
-  type InviteStatus,
   type RebateMode,
   type UserInvitationBetPlaySummary,
   type UserInvitationDirectUser,
@@ -28,6 +27,8 @@ const loading = ref(false)
 const submitting = ref(false)
 const application = ref<AgentApplication | null>(null)
 const applicationReason = ref('')
+const betDetailVisible = ref(false)
+const selectedBetUser = ref<UserInvitationDirectUser | null>(null)
 const summary = ref<UserInvitationSummary>({
   canInvite: false,
   invitationCode: '',
@@ -53,11 +54,6 @@ const statusTextMap: Record<UserStatus, string> = {
   active: '正常',
   suspended: '已停用',
   locked: '已锁定',
-}
-const inviteStatusTextMap: Record<InviteStatus, string> = {
-  pending: '待生效',
-  active: '已生效',
-  disabled: '已禁用',
 }
 const rebateModeTextMap: Record<RebateMode, string> = {
   immediate: '立即返利',
@@ -120,6 +116,15 @@ function hasBetProfile(item: UserInvitationDirectUser) {
   return Number(item.totalBetAmountMinor || 0) > 0 || Boolean(item.latestBet)
 }
 
+function openBetDetail(item: UserInvitationDirectUser) {
+  selectedBetUser.value = item
+  betDetailVisible.value = true
+}
+
+function resetBetDetail() {
+  selectedBetUser.value = null
+}
+
 function latestBetMainText(item: UserInvitationDirectUser) {
   const latestBet = item.latestBet
   if (!latestBet) return '暂无投注记录'
@@ -153,10 +158,6 @@ function formatBasisPoints(value: number) {
 
 function statusText(status: UserStatus) {
   return statusTextMap[status] || status || '-'
-}
-
-function inviteStatusText(status: InviteStatus) {
-  return inviteStatusTextMap[status] || status || '-'
 }
 
 function rebateModeText(mode: RebateMode) {
@@ -304,45 +305,96 @@ async function submitApplication() {
               <span class="shrink-0 rounded-full bg-white px-3 py-1 text-[11px] font-bold text-primary">{{ statusText(item.status) }}</span>
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-on-surface-variant">
-              <span class="rounded-full bg-white px-2.5 py-1 font-bold text-red-900">邀请{{ inviteStatusText(item.inviteStatus) }}</span>
-              <span class="rounded-full bg-white px-2.5 py-1">{{ item.rebateEnabled ? '返利开启' : '返利关闭' }}</span>
               <span class="rounded-full bg-white px-2.5 py-1 font-bold text-emerald-700">余额 ¥{{ formatMoney(item.availableBalanceMinor) }}</span>
               <span class="rounded-full bg-white px-2.5 py-1">充值 ¥{{ formatMoney(item.totalDepositMinor) }}</span>
               <span class="rounded-full bg-white px-2.5 py-1">提现 ¥{{ formatMoney(item.totalWithdrawalMinor) }}</span>
               <span class="rounded-full bg-white px-2.5 py-1 font-bold text-red-900">投注 ¥{{ formatMoney(item.totalBetAmountMinor) }}</span>
             </div>
             <div class="mt-3 rounded-2xl border border-red-900/5 bg-white/80 px-3 py-2.5">
-              <div class="flex items-start justify-between gap-3">
+              <div class="flex items-center justify-between gap-3">
                 <div class="min-w-0">
-                  <p class="text-[11px] font-bold text-red-900">最近投注</p>
-                  <p class="mt-1 truncate text-xs font-bold text-on-surface">{{ latestBetMainText(item) }}</p>
-                  <p v-if="item.latestBet" class="mt-0.5 text-[11px] text-on-surface-variant">{{ latestBetMetaText(item) }}</p>
-                  <p v-if="item.latestBet" class="mt-1 break-words text-[11px] font-semibold leading-4 text-on-surface">
-                    号码：{{ latestBetNumberText(item) }}
-                  </p>
-                  <p v-if="latestBetFollowText(item)" class="mt-1 rounded-lg bg-red-50 px-2 py-1 text-[11px] font-bold text-primary">
-                    {{ latestBetFollowText(item) }}
+                  <p class="text-[11px] font-bold text-red-900">下级投注</p>
+                  <p class="mt-1 truncate text-xs font-bold text-on-surface">
+                    {{ hasBetProfile(item) ? `累计 ¥${formatMoney(item.totalBetAmountMinor)}` : '暂无投注记录' }}
                   </p>
                 </div>
-                <span class="shrink-0 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-bold text-primary">
-                  {{ hasBetProfile(item) ? `${topBetPlaySummaries(item).length || 1} 类玩法` : '无投注' }}
-                </span>
-              </div>
-              <div v-if="topBetPlaySummaries(item).length" class="mt-2 space-y-1.5">
-                <div
-                  v-for="play in topBetPlaySummaries(item)"
-                  :key="`${item.id}-${play.lotteryId}-${play.ruleCode}`"
-                  class="flex items-center justify-between gap-2 rounded-xl bg-stone-50 px-2.5 py-2 text-[11px]"
+                <button
+                  class="shrink-0 rounded-full bg-red-900 px-3 py-1.5 text-[11px] font-bold text-white active:scale-95 disabled:bg-stone-200 disabled:text-stone-400"
+                  type="button"
+                  :disabled="!hasBetProfile(item)"
+                  @click="openBetDetail(item)"
                 >
-                  <span class="min-w-0 truncate font-bold text-on-surface">{{ play.lotteryName }} · {{ play.playName }}</span>
-                  <span class="shrink-0 text-red-900">¥{{ formatMoney(play.amountMinor) }} · {{ play.orderCount }}笔</span>
-                </div>
+                  查看最近投注
+                </button>
               </div>
             </div>
           </div>
         </div>
       </section>
     </main>
+
+    <van-popup
+      v-model:show="betDetailVisible"
+      position="bottom"
+      round
+      overlay-class="backdrop-blur-sm"
+      class="agent-bet-detail-popup overflow-hidden !rounded-t-[1.5rem] bg-surface-container-lowest"
+      :style="{ maxHeight: '64vh' }"
+      @closed="resetBetDetail"
+    >
+      <section v-if="selectedBetUser" class="max-h-[64vh] overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-4">
+        <div class="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p class="text-xs font-bold text-red-900">下级投注详情</p>
+            <h3 class="mt-1 font-headline text-xl font-black text-on-surface">{{ selectedBetUser.username }}</h3>
+            <p class="mt-1 text-xs text-on-surface-variant">累计投注 ¥{{ formatMoney(selectedBetUser.totalBetAmountMinor) }}</p>
+          </div>
+          <button class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-red-900 shadow-sm" type="button" @click="betDetailVisible = false">
+            <LucideIcon name="close" class="h-4.5 w-4.5" />
+          </button>
+        </div>
+
+        <div class="rounded-[1.25rem] bg-white p-3 shadow-sm">
+          <p class="text-xs font-bold text-red-900">最近投注</p>
+          <p class="mt-2 text-sm font-black text-on-surface">{{ latestBetMainText(selectedBetUser) }}</p>
+          <template v-if="selectedBetUser.latestBet">
+            <p class="mt-1 text-xs text-on-surface-variant">{{ latestBetMetaText(selectedBetUser) }}</p>
+            <p class="mt-2 rounded-2xl bg-stone-50 px-3 py-2 text-xs font-semibold leading-5 text-on-surface">
+              号码：{{ latestBetNumberText(selectedBetUser) }}
+            </p>
+            <p v-if="latestBetFollowText(selectedBetUser)" class="mt-2 rounded-2xl bg-red-50 px-3 py-2 text-xs font-bold text-primary">
+              {{ latestBetFollowText(selectedBetUser) }}
+            </p>
+          </template>
+          <p v-else class="mt-2 rounded-2xl bg-stone-50 px-3 py-3 text-center text-xs text-on-surface-variant">
+            暂无投注记录
+          </p>
+        </div>
+
+        <div class="mt-3 rounded-[1.25rem] bg-white p-3 shadow-sm">
+          <div class="flex items-center justify-between gap-3">
+            <p class="text-xs font-bold text-red-900">玩法汇总</p>
+            <span class="text-[11px] text-on-surface-variant">{{ topBetPlaySummaries(selectedBetUser).length }} 类玩法</span>
+          </div>
+          <div v-if="topBetPlaySummaries(selectedBetUser).length" class="mt-2 space-y-2">
+            <div
+              v-for="play in topBetPlaySummaries(selectedBetUser)"
+              :key="`${selectedBetUser.id}-${play.lotteryId}-${play.ruleCode}`"
+              class="rounded-2xl bg-stone-50 px-3 py-2 text-xs"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="min-w-0 truncate font-bold text-on-surface">{{ play.lotteryName }} · {{ play.playName }}</span>
+                <span class="shrink-0 font-bold text-red-900">¥{{ formatMoney(play.amountMinor) }}</span>
+              </div>
+              <p class="mt-1 text-[11px] text-on-surface-variant">{{ play.orderCount }} 笔</p>
+            </div>
+          </div>
+          <p v-else class="mt-2 rounded-2xl bg-stone-50 px-3 py-3 text-center text-xs text-on-surface-variant">
+            暂无玩法汇总
+          </p>
+        </div>
+      </section>
+    </van-popup>
   </div>
 </template>
 
