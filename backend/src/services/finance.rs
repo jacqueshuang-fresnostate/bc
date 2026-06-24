@@ -1893,11 +1893,21 @@ impl FinanceStore {
         &mut self,
         settlement: &SettlementRun,
         group_buy_plans: &[GroupBuyPlan],
+        skip_group_buy_order_ids: &BTreeSet<String>,
     ) -> ApiResult<Vec<LedgerEntry>> {
         let mut entries = Vec::new();
 
         for order in &settlement.orders {
             if !order.is_winning || order.payout_minor <= 0 {
+                continue;
+            }
+
+            if skip_group_buy_order_ids.contains(&order.order_id) {
+                tracing::warn!(
+                    order_id = %order.order_id,
+                    settlement_id = %settlement.id,
+                    "合买订单缺少对应合买计划，已跳过派奖入账"
+                );
                 continue;
             }
 
@@ -2568,7 +2578,7 @@ fn current_timestamp_label() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use crate::{
         domain::{
@@ -2756,7 +2766,7 @@ mod tests {
         let plan = group_buy_plan_with_order("G202606050001", "O000000000001");
 
         let entries = store
-            .credit_settlement_with_group_buys(&settlement, &[plan])
+            .credit_settlement_with_group_buys(&settlement, &[plan], &BTreeSet::new())
             .expect("group buy payout can be credited");
         let agent = store.account("U90001").expect("agent account exists");
         let user = store.account("U10001").expect("user account exists");

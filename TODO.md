@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-06-24 HKT 独立下单中奖派奖入账修复
+
+- 完成任务：修复独立下单中奖后资金未结算到账户余额、未加入流水的问题。
+- 解决问题：`settle_with_payouts` 在遇到缺少对应合买计划的 `OrderSource::GroupBuy` 订单时会直接返回错误，阻止同期所有订单（包括 `OrderSource::Direct` 独立订单）的结算入账，导致独立下单中奖后无余额变动、无流水记录。
+- 实施内容：`settle_with_payouts` 中将缺失合买计划的 GroupBuy 订单从硬错误降级为 `tracing::warn!` 警告日志，同时在 `credit_settlement_with_group_buys` 中跳过缺少计划的合买订单派奖入账，不再阻断独立订单的正常结算；更新相关测试覆盖新行为。
+- 验证结果：`cargo check --manifest-path backend/Cargo.toml` 编译通过；order 模块 44 个测试全部通过；finance 模块 28 个测试全部通过。
+
 ## 2026-06-23 23:01 HKT 投注倍数参与派奖修复
 
 - 完成任务：修复中奖派奖没有按投注倍数放大的问题。

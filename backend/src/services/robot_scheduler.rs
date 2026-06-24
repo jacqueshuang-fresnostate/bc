@@ -604,7 +604,7 @@ pub fn spawn_robot_scheduler(
             };
 
             if !current_config.enabled {
-                tracing::debug!("机器人调度器因配置禁用跳过本轮执行");
+                // tracing::debug!("机器人调度器因配置禁用跳过本轮执行");
                 tokio::time::sleep(Duration::from_secs(DISABLED_ROBOT_SCHEDULER_POLL_SECONDS))
                     .await;
                 next_run_at = tokio::time::Instant::now();

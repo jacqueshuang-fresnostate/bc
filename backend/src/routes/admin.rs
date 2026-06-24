@@ -2164,6 +2164,7 @@ async fn settle_draw_issue_orders(
         .orders
         .settle_with_payouts(&state.finance, &state.group_buys, &draw_issue)
         .await?;
+    publish_settlement_order_events(&state, &settlement).await;
     publish_settlement_balance_events(&state, &entries).await;
     let usernames = admin_usernames(&state).await?;
     let settlement = admin_settlement_run_with_usernames(settlement, &usernames);
@@ -2179,7 +2180,19 @@ async fn publish_draw_automation_events(state: &AppState, run: &DrawAutomationRu
     for issue in &run.drawn_issues {
         state.realtime.publish_public(draw_result_event(issue));
     }
+    for settlement in &run.settlement_runs {
+        publish_settlement_order_events(state, settlement).await;
+    }
     publish_settlement_balance_events(state, &run.ledger_entries).await;
+}
+
+/// 推送结算完成后的用户注单变化事件，确保手机端“我的注单/我的合买”及时刷新状态和派奖金额。
+async fn publish_settlement_order_events(state: &AppState, settlement: &SettlementRun) {
+    for item in &settlement.orders {
+        if let Ok(order) = state.orders.get(&item.order_id).await {
+            publish_user_order_changed(state, &order, "settled");
+        }
+    }
 }
 
 /// 推送结算产生的用户余额变化事件。

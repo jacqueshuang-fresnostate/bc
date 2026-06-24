@@ -778,15 +778,20 @@ impl OrderRepository {
                     }))
                 .then(|| settlement_order.order_id.clone())
             })
-            .collect::<Vec<_>>();
+            .collect::<std::collections::BTreeSet<String>>();
         if !missing_group_buy_order_ids.is_empty() {
-            return Err(ApiError::Internal(format!(
-                "合买订单缺少对应合买计划，已阻止按普通订单派奖：{}",
-                missing_group_buy_order_ids.join(",")
-            )));
+            tracing::warn!(
+                missing_order_ids = %missing_group_buy_order_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>().join(","),
+                lottery_id = %draw_issue.lottery_id,
+                issue = %draw_issue.issue,
+                "合买订单缺少对应合买计划，已跳过该合买订单的派奖"
+            );
         }
-        let mut ledger_entries =
-            finance_store.credit_settlement_with_group_buys(&settlement, &group_buy_plans)?;
+        let mut ledger_entries = finance_store.credit_settlement_with_group_buys(
+            &settlement,
+            &group_buy_plans,
+            &missing_group_buy_order_ids,
+        )?;
         group_buy_store.mark_settled_by_order_ids(&order_ids);
 
         let id_remap = persist_order_finance_group_buy_stores(
@@ -2999,7 +3004,7 @@ mod tests {
 
     #[tokio::test]
     /// 验证合买订单如果缺少对应计划，结算时不能退化成普通订单给发起人整单派奖。
-    async fn repository_rejects_group_buy_payout_without_plan() {
+    async fn repository_skips_group_buy_payout_without_plan() {
         let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
@@ -3013,19 +3018,16 @@ mod tests {
             .await
             .expect("测试合买订单可以创建");
 
-        let error = orders
+        let (settlement, entries) = orders
             .settle_with_payouts(
                 &finance,
                 &group_buys,
                 &draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")),
             )
             .await
-            .expect_err("缺少合买计划时必须拒绝整单派奖");
-        assert!(error.to_string().contains("合买订单缺少对应合买计划"));
-        let entries = finance.ledger_entries().await.expect("流水可以读取");
-        assert!(entries
-            .iter()
-            .all(|entry| entry.kind != LedgerEntryKind::PayoutCredit));
+            .expect("缺少合买计划时不再阻断整单派奖，只跳过合买订单");
+        assert_eq!(entries.len(), 0, "缺少合买计划时不产生派奖流水");
+        assert!(settlement.winning_order_count > 0, "订单仍会计为中奖");
     }
 
     #[test]

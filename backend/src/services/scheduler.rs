@@ -106,7 +106,7 @@ pub struct DrawSchedulerSkippedLottery {
 pub struct DrawSchedulerRun {
     /// 当前业务时间字符串。
     pub now: String,
-    /// automationrun字段。
+    /// automation-run字段。
     pub automation_run: DrawAutomationRun,
     /// 本次生成的新期号列表。
     pub generated_issues: Vec<DrawIssue>,
@@ -756,15 +756,15 @@ pub fn spawn_draw_scheduler(
     config: DrawSchedulerConfig,
     scheduler: DrawSchedulerRepository,
 ) -> JoinHandle<()> {
-    tracing::info!(
-        enabled = config.enabled,
-        interval_seconds = config.interval_seconds,
-        future_issue_count = config.future_issue_count,
-        sale_close_lead_seconds = config.sale_close_lead_seconds,
-        local_issue_generation_concurrency = config.local_issue_generation_concurrency,
-        api_issue_generation_concurrency = config.api_issue_generation_concurrency,
-        "开奖调度器后台任务已启动"
-    );
+    // tracing::info!(
+    //     enabled = config.enabled,
+    //     interval_seconds = config.interval_seconds,
+    //     future_issue_count = config.future_issue_count,
+    //     sale_close_lead_seconds = config.sale_close_lead_seconds,
+    //     local_issue_generation_concurrency = config.local_issue_generation_concurrency,
+    //     api_issue_generation_concurrency = config.api_issue_generation_concurrency,
+    //     "开奖调度器后台任务已启动"
+    // );
 
     let due_phase_lock = Arc::new(AsyncMutex::new(()));
     tokio::spawn(async move {
@@ -786,7 +786,7 @@ pub fn spawn_draw_scheduler(
             };
 
             if !current_config.enabled {
-                tracing::debug!("开奖调度器因配置禁用跳过本轮执行");
+                // tracing::debug!("开奖调度器因配置禁用跳过本轮执行");
                 tokio::time::sleep(Duration::from_secs(DISABLED_SCHEDULER_POLL_SECONDS)).await;
                 next_run_at = tokio::time::Instant::now();
                 continue;
@@ -820,13 +820,13 @@ pub fn spawn_draw_scheduler(
                     {
                         tracing::error!(error = %error.log_message(), "开奖调度器历史记录写入失败");
                     }
-                    tracing::info!(
-                        "当前时间" = %run.now,
-                        "本轮耗时毫秒" = run_elapsed_ms,
-                        "封盘期数" = run.automation_run.closed_issues.len(),
-                        "新增期号" = run.generated_issues.len(),
-                        "开奖调度器开盘阶段执行完成"
-                    );
+                    // tracing::info!(
+                    //     "当前时间" = %run.now,
+                    //     "本轮耗时毫秒" = run_elapsed_ms,
+                    //     "封盘期数" = run.automation_run.closed_issues.len(),
+                    //     "新增期号" = run.generated_issues.len(),
+                    //     "开奖调度器开盘阶段执行完成"
+                    // );
 
                     let due_lock = due_phase_lock.clone();
                     match due_lock.try_lock_owned() {
@@ -858,13 +858,7 @@ pub fn spawn_draw_scheduler(
                                 )
                                 .await
                                 {
-                                    Ok(due_run) => tracing::info!(
-                                        "当前时间" = %due_run.now,
-                                        "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
-                                        "开奖期数" = due_run.automation_run.drawn_issues.len(),
-                                        "兜底满单" = due_run.robot_run.filled_plans.len(),
-                                        "开奖调度器到期开奖后台任务完成"
-                                    ),
+                                    Ok(due_run) => {}
                                     Err(error) => tracing::error!(
                                         now = %due_now,
                                         "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
@@ -1097,15 +1091,15 @@ async fn run_draw_scheduler_opening_once_with_realtime(
         publish_scheduler_opening_events(realtime, &close_run.closed_issues, &generated_issues);
     }
 
-    tracing::info!(
-        "当前时间" = %now,
-        "封盘耗时毫秒" = close_phase_ms,
-        "本地补期耗时毫秒" = local_generation_phase_ms,
-        "本地补期并发上限" = config.local_issue_generation_concurrency,
-        "封盘期数" = close_run.closed_issues.len(),
-        "新增期号" = generated_issues.len(),
-        "开奖调度器快阶段完成，已释放下一期开盘"
-    );
+    // tracing::info!(
+    //     "当前时间" = %now,
+    //     "封盘耗时毫秒" = close_phase_ms,
+    //     "本地补期耗时毫秒" = local_generation_phase_ms,
+    //     "本地补期并发上限" = config.local_issue_generation_concurrency,
+    //     "封盘期数" = close_run.closed_issues.len(),
+    //     "新增期号" = generated_issues.len(),
+    //     "开奖调度器快阶段完成，已释放下一期开盘"
+    // );
 
     let api_generation_phase_started = Instant::now();
     let (mut api_generated_issues, mut api_skipped_lotteries) =
@@ -1114,14 +1108,14 @@ async fn run_draw_scheduler_opening_once_with_realtime(
     if let Some(realtime) = realtime {
         publish_scheduler_opening_events(realtime, &[], &api_generated_issues);
     }
-    tracing::info!(
-        "当前时间" = %now,
-        "API补期耗时毫秒" = api_generation_phase_ms,
-        "API补期并发上限" = config.api_issue_generation_concurrency,
-        "API新增期号" = api_generated_issues.len(),
-        "API跳过彩种" = api_skipped_lotteries.len(),
-        "开奖调度器 API 补期阶段完成"
-    );
+    // tracing::info!(
+    //     "当前时间" = %now,
+    //     "API补期耗时毫秒" = api_generation_phase_ms,
+    //     "API补期并发上限" = config.api_issue_generation_concurrency,
+    //     "API新增期号" = api_generated_issues.len(),
+    //     "API跳过彩种" = api_skipped_lotteries.len(),
+    //     "开奖调度器 API 补期阶段完成"
+    // );
     generated_issues.append(&mut api_generated_issues);
     skipped_lotteries.append(&mut api_skipped_lotteries);
 
@@ -1223,17 +1217,17 @@ async fn run_draw_scheduler_due_once_with_realtime(
         publish_robot_realtime_events(realtime, finance, &run.robot_run).await;
     }
 
-    tracing::info!(
-        "当前时间" = %run.now,
-        "封盘流单退款耗时毫秒" = refund_phase_ms,
-        "开奖结算耗时毫秒" = draw_phase_ms,
-        "流单前兜底耗时毫秒" = guard_phase_ms,
-        "开奖期数" = run.automation_run.drawn_issues.len(),
-        "结算批次" = run.automation_run.settlement_runs.len(),
-        "入账笔数" = run.automation_run.ledger_entries.len(),
-        "兜底满单" = run.robot_run.filled_plans.len(),
-        "开奖调度器到期开奖阶段完成"
-    );
+    // tracing::info!(
+    //     "当前时间" = %run.now,
+    //     "封盘流单退款耗时毫秒" = refund_phase_ms,
+    //     "开奖结算耗时毫秒" = draw_phase_ms,
+    //     "流单前兜底耗时毫秒" = guard_phase_ms,
+    //     "开奖期数" = run.automation_run.drawn_issues.len(),
+    //     "结算批次" = run.automation_run.settlement_runs.len(),
+    //     "入账笔数" = run.automation_run.ledger_entries.len(),
+    //     "兜底满单" = run.robot_run.filled_plans.len(),
+    //     "开奖调度器到期开奖阶段完成"
+    // );
 
     Ok(run)
 }
