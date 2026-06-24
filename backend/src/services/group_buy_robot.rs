@@ -59,8 +59,8 @@ const ROBOT_FILL_STAGE_COUNT: i64 = 5;
 const ROBOT_FILL_USERS_PER_STAGE_MIN: usize = 5;
 const ROBOT_FILL_USERS_PER_STAGE_MAX: usize = 10;
 const ROBOT_FILL_USER_IDS: [&str; 10] = [
-    "U90001", "X90002", "X90003", "X90004", "X90005",
-    "X90006", "X90007", "X90008", "X90009", "X90010",
+    "U90001", "X90002", "X90003", "X90004", "X90005", "X90006", "X90007", "X90008", "X90009",
+    "X90010",
 ];
 const ROBOT_CONCURRENT_JOB_LIMIT: usize = 8;
 const ROBOT_BASE_UNIT_AMOUNT_MINOR: i64 = 200;
@@ -785,7 +785,12 @@ async fn fill_robot_plan(
         .max(plan.min_share_amount_minor)
         .max(1);
     let users_per_stage = robot_fill_users_per_stage(fill_amount_minor, participant_min);
-    let split_amounts = split_fill_amount_evenly(fill_amount_minor, users_per_stage, participant_min, plan.min_share_amount_minor);
+    let split_amounts = split_fill_amount_evenly(
+        fill_amount_minor,
+        users_per_stage,
+        participant_min,
+        plan.min_share_amount_minor,
+    );
 
     let mut participant_ids = Vec::with_capacity(split_amounts.len());
     let mut rollback_participant_ids = Vec::new();
@@ -1650,7 +1655,6 @@ fn robot_plan_id(robot: &RobotConfigSummary, lottery: &LotteryKind, issue: &Draw
     )
 }
 
-
 /// 根据补单金额和最低参与金额决定本阶段应拆分为几个机器人用户。
 fn robot_fill_users_per_stage(fill_amount_minor: i64, participant_min: i64) -> usize {
     if participant_min <= 0 {
@@ -1715,7 +1719,6 @@ fn split_fill_amount_evenly(
     }
     amounts
 }
-
 
 /// 生成机器人补满参与记录 ID。
 fn next_robot_fill_participant_id(plan: &GroupBuyPlan) -> String {

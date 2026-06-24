@@ -453,9 +453,8 @@ fn mobile_app_update_from_settings(
     let release_notes =
         config_value(settings, &format!("{key_prefix}_release_notes")).unwrap_or_default();
     let current_version = query.current_version.as_deref().unwrap_or("0.0.0");
-    let update_available = enabled
-        && download_url.is_some()
-        && version_is_newer(&latest_version, current_version);
+    let update_available =
+        enabled && download_url.is_some() && version_is_newer(&latest_version, current_version);
 
     MobileAppUpdateConfig {
         platform: platform.to_string(),
