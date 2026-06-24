@@ -445,6 +445,7 @@ impl OrderRepository {
 
         ensure_financial_account_row_in_transaction(&mut *tx, &user_id).await?;
         let mut account = lock_financial_account_in_transaction(&mut *tx, &user_id).await?;
+        let previous_account = account.clone();
 
         let mut created_orders = Vec::with_capacity(requests.len());
         let mut max_order_sequence = 0_u64;
@@ -502,6 +503,7 @@ impl OrderRepository {
         let _finance_mutation_guard = finance.mutation_lock.lock().await;
         self.apply_persisted_created_orders(&created_orders, max_order_sequence)?;
         finance.apply_persisted_order_debits(
+            vec![previous_account],
             vec![account],
             ledger_entries,
             max_finance_sequence,

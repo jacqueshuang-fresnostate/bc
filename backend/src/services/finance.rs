@@ -555,10 +555,11 @@ impl FinanceRepository {
         Ok(())
     }
 
-    /// 数据库原子事务提交后，把本次变更的账户和流水增量合并进内存快照。
+    /// 数据库原子事务提交后，以增量方式把本次变更合并进内存快照，避免用绝对值覆盖其他并发操作的余额变更。
     pub(crate) fn apply_persisted_order_debits(
         &self,
-        accounts: Vec<FinancialAccountSummary>,
+        previous_accounts: Vec<FinancialAccountSummary>,
+        new_accounts: Vec<FinancialAccountSummary>,
         ledger_entries: Vec<LedgerEntry>,
         next_sequence: u64,
     ) -> ApiResult<()> {
@@ -566,8 +567,15 @@ impl FinanceRepository {
             .inner
             .write()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
-        for account in accounts {
-            store.accounts.insert(account.user_id.clone(), account);
+        for (prev, new) in previous_accounts.iter().zip(new_accounts.iter()) {
+            let delta_available = new.available_balance_minor - prev.available_balance_minor;
+            let delta_frozen = new.frozen_balance_minor - prev.frozen_balance_minor;
+            if let Some(existing) = store.accounts.get_mut(&new.user_id) {
+                existing.available_balance_minor += delta_available;
+                existing.frozen_balance_minor += delta_frozen;
+            } else {
+                store.accounts.insert(new.user_id.clone(), new.clone());
+            }
         }
         store.ledger_entries.extend(ledger_entries);
         store.next_sequence = store.next_sequence.max(next_sequence);
