@@ -1,5 +1,25 @@
 # TODO
 
+## 2026-06-24 HKT 移动端版本相同时不弹更新窗
+
+- 完成任务：修复移动端自动更新在版本号相同（仅 build 号不同）时仍弹出更新弹窗的问题。
+- 解决问题：后端 `update_available` 判断条件为 `latest_build > current_build || version_is_newer`，前端 `currentBuild` 硬编码为 `1`，导致 `latest_build > 1` 即始终满足，即使版本号相同也弹窗。
+- 实施内容：`mobile_app_update_from_settings` 中的 `update_available` 改为仅比较 `version_is_newer`，移除 `latest_build > current_build` 条件；`latest_build` 仍保留在响应中供前端展示。
+- 验证结果：3 个 `mobile_app_update` 测试全部通过。
+
+## 2026-06-24 HKT 移动端自动更新下载链接无法打开
+
+- 完成任务：修复移动端自动更新弹窗点击"立即更新"后无法打开下载链接的问题。
+- 解决问题：移动端使用 `window.open(downloadUrl, '_blank')` 在 Tauri v2 WebView 中无法可靠打开外部浏览器下载 APK/IPA；根本原因是未安装 `tauri-plugin-opener` 插件，缺少系统浏览器唤起能力和相应权限声明。
+- 实施内容：
+  1. `mobile/src-tauri/Cargo.toml` 添加 `tauri-plugin-opener = "2"` 依赖
+  2. `mobile/src-tauri/capabilities/default.json` 添加 `"opener:default"` 权限
+  3. `mobile/src-tauri/src/lib.rs` 注册 `.plugin(tauri_plugin_opener::init())`
+  4. `mobile/src/composables/useAppUpdateCheck.ts` 引入 `openUrl` 并在 `openDownloadUrl` 中优先使用 opener API，降级兜底 `window.open`
+  5. `mobile/package.json` 添加 `@tauri-apps/plugin-opener` 依赖
+- 验证结果：代码修改已确认，Cargo.toml、capabilities、lib.rs、useAppUpdateCheck.ts、package.json 均已正确更新。npm 包安装因网络受限未完成，需要开发者本地执行 `cd mobile && pnpm install` 后重新构建应用。
+- 注意：iOS 端 `tauri-plugin-opener` 会自动注入 `LSApplicationQueriesSchemes`，Android 端自动注册 `Intent` 配置，无需手动修改原生配置文件。
+
 ## 2026-06-24 HKT 独立下单中奖派奖入账修复
 
 - 完成任务：修复独立下单中奖后资金未结算到账户余额、未加入流水的问题。

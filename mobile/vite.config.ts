@@ -260,14 +260,14 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // proxy: {
-    //   '/api': { target: devApiBase, changeOrigin: true },
-    //   '/ws': { target: devApiBase, ws: true },
-    // },
-
     proxy: {
-      '/api': { target: 'http://127.0.0.1:18120', changeOrigin: true },
-      '/ws': { target: 'http://127.0.0.1:18120', ws: true },
+      '/api': { target: devApiBase, changeOrigin: true },
+      '/ws': { target: devApiBase, ws: true },
     },
+
+    // proxy: {
+    //   '/api': { target: 'http://127.0.0.1:18120', changeOrigin: true },
+    //   '/ws': { target: 'http://127.0.0.1:18120', ws: true },
+    // },
   },
 })

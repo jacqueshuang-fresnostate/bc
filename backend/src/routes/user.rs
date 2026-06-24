@@ -453,10 +453,9 @@ fn mobile_app_update_from_settings(
     let release_notes =
         config_value(settings, &format!("{key_prefix}_release_notes")).unwrap_or_default();
     let current_version = query.current_version.as_deref().unwrap_or("0.0.0");
-    let current_build = query.current_build.unwrap_or(0);
     let update_available = enabled
         && download_url.is_some()
-        && (latest_build > current_build || version_is_newer(&latest_version, current_version));
+        && version_is_newer(&latest_version, current_version);
 
     MobileAppUpdateConfig {
         platform: platform.to_string(),
@@ -4531,7 +4530,7 @@ mod tests {
 
     #[test]
     /// 验证构建号落后时会返回需要更新，并携带强制更新配置。
-    fn mobile_app_update_detects_newer_build() {
+    fn mobile_app_update_ignores_same_version_with_higher_build() {
         let settings = vec![
             test_setting("mobile_app_android_enabled", "true"),
             test_setting("mobile_app_android_latest_version", "1.1.0"),
@@ -4551,13 +4550,8 @@ mod tests {
 
         let config = mobile_app_update_from_settings(&settings, &query);
 
-        assert!(config.update_available);
-        assert!(config.force_update);
-        assert_eq!(
-            config.download_url,
-            Some("https://example.com/app.apk".to_string())
-        );
-        assert_eq!(config.release_notes, "修复启动异常");
+        assert!(!config.update_available, "版本号相同时不应提示更新");
+        assert_eq!(config.latest_build, 12);
     }
 
     #[test]

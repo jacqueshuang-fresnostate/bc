@@ -1,5 +1,6 @@
 import { showConfirmDialog } from 'vant'
 import { fetchMobileAppUpdate } from '../api/user'
+import { openUrl } from '@tauri-apps/plugin-opener'
 
 type AppPlatform = 'android' | 'ios'
 
@@ -75,8 +76,12 @@ function buildUpdateMessage(latestVersion: string, releaseNotes: string) {
 }
 
 function openDownloadUrl(downloadUrl: string) {
-  const opened = window.open(downloadUrl, '_blank')
-  if (!opened) {
-    window.location.href = downloadUrl
+  try {
+    openUrl(downloadUrl)
+  } catch {
+    const opened = window.open(downloadUrl, '_blank')
+    if (!opened) {
+      window.location.href = downloadUrl
+    }
   }
 }

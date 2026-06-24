@@ -127,6 +127,7 @@ pub fn run() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|_app| {
             #[cfg(mobile)]
             {
