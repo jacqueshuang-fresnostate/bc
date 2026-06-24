@@ -2,9 +2,18 @@
 ## 2026-06-25 HKT 独立下单中奖余额未更新修复
 
 - 完成任务：修复独立下单中奖后虽有派奖流水但账户余额不增加的问题。
-- 解决问题：`settle_with_payouts` 只持有 `group_buys.mutation_lock`，未持有 `finance.mutation_lock`。并发的资金操作（如账户创建、手动调账）可能在结算写入余额后覆盖掉派奖的余额更新，导致 DB 和内存快照中的余额被回退到结算前状态。流水已写入（`ledger_entries` INSERT）但余额被覆盖（`financial_accounts` UPDATE）。
-- 实施内容：`settle_with_payouts` 在克隆资金快照前新增 `finance.mutation_lock.lock().await`，保证结算期间其他资金操作串行等待，避免余额写入被并发覆盖。
-- 验证结果：`cargo check --manifest-path backend/Cargo.toml` 编译通过；后端全量 422 个测试全部通过。
+- 解决问题：根因是下单和结算两个路径在并发修改资金内存快照时缺少互斥锁。`create_many_with_debit_in_database` 在 DB 事务提交后通过 `apply_persisted_order_debits` 直接将扣款后的余额覆盖写回内存快照，而 `settle_with_payouts` 结算派奖后也通过 `replace_store` 写回内存快照。并发时后写入者会覆盖先写入者的余额，导致 DB 中余额正确但内存快照被回退。
+- 实施内容：
+  1. `settle_with_payouts` 在克隆资金快照前获取 `finance.mutation_lock`，防止结算期间其他资金操作并发修改快照。
+  2. `create_many_with_debit_in_database` 在 DB 事务提交后、调用 `apply_persisted_order_debits` 写内存快照前获取 `finance.mutation_lock`，防止下单的余额写回与结算的余额写回互相覆盖。
+  3. 锁仅在写内存快照阶段持有，DB 事务期间不持锁，避免阻塞其他用户的数据库操作。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check` 和 `cargo check --manifest-path backend/Cargo.toml` 编译通过；后端全量 422 个测试全部通过。
+## 2026-06-25 HKT 资金内存快照并发安全补全
+
+- 完成任务：补全提现、充值、聊天红包模块的资金内存快照并发安全保护。
+- 解决问题：`withdrawal.rs`（create_order / approve_order / reject_order）、`recharge.rs`（epay_notify / confirm_customer_service）、`chat_hall.rs`（send_red_packet / claim_red_packet）在修改资金快照并写回内存时均未持有 `finance.mutation_lock`，与结算派奖并发时存在余额覆盖风险。
+- 实施内容：7 个函数均在克隆资金快照后、修改前获取 `finance.mutation_lock`，确保与结算路径串行化。
+- 验证结果：`cargo fmt --check`、`cargo check`、后端全量 422 个测试全部通过。
 
 
 ## 2026-06-24 HKT 补单机器人阶段多用户模拟

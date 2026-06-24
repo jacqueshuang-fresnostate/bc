@@ -375,6 +375,7 @@ impl RechargeRepository {
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
         let mut finance_store = previous_finance_store.clone();
+        let _finance_mutation_guard = finance.mutation_lock.lock().await;
 
         let was_paid = recharge_store.is_paid_order(order_id)?;
         let order = recharge_store.mark_paid(order_id, paid_amount_minor, trade_no)?;
@@ -440,6 +441,7 @@ impl RechargeRepository {
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
         let mut finance_store = previous_finance_store.clone();
+        let _finance_mutation_guard = finance.mutation_lock.lock().await;
 
         let was_paid = recharge_store.is_paid_order(order_id)?;
         let order = recharge_store.confirm_customer_service_order(order_id, request)?;

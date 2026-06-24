@@ -221,6 +221,7 @@ impl WithdrawalRepository {
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
         let mut finance_store = previous_finance_store.clone();
+        let _finance_mutation_guard = finance.mutation_lock.lock().await;
 
         let order = withdrawal_store.draft_order(user, method, request)?;
         let turnover = finance.withdrawal_turnover_for_user(&order.user_id).await?;
@@ -260,6 +261,7 @@ impl WithdrawalRepository {
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
         let mut finance_store = previous_finance_store.clone();
+        let _finance_mutation_guard = finance.mutation_lock.lock().await;
 
         let order = withdrawal_store.reviewable_order(id, WithdrawalOrderStatus::Approved)?;
         finance_store.approve_withdrawal(&order.user_id, order.amount_minor, &order.id)?;
@@ -297,6 +299,7 @@ impl WithdrawalRepository {
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .clone();
         let mut finance_store = previous_finance_store.clone();
+        let _finance_mutation_guard = finance.mutation_lock.lock().await;
 
         let order = withdrawal_store.reviewable_order(id, WithdrawalOrderStatus::Rejected)?;
         finance_store.reject_withdrawal(&order.user_id, order.amount_minor, &order.id)?;

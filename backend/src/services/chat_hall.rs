@@ -116,6 +116,7 @@ impl ChatHallRepository {
             .map_err(|_| ApiError::Internal("资金数据锁读取失败".to_string()))?
             .clone();
         let mut finance_snapshot = previous_finance_store.clone();
+        let _finance_mutation_guard = finance.mutation_lock.lock().await;
 
         let prepared = chat_snapshot.prepare_red_packet(user, request)?;
         finance_snapshot.debit_chat_red_packet(
@@ -153,6 +154,7 @@ impl ChatHallRepository {
             .map_err(|_| ApiError::Internal("资金数据锁读取失败".to_string()))?
             .clone();
         let mut finance_snapshot = previous_finance_store.clone();
+        let _finance_mutation_guard = finance.mutation_lock.lock().await;
 
         let prepared = chat_snapshot.prepare_red_packet_claim(user, red_packet_id)?;
         finance_snapshot.credit_chat_red_packet(

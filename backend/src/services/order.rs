@@ -499,6 +499,7 @@ impl OrderRepository {
             ApiError::Internal("普通下注数据库事务提交失败".to_string())
         })?;
 
+        let _finance_mutation_guard = finance.mutation_lock.lock().await;
         self.apply_persisted_created_orders(&created_orders, max_order_sequence)?;
         finance.apply_persisted_order_debits(
             vec![account],
