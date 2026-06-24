@@ -1,4 +1,113 @@
 # TODO
+## 2026-06-25 HKT 独立下单中奖余额未更新修复
+
+- 完成任务：修复独立下单中奖后虽有派奖流水但账户余额不增加的问题。
+- 解决问题：`settle_with_payouts` 只持有 `group_buys.mutation_lock`，未持有 `finance.mutation_lock`。并发的资金操作（如账户创建、手动调账）可能在结算写入余额后覆盖掉派奖的余额更新，导致 DB 和内存快照中的余额被回退到结算前状态。流水已写入（`ledger_entries` INSERT）但余额被覆盖（`financial_accounts` UPDATE）。
+- 实施内容：`settle_with_payouts` 在克隆资金快照前新增 `finance.mutation_lock.lock().await`，保证结算期间其他资金操作串行等待，避免余额写入被并发覆盖。
+- 验证结果：`cargo check --manifest-path backend/Cargo.toml` 编译通过；后端全量 422 个测试全部通过。
+
+
+## 2026-06-24 HKT 补单机器人阶段多用户模拟
+
+- 完成任务：修复补单机器人阶段性补单时每个阶段只使用一个机器人用户认购的问题，改为每个阶段模拟 5-10 个用户分散购买。
+- 解决问题：split_fill_amount_evenly 在补单金额拆分后任一份额低于 participant_min 时直接退回单份（vec![total]），导致单阶段补单只能用 1 个机器人用户；robot_fill_users_per_stage 返回值可能低于 5。
+- 实施内容：
+  1. robot_fill_users_per_stage：当补单金额足够时强制至少 5 个用户，金额不足时取最大可行用户数；添加 tracing::info! 日志记录小金额阶段用户数。
+  2. split_fill_amount_evenly：当拆分金额低于 participant_min 时不再退回单份，改为降低用户数到最大可行值并递归拆分；同时记录 tracing::info! 降级日志。
+- 验证结果：cargo check --manifest-path backend/Cargo.toml 编译通过；cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture 14 个测试全部通过。
+
+## 2026-06-24 HKT 手机端下载链接打开时增加用户提示
+
+- 完成任务：移动端自动更新点击"立即更新"后增加 Toast 提示"正在跳转下载页面..."，下载失败时提示用户检查网络。
+- 实施内容：useAppUpdateCheck.ts 的 openDownloadUrl 引入 showToast，在打开下载链接前展示跳转提示，openUrl 失败且 window.open 也失败时提示用户。
+- 验证结果：pnpm --dir mobile build 构建通过。
+## 2026-06-24 HKT 补单机器人阶段多用户模拟
+
+- 完成任务：修复补单机器人阶段性补单时每个阶段只使用一个机器人用户认购的问题，改为每个阶段模拟 5-10 个用户分散购买。
+- 解决问题： 在补单金额拆分后任一份额低于  时直接退回单份（），导致单阶段补单只能用 1 个机器人用户； 返回值可能低于 5。
+- 实施内容：
+  1. ：当补单金额足够时强制至少 5 个用户，金额不足时取最大可行用户数；添加  日志记录小金额阶段用户数。
+  2. ：当拆分金额低于  时不再退回单份，改为降低用户数到最大可行值并递归拆分；同时记录  降级日志。
+- 验证结果： 编译通过；
+running 14 tests
+test services::group_buy_robot::tests::robot_amounts_keep_remaining_participation_valid ... ok
+test services::group_buy_robot::tests::robot_direct_numbers_vary_across_issues ... ok
+test services::group_buy_robot::tests::robot_numbers_match_every_supported_play_rule ... ok
+test services::group_buy_robot::tests::robot_display_users_keep_robot_id_and_replace_username ... ok
+test services::group_buy_robot::tests::robot_display_name_uses_random_chinese_name ... ok
+test services::group_buy_robot::tests::robot_plan_request_randomizes_play_rule_stake_count_and_multiplier ... ok
+test services::group_buy_robot::tests::robot_guard_fills_closed_user_group_buy_before_refund ... ok
+test services::scheduler::tests::scheduler_guard_uses_enabled_group_buy_robot_for_unbound_lottery ... ok
+test services::group_buy_robot::tests::robot_run_creates_plan_then_fills_group_buy_with_rhythm ... ok
+test services::group_buy_robot::tests::robot_run_auto_credits_robot_account_when_balance_is_low ... ok
+test services::group_buy_robot::tests::robot_run_fills_own_plan_by_before_draw_strategy ... ok
+test services::group_buy_robot::tests::robot_run_executes_multiple_lottery_jobs_in_one_round ... ok
+test services::group_buy_robot::tests::robot_run_fills_user_plan_by_before_draw_strategy ... ok
+test services::group_buy_robot::tests::robot_run_fills_existing_non_robot_group_buy_plan_with_rhythm ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 408 filtered out; finished in 5.59s 14 个测试全部通过。
+
+## 2026-06-24 HKT 手机端下载链接打开时增加用户提示
+
+- 完成任务：移动端自动更新点击立即更新后增加 Toast 提示正在跳转下载页面…，下载失败时提示用户检查网络。
+- 实施内容： 的  引入 ，在打开下载链接前展示跳转提示， 失败且  也失败时提示用户。
+- 验证结果：
+> mobile-client@0.0.0 build /Users/huangkunhuang/Public/程序工程目录/复合工程/bc/mobile
+> vue-tsc -b && vite build
+
+vite v6.4.2 building for production...
+transforming...
+✓ 2168 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                                 344.72 kB │ gzip: 77.99 kB
+dist/assets/_plugin-vue_export-helper-DlAUqK2U.js                                 0.09 kB │ gzip:  0.10 kB
+dist/assets/arrow-left-CMDAtqCI.js                                                0.35 kB │ gzip:  0.27 kB
+dist/assets/lottery-DKx0TpTZ.js                                                   0.36 kB │ gzip:  0.18 kB
+dist/assets/message-circle-hGEhvm2T.js                                            0.42 kB │ gzip:  0.32 kB
+dist/assets/timeSort-BFmzhI-n.js                                                  0.43 kB │ gzip:  0.27 kB
+dist/assets/headset-EjlA9hfC.js                                                   0.48 kB │ gzip:  0.32 kB
+dist/assets/index-gdjTF-WI.js                                                     0.67 kB │ gzip:  0.33 kB
+dist/assets/zh-B_NXpyvP.js                                                        0.70 kB │ gzip:  0.49 kB
+dist/assets/shield-check-ClFYZXTw.js                                              0.84 kB │ gzip:  0.46 kB
+dist/assets/CachedRemoteImage.vue_vue_type_script_setup_true_lang-DLVnizyV.js     0.84 kB │ gzip:  0.52 kB
+dist/assets/CachedAvatarImage.vue_vue_type_script_setup_true_lang-w2sKjBso.js     0.84 kB │ gzip:  0.52 kB
+dist/assets/eye-1Qn4N0pd.js                                                       0.99 kB │ gzip:  0.46 kB
+dist/assets/index-ML1ww6Kf.js                                                     1.16 kB │ gzip:  0.66 kB
+dist/assets/supportUnread-D2zMSAwl.js                                             1.28 kB │ gzip:  0.70 kB
+dist/assets/WalletHeaderAmount.vue_vue_type_script_setup_true_lang-COFPyAsF.js    1.58 kB │ gzip:  0.96 kB
+dist/assets/createLucideIcon-DkVnVCYu.js                                          1.78 kB │ gzip:  0.76 kB
+dist/assets/core-DhEqZVGG.js                                                      2.44 kB │ gzip:  0.98 kB
+dist/assets/presentation-BcXnu0gL.js                                              2.47 kB │ gzip:  1.17 kB
+dist/assets/avatarImageCache-BO1dGe69.js                                          2.82 kB │ gzip:  1.25 kB
+dist/assets/index-B-8OrbYW.js                                                     3.38 kB │ gzip:  1.12 kB
+dist/assets/mobileUserData--0eE9Hb0.js                                            3.99 kB │ gzip:  1.31 kB
+dist/assets/api-CLUpzLVa.js                                                       4.77 kB │ gzip:  1.41 kB
+dist/assets/bet-Dhg9HMt5.js                                                       5.19 kB │ gzip:  1.97 kB
+dist/assets/AccountLedgerView-COrofJzM.js                                         6.88 kB │ gzip:  2.84 kB
+dist/assets/ForgotPasswordView-BFTFEE_R.js                                        6.99 kB │ gzip:  2.69 kB
+dist/assets/LayoutView-CWyXhhlq.js                                                9.17 kB │ gzip:  3.89 kB
+dist/assets/SecurityCenterView-BSVYAUzo.js                                        9.61 kB │ gzip:  3.33 kB
+dist/assets/WithdrawalMethodsView-ScRkaz5J.js                                    10.39 kB │ gzip:  3.82 kB
+dist/assets/WithdrawView-e439d30g.js                                             10.46 kB │ gzip:  4.01 kB
+dist/assets/AllLotteryView-BEQrdTLp.js                                           10.60 kB │ gzip:  3.66 kB
+dist/assets/LucideIcon.vue_vue_type_script_setup_true_lang-B4MZDlHc.js           11.01 kB │ gzip:  2.84 kB
+dist/assets/ProfileView-DQGFiLg7.js                                              11.09 kB │ gzip:  4.73 kB
+dist/assets/LoginView-C1T0DJj5.js                                                12.54 kB │ gzip:  3.94 kB
+dist/assets/lotteryFormat-CH24VgiS.js                                            13.02 kB │ gzip:  4.38 kB
+dist/assets/InvitationCenterView-CBoOT2B-.js                                     13.53 kB │ gzip:  4.90 kB
+dist/assets/DepositView-BAZeZhka.js                                              15.03 kB │ gzip:  5.51 kB
+dist/assets/ChatHallView-BWC5nr98.js                                             18.09 kB │ gzip:  6.46 kB
+dist/assets/SupportView-CKTciVGk.js                                              20.47 kB │ gzip:  8.20 kB
+dist/assets/HistoryView-CRXXWguZ.js                                              23.36 kB │ gzip:  7.74 kB
+dist/assets/HomeView-C0AV0JRm.js                                                 23.55 kB │ gzip:  7.96 kB
+dist/assets/GroupBuyView-CTkHDRAs.js                                             33.30 kB │ gzip: 10.64 kB
+dist/assets/BetView-DiOnPRWH.js                                                  53.36 kB │ gzip: 16.22 kB
+dist/assets/module-D8iBLRih.js                                                   77.29 kB │ gzip: 27.78 kB
+dist/assets/index-CovB_O0p.js                                                   251.98 kB │ gzip: 94.98 kB
+dist/assets/native-48B9X9Wg.js                                                  432.75 kB │ gzip: 82.80 kB
+✓ built in 2.71s 构建通过。
+
 
 ## 2026-06-24 HKT 移动端版本相同时不弹更新窗
 

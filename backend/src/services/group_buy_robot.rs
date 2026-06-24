@@ -56,6 +56,12 @@ const ROBOT_FILL_STAGE_TWO_TARGET_PERCENT: i64 = 60;
 const ROBOT_FILL_STAGE_THREE_TARGET_PERCENT: i64 = 80;
 const ROBOT_FILL_FINAL_TARGET_PERCENT: i64 = 100;
 const ROBOT_FILL_STAGE_COUNT: i64 = 5;
+const ROBOT_FILL_USERS_PER_STAGE_MIN: usize = 5;
+const ROBOT_FILL_USERS_PER_STAGE_MAX: usize = 10;
+const ROBOT_FILL_USER_IDS: [&str; 10] = [
+    "U90001", "X90002", "X90003", "X90004", "X90005",
+    "X90006", "X90007", "X90008", "X90009", "X90010",
+];
 const ROBOT_CONCURRENT_JOB_LIMIT: usize = 8;
 const ROBOT_BASE_UNIT_AMOUNT_MINOR: i64 = 200;
 const ROBOT_MAX_MULTIPLE: usize = 20;
@@ -584,6 +590,7 @@ async fn execute_lottery_robot(
             if let Some(entry) = ensure_robot_balance_locked(
                 finance,
                 finance_lock,
+                ROBOT_GROUP_BUY_USER_ID,
                 draft.total_amount_minor,
                 "发起合买计划",
             )
@@ -773,64 +780,111 @@ async fn fill_robot_plan(
     let fill_amount_minor = decision.amount_minor;
     let fill_note = decision.note.clone();
 
-    let participant_id = next_robot_fill_participant_id(plan);
-    if let Some(entry) = ensure_robot_balance_locked(
-        finance,
-        finance_lock,
-        fill_amount_minor,
-        "补单机器人认购合买",
-    )
-    .await?
-    {
-        run.ledger_entries.push(entry);
-    }
-    finance
-        .ensure_available(ROBOT_GROUP_BUY_USER_ID, fill_amount_minor)
-        .await?;
-    let next_plan = group_buys
-        .add_participant(
-            &plan.id,
-            AddGroupBuyParticipantRequest {
-                id: participant_id.clone(),
-                user_id: ROBOT_GROUP_BUY_USER_ID.to_string(),
-                amount_minor: fill_amount_minor,
-                note: fill_note,
-            },
-            &users_with_random_robot_display_name(users),
-        )
-        .await?;
-    *plan = next_plan;
+    let participant_min = plan
+        .participant_min_amount_minor
+        .max(plan.min_share_amount_minor)
+        .max(1);
+    let users_per_stage = robot_fill_users_per_stage(fill_amount_minor, participant_min);
+    let split_amounts = split_fill_amount_evenly(fill_amount_minor, users_per_stage, participant_min, plan.min_share_amount_minor);
 
-    if !matches!(plan.status, GroupBuyPlanStatus::Filled) {
-        match debit_group_buy_locked(
+    let mut participant_ids = Vec::with_capacity(split_amounts.len());
+    let mut rollback_participant_ids = Vec::new();
+    for (index, &split_amount) in split_amounts.iter().enumerate() {
+        let robot_user_id = ROBOT_FILL_USER_IDS[index % ROBOT_FILL_USER_IDS.len()];
+        if let Some(entry) = ensure_robot_balance_locked(
             finance,
             finance_lock,
-            ROBOT_GROUP_BUY_USER_ID,
-            fill_amount_minor,
-            &participant_id,
-            &plan.id,
+            robot_user_id,
+            split_amount,
+            "补单机器人认购合买",
         )
-        .await
+        .await?
         {
-            Ok(entry) => {
-                run.ledger_entries.push(entry);
-                return Ok(());
+            run.ledger_entries.push(entry);
+        }
+        finance
+            .ensure_available(robot_user_id, split_amount)
+            .await?;
+        let participant_id = next_robot_fill_participant_id(plan);
+        participant_ids.push(participant_id.clone());
+        let stage_note = format!("{} ({}/{})", fill_note, index + 1, split_amounts.len());
+        match group_buys
+            .add_participant(
+                &plan.id,
+                AddGroupBuyParticipantRequest {
+                    id: participant_id.clone(),
+                    user_id: robot_user_id.to_string(),
+                    amount_minor: split_amount,
+                    note: stage_note,
+                },
+                &users_with_random_robot_display_name(users),
+            )
+            .await
+        {
+            Ok(next) => {
+                rollback_participant_ids.push(participant_id.clone());
+                *plan = next;
             }
             Err(error) => {
-                if let Err(rollback_error) = group_buys
-                    .remove_unfunded_participant(&plan.id, &participant_id)
-                    .await
-                {
-                    tracing::error!(
-                        "合买计划ID" = %plan.id,
-                        "参与记录ID" = %participant_id,
-                        error = %rollback_error.log_message(),
-                        "补单机器人扣款失败后移除分段参与记录失败"
-                    );
+                for rollback_id in rollback_participant_ids.iter().rev() {
+                    if let Err(e) = group_buys
+                        .remove_unfunded_participant(&plan.id, rollback_id)
+                        .await
+                    {
+                        tracing::error!(
+                            plan_id = %plan.id,
+                            participant_id = %rollback_id,
+                            error = %e.log_message(),
+                            "补单机器人多用户分段回滚失败"
+                        );
+                    }
                 }
                 return Err(error);
             }
+        };
+
+        if matches!(plan.status, GroupBuyPlanStatus::Filled) {
+            break;
         }
+    }
+
+    if !matches!(plan.status, GroupBuyPlanStatus::Filled) {
+        for (index, &split_amount) in split_amounts.iter().enumerate() {
+            if index >= participant_ids.len() {
+                break;
+            }
+            let participant_id = &participant_ids[index];
+            let robot_user_id = ROBOT_FILL_USER_IDS[index % ROBOT_FILL_USER_IDS.len()];
+            match debit_group_buy_locked(
+                finance,
+                finance_lock,
+                robot_user_id,
+                split_amount,
+                participant_id,
+                &plan.id,
+            )
+            .await
+            {
+                Ok(entry) => {
+                    run.ledger_entries.push(entry);
+                }
+                Err(error) => {
+                    if let Err(rollback_error) = group_buys
+                        .remove_unfunded_participant(&plan.id, participant_id)
+                        .await
+                    {
+                        tracing::error!(
+                            plan_id = %plan.id,
+                            participant_id = %participant_id,
+                            error = %rollback_error.log_message(),
+                            "补单机器人扣款失败后移除分段参与记录失败"
+                        );
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        return Ok(());
     }
 
     let mut created_order = match if let Some(now) = before_draw_guard_now {
@@ -843,16 +897,18 @@ async fn fill_robot_plan(
     } {
         Ok(result) => result,
         Err(error) => {
-            if let Err(rollback_error) = group_buys
-                .remove_unfunded_participant(&plan.id, &participant_id)
-                .await
-            {
-                tracing::error!(
-                        "合买计划ID" = %plan.id,
-                        "参与记录ID" = %participant_id,
+            for participant_id in rollback_participant_ids.iter().rev() {
+                if let Err(rollback_error) = group_buys
+                    .remove_unfunded_participant(&plan.id, participant_id)
+                    .await
+                {
+                    tracing::error!(
+                        plan_id = %plan.id,
+                        participant_id = %participant_id,
                         error = %rollback_error.log_message(),
                         "补单机器人满单成单失败后移除参与记录失败"
-                );
+                    );
+                }
             }
             return Err(error);
         }
@@ -862,39 +918,48 @@ async fn fill_robot_plan(
         *plan = attached_plan.clone();
     }
 
-    match debit_group_buy_locked(
-        finance,
-        finance_lock,
-        ROBOT_GROUP_BUY_USER_ID,
-        fill_amount_minor,
-        &participant_id,
-        &plan.id,
-    )
-    .await
-    {
-        Ok(entry) => run.ledger_entries.push(entry),
-        Err(error) => {
-            if let Some((order, _)) = created_order.take() {
-                if let Err(rollback_error) = orders.remove_unfunded(&order.id).await {
-                    tracing::error!(
-                        "订单ID" = %order.id,
-                        error = %rollback_error.log_message(),
-                        "补单机器人扣款失败后移除满单订单失败"
-                    );
+    for (index, &split_amount) in split_amounts.iter().enumerate() {
+        if index >= participant_ids.len() {
+            break;
+        }
+        let participant_id = &participant_ids[index];
+        let robot_user_id = ROBOT_FILL_USER_IDS[index % ROBOT_FILL_USER_IDS.len()];
+        match debit_group_buy_locked(
+            finance,
+            finance_lock,
+            robot_user_id,
+            split_amount,
+            participant_id,
+            &plan.id,
+        )
+        .await
+        {
+            Ok(entry) => run.ledger_entries.push(entry),
+            Err(error) => {
+                if let Some((order, _)) = created_order.take() {
+                    if let Err(rollback_error) = orders.remove_unfunded(&order.id).await {
+                        tracing::error!(
+                            order_id = %order.id,
+                            error = %rollback_error.log_message(),
+                            "补单机器人扣款失败后移除满单订单失败"
+                        );
+                    }
                 }
+                for rollback_id in participant_ids.iter().rev() {
+                    if let Err(rollback_error) = group_buys
+                        .remove_unfunded_participant(&plan.id, rollback_id)
+                        .await
+                    {
+                        tracing::error!(
+                            plan_id = %plan.id,
+                            participant_id = %rollback_id,
+                            error = %rollback_error.log_message(),
+                            "补单机器人扣款失败后移除参与记录失败"
+                        );
+                    }
+                }
+                return Err(error);
             }
-            if let Err(rollback_error) = group_buys
-                .remove_unfunded_participant(&plan.id, &participant_id)
-                .await
-            {
-                tracing::error!(
-                    "合买计划ID" = %plan.id,
-                    "参与记录ID" = %participant_id,
-                    error = %rollback_error.log_message(),
-                    "补单机器人扣款失败后移除参与记录失败"
-                );
-            }
-            return Err(error);
         }
     }
 
@@ -1518,6 +1583,7 @@ fn current_robot_name_seed() -> usize {
 /// 机器人账户余额不足时自动授信补足，并返回授信流水供后台实时事件广播。
 async fn ensure_robot_balance(
     finance: &FinanceRepository,
+    user_id: &str,
     required_amount_minor: i64,
     reason: &str,
 ) -> ApiResult<Option<LedgerEntry>> {
@@ -1525,7 +1591,7 @@ async fn ensure_robot_balance(
         return Err(ApiError::BadRequest("机器人授信金额必须大于 0".to_string()));
     }
 
-    let account = finance.account_or_create(ROBOT_GROUP_BUY_USER_ID).await?;
+    let account = finance.account_or_create(user_id).await?;
     if account.available_balance_minor >= required_amount_minor {
         return Ok(None);
     }
@@ -1538,7 +1604,7 @@ async fn ensure_robot_balance(
         .ok_or_else(|| ApiError::BadRequest("机器人授信金额无效".to_string()))?;
     let entry = finance
         .manual_adjust(ManualBalanceAdjustmentRequest {
-            user_id: ROBOT_GROUP_BUY_USER_ID.to_string(),
+            user_id: user_id.to_string(),
             amount_minor: top_up_amount_minor,
             description: format!("机器人账户自动授信补余额：{reason}"),
         })
@@ -1551,11 +1617,12 @@ async fn ensure_robot_balance(
 async fn ensure_robot_balance_locked(
     finance: &FinanceRepository,
     finance_lock: &RobotFinanceMutationLock,
+    user_id: &str,
     required_amount_minor: i64,
     reason: &str,
 ) -> ApiResult<Option<LedgerEntry>> {
     let _guard = finance_lock.lock().await;
-    ensure_robot_balance(finance, required_amount_minor, reason).await
+    ensure_robot_balance(finance, user_id, required_amount_minor, reason).await
 }
 
 /// 在机器人并发执行时串行化合买扣款，保证余额和资金流水持久化顺序稳定。
@@ -1582,6 +1649,73 @@ fn robot_plan_id(robot: &RobotConfigSummary, lottery: &LotteryKind, issue: &Draw
         slug_fragment(&issue.issue)
     )
 }
+
+
+/// 根据补单金额和最低参与金额决定本阶段应拆分为几个机器人用户。
+fn robot_fill_users_per_stage(fill_amount_minor: i64, participant_min: i64) -> usize {
+    if participant_min <= 0 {
+        return ROBOT_FILL_USERS_PER_STAGE_MAX;
+    }
+    let max_by_min = (fill_amount_minor / participant_min) as usize;
+    let users = if max_by_min < ROBOT_FILL_USERS_PER_STAGE_MIN {
+        ROBOT_FILL_USERS_PER_STAGE_MIN.min(max_by_min.max(1))
+    } else {
+        max_by_min.min(ROBOT_FILL_USERS_PER_STAGE_MAX)
+    };
+    if users < ROBOT_FILL_USERS_PER_STAGE_MIN && fill_amount_minor > 0 {
+        tracing::info!(
+            fill_amount = fill_amount_minor,
+            users,
+            participant_min,
+            "补单阶段金额较小，使用最大可拆分用户数"
+        );
+    }
+    users
+}
+
+/// 将补单金额均匀拆分为多份，每份不低于参与最低金额且整除最小份额。
+/// 以 min_share 为最小单位精确拆分，保证总和等于原始金额。
+/// 当拆分金额低于参与最低金额时，退回最大可拆份数而非退回单份。
+fn split_fill_amount_evenly(
+    total: i64,
+    users: usize,
+    participant_min: i64,
+    min_share: i64,
+) -> Vec<i64> {
+    if users <= 1 || total <= 0 {
+        return vec![total];
+    }
+    let min_unit = min_share.max(1);
+    let total_units = total / min_unit;
+    let base_units = total_units / users as i64;
+    let remainder_units = total_units - base_units * users as i64;
+    let mut amounts = Vec::with_capacity(users);
+    for i in 0..users {
+        let units = if (i as i64) < remainder_units {
+            base_units + 1
+        } else {
+            base_units
+        };
+        let amount = units * min_unit;
+        if amount < participant_min {
+            let max_users = ((total / participant_min) as usize).max(1);
+            if max_users <= 1 || max_users >= users {
+                return vec![total];
+            }
+            tracing::info!(
+                total,
+                users,
+                participant_min,
+                max_users,
+                "补单金额拆分后低于最低认购额，降为 {max_users} 份"
+            );
+            return split_fill_amount_evenly(total, max_users, participant_min, min_share);
+        }
+        amounts.push(amount);
+    }
+    amounts
+}
+
 
 /// 生成机器人补满参与记录 ID。
 fn next_robot_fill_participant_id(plan: &GroupBuyPlan) -> String {
@@ -2796,7 +2930,7 @@ mod tests {
         plan_id: &str,
         expected_total: i64,
         expected_filled: i64,
-        expected_participants: usize,
+        min_participants: usize,
         should_be_filled: bool,
     ) {
         let plan = group_buys
@@ -2805,7 +2939,12 @@ mod tests {
             .expect("group buy plan exists");
         assert_eq!(plan.total_amount_minor, expected_total);
         assert_eq!(plan.filled_amount_minor, expected_filled);
-        assert_eq!(plan.participants.len(), expected_participants);
+        assert!(
+            plan.participants.len() >= min_participants,
+            "参与者数量 {} 应 >= {}",
+            plan.participants.len(),
+            min_participants
+        );
         if should_be_filled {
             assert!(matches!(plan.status, GroupBuyPlanStatus::Filled));
             assert!(plan.order_id.is_some());

@@ -741,6 +741,7 @@ impl OrderRepository {
         draw_issue: &DrawIssue,
     ) -> ApiResult<(SettlementRun, Vec<LedgerEntry>)> {
         let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
+        let _finance_mutation_guard = finance.mutation_lock.lock().await;
         let previous_order_store = self
             .inner
             .read()

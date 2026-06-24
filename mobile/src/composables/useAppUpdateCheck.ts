@@ -1,4 +1,4 @@
-import { showConfirmDialog } from 'vant'
+import { showConfirmDialog, showToast } from 'vant'
 import { fetchMobileAppUpdate } from '../api/user'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
@@ -76,11 +76,13 @@ function buildUpdateMessage(latestVersion: string, releaseNotes: string) {
 }
 
 function openDownloadUrl(downloadUrl: string) {
+  showToast('正在跳转下载页面…')
   try {
     openUrl(downloadUrl)
   } catch {
     const opened = window.open(downloadUrl, '_blank')
     if (!opened) {
+      showToast('下载链接打开失败，请检查网络后重试')
       window.location.href = downloadUrl
     }
   }

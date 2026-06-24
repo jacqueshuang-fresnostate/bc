@@ -1572,6 +1572,15 @@ impl FinanceStore {
         store.seed_account("U10003", 100_000, 0);
         store.seed_account("U10004", 0, 0);
         store.seed_account("U90001", 520_000, 0);
+        store.seed_account("X90002", 520_000, 0);
+        store.seed_account("X90003", 520_000, 0);
+        store.seed_account("X90004", 520_000, 0);
+        store.seed_account("X90005", 520_000, 0);
+        store.seed_account("X90006", 520_000, 0);
+        store.seed_account("X90007", 520_000, 0);
+        store.seed_account("X90008", 520_000, 0);
+        store.seed_account("X90009", 520_000, 0);
+        store.seed_account("X90010", 520_000, 0);
         store
     }
 
