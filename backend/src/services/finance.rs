@@ -2419,9 +2419,8 @@ impl FinanceStore {
         description: String,
     ) -> ApiResult<LedgerEntry> {
         let user_id = user_id.trim();
-        let account = self.accounts.get_mut(user_id).ok_or_else(|| {
-            ApiError::NotFound(format!("financial account `{user_id}` not found"))
-        })?;
+        self.account_or_create(user_id)?;
+        let account = self.accounts.get_mut(user_id).unwrap();
         let available_balance_minor = account
             .available_balance_minor
             .checked_add(amount_minor)
@@ -2785,6 +2784,75 @@ mod tests {
             .all(|entry| entry.reference_id.as_deref() != Some("S000000000001:O000000000001")));
         assert_eq!(agent.available_balance_minor, 521_000);
         assert_eq!(user.available_balance_minor, 14_000);
+    }
+    #[test]
+    /// 同一用户独立下单和合买认购同时中奖且金额相同，两种派奖都应入账。
+    fn store_credits_same_user_direct_and_group_buy_payout_with_same_amount() {
+        let mut store = FinanceStore::seeded();
+        // 构造一个结算批次包含同一用户的两笔中奖订单
+        let base_settlement = settlement_run("S000000000001", "U10001", 1000);
+        let mut settlement = SettlementRun {
+            settled_order_count: 2,
+            winning_order_count: 2,
+            total_stake_amount_minor: 400,
+            total_payout_minor: 2000,
+            orders: vec![
+                OrderSettlement {
+                    order_id: "O_IND".to_string(),
+                    user_id: "U10001".to_string(),
+                    payout_minor: 1000,
+                    ..base_settlement.orders[0].clone()
+                },
+                OrderSettlement {
+                    order_id: "O_GB".to_string(),
+                    user_id: "U90001".to_string(),
+                    payout_minor: 1000,
+                    ..base_settlement.orders[0].clone()
+                },
+            ],
+            ..base_settlement
+        };
+
+        let plan = GroupBuyPlan {
+            id: "G202606250001".to_string(),
+            order_id: Some("O_GB".to_string()),
+            total_amount_minor: 200,
+            filled_amount_minor: 200,
+            min_share_amount_minor: 200,
+            participant_min_amount_minor: 200,
+            share_count: 1,
+            participants: vec![GroupBuyParticipant {
+                id: "G202606250001-P001".to_string(),
+                user_id: "U10001".to_string(),
+                amount_minor: 200,
+                share_count: 1,
+                ..group_buy_plan_with_order("G202606250001", "O_GB").participants[0].clone()
+            }],
+            ..group_buy_plan_with_order("G202606250001", "O_GB")
+        };
+
+        let entries = store
+            .credit_settlement_with_group_buys(&settlement, &[plan], &BTreeSet::new())
+            .expect("same user direct + group buy payout can be credited");
+        let account = store.account("U10001").expect("account exists");
+
+        assert_eq!(
+            entries.len(),
+            2,
+            "应产生 2 条派奖流水（独立 1 条 + 合买 1 条）"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.reference_id.as_deref() == Some("S000000000001:O_IND")),
+            "应包含独立下单派奖流水"
+        );
+        assert!(entries.iter().any(|e| e.reference_id.as_deref() == Some("S000000000001:O_GB:G202606250001-P001")),
+            "应包含合买分账派奖流水");
+        assert_eq!(
+            account.available_balance_minor, 14_000,
+            "U10001 余额应增加 2000（独立 1000 + 合买 1000）"
+        );
     }
 
     #[test]

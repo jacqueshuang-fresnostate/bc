@@ -1,4 +1,13 @@
 # TODO
+## 2026-06-25 HKT 派奖账户不存在时静默失败修复
+
+- 完成任务：修复独立下单和合买同时中奖时，因资金账户不存在导致派奖静默失败的问题。
+- 解决问题：`apply_available_delta` 原来使用 `accounts.get_mut()` 直接获取可变引用，如果账户因并发、缓存不一致等原因不在内存快照中，会返回 `NotFound` 错误导致派奖失败。改为先调用 `account_or_create()` 确保账户存在（不存在则创建 0 余额账户），再执行余额变更。这与其他路径（如下单扣款时的 `account_or_create`）保持一致。
+- 实施内容：
+  1. `FinanceStore::apply_available_delta` 中将 `accounts.get_mut(user_id).ok_or_else(...)` 改为先 `account_or_create(user_id)?` 再 `accounts.get_mut(user_id).unwrap()`。
+  2. 新增测试 `store_credits_same_user_direct_and_group_buy_payout_with_same_amount`：验证同一用户独立下单和合买认购同时中奖且金额相同时，两条派奖流水均正常生成，余额正确增加。
+- 验证结果：`cargo fmt --check` 通过、全量 423 个测试通过。
+
 ## 2026-06-25 HKT 资金余额写入改为增量
 
 - 完成任务：将资金账户余额的数据库写入从绝对值改为增量，从根本上消除并发覆盖问题。
