@@ -127,6 +127,10 @@ impl GroupBuyRepository {
 
     /// 返回完整计划列表，供用户端大厅按参与记录计算我的合买。
     pub async fn list_details(&self) -> ApiResult<Vec<GroupBuyPlan>> {
+        if let Some(persistence) = &self.persistence {
+            return query_group_buy_details(persistence).await;
+        }
+
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))
@@ -691,6 +695,52 @@ async fn query_group_buy_summary_page(
 }
 
 /// 数据库模式下读取指定用户发起或参与过的合买计划，并只加载这些计划的参与人。
+/// 数据库模式下读取全部合买计划详情及参与人，供调度器强制满单扫描使用。
+async fn query_group_buy_details(database: &BusinessDatabase) -> ApiResult<Vec<GroupBuyPlan>> {
+    let rows = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, initiator_user_id, initiator_username,
+                order_id, issue, rule_code, title, numbers,
+                total_amount_minor, filled_amount_minor, min_share_amount_minor,
+                participant_min_amount_minor, share_count, status, note, created_at, updated_at
+         FROM group_buy_plans
+         ORDER BY issue DESC, created_at DESC, id DESC",
+    )
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("合买计划全量数据读取失败".to_string()))?;
+    let mut plans = rows
+        .into_iter()
+        .map(group_buy_plan_from_row)
+        .map(|result| result.map(|plan| (plan.id.clone(), plan)))
+        .collect::<ApiResult<BTreeMap<_, _>>>()?;
+    if plans.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let plan_ids = plans.keys().cloned().collect::<Vec<_>>();
+    let participant_rows = sqlx::query(
+        "SELECT id, plan_id, user_id, username, amount_minor, share_count, note, created_at
+         FROM group_buy_participants
+         WHERE plan_id = ANY($1)
+         ORDER BY plan_id ASC, id ASC",
+    )
+    .bind(&plan_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("合买参与人全量数据读取失败".to_string()))?;
+    for row in participant_rows {
+        let participant = group_buy_participant_from_row(row)?;
+        if let Some(plan) = plans.get_mut(&participant.0) {
+            plan.participants.push(participant.1);
+        }
+    }
+
+    Ok(sorted_group_buy_plans(plans.values())
+        .into_iter()
+        .cloned()
+        .collect())
+}
+
 async fn query_group_buy_details_for_user(
     database: &BusinessDatabase,
     user_id: &str,

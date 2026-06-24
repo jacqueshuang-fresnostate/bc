@@ -1,4 +1,13 @@
 # TODO
+## 2026-06-25 HKT 强制满单读取过期缓存修复
+
+- 完成任务：修复调度器强制满单因读取内存快照导致漏掉未满单合买计划的问题。
+- 解决问题：`force_fill_user_group_buy_plans_before_refund` 调用 `group_buys.list_details()` 读取合买计划，但 `list_details()` 永远只读内存快照不走数据库。当内存快照因并发覆盖导致状态过时，调度器扫描不到应被强制满单的计划，导致计划流单到开奖仍未满。
+- 实施内容：
+  1. `GroupBuyRepository::list_details()` 新增 DB 回退：有持久化配置时调用 `query_group_buy_details` 从 `group_buy_plans` + `group_buy_participants` 表全量加载。
+  2. 新增 `query_group_buy_details` 数据库查询函数，与 `query_group_buy_details_for_user` 结构一致但不加用户过滤。
+- 验证结果：`cargo fmt --check`、`cargo check`、后端全量 422 个测试全部通过。
+
 ## 2026-06-25 HKT 独立下单中奖余额未更新修复
 
 - 完成任务：修复独立下单中奖后虽有派奖流水但账户余额不增加的问题。
