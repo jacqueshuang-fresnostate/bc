@@ -1,4 +1,14 @@
 # TODO
+## 2026-06-25 HKT 资金余额写入改为增量
+
+- 完成任务：将资金账户余额的数据库写入从绝对值改为增量，从根本上消除并发覆盖问题。
+- 解决问题：`save_finance_store_incremental_in_transaction` 原来用 `ON CONFLICT DO UPDATE SET available_balance_minor = EXCLUDED.available_balance_minor`（写入绝对值），多线程同时计算余额后写入 DB 时后写者覆盖先写者。改为 `SET available_balance_minor = financial_accounts.available_balance_minor + EXCLUDED.available_balance_minor`（写入增量），每个线程写入的是"内存快照计算出的变化量"而非"快照的绝对值"，即使并发也不丢失数据。
+- 实施内容：
+  1. 计算新旧快照的 delta（`new.available - old.available`），新账户 delta = 绝对值。
+  2. SQL 改为 `+ EXCLUDED.available_balance_minor` 增量写入。
+  3. delta 为 0 时跳过写入（等价于旧逻辑的 `previous == account` 跳过）。
+- 验证结果：`cargo fmt --check`、`cargo test finance --quiet` 28 个测试通过、全量 422 个测试通过。
+
 ## 2026-06-25 HKT 强制满单读取过期缓存修复
 
 - 完成任务：修复调度器强制满单因读取内存快照导致漏掉未满单合买计划的问题。

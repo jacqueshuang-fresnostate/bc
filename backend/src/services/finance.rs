@@ -1356,7 +1356,18 @@ pub(crate) async fn save_finance_store_incremental_in_transaction(
     }
 
     for (user_id, account) in &store.accounts {
-        if previous.accounts.get(user_id) == Some(account) {
+        let previous_account = previous.accounts.get(user_id);
+        let delta_available = if let Some(prev) = previous_account {
+            account.available_balance_minor - prev.available_balance_minor
+        } else {
+            account.available_balance_minor
+        };
+        let delta_frozen = if let Some(prev) = previous_account {
+            account.frozen_balance_minor - prev.frozen_balance_minor
+        } else {
+            account.frozen_balance_minor
+        };
+        if delta_available == 0 && delta_frozen == 0 {
             continue;
         }
         sqlx::query(
@@ -1364,22 +1375,24 @@ pub(crate) async fn save_finance_store_incremental_in_transaction(
              (user_id, available_balance_minor, frozen_balance_minor)
              VALUES ($1, $2, $3)
              ON CONFLICT (user_id) DO UPDATE SET
-                available_balance_minor = EXCLUDED.available_balance_minor,
-                frozen_balance_minor = EXCLUDED.frozen_balance_minor,
+                available_balance_minor = financial_accounts.available_balance_minor + EXCLUDED.available_balance_minor,
+                frozen_balance_minor = financial_accounts.frozen_balance_minor + EXCLUDED.frozen_balance_minor,
                 updated_at = now()",
         )
         .bind(&account.user_id)
-        .bind(account.available_balance_minor)
-        .bind(account.frozen_balance_minor)
+        .bind(delta_available)
+        .bind(delta_frozen)
         .execute(&mut *connection)
         .await
         .map_err(|error| {
             tracing::error!(
                 %error,
                 user_id = account.user_id.as_str(),
-                "资金账户数据保存失败"
+                delta_available,
+                delta_frozen,
+                "资金账户增量保存失败"
             );
-            ApiError::Internal("资金账户数据保存失败".to_string())
+            ApiError::Internal("资金账户增量保存失败".to_string())
         })?;
     }
 
@@ -1388,24 +1401,6 @@ pub(crate) async fn save_finance_store_incremental_in_transaction(
         .iter()
         .map(|entry| (entry.id.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
-    let current_entry_ids = store
-        .ledger_entries
-        .iter()
-        .map(|entry| entry.id.as_str())
-        .collect::<BTreeSet<_>>();
-    for entry_id in previous_entries
-        .keys()
-        .filter(|entry_id| !current_entry_ids.contains(**entry_id))
-    {
-        sqlx::query("DELETE FROM ledger_entries WHERE id = $1")
-            .bind(entry_id)
-            .execute(&mut *connection)
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, entry_id = *entry_id, "资金流水数据删除失败");
-                ApiError::Internal("资金流水数据删除失败".to_string())
-            })?;
-    }
 
     for entry in &store.ledger_entries {
         if previous_entries
@@ -1420,14 +1415,7 @@ pub(crate) async fn save_finance_store_incremental_in_transaction(
             "INSERT INTO ledger_entries
              (id, user_id, kind, amount_minor, balance_after_minor, reference_id, description, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (id) DO UPDATE SET
-                user_id = EXCLUDED.user_id,
-                kind = EXCLUDED.kind,
-                amount_minor = EXCLUDED.amount_minor,
-                balance_after_minor = EXCLUDED.balance_after_minor,
-                reference_id = EXCLUDED.reference_id,
-                description = EXCLUDED.description,
-                created_at = EXCLUDED.created_at",
+             ON CONFLICT (id) DO NOTHING",
         )
         .bind(&entry.id)
         .bind(&entry.user_id)
