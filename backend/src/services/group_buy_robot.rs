@@ -1160,11 +1160,16 @@ async fn current_open_issue(
     lottery: &LotteryKind,
     now: &str,
 ) -> ApiResult<Option<DrawIssue>> {
+    // 选择当前可销售的 Open 期号：封盘时间还没到才算可销售。
+    // 之前用 scheduled_at >= now 会漏掉已到开奖时间但尚未开奖的期号，
+    // 导致机器人发单被跳过、合买大厅缺少机器人合买。
     Ok(draws
         .list_by_lottery_id(&lottery.id)
         .await?
         .into_iter()
-        .filter(|issue| issue.status == DrawIssueStatus::Open && issue.scheduled_at.as_str() >= now)
+        .filter(|issue| {
+            issue.status == DrawIssueStatus::Open && issue.sale_closed_at.as_str() > now
+        })
         .min_by(|left, right| {
             left.sale_closed_at
                 .cmp(&right.sale_closed_at)
