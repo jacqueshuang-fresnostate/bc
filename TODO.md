@@ -1,4 +1,15 @@
 # TODO
+## 2026-06-25 HKT 修复已开奖期号合买计划卡在认购中
+
+- 完成任务：修复期号开奖后机器人合买计划仍卡在"合买认购中"（Draft/Open 状态）的问题。
+- 解决问题：合买流单退款逻辑 `refund_closed_unfilled_group_buys_with_protected_plans` 遍历 `list_scheduler_active()` 返回的期号，但该方法只返回 Open/Closed 状态的期号，不含 Drawn。`should_refund_unfilled_group_buy` 虽然接受 Drawn 状态，但 Drawn 期号永远进不了退款循环，导致已开奖期号的未满单合买计划（尤其是机器人发的）无法被取消退款，永久卡在认购中。
+- 实施内容：
+  1. `DrawRepository` 新增 `list_refundable_draw_issues()` 方法，返回 Closed + Drawn 状态的期号。
+  2. 新增 `query_refundable_draw_issues` 数据库查询函数，SQL `WHERE status IN ('closed', 'drawn')`。
+  3. 退款函数改用 `list_refundable_draw_issues()` 替代 `list_scheduler_active()`，确保已开奖期号的未满单合买计划也能被扫描到并取消退款。
+  4. 封盘 `close_due_draw_issues` 和开奖 `draw_due_issues` 仍用 `list_scheduler_active()` 不变。
+- 验证结果：`cargo fmt --check` 通过、全量 424 个测试通过。
+
 ## 2026-06-25 HKT 合买机器人覆盖所有彩种
 
 - 完成任务：确保每个启用合买的彩种每一期至少有一个合买机器人发单。

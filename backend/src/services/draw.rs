@@ -237,6 +237,29 @@ impl DrawRepository {
             })
     }
 
+    /// 返回封盘后和已开奖的期号，供合买流单退款扫描已过期但未处理的合买计划。
+    pub async fn list_refundable_draw_issues(&self) -> ApiResult<Vec<DrawIssue>> {
+        if let Some(persistence) = &self.persistence {
+            return query_refundable_draw_issues(persistence).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .list()
+                    .into_iter()
+                    .filter(|issue| {
+                        matches!(
+                            issue.status,
+                            DrawIssueStatus::Closed | DrawIssueStatus::Drawn
+                        )
+                    })
+                    .collect()
+            })
+    }
+
     /// 按业务标识读取单条记录，未命中时返回未找到错误。
     pub async fn get(&self, id: &str) -> ApiResult<DrawIssue> {
         self.inner
@@ -806,6 +829,22 @@ async fn query_scheduler_active_draw_issues(
     .fetch_all(database.pool())
     .await
     .map_err(|_| ApiError::Internal("调度活跃期号数据读取失败".to_string()))?;
+
+    rows.into_iter().map(draw_issue_from_row).collect()
+}
+
+/// 数据库模式下读取封盘和已开奖的期号，用于合买流单退款扫描。
+async fn query_refundable_draw_issues(database: &BusinessDatabase) -> ApiResult<Vec<DrawIssue>> {
+    let rows = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         WHERE status IN ('closed', 'drawn')
+         ORDER BY id DESC",
+    )
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("退款期号数据读取失败".to_string()))?;
 
     rows.into_iter().map(draw_issue_from_row).collect()
 }

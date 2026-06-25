@@ -159,7 +159,7 @@ pub async fn refund_closed_unfilled_group_buys_with_protected_plans(
     let mut run = empty_draw_automation_run(&now);
     let lottery_configs = lottery_automation_configs(lotteries).await?;
 
-    for issue in draws.list_scheduler_active().await? {
+    for issue in draws.list_refundable_draw_issues().await? {
         if skip_issue_if_lottery_disabled(&issue, &lottery_configs).is_some() {
             continue;
         }
