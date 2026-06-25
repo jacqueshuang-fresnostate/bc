@@ -250,12 +250,7 @@ impl DrawRepository {
                 store
                     .list()
                     .into_iter()
-                    .filter(|issue| {
-                        matches!(
-                            issue.status,
-                            DrawIssueStatus::Closed | DrawIssueStatus::Drawn
-                        )
-                    })
+                    .filter(|issue| matches!(issue.status, DrawIssueStatus::Closed))
                     .collect()
             })
     }
@@ -839,8 +834,9 @@ async fn query_refundable_draw_issues(database: &BusinessDatabase) -> ApiResult<
         "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
                 sale_closed_at, status, draw_number, drawn_at, created_at
          FROM draw_issues
-         WHERE status IN ('closed', 'drawn')
-         ORDER BY id DESC",
+         WHERE status = 'closed'
+         ORDER BY id DESC
+         LIMIT 100",
     )
     .fetch_all(database.pool())
     .await
