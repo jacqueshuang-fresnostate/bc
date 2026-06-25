@@ -677,34 +677,12 @@ async fn seed_robot_plan_initial_participants(
         }
         let participant_id = next_robot_fill_participant_id(plan);
         let note = format!("机器人初始认购 ({}/{})", index + 1, split_amounts.len());
-        match debit_group_buy_locked(
-            finance,
-            finance_lock,
-            robot_user_id,
-            split_amount,
-            &participant_id,
-            &plan.id,
-        )
-        .await
-        {
-            Ok(entry) => {
-                run.ledger_entries.push(entry);
-            }
-            Err(error) => {
-                tracing::warn!(
-                    "合买计划ID" = %plan.id,
-                    robot_user_id = robot_user_id,
-                    error = %error.log_message(),
-                    "发单机器人初始种子认购扣款失败，跳过该用户"
-                );
-                continue;
-            }
-        }
+        // 先写参与记录，扣款失败再回滚，避免扣了钱没加参与记录导致下一轮 ID 冲突。
         match group_buys
             .add_participant(
                 &plan.id,
                 AddGroupBuyParticipantRequest {
-                    id: participant_id,
+                    id: participant_id.clone(),
                     user_id: robot_user_id.to_string(),
                     amount_minor: split_amount,
                     note,
@@ -715,6 +693,42 @@ async fn seed_robot_plan_initial_participants(
         {
             Ok(updated_plan) => {
                 *plan = updated_plan;
+                match debit_group_buy_locked(
+                    finance,
+                    finance_lock,
+                    robot_user_id,
+                    split_amount,
+                    &participant_id,
+                    &plan.id,
+                )
+                .await
+                {
+                    Ok(entry) => {
+                        run.ledger_entries.push(entry);
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            "合买计划ID" = %plan.id,
+                            robot_user_id = robot_user_id,
+                            error = %error.log_message(),
+                            "发单机器人初始种子认购扣款失败，回滚参与记录"
+                        );
+                        if let Err(rollback_error) = group_buys
+                            .remove_unfunded_participant(&plan.id, &participant_id)
+                            .await
+                        {
+                            tracing::error!(
+                                "合买计划ID" = %plan.id,
+                                participant_id = %participant_id,
+                                error = %rollback_error.log_message(),
+                                "发单机器人初始种子认购回滚参与记录失败"
+                            );
+                        }
+                        if let Ok(rolled_back) = group_buys.get(&plan.id).await {
+                            *plan = rolled_back;
+                        }
+                    }
+                }
             }
             Err(error) => {
                 tracing::warn!(
