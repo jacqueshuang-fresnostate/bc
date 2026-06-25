@@ -844,35 +844,46 @@ pub fn spawn_draw_scheduler(
                             tokio::spawn(async move {
                                 let _guard = guard;
                                 let due_started = Instant::now();
-                                match run_draw_scheduler_due_once_with_realtime(
-                                    &draws,
-                                    &lotteries,
-                                    &orders,
-                                    &finance,
-                                    &group_buys,
-                                    &robots,
-                                    &access,
-                                    &current_config,
-                                    due_now.clone(),
-                                    Some(&realtime),
+                                // 设置 120 秒超时，防止兜底补满或开奖结算卡死导致锁永久泄漏
+                                let due_result = tokio::time::timeout(
+                                    Duration::from_secs(120),
+                                    run_draw_scheduler_due_once_with_realtime(
+                                        &draws,
+                                        &lotteries,
+                                        &orders,
+                                        &finance,
+                                        &group_buys,
+                                        &robots,
+                                        &access,
+                                        &current_config,
+                                        due_now.clone(),
+                                        Some(&realtime),
+                                    ),
                                 )
-                                .await
-                                {
-                                    Ok(due_run) => {}
-                                    Err(error) => tracing::error!(
+                                .await;
+                                match due_result {
+                                    Ok(Ok(_due_run)) => {}
+                                    Ok(Err(error)) => tracing::error!(
                                         now = %due_now,
                                         "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
                                         error = %error.log_message(),
                                         "开奖调度器到期开奖后台任务失败"
                                     ),
+                                    Err(_) => {
+                                        tracing::error!(
+                                            now = %due_now,
+                                            "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
+                                            "开奖调度器到期开奖阶段超时（120秒），强制释放锁"
+                                        );
+                                    }
                                 }
                             });
                         }
                         Err(_) => {
-                            // tracing::warn!(
-                            //     "当前时间" = %now,
-                            //     "开奖调度器到期开奖阶段仍在执行，本轮不重复启动"
-                            // );
+                            tracing::warn!(
+                                "当前时间" = %now,
+                                "开奖调度器到期开奖阶段仍在执行，本轮不重复启动"
+                            );
                         }
                     }
                 }
