@@ -614,14 +614,18 @@ async fn seed_robot_plan_initial_participants(
     }
 
     let min_share = plan.min_share_amount_minor.max(1);
+    let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
     // 种子认购目标按最低份额向下对齐，保证拆分后每份都是最低份额整数倍。
-    let seed_target = (remaining / 3) / min_share * min_share;
-    if seed_target <= 0 {
+    // 同时保证目标至少能覆盖一份最低认购额，否则跳过种子认购交由补单兜底。
+    let seed_target = ((remaining / 3) / min_share * min_share).max(participant_min);
+    if seed_target > remaining {
         return Ok(());
     }
 
-    let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
-    let users_per_stage = robot_fill_users_per_stage(seed_target, participant_min);
+    // 拆分份数受限于每份不得低于最低认购额，避免拆出低于最低认购额的零头。
+    let max_users_by_min = ((seed_target / participant_min) as usize).max(1);
+    let users_per_stage =
+        robot_fill_users_per_stage(seed_target, participant_min).min(max_users_by_min);
     let split_amounts =
         split_fill_amount_evenly(seed_target, users_per_stage, participant_min, min_share);
 
@@ -933,16 +937,17 @@ async fn fill_robot_plan(
     let fill_amount_minor = decision.amount_minor;
     let fill_note = decision.note.clone();
 
-    let participant_min = plan
-        .participant_min_amount_minor
-        .max(plan.min_share_amount_minor)
-        .max(1);
-    let users_per_stage = robot_fill_users_per_stage(fill_amount_minor, participant_min);
+    let min_share = plan.min_share_amount_minor.max(1);
+    let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
+    // 拆分份数受限于每份不得低于最低认购额，避免拆出低于最低认购额的零头。
+    let max_users_by_min = ((fill_amount_minor / participant_min) as usize).max(1);
+    let users_per_stage =
+        robot_fill_users_per_stage(fill_amount_minor, participant_min).min(max_users_by_min);
     let split_amounts = split_fill_amount_evenly(
         fill_amount_minor,
         users_per_stage,
         participant_min,
-        plan.min_share_amount_minor,
+        min_share,
     );
 
     let mut participant_ids = Vec::with_capacity(split_amounts.len());
@@ -2361,6 +2366,40 @@ mod tests {
         assert_ne!(robot.username, ROBOT_GROUP_BUY_USERNAME);
         assert!(is_valid_robot_display_name(&robot.username));
         assert_eq!(real_user.username, "真实用户");
+    }
+
+    /// 验证拆分金额每份都是最低份额整数倍且不低于最低认购额。
+    #[test]
+    fn robot_split_amounts_align_to_min_share_and_participant_min() {
+        // remaining=1400, min_share=100, participant_min=500：
+        // 1400/3=466 向下对齐到 400，再 .max(500) => seed_target=500，
+        // 只能拆 1 份（500/500=1），每份整除 100 且 >= 500。
+        let min_share = 100;
+        let participant_min = 500;
+        let seed_target = ((1400 / 3) / min_share * min_share).max(participant_min);
+        assert_eq!(seed_target, 500);
+        let max_users = ((seed_target / participant_min) as usize).max(1);
+        assert_eq!(max_users, 1);
+        let users = robot_fill_users_per_stage(seed_target, participant_min).min(max_users);
+        let amounts = split_fill_amount_evenly(seed_target, users, participant_min, min_share);
+        for &amount in &amounts {
+            assert_eq!(amount % min_share, 0, "每份必须整除最低份额");
+            assert!(amount >= participant_min, "每份必须不低于最低认购额");
+        }
+
+        // remaining=3000, min_share=100, participant_min=500：
+        // seed_target=1000，可拆 2 份，每份 500，整除且 >= participant_min。
+        let seed_target_2 = ((3000 / 3) / min_share * min_share).max(participant_min);
+        assert_eq!(seed_target_2, 1000);
+        let max_users_2 = ((seed_target_2 / participant_min) as usize).max(1);
+        let users_2 = robot_fill_users_per_stage(seed_target_2, participant_min).min(max_users_2);
+        let amounts_2 =
+            split_fill_amount_evenly(seed_target_2, users_2, participant_min, min_share);
+        assert_eq!(amounts_2.iter().sum::<i64>(), seed_target_2);
+        for &amount in &amounts_2 {
+            assert_eq!(amount % min_share, 0);
+            assert!(amount >= participant_min);
+        }
     }
 
     /// 验证机器人金额keep剩余参与有效。
