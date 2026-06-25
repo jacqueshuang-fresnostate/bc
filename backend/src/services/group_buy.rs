@@ -258,10 +258,17 @@ impl GroupBuyRepository {
     pub async fn list_active_details_page(
         &self,
         lottery_ids: &[String],
+        status_filter: Option<GroupBuyPlanStatus>,
         page: PageRequest,
     ) -> ApiResult<ListPage<GroupBuyPlan>> {
         if let Some(persistence) = &self.persistence {
-            return query_active_group_buy_details_page(persistence, lottery_ids, page).await;
+            return query_active_group_buy_details_page(
+                persistence,
+                lottery_ids,
+                status_filter,
+                page,
+            )
+            .await;
         }
 
         let lottery_ids = lottery_ids.iter().collect::<BTreeSet<_>>();
@@ -273,12 +280,15 @@ impl GroupBuyRepository {
             .into_iter()
             .filter(|plan| {
                 (lottery_ids.is_empty() || lottery_ids.contains(&plan.lottery_id))
-                    && matches!(
-                        plan.status,
-                        GroupBuyPlanStatus::Draft
-                            | GroupBuyPlanStatus::Open
-                            | GroupBuyPlanStatus::Filled
-                    )
+                    && match &status_filter {
+                        Some(status) => plan.status == *status,
+                        None => matches!(
+                            plan.status,
+                            GroupBuyPlanStatus::Draft
+                                | GroupBuyPlanStatus::Open
+                                | GroupBuyPlanStatus::Filled
+                        ),
+                    }
             })
             .collect::<Vec<_>>();
         Ok(ListPage::from_all(plans, page))
@@ -1059,16 +1069,18 @@ fn control_group_buy_plan_with_initiator_participants(
 async fn query_active_group_buy_details_page(
     database: &BusinessDatabase,
     lottery_ids: &[String],
+    status_filter: Option<GroupBuyPlanStatus>,
     page: PageRequest,
 ) -> ApiResult<ListPage<GroupBuyPlan>> {
     let filter_by_lottery = !lottery_ids.is_empty();
     let lottery_ids = lottery_ids.to_vec();
-    let total_count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*)
-         FROM group_buy_plans
-         WHERE status IN ('draft', 'open', 'filled')
-           AND ($1::bool = false OR lottery_id = ANY($2))",
-    )
+    let status_clause = match &status_filter {
+        Some(status) => format!("status = '{}'", enum_to_string(status)?),
+        None => "status IN ('draft', 'open', 'filled')".to_string(),
+    };
+    let total_count = sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(*) FROM group_buy_plans WHERE {status_clause} AND ($1::bool = false OR lottery_id = ANY($2))"
+    ))
     .bind(filter_by_lottery)
     .bind(&lottery_ids)
     .fetch_one(database.pool())
@@ -1077,17 +1089,17 @@ async fn query_active_group_buy_details_page(
     let total_count = usize::try_from(total_count)
         .map_err(|_| ApiError::Internal("合买大厅分页总数无效".to_string()))?;
     let resolved = page.resolve(total_count);
-    let rows = sqlx::query(
+    let rows = sqlx::query(&format!(
         "SELECT id, lottery_id, lottery_name, initiator_user_id, initiator_username,
                 order_id, issue, rule_code, title, numbers,
                 total_amount_minor, filled_amount_minor, min_share_amount_minor,
                 participant_min_amount_minor, share_count, status, note, created_at, updated_at
          FROM group_buy_plans
-         WHERE status IN ('draft', 'open', 'filled')
+         WHERE {status_clause}
            AND ($1::bool = false OR lottery_id = ANY($2))
          ORDER BY created_at DESC, id DESC
-         LIMIT $3 OFFSET $4",
-    )
+         LIMIT $3 OFFSET $4"
+    ))
     .bind(filter_by_lottery)
     .bind(&lottery_ids)
     .bind(resolved.limit_i64()?)

@@ -79,13 +79,34 @@ async fn apply_avoid_winning_policy(
         return Ok((payload, uses_control_number));
     }
 
-    let replacement =
-        find_non_winning_draw_number(&issue.number_type, &current_draw_number, &pending_orders)?
-            .ok_or_else(|| {
-                ApiError::Conflict(
-                    "当前期号投注已覆盖所有开奖号码，无法生成避开中奖号码".to_string(),
-                )
-            })?;
+    let replacement = match find_non_winning_draw_number(
+        &issue.number_type,
+        &current_draw_number,
+        &pending_orders,
+    ) {
+        Ok(Some(replacement)) => replacement,
+        Ok(None) => {
+            tracing::warn!(
+                lottery_id = %issue.lottery_id,
+                lottery_name = %issue.lottery_name,
+                issue = %issue.issue,
+                order_count = pending_orders.len(),
+                original_draw_number = %current_draw_number,
+                "当前期号投注已覆盖所有开奖号码，无法避开中奖，回退原始号码正常开奖"
+            );
+            return Ok((payload, uses_control_number));
+        }
+        Err(error) => {
+            tracing::warn!(
+                lottery_id = %issue.lottery_id,
+                lottery_name = %issue.lottery_name,
+                issue = %issue.issue,
+                error = %error.log_message(),
+                "避开中奖号码生成失败，回退原始号码正常开奖"
+            );
+            return Ok((payload, uses_control_number));
+        }
+    };
     let uses_replacement_for_platform =
         uses_control_number || issue.draw_mode == DrawMode::Platform;
 

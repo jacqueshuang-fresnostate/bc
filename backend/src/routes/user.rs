@@ -2496,6 +2496,8 @@ struct UserGroupBuyListQuery {
     lottery_id: Option<String>,
     #[serde(default, alias = "group_code")]
     group_code: Option<String>,
+    #[serde(default)]
+    status: Option<GroupBuyPlanStatus>,
     page: Option<usize>,
     page_size: Option<usize>,
 }
@@ -2903,7 +2905,11 @@ async fn user_group_buy_plans(
 
     let items = state
         .group_buys
-        .list_active_details_page(&lottery_ids, PageRequest::new(query.page, query.page_size))
+        .list_active_details_page(
+            &lottery_ids,
+            query.status.clone(),
+            PageRequest::new(query.page, query.page_size),
+        )
         .await?
         .items
         .into_iter()

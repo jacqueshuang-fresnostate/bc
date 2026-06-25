@@ -1,4 +1,24 @@
 # TODO
+## 2026-06-25 HKT 修复避奖策略导致开奖卡住
+
+- 完成任务：修复合买开启避奖策略后期号到达开奖时间却卡住不开奖的问题。
+- 解决问题：`apply_avoid_winning_policy` 在开启避奖策略时，如果所有开奖号码都被当前注单覆盖（`find_non_winning_draw_number` 返回 None），或号码空间过大/特殊号码类型不支持穷举时，直接返回 `Conflict` 错误。该错误在 `execute_draw_jobs_concurrently` 中被当作开奖失败处理，期号记为 `skipped_issues` 并跳过，导致期号永远卡住不开奖。
+- 实施内容：将 `find_non_winning_draw_number` 的返回结果和错误都改为回退逻辑——找不到不中奖号码或穷举失败时，记录警告日志但回退到原始开奖号码正常开奖，不阻断开奖流程。避奖只是优化策略，绝不能卡住开奖。
+- 验证结果：`cargo fmt --check` 通过、避奖测试通过、全量 424 个测试通过。
+
+## 2026-06-25 HKT 合买计划列表状态筛选 + 机器人多彩种发单修复
+
+- 完成任务：1）合买计划列表支持按状态筛选；2）修复合买机器人选了多个彩种但合买大厅只显示一两个的问题。
+- 解决问题：
+  1. 合买大厅 API 之前只支持按彩种和分类筛选，不支持按计划状态（Draft/Open/Filled）筛选，用户无法快速过滤特定状态的合买。
+  2. 合买机器人只显示部分彩种的主因是上一轮修复的 `current_open_issue` 过滤条件（之前用 `scheduled_at >= now` 漏掉已到开奖时间的期号），已在上一轮改为 `sale_closed_at > now`。本轮确认该修复完整覆盖多彩种场景。
+- 实施内容：
+  1. `UserGroupBuyListQuery` 新增 `status: Option<GroupBuyPlanStatus>` 字段，支持前端传入状态筛选。
+  2. `list_active_details_page` 新增 `status_filter` 参数，传入状态时按该状态精确过滤，不传时保持原行为（Draft/Open/Filled 全部返回）。
+  3. `query_active_group_buy_details_page` 数据库查询同步支持状态参数，SQL 动态拼接状态条件。
+  4. 路由层透传 `query.status` 到仓储层。
+- 验证结果：`cargo fmt --check` 通过、全量 424 个测试通过。
+
 ## 2026-06-25 HKT 修复合买机器人未覆盖所有彩种发单
 
 - 完成任务：修复合买发单机器人没有对每个开启合买的彩种都发合买的问题。
