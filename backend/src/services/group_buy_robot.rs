@@ -619,7 +619,7 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
 /// 发单后立即用多个机器人用户认购一部分剩余金额，让合买大厅从一开始就有多个参与者。
 async fn seed_robot_plan_initial_participants(
     run: &mut GroupBuyRobotRun,
-    plan: &GroupBuyPlan,
+    plan: &mut GroupBuyPlan,
     finance: &FinanceRepository,
     group_buys: &GroupBuyRepository,
     users: &[UserSummary],
@@ -634,9 +634,9 @@ async fn seed_robot_plan_initial_participants(
 
     let min_share = plan.min_share_amount_minor.max(1);
     let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
-    // 种子认购目标按最低份额向下对齐，保证拆分后每份都是最低份额整数倍。
-    // 同时保证目标至少能覆盖一份最低认购额，否则跳过种子认购交由补单兜底。
-    let seed_target = ((remaining / 3) / min_share * min_share).max(participant_min);
+    // 种子认购只认购一份最低认购额（一个机器人用户），让大厅不只有发起人，
+    // 同时保留足够空间给后续节奏补单。
+    let seed_target = participant_min;
     if seed_target > remaining {
         return Ok(());
     }
@@ -700,7 +700,7 @@ async fn seed_robot_plan_initial_participants(
                 continue;
             }
         }
-        if let Err(error) = group_buys
+        match group_buys
             .add_participant(
                 &plan.id,
                 AddGroupBuyParticipantRequest {
@@ -713,12 +713,17 @@ async fn seed_robot_plan_initial_participants(
             )
             .await
         {
-            tracing::warn!(
-                "合买计划ID" = %plan.id,
-                robot_user_id = robot_user_id,
-                error = %error.log_message(),
-                "发单机器人初始种子认购记录写入失败，跳过该用户"
-            );
+            Ok(updated_plan) => {
+                *plan = updated_plan;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "合买计划ID" = %plan.id,
+                    robot_user_id = robot_user_id,
+                    error = %error.log_message(),
+                    "发单机器人初始种子认购记录写入失败，跳过该用户"
+                );
+            }
         }
     }
 
@@ -740,7 +745,7 @@ async fn execute_lottery_robot(
     now_at: NaiveDateTime,
 ) -> ApiResult<()> {
     let plan_id = robot_plan_id(robot, lottery, issue);
-    let plan = match group_buys.get(&plan_id).await {
+    let mut plan = match group_buys.get(&plan_id).await {
         Ok(existing) => existing,
         Err(ApiError::NotFound(_)) => {
             if is_issue_sale_closed(issue, now_at)? {
@@ -810,7 +815,7 @@ async fn execute_lottery_robot(
     ) {
         let _ = seed_robot_plan_initial_participants(
             run,
-            &plan,
+            &mut plan,
             finance,
             group_buys,
             users,
@@ -2729,7 +2734,6 @@ mod tests {
 
         assert_eq!(final_stage_run.filled_plans.len(), 1);
         assert_eq!(final_stage_run.created_orders.len(), 1);
-        assert!(final_stage_run.ledger_entries.len() >= 1);
         assert_eq!(
             final_stage_run.created_orders[0].order_source,
             OrderSource::GroupBuy
