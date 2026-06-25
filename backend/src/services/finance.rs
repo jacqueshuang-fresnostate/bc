@@ -1953,7 +1953,8 @@ impl FinanceStore {
             order.payout_minor,
             Some(reference_id),
             format!("中奖派奖：{} {}", settlement.lottery_name, settlement.issue),
-        ).map(|entry| {
+        )
+        .map(|entry| {
             tracing::info!(
                 entry_id = entry.id.as_str(),
                 user_id = entry.user_id.as_str(),

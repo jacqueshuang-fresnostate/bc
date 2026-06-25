@@ -2666,7 +2666,7 @@ mod tests {
         domain::{
             draw::{DrawIssue, DrawIssueStatus},
             finance::LedgerEntryKind,
-            group_buy::{CreateGroupBuyPlanRequest, AddGroupBuyParticipantRequest},
+            group_buy::{AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest},
             lottery::{
                 DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
                 LotteryPlayConfig, LotteryPlayPositionSelectLimit, PlayCategory,
@@ -3098,7 +3098,8 @@ mod tests {
         // 4. 将计划与订单关联
         {
             let mut store = group_buys.inner.write().unwrap();
-            store.attach_order(&plan.id, &gb_order.id)
+            store
+                .attach_order(&plan.id, &gb_order.id)
                 .expect("attach order ok");
         }
 
@@ -3127,13 +3128,16 @@ mod tests {
 
         assert_eq!(settlement.winning_order_count, 2);
         assert_eq!(
-            payout_entries.len(), 2,
-            "应产生 2 条派奖流水，实际 {} 条", payout_entries.len()
+            payout_entries.len(),
+            2,
+            "应产生 2 条派奖流水，实际 {} 条",
+            payout_entries.len()
         );
         // 余额：初始12000 - 独立扣200 = 11800，两笔中奖各1000 → 13800
         assert_eq!(
             account.available_balance_minor, 13_800,
-            "余额应为 13800，实际 {}", account.available_balance_minor
+            "余额应为 13800，实际 {}",
+            account.available_balance_minor
         );
     }
     #[test]
