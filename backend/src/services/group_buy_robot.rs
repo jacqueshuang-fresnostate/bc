@@ -640,6 +640,12 @@ async fn seed_robot_plan_initial_participants(
     if seed_target > remaining {
         return Ok(());
     }
+    // 种子认购后剩余必须为 0 或不低于最低认购额，否则跳过种子认购交由补单兜底，
+    // 避免触发"认购后剩余金额低于最低认购额"校验。
+    let leftover_after_seed = remaining - seed_target;
+    if leftover_after_seed > 0 && leftover_after_seed < participant_min {
+        return Ok(());
+    }
 
     // 拆分份数受限于每份不得低于最低认购额，避免拆出低于最低认购额的零头。
     let max_users_by_min = ((seed_target / participant_min) as usize).max(1);
