@@ -613,22 +613,17 @@ async fn seed_robot_plan_initial_participants(
         return Ok(());
     }
 
-    let seed_target = remaining / 3;
+    let min_share = plan.min_share_amount_minor.max(1);
+    // 种子认购目标按最低份额向下对齐，保证拆分后每份都是最低份额整数倍。
+    let seed_target = (remaining / 3) / min_share * min_share;
     if seed_target <= 0 {
         return Ok(());
     }
 
-    let participant_min = plan
-        .participant_min_amount_minor
-        .max(plan.min_share_amount_minor)
-        .max(1);
+    let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
     let users_per_stage = robot_fill_users_per_stage(seed_target, participant_min);
-    let split_amounts = split_fill_amount_evenly(
-        seed_target,
-        users_per_stage,
-        participant_min,
-        plan.min_share_amount_minor,
-    );
+    let split_amounts =
+        split_fill_amount_evenly(seed_target, users_per_stage, participant_min, min_share);
 
     let display_users = users_with_random_robot_display_name(users);
     for (index, &split_amount) in split_amounts.iter().enumerate() {
@@ -1849,10 +1844,12 @@ fn split_fill_amount_evenly(
     participant_min: i64,
     min_share: i64,
 ) -> Vec<i64> {
+    let min_unit = min_share.max(1);
+    // 入参先向下对齐到最低份额整数倍，避免拆分出无法整除的零头。
+    let total = total / min_unit * min_unit;
     if users <= 1 || total <= 0 {
         return vec![total];
     }
-    let min_unit = min_share.max(1);
     let total_units = total / min_unit;
     let base_units = total_units / users as i64;
     let remainder_units = total_units - base_units * users as i64;
