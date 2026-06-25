@@ -1937,6 +1937,13 @@ impl FinanceStore {
     ) -> ApiResult<LedgerEntry> {
         let reference_id = format!("{}:{}", settlement.id, order.order_id);
         if let Some(entry) = self.reference_entry(&LedgerEntryKind::PayoutCredit, &reference_id) {
+            tracing::warn!(
+                reference_id = reference_id.as_str(),
+                order_id = order.order_id.as_str(),
+                user_id = order.user_id.as_str(),
+                payout_minor = order.payout_minor,
+                "独立下单派奖跳过：reference_id 重复"
+            );
             return Ok(entry);
         }
 
@@ -1946,7 +1953,16 @@ impl FinanceStore {
             order.payout_minor,
             Some(reference_id),
             format!("中奖派奖：{} {}", settlement.lottery_name, settlement.issue),
-        )
+        ).map(|entry| {
+            tracing::info!(
+                entry_id = entry.id.as_str(),
+                user_id = entry.user_id.as_str(),
+                amount_minor = entry.amount_minor,
+                reference_id = entry.reference_id.as_deref().unwrap_or("无"),
+                "独立下单派奖入账成功"
+            );
+            entry
+        })
     }
 
     /// 给合买参与人按出资比例分配派奖金额。

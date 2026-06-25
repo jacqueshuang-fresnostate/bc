@@ -1,6 +1,9 @@
 //! 机器人执行服务，合买机器人只负责发单，补单机器人只负责认购未满单合买。
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use chrono::NaiveDateTime;
 use random_zh::{random_zh, RandomZhOptions};
@@ -201,31 +204,32 @@ pub async fn run_group_buy_robots(
     let mut jobs = Vec::new();
     let mut issue_locks = BTreeMap::<String, RobotIssueMutationLock>::new();
 
-    for robot in robots.list().await? {
+    let all_robots = robots.list().await?;
+    for robot in &all_robots {
         if !matches!(robot.kind, RobotKind::GroupBuy | RobotKind::Purchase) {
             continue;
         }
         if robot.status != RobotStatus::Enabled {
-            push_skipped(&mut run, &robot, "", None, "机器人未启用，跳过执行");
+            push_skipped(&mut run, robot, "", None, "机器人未启用，跳过执行");
             continue;
         }
 
         for lottery_id in &robot.lottery_ids {
             let Some(lottery) = lotteries_by_id.get(lottery_id) else {
-                push_skipped(&mut run, &robot, lottery_id, None, "绑定彩种不存在");
+                push_skipped(&mut run, robot, lottery_id, None, "绑定彩种不存在");
                 continue;
             };
             if !lottery.sale_enabled {
-                push_skipped(&mut run, &robot, &lottery.id, None, "彩种已停售");
+                push_skipped(&mut run, robot, &lottery.id, None, "彩种已停售");
                 continue;
             }
             if !lottery.group_buy.enabled {
-                push_skipped(&mut run, &robot, &lottery.id, None, "彩种未开启合买");
+                push_skipped(&mut run, robot, &lottery.id, None, "彩种未开启合买");
                 continue;
             }
 
             let Some(issue) = current_open_issue(draws, lottery, &now).await? else {
-                push_skipped(&mut run, &robot, &lottery.id, None, "没有可销售的当前期号");
+                push_skipped(&mut run, robot, &lottery.id, None, "没有可销售的当前期号");
                 continue;
             };
 
@@ -241,6 +245,41 @@ pub async fn run_group_buy_robots(
         }
     }
 
+    // 确保每个启用了合买的彩种至少有一个机器人发单
+    let covered_lottery_ids: BTreeSet<String> = jobs
+        .iter()
+        .filter(|job| job.robot.kind == RobotKind::GroupBuy)
+        .map(|job| job.lottery.id.clone())
+        .collect();
+    let default_group_buy_robot = all_robots
+        .iter()
+        .find(|r| r.kind == RobotKind::GroupBuy && r.status == RobotStatus::Enabled);
+    if let Some(default_robot) = default_group_buy_robot {
+        for (lottery_id, lottery) in &lotteries_by_id {
+            if !lottery.sale_enabled || !lottery.group_buy.enabled {
+                continue;
+            }
+            if covered_lottery_ids.contains(lottery_id) {
+                continue;
+            }
+            if let Some(issue) = current_open_issue(draws, lottery, &now).await? {
+                tracing::info!(
+                    lottery_id = lottery_id.as_str(),
+                    issue = %issue.issue,
+                    "合买机器人未覆盖该彩种，使用默认机器人补发合买计划"
+                );
+                let issue_key = group_buy_robot_issue_key(lottery_id, &issue.issue);
+                issue_locks
+                    .entry(issue_key)
+                    .or_insert_with(|| Arc::new(AsyncMutex::new(())));
+                jobs.push(GroupBuyRobotJob {
+                    robot: default_robot.clone(),
+                    lottery: lottery.clone(),
+                    issue,
+                });
+            }
+        }
+    }
     if jobs.is_empty() {
         return Ok(run);
     }

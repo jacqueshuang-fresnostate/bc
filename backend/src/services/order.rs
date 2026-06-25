@@ -2666,7 +2666,7 @@ mod tests {
         domain::{
             draw::{DrawIssue, DrawIssueStatus},
             finance::LedgerEntryKind,
-            group_buy::CreateGroupBuyPlanRequest,
+            group_buy::{CreateGroupBuyPlanRequest, AddGroupBuyParticipantRequest},
             lottery::{
                 DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
                 LotteryPlayConfig, LotteryPlayPositionSelectLimit, PlayCategory,
@@ -3033,7 +3033,109 @@ mod tests {
         assert_eq!(entries.len(), 0, "缺少合买计划时不产生派奖流水");
         assert!(settlement.winning_order_count > 0, "订单仍会计为中奖");
     }
+    #[tokio::test]
+    /// 同一用户独立下单+认购合买同时中奖，验证两条流水和双倍余额。
+    async fn repository_settles_same_user_direct_and_group_buy_full_path() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
+        let access_snapshot = access.snapshot().await.expect("access ok");
 
+        // 1. 独立下单
+        orders
+            .create_with_debit(
+                &finance,
+                &lottery,
+                direct_order_request("U10001", "2026156", 200),
+                OrderSource::Direct,
+            )
+            .await
+            .expect("direct order ok");
+
+        // 2. 创建合买计划（U10001 是发起人）
+        let plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-TEST-FULL-001".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026156".to_string(),
+                    rule_code: "threeDirect".to_string(),
+                    title: "测试合买".to_string(),
+                    numbers: "2,4,7".to_string(),
+                    initiator_user_id: "U10001".to_string(),
+                    total_amount_minor: 200,
+                    initiator_amount_minor: 200,
+                    note: "测试".to_string(),
+                },
+                &[lottery.clone()],
+                &access_snapshot.users,
+            )
+            .await
+            .expect("plan created");
+
+        // 3. 创建合买来源的订单（模拟满单后订单）
+        let gb_order = orders
+            .create_with_source(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10001".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026156".to_string(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: PlaySelection {
+                        positions: vec![vec![2], vec![4], vec![7]],
+                        ..PlaySelection::default()
+                    },
+                    unit_amount_minor: 200,
+                },
+                OrderSource::GroupBuy,
+            )
+            .await
+            .expect("gb order ok");
+
+        // 4. 将计划与订单关联
+        {
+            let mut store = group_buys.inner.write().unwrap();
+            store.attach_order(&plan.id, &gb_order.id)
+                .expect("attach order ok");
+        }
+
+        // 5. 结算
+        let (settlement, entries) = orders
+            .settle_with_payouts(
+                &finance,
+                &group_buys,
+                &draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")),
+            )
+            .await
+            .expect("settlement ok");
+
+        let account = finance
+            .accounts()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.user_id == "U10001")
+            .unwrap();
+
+        let payout_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.kind == LedgerEntryKind::PayoutCredit)
+            .collect();
+
+        assert_eq!(settlement.winning_order_count, 2);
+        assert_eq!(
+            payout_entries.len(), 2,
+            "应产生 2 条派奖流水，实际 {} 条", payout_entries.len()
+        );
+        // 余额：初始12000 - 独立扣200 = 11800，两笔中奖各1000 → 13800
+        assert_eq!(
+            account.available_balance_minor, 13_800,
+            "余额应为 13800，实际 {}", account.available_balance_minor
+        );
+    }
     #[test]
     /// 验证未启用玩法分类不能下单。
     fn store_rejects_disabled_play_category() {
