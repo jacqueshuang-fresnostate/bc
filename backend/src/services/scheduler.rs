@@ -828,64 +828,58 @@ pub fn spawn_draw_scheduler(
                     //     "开奖调度器开盘阶段执行完成"
                     // );
 
+                    // 到期开奖阶段：在独立 spawn 中执行，用 lock().await 排队而非 try_lock 跳过，
+                    // 确保每一轮到期开奖都能被执行，不会因上一轮未完成而跳过。
                     let due_lock = due_phase_lock.clone();
-                    match due_lock.try_lock_owned() {
-                        Ok(guard) => {
-                            let draws = draws.clone();
-                            let lotteries = lotteries.clone();
-                            let orders = orders.clone();
-                            let finance = finance.clone();
-                            let group_buys = group_buys.clone();
-                            let robots = robots.clone();
-                            let access = access.clone();
-                            let realtime = realtime.clone();
-                            let current_config = current_config.clone();
-                            let due_now = now.clone();
-                            tokio::spawn(async move {
-                                let _guard = guard;
-                                let due_started = Instant::now();
-                                // 设置 120 秒超时，防止兜底补满或开奖结算卡死导致锁永久泄漏
-                                let due_result = tokio::time::timeout(
-                                    Duration::from_secs(120),
-                                    run_draw_scheduler_due_once_with_realtime(
-                                        &draws,
-                                        &lotteries,
-                                        &orders,
-                                        &finance,
-                                        &group_buys,
-                                        &robots,
-                                        &access,
-                                        &current_config,
-                                        due_now.clone(),
-                                        Some(&realtime),
-                                    ),
-                                )
-                                .await;
-                                match due_result {
-                                    Ok(Ok(_due_run)) => {}
-                                    Ok(Err(error)) => tracing::error!(
-                                        now = %due_now,
-                                        "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
-                                        error = %error.log_message(),
-                                        "开奖调度器到期开奖后台任务失败"
-                                    ),
-                                    Err(_) => {
-                                        tracing::error!(
-                                            now = %due_now,
-                                            "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
-                                            "开奖调度器到期开奖阶段超时（120秒），强制释放锁"
-                                        );
-                                    }
-                                }
-                            });
+                    let draws = draws.clone();
+                    let lotteries = lotteries.clone();
+                    let orders = orders.clone();
+                    let finance = finance.clone();
+                    let group_buys = group_buys.clone();
+                    let robots = robots.clone();
+                    let access = access.clone();
+                    let realtime = realtime.clone();
+                    let current_config = current_config.clone();
+                    let due_now = now.clone();
+                    tokio::spawn(async move {
+                        // 阻塞等待锁：如果上一轮还在执行，排队等它完成后立即开始本轮，
+                        // 而不是跳过本轮。这样到期开奖不会被持续推迟。
+                        let _guard = due_lock.lock().await;
+                        let due_started = Instant::now();
+                        // 设置 120 秒超时，防止兜底补满或开奖结算卡死导致锁永久泄漏
+                        let due_result = tokio::time::timeout(
+                            Duration::from_secs(120),
+                            run_draw_scheduler_due_once_with_realtime(
+                                &draws,
+                                &lotteries,
+                                &orders,
+                                &finance,
+                                &group_buys,
+                                &robots,
+                                &access,
+                                &current_config,
+                                due_now.clone(),
+                                Some(&realtime),
+                            ),
+                        )
+                        .await;
+                        match due_result {
+                            Ok(Ok(_due_run)) => {}
+                            Ok(Err(error)) => tracing::error!(
+                                now = %due_now,
+                                "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
+                                error = %error.log_message(),
+                                "开奖调度器到期开奖后台任务失败"
+                            ),
+                            Err(_) => {
+                                tracing::error!(
+                                    now = %due_now,
+                                    "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
+                                    "开奖调度器到期开奖阶段超时（120秒），强制释放锁"
+                                );
+                            }
                         }
-                        Err(_) => {
-                            tracing::warn!(
-                                "当前时间" = %now,
-                                "开奖调度器到期开奖阶段仍在执行，本轮不重复启动"
-                            );
-                        }
-                    }
+                    });
                 }
                 Err(error) => {
                     let run_elapsed_ms = run_started.elapsed().as_millis();
@@ -1228,17 +1222,17 @@ async fn run_draw_scheduler_due_once_with_realtime(
         publish_robot_realtime_events(realtime, finance, &run.robot_run).await;
     }
 
-    // tracing::info!(
-    //     "当前时间" = %run.now,
-    //     "封盘流单退款耗时毫秒" = refund_phase_ms,
-    //     "开奖结算耗时毫秒" = draw_phase_ms,
-    //     "流单前兜底耗时毫秒" = guard_phase_ms,
-    //     "开奖期数" = run.automation_run.drawn_issues.len(),
-    //     "结算批次" = run.automation_run.settlement_runs.len(),
-    //     "入账笔数" = run.automation_run.ledger_entries.len(),
-    //     "兜底满单" = run.robot_run.filled_plans.len(),
-    //     "开奖调度器到期开奖阶段完成"
-    // );
+    tracing::warn!(
+        "当前时间" = %run.now,
+        "封盘流单退款耗时毫秒" = refund_phase_ms,
+        "开奖结算耗时毫秒" = draw_phase_ms,
+        "流单前兜底耗时毫秒" = guard_phase_ms,
+        "开奖期数" = run.automation_run.drawn_issues.len(),
+        "结算批次" = run.automation_run.settlement_runs.len(),
+        "入账笔数" = run.automation_run.ledger_entries.len(),
+        "兜底满单" = run.robot_run.filled_plans.len(),
+        "开奖调度器到期开奖阶段完成"
+    );
 
     Ok(run)
 }
