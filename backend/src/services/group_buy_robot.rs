@@ -51,6 +51,8 @@ const ROBOT_FILL_PARTICIPANT_SUFFIX: &str = "P-ROBOT-FILL";
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const ROBOT_AUTO_CREDIT_RESERVE_MINOR: i64 = 100_000;
 const ROBOT_FILL_WINDOW_SECONDS: i64 = 90;
+/// 合买兜底失败后最大保护秒数，超过后不再暂缓开奖，强制流单退款。
+const ROBOT_GUARD_PROTECT_MAX_SECONDS: i64 = 180;
 const ROBOT_FILL_STAGE_ONE_SECONDS: i64 = 60;
 const ROBOT_FILL_STAGE_TWO_SECONDS: i64 = 30;
 const ROBOT_FILL_FINAL_STAGE_SECONDS: i64 = 15;
@@ -157,6 +159,17 @@ fn protect_group_buy_plan(run: &mut GroupBuyRobotRun, plan: &GroupBuyPlan) {
         &mut run.protected_issue_keys,
         group_buy_robot_issue_key(&plan.lottery_id, &plan.issue),
     );
+}
+
+/// 判断期号是否已超过最大保护时限，超期后不应再暂缓开奖。
+/// 以期号计划开奖时间为基准，超过 ROBOT_GUARD_PROTECT_MAX_SECONDS 秒即视为超期。
+fn issue_guard_protection_expired(issue: &DrawIssue, now_at: NaiveDateTime) -> bool {
+    let Ok(scheduled_at) =
+        NaiveDateTime::parse_from_str(issue.scheduled_at.trim(), TIMESTAMP_FORMAT)
+    else {
+        return true;
+    };
+    now_at - scheduled_at > chrono::Duration::seconds(ROBOT_GUARD_PROTECT_MAX_SECONDS)
 }
 
 /// 选择流单前兜底补单机器人，优先使用绑定当前彩种的配置，没有绑定时使用任意启用补单机器人。
@@ -487,7 +500,9 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
                 "期号" = %plan.issue,
                 "合买兜底补满没有可用机器人，本轮暂缓流单和开奖等待下一轮兜底"
             );
-            protect_group_buy_plan(&mut run, &plan);
+            if !issue_guard_protection_expired(issue, now_at) {
+                protect_group_buy_plan(&mut run, &plan);
+            }
             continue;
         };
         if !robot.lottery_ids.iter().any(|id| id == &lottery.id) {
@@ -524,7 +539,9 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
                 error = %error.log_message(),
                 "合买兜底补满失败，本轮暂缓流单和开奖等待下一轮兜底"
             );
-            protect_group_buy_plan(&mut run, &plan);
+            if !issue_guard_protection_expired(issue, now_at) {
+                protect_group_buy_plan(&mut run, &plan);
+            }
             push_skipped(
                 &mut run,
                 robot,
@@ -580,7 +597,9 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
                     error = %error.log_message(),
                     "合买已满单补建订单失败，计划暂时保留等待下一轮"
                 );
-                protect_group_buy_plan(&mut run, &plan);
+                if !issue_guard_protection_expired(issue, now_at) {
+                    protect_group_buy_plan(&mut run, &plan);
+                }
                 if let Some(robot) = guard_robot_for_lottery(&robots, &lottery.id) {
                     push_skipped(
                         &mut run,
