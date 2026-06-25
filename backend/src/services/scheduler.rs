@@ -1223,7 +1223,7 @@ async fn run_draw_scheduler_due_once_with_realtime(
     }
 
     tracing::warn!(
-        "当前时间" = %run.now,
+        "当前时间 " = %run.now,
         "封盘流单退款耗时毫秒" = refund_phase_ms,
         "开奖结算耗时毫秒" = draw_phase_ms,
         "流单前兜底耗时毫秒" = guard_phase_ms,
