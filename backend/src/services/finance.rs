@@ -361,6 +361,15 @@ impl FinanceRepository {
 
     /// 获取用户资金账户，不存在时自动创建默认账户后返回。
     pub async fn account_or_create(&self, user_id: &str) -> ApiResult<FinancialAccountSummary> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
+
+        if self.persistence.is_some() {
+            return self.account_or_create_in_database(user_id).await;
+        }
+
         let _mutation_guard = self.mutation_lock.lock().await;
         let (result, previous, mut snapshot) = {
             let previous = self
@@ -378,11 +387,43 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 数据库模式下确保账户行存在并返回最新账户摘要，行锁保证读到最新余额。
+    async fn account_or_create_in_database(
+        &self,
+        user_id: &str,
+    ) -> ApiResult<FinancialAccountSummary> {
+        let database = self.persistence.as_ref().unwrap();
+        let mut tx = database
+            .pool()
+            .begin()
+            .await
+            .map_err(|_| ApiError::Internal("资金账户事务开启失败".to_string()))?;
+        let account = Self::lock_account_in_database(&mut *tx, user_id).await?;
+        tx.commit()
+            .await
+            .map_err(|_| ApiError::Internal("资金账户事务提交失败".to_string()))?;
+
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let mut store = self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+        store
+            .accounts
+            .entry(user_id.to_string())
+            .or_insert(account.clone());
+        Ok(account)
+    }
+
     /// 执行财务手工增减并记录流水。
     pub async fn manual_adjust(
         &self,
         payload: ManualBalanceAdjustmentRequest,
     ) -> ApiResult<LedgerEntry> {
+        if self.persistence.is_some() {
+            return self.manual_adjust_in_database(payload).await;
+        }
+
         let _mutation_guard = self.mutation_lock.lock().await;
         let (mut result, previous, mut snapshot) = {
             let previous = self
@@ -398,6 +439,60 @@ impl FinanceRepository {
         id_remap.apply_to_entry(&mut result);
         self.replace_store(snapshot)?;
         Ok(result)
+    }
+
+    /// 数据库模式下执行手工调账：行锁 + 直写账户与流水，再增量同步内存。
+    async fn manual_adjust_in_database(
+        &self,
+        payload: ManualBalanceAdjustmentRequest,
+    ) -> ApiResult<LedgerEntry> {
+        let user_id = payload.user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
+        if payload.amount_minor == 0 {
+            return Err(ApiError::BadRequest(
+                "adjustment amount must not be zero".to_string(),
+            ));
+        }
+        let description = payload.description.trim();
+        if description.is_empty() {
+            return Err(ApiError::BadRequest(
+                "adjustment description is required".to_string(),
+            ));
+        }
+
+        let database = self.persistence.as_ref().unwrap();
+        let mut tx = database
+            .pool()
+            .begin()
+            .await
+            .map_err(|_| ApiError::Internal("资金调账事务开启失败".to_string()))?;
+        let mut account = Self::lock_account_in_database(&mut *tx, user_id).await?;
+        let previous_account = account.clone();
+        let (entry, sequence) = Self::apply_available_delta_in_database(
+            &mut *tx,
+            user_id,
+            &mut account,
+            LedgerEntryKind::ManualAdjustment,
+            payload.amount_minor,
+            None,
+            description.to_string(),
+        )
+        .await?;
+        super::order::sync_finance_next_sequence_in_transaction(&mut *tx, sequence).await?;
+        tx.commit()
+            .await
+            .map_err(|_| ApiError::Internal("资金调账事务提交失败".to_string()))?;
+
+        let _mutation_guard = self.mutation_lock.lock().await;
+        self.apply_persisted_order_debits(
+            vec![previous_account],
+            vec![account],
+            vec![entry.clone()],
+            sequence,
+        )?;
+        Ok(entry)
     }
 
     #[cfg(test)]
@@ -438,6 +533,12 @@ impl FinanceRepository {
         amount_minor: i64,
         description: &str,
     ) -> ApiResult<LedgerEntry> {
+        if self.persistence.is_some() {
+            return self
+                .withdraw_agent_rebate_in_database(agent_user_id, amount_minor, description)
+                .await;
+        }
+
         let _mutation_guard = self.mutation_lock.lock().await;
         let (mut result, previous, mut snapshot) = {
             let previous = self
@@ -456,6 +557,65 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 数据库模式下处理代理返利提现：行锁校验余额 + 直写扣款流水。
+    async fn withdraw_agent_rebate_in_database(
+        &self,
+        agent_user_id: &str,
+        amount_minor: i64,
+        description: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let agent_user_id = agent_user_id.trim();
+        let description = description.trim();
+        if agent_user_id.is_empty() {
+            return Err(ApiError::BadRequest("代理用户 ID 不能为空".to_string()));
+        }
+        if amount_minor <= 0 {
+            return Err(ApiError::BadRequest("返利提现金额必须大于 0".to_string()));
+        }
+        if description.is_empty() {
+            return Err(ApiError::BadRequest("返利提现说明不能为空".to_string()));
+        }
+
+        let database = self.persistence.as_ref().unwrap();
+        let mut tx = database
+            .pool()
+            .begin()
+            .await
+            .map_err(|_| ApiError::Internal("返利提现事务开启失败".to_string()))?;
+        let mut account = Self::lock_account_in_database(&mut *tx, agent_user_id).await?;
+        let previous_account = account.clone();
+        if account.available_balance_minor < amount_minor {
+            return Err(ApiError::BadRequest(
+                "insufficient available balance".to_string(),
+            ));
+        }
+        let (entry, sequence) = Self::apply_available_delta_in_database(
+            &mut *tx,
+            agent_user_id,
+            &mut account,
+            LedgerEntryKind::AgentRebateWithdrawal,
+            amount_minor
+                .checked_neg()
+                .ok_or_else(|| ApiError::BadRequest("返利提现金额过大".to_string()))?,
+            None,
+            description.to_string(),
+        )
+        .await?;
+        super::order::sync_finance_next_sequence_in_transaction(&mut *tx, sequence).await?;
+        tx.commit()
+            .await
+            .map_err(|_| ApiError::Internal("返利提现事务提交失败".to_string()))?;
+
+        let _mutation_guard = self.mutation_lock.lock().await;
+        self.apply_persisted_order_debits(
+            vec![previous_account],
+            vec![account],
+            vec![entry.clone()],
+            sequence,
+        )?;
+        Ok(entry)
+    }
+
     /// 合买认购时扣减用户可用余额，并按参与记录 ID 保持幂等。
     pub async fn debit_group_buy(
         &self,
@@ -464,6 +624,12 @@ impl FinanceRepository {
         participant_id: &str,
         plan_id: &str,
     ) -> ApiResult<LedgerEntry> {
+        if self.persistence.is_some() {
+            return self
+                .debit_group_buy_in_database(user_id, amount_minor, participant_id, plan_id)
+                .await;
+        }
+
         let _mutation_guard = self.mutation_lock.lock().await;
         let (mut result, previous, mut snapshot) = {
             let previous = self
@@ -482,12 +648,92 @@ impl FinanceRepository {
         Ok(result)
     }
 
+    /// 数据库模式下合买认购扣款：按参与记录 ID 幂等 + 行锁校验余额 + 直写扣款流水。
+    async fn debit_group_buy_in_database(
+        &self,
+        user_id: &str,
+        amount_minor: i64,
+        participant_id: &str,
+        plan_id: &str,
+    ) -> ApiResult<LedgerEntry> {
+        let user_id = user_id.trim();
+        let participant_id = participant_id.trim();
+        let plan_id = plan_id.trim();
+        if amount_minor <= 0 {
+            return Err(ApiError::BadRequest(
+                "group buy amount must be greater than zero".to_string(),
+            ));
+        }
+        if participant_id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "group buy participant id is required".to_string(),
+            ));
+        }
+
+        let database = self.persistence.as_ref().unwrap();
+        let kind = LedgerEntryKind::GroupBuyDebit;
+        let kind_str = enum_to_string(&kind)?;
+        let mut tx = database
+            .pool()
+            .begin()
+            .await
+            .map_err(|_| ApiError::Internal("合买认购扣款事务开启失败".to_string()))?;
+        if let Some(existing) = Self::query_ledger_entry_by_reference_in_transaction(
+            &mut *tx,
+            &kind_str,
+            participant_id,
+        )
+        .await?
+        {
+            tx.commit()
+                .await
+                .map_err(|_| ApiError::Internal("合买认购扣款事务提交失败".to_string()))?;
+            return Ok(existing);
+        }
+        let mut account = Self::lock_account_in_database(&mut *tx, user_id).await?;
+        let previous_account = account.clone();
+        if account.available_balance_minor < amount_minor {
+            return Err(ApiError::BadRequest(
+                "insufficient available balance".to_string(),
+            ));
+        }
+        let (entry, sequence) = Self::apply_available_delta_in_database(
+            &mut *tx,
+            user_id,
+            &mut account,
+            kind,
+            amount_minor
+                .checked_neg()
+                .ok_or_else(|| ApiError::BadRequest("group buy amount is too large".to_string()))?,
+            Some(participant_id.to_string()),
+            format!("合买认购扣款：{plan_id}"),
+        )
+        .await?;
+        super::order::sync_finance_next_sequence_in_transaction(&mut *tx, sequence).await?;
+        tx.commit()
+            .await
+            .map_err(|_| ApiError::Internal("合买认购扣款事务提交失败".to_string()))?;
+
+        let _mutation_guard = self.mutation_lock.lock().await;
+        self.apply_persisted_order_debits(
+            vec![previous_account],
+            vec![account],
+            vec![entry.clone()],
+            sequence,
+        )?;
+        Ok(entry)
+    }
+
     /// 合买取消或流单时按参与记录退还认购金额。
     pub async fn refund_group_buy_plan(
         &self,
         plan: &GroupBuyPlan,
         reason: &str,
     ) -> ApiResult<Vec<LedgerEntry>> {
+        if self.persistence.is_some() {
+            return self.refund_group_buy_plan_in_database(plan, reason).await;
+        }
+
         let _mutation_guard = self.mutation_lock.lock().await;
         let (mut result, previous, mut snapshot) = {
             let previous = self
@@ -503,6 +749,84 @@ impl FinanceRepository {
         id_remap.apply_to_entries(&mut result);
         self.replace_store(snapshot)?;
         Ok(result)
+    }
+
+    /// 数据库模式下合买退款：按参与记录 ID 幂等，对每个参与人加行锁后入账并写流水。
+    async fn refund_group_buy_plan_in_database(
+        &self,
+        plan: &GroupBuyPlan,
+        reason: &str,
+    ) -> ApiResult<Vec<LedgerEntry>> {
+        let reason = reason.trim();
+        let reason_label = if reason.is_empty() {
+            "合买退款"
+        } else {
+            reason
+        };
+        let kind = LedgerEntryKind::GroupBuyRefund;
+        let kind_str = enum_to_string(&kind)?;
+
+        let database = self.persistence.as_ref().unwrap();
+        let mut tx = database
+            .pool()
+            .begin()
+            .await
+            .map_err(|_| ApiError::Internal("合买退款事务开启失败".to_string()))?;
+
+        let mut entries = Vec::new();
+        let mut max_sequence = 0_u64;
+        let mut previous_accounts: BTreeMap<String, FinancialAccountSummary> = BTreeMap::new();
+        let mut current_accounts: BTreeMap<String, FinancialAccountSummary> = BTreeMap::new();
+
+        for participant in &plan.participants {
+            if participant.amount_minor <= 0 {
+                continue;
+            }
+            if let Some(existing) = Self::query_ledger_entry_by_reference_in_transaction(
+                &mut *tx,
+                &kind_str,
+                &participant.id,
+            )
+            .await?
+            {
+                entries.push(existing);
+                continue;
+            }
+
+            let user_id = participant.user_id.trim();
+            if !current_accounts.contains_key(user_id) {
+                let locked = Self::lock_account_in_database(&mut *tx, user_id).await?;
+                previous_accounts.insert(user_id.to_string(), locked.clone());
+                current_accounts.insert(user_id.to_string(), locked);
+            }
+            let account = current_accounts.get_mut(user_id).unwrap();
+            let (entry, sequence) = Self::apply_available_delta_in_database(
+                &mut *tx,
+                user_id,
+                account,
+                kind.clone(),
+                participant.amount_minor,
+                Some(participant.id.clone()),
+                format!("合买退款：{} {reason_label}", plan.id),
+            )
+            .await?;
+            max_sequence = max_sequence.max(sequence);
+            entries.push(entry);
+        }
+
+        super::order::sync_finance_next_sequence_in_transaction(&mut *tx, max_sequence).await?;
+        tx.commit()
+            .await
+            .map_err(|_| ApiError::Internal("合买退款事务提交失败".to_string()))?;
+
+        let _mutation_guard = self.mutation_lock.lock().await;
+        self.apply_persisted_order_debits(
+            previous_accounts.into_values().collect::<Vec<_>>(),
+            current_accounts.into_values().collect::<Vec<_>>(),
+            entries.clone(),
+            max_sequence,
+        )?;
+        Ok(entries)
     }
     /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &FinanceStore) -> ApiResult<()> {
@@ -581,6 +905,242 @@ impl FinanceRepository {
         store.next_sequence = store.next_sequence.max(next_sequence);
         Ok(())
     }
+
+    /// 数据库模式下按流水类型和关联单号查询幂等流水，命中则返回已有流水避免重复入账。
+    async fn query_ledger_entry_by_reference_in_transaction(
+        connection: &mut PgConnection,
+        kind_str: &str,
+        reference_id: &str,
+    ) -> ApiResult<Option<LedgerEntry>> {
+        let row = sqlx::query(
+            "SELECT id, user_id, kind, amount_minor, balance_after_minor, reference_id, description, created_at
+             FROM ledger_entries
+             WHERE kind = $1 AND reference_id = $2
+             LIMIT 1",
+        )
+        .bind(kind_str)
+        .bind(reference_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(|_| ApiError::Internal("资金幂等流水查询失败".to_string()))?;
+        row.map(ledger_entry_from_row).transpose()
+    }
+
+    /// 数据库模式下获取或创建用户资金账户行并加行锁，返回加锁后的账户副本。
+    async fn lock_account_in_database(
+        connection: &mut PgConnection,
+        user_id: &str,
+    ) -> ApiResult<FinancialAccountSummary> {
+        super::order::ensure_financial_account_row_in_transaction(connection, user_id).await?;
+        super::order::lock_financial_account_in_transaction(connection, user_id).await
+    }
+
+    /// 数据库模式下对可用余额做增量调整：更新账户行并写入流水，返回流水与序列号。
+    async fn apply_available_delta_in_database(
+        connection: &mut PgConnection,
+        user_id: &str,
+        account: &mut FinancialAccountSummary,
+        kind: LedgerEntryKind,
+        amount_minor: i64,
+        reference_id: Option<String>,
+        description: String,
+    ) -> ApiResult<(LedgerEntry, u64)> {
+        let available_balance_minor = account
+            .available_balance_minor
+            .checked_add(amount_minor)
+            .ok_or_else(|| ApiError::BadRequest("balance amount is too large".to_string()))?;
+        if available_balance_minor < 0 {
+            return Err(ApiError::BadRequest(
+                "available balance cannot be negative".to_string(),
+            ));
+        }
+        account.available_balance_minor = available_balance_minor;
+        let balance_after_minor = account
+            .available_balance_minor
+            .checked_add(account.frozen_balance_minor)
+            .ok_or_else(|| ApiError::BadRequest("balance amount is too large".to_string()))?;
+
+        let sequence = super::order::next_ledger_entry_sequence_in_transaction(connection).await?;
+        let entry = LedgerEntry {
+            id: format!("L{:012}", sequence),
+            user_id: user_id.to_string(),
+            kind,
+            amount_minor,
+            balance_after_minor,
+            reference_id,
+            description,
+            created_at: current_timestamp_label(),
+        };
+        super::order::insert_ledger_entry_in_transaction(connection, &entry).await?;
+        super::order::update_financial_account_in_transaction(connection, account).await?;
+        Ok((entry, sequence))
+    }
+
+    /// 数据库模式下结算派奖：在已开启的事务里按行锁直接入账，普通订单与合买分账逻辑保持一致。
+    pub(crate) async fn credit_settlement_with_group_buys_in_database(
+        connection: &mut PgConnection,
+        settlement: &SettlementRun,
+        group_buy_plans: &[GroupBuyPlan],
+        skip_group_buy_order_ids: &BTreeSet<String>,
+    ) -> ApiResult<SettlementPayoutResult> {
+        let kind = LedgerEntryKind::PayoutCredit;
+        let kind_str = enum_to_string(&kind)?;
+        let mut entries = Vec::new();
+        let mut max_sequence = 0_u64;
+        let mut previous_accounts: BTreeMap<String, FinancialAccountSummary> = BTreeMap::new();
+        let mut current_accounts: BTreeMap<String, FinancialAccountSummary> = BTreeMap::new();
+
+        for order in &settlement.orders {
+            if !order.is_winning || order.payout_minor <= 0 {
+                continue;
+            }
+            if skip_group_buy_order_ids.contains(&order.order_id) {
+                tracing::warn!(
+                    order_id = %order.order_id,
+                    settlement_id = %settlement.id,
+                    "合买订单缺少对应合买计划，已跳过派奖入账"
+                );
+                continue;
+            }
+
+            if let Some(plan) = group_buy_plans
+                .iter()
+                .find(|plan| plan.order_id.as_deref() == Some(order.order_id.as_str()))
+            {
+                if plan.total_amount_minor <= 0 {
+                    return Err(ApiError::BadRequest("合买总金额无效".to_string()));
+                }
+                let participants = plan
+                    .participants
+                    .iter()
+                    .filter(|participant| participant.amount_minor > 0)
+                    .collect::<Vec<_>>();
+                if participants.is_empty() {
+                    return Err(ApiError::BadRequest("合买计划没有可派奖参与人".to_string()));
+                }
+                let participant_count = participants.len();
+                let mut remaining_payout = order.payout_minor;
+                for (index, participant) in participants.into_iter().enumerate() {
+                    let payout_minor = if index + 1 == participant_count {
+                        remaining_payout
+                    } else {
+                        proportional_amount(
+                            order.payout_minor,
+                            participant.amount_minor,
+                            plan.total_amount_minor,
+                        )?
+                    };
+                    remaining_payout = remaining_payout
+                        .checked_sub(payout_minor)
+                        .ok_or_else(|| ApiError::BadRequest("合买派奖金额过大".to_string()))?;
+                    if payout_minor <= 0 {
+                        continue;
+                    }
+
+                    let reference_id =
+                        format!("{}:{}:{}", settlement.id, order.order_id, participant.id);
+                    if let Some(existing) = Self::query_ledger_entry_by_reference_in_transaction(
+                        connection,
+                        &kind_str,
+                        &reference_id,
+                    )
+                    .await?
+                    {
+                        entries.push(existing);
+                        continue;
+                    }
+
+                    let user_id = participant.user_id.trim();
+                    if !current_accounts.contains_key(user_id) {
+                        let locked = Self::lock_account_in_database(connection, user_id).await?;
+                        previous_accounts.insert(user_id.to_string(), locked.clone());
+                        current_accounts.insert(user_id.to_string(), locked);
+                    }
+                    let account = current_accounts.get_mut(user_id).unwrap();
+                    let (entry, sequence) = Self::apply_available_delta_in_database(
+                        connection,
+                        user_id,
+                        account,
+                        kind.clone(),
+                        payout_minor,
+                        Some(reference_id),
+                        format!(
+                            "合买中奖分账：{} {} {}",
+                            settlement.lottery_name, settlement.issue, plan.id
+                        ),
+                    )
+                    .await?;
+                    max_sequence = max_sequence.max(sequence);
+                    entries.push(entry);
+                }
+            } else {
+                let reference_id = format!("{}:{}", settlement.id, order.order_id);
+                if let Some(existing) = Self::query_ledger_entry_by_reference_in_transaction(
+                    connection,
+                    &kind_str,
+                    &reference_id,
+                )
+                .await?
+                {
+                    tracing::warn!(
+                        reference_id = reference_id.as_str(),
+                        order_id = order.order_id.as_str(),
+                        user_id = order.user_id.as_str(),
+                        payout_minor = order.payout_minor,
+                        "独立下单派奖跳过：reference_id 重复"
+                    );
+                    entries.push(existing);
+                    continue;
+                }
+
+                let user_id = order.user_id.trim();
+                if !current_accounts.contains_key(user_id) {
+                    let locked = Self::lock_account_in_database(connection, user_id).await?;
+                    previous_accounts.insert(user_id.to_string(), locked.clone());
+                    current_accounts.insert(user_id.to_string(), locked);
+                }
+                let account = current_accounts.get_mut(user_id).unwrap();
+                let (entry, sequence) = Self::apply_available_delta_in_database(
+                    connection,
+                    user_id,
+                    account,
+                    kind.clone(),
+                    order.payout_minor,
+                    Some(reference_id.clone()),
+                    format!("中奖派奖：{} {}", settlement.lottery_name, settlement.issue),
+                )
+                .await?;
+                max_sequence = max_sequence.max(sequence);
+                tracing::info!(
+                    entry_id = entry.id.as_str(),
+                    user_id = entry.user_id.as_str(),
+                    amount_minor = entry.amount_minor,
+                    reference_id = entry.reference_id.as_deref().unwrap_or("无"),
+                    "独立下单派奖入账成功"
+                );
+                entries.push(entry);
+            }
+        }
+
+        Ok(SettlementPayoutResult {
+            entries,
+            previous_accounts: previous_accounts.into_values().collect::<Vec<_>>(),
+            new_accounts: current_accounts.into_values().collect::<Vec<_>>(),
+            max_sequence,
+        })
+    }
+}
+
+/// 数据库模式下结算派奖直接写库结果，供内存增量同步使用。
+pub(crate) struct SettlementPayoutResult {
+    /// 本次派奖生成的资金流水。
+    pub(crate) entries: Vec<LedgerEntry>,
+    /// 受影响账户变更前余额，供内存按增量合并。
+    pub(crate) previous_accounts: Vec<FinancialAccountSummary>,
+    /// 受影响账户变更后余额，供内存按增量合并。
+    pub(crate) new_accounts: Vec<FinancialAccountSummary>,
+    /// 本次派奖使用的最大流水序号。
+    pub(crate) max_sequence: u64,
 }
 
 /// 归一化可选筛选值，空字符串不参与过滤。

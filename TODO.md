@@ -1,4 +1,20 @@
 # TODO
+## 2026-06-25 HKT 资金模块派奖/退款/合买扣款改造为直写DB+行锁
+
+- 完成任务：把资金模块的派奖、退款、合买认购扣款、手工调账、代理返利提现、结算派奖等路径从"全量clone+diff+replace_store"低效模式改造为"DB事务+行锁+直写+增量内存同步"高效模式，与下注路径 `create_many_with_debit_in_database` 对齐。
+- 解决问题：
+  1. 原有 `refund_group_buy_plan`、`manual_adjust`、`withdraw_agent_rebate`、`debit_group_buy`、`account_or_create` 等方法在数据库模式下走 `mutation_lock` + `inner.read().clone()`（全量clone整个FinanceStore）+ `persist_incremental`（diff全量accounts+全量ledger_entries）+ `replace_store`，并发下性能差且有内存覆盖风险。
+  2. `settle_with_payouts` 结算派奖路径同样 clone 三个 Store 后全量 diff 写库，是核心资金链路最大的性能与一致性热点。
+- 实施内容：
+  1. 将 order.rs 中 `ensure_financial_account_row_in_transaction`、`lock_financial_account_in_transaction`、`update_financial_account_in_transaction`、`insert_ledger_entry_in_transaction`、`next_ledger_entry_sequence_in_transaction`、`sync_finance_next_sequence_in_transaction` 6 个 DB 辅助函数改为 `pub(super)`，供 finance.rs 跨文件复用。
+  2. finance.rs 新增 3 个共享 DB 辅助方法：`query_ledger_entry_by_reference_in_transaction`（按 kind+reference_id 幂等查询）、`lock_account_in_database`（确保账户行+FOR UPDATE行锁）、`apply_available_delta_in_database`（更新账户行+插入流水+取序列号）。
+  3. finance.rs 为 `account_or_create`、`manual_adjust`、`withdraw_agent_rebate`、`debit_group_buy`、`refund_group_buy_plan` 各新增 `*_in_database` 分支：DB模式下走 事务+行锁+幂等检查+直写，内存模式（persistence=None）保留原 clone+diff 逻辑不动。
+  4. 幂等键规则与现有 FinanceStore 方法完全一致：`debit_group_buy` 用 participant_id、`refund_group_buy_plan` 用 participant.id、派奖用 `settlement.id:order_id`（普通）/`settlement.id:order_id:participant.id`（合买分账）、手工调账/代理返利提现无幂等键。
+  5. 新增 `FinanceRepository::credit_settlement_with_group_buys_in_database`（含 `SettlementPayoutResult` 结构体），在已开启事务内按 reference_id 幂等 + 行锁直写派奖，保留合买按出资比例分账逻辑（含末位承接余数）。
+  6. order.rs `settle_with_payouts` 新增 DB 分支 `settle_with_payouts_in_database`：订单结算状态与合买计划状态走增量持久化（复用 `save_order_store_incremental_in_transaction` / `save_group_buy_store_incremental_in_transaction`），派奖走行锁直写，全部在同一事务提交；内存同步订单/合买走 `replace_store`，资金走 `apply_persisted_order_debits` 增量合并。
+  7. 写完 DB 后统一用 `sync_finance_next_sequence_in_transaction` 同步 `finance_runtime` 序号，内存模式继续用 `self.next_sequence`。
+- 验证结果：`cargo check`、`cargo check --tests`、`cargo fmt` 通过；全量 424 个测试通过（含 finance、settle、group_buy 相关测试），内存模式行为未受影响。
+
 ## 2026-06-25 HKT 修复合买机器人只有一个人 + 补单用户不存在
 
 - 完成任务：1）修复合买机器人发单后大厅只有发起人一个人的问题；2）修复补单机器人认购时报 `user X90002 not found` 错误。

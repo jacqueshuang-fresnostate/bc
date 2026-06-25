@@ -745,6 +745,17 @@ impl OrderRepository {
     ) -> ApiResult<(SettlementRun, Vec<LedgerEntry>)> {
         let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
         let _finance_mutation_guard = finance.mutation_lock.lock().await;
+
+        // 数据库模式下，结算派奖走事务 + 行锁直写，避免全量 clone + diff。
+        if self.persistence.is_some()
+            && finance.persistence.is_some()
+            && group_buys.persistence.is_some()
+        {
+            return self
+                .settle_with_payouts_in_database(finance, group_buys, draw_issue)
+                .await;
+        }
+
         let previous_order_store = self
             .inner
             .read()
@@ -816,6 +827,100 @@ impl OrderRepository {
         group_buys.replace_store(group_buy_store)?;
 
         Ok((settlement, ledger_entries))
+    }
+
+    /// 数据库模式下结算派奖：订单结算状态、合买计划状态走增量持久化，派奖走行锁直写。
+    async fn settle_with_payouts_in_database(
+        &self,
+        finance: &FinanceRepository,
+        group_buys: &GroupBuyRepository,
+        draw_issue: &DrawIssue,
+    ) -> ApiResult<(SettlementRun, Vec<LedgerEntry>)> {
+        let database = self.persistence.as_ref().unwrap();
+
+        let previous_order_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .clone();
+        let mut order_store = previous_order_store.clone();
+        let previous_group_buy_store = group_buys
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
+            .clone();
+        let mut group_buy_store = previous_group_buy_store.clone();
+
+        let settlement = order_store.settle_draw_issue(draw_issue)?;
+        let order_ids = settlement
+            .orders
+            .iter()
+            .map(|order| order.order_id.clone())
+            .collect::<Vec<_>>();
+        let group_buy_plans = group_buy_store.plans_for_order_ids(&order_ids);
+        let missing_group_buy_order_ids = settlement
+            .orders
+            .iter()
+            .filter_map(|settlement_order| {
+                let order = order_store.orders.get(&settlement_order.order_id)?;
+                (matches!(order.order_source, OrderSource::GroupBuy)
+                    && !group_buy_plans.iter().any(|plan| {
+                        plan.order_id.as_deref() == Some(settlement_order.order_id.as_str())
+                    }))
+                .then(|| settlement_order.order_id.clone())
+            })
+            .collect::<std::collections::BTreeSet<String>>();
+        if !missing_group_buy_order_ids.is_empty() {
+            tracing::warn!(
+                missing_order_ids = %missing_group_buy_order_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>().join(","),
+                lottery_id = %draw_issue.lottery_id,
+                issue = %draw_issue.issue,
+                "合买订单缺少对应合买计划，已跳过该合买订单的派奖"
+            );
+        }
+        group_buy_store.mark_settled_by_order_ids(&order_ids);
+
+        let mut tx = database.pool().begin().await.map_err(|error| {
+            tracing::error!(%error, "结算派奖数据库事务开启失败");
+            ApiError::Internal("结算派奖数据库事务开启失败".to_string())
+        })?;
+
+        // 订单结算状态与合买计划状态走增量持久化。
+        save_order_store_incremental_in_transaction(&mut *tx, &previous_order_store, &order_store)
+            .await?;
+        save_group_buy_store_incremental_in_transaction(
+            &mut *tx,
+            &previous_group_buy_store,
+            &group_buy_store,
+        )
+        .await?;
+
+        // 派奖走行锁直写：按 reference_id 幂等，对每个受影响用户加行锁后入账。
+        let payout = FinanceRepository::credit_settlement_with_group_buys_in_database(
+            &mut *tx,
+            &settlement,
+            &group_buy_plans,
+            &missing_group_buy_order_ids,
+        )
+        .await?;
+        sync_finance_next_sequence_in_transaction(&mut *tx, payout.max_sequence).await?;
+
+        tx.commit().await.map_err(|error| {
+            tracing::error!(%error, "结算派奖数据库事务提交失败");
+            ApiError::Internal("结算派奖数据库事务提交失败".to_string())
+        })?;
+
+        // 订单、合买走整快照替换；资金走增量合并，避免全量 clone。
+        self.replace_store(order_store)?;
+        group_buys.replace_store(group_buy_store)?;
+        finance.apply_persisted_order_debits(
+            payout.previous_accounts,
+            payout.new_accounts,
+            payout.entries.clone(),
+            payout.max_sequence,
+        )?;
+
+        Ok((settlement, payout.entries))
     }
     /// 把当前仓储快照同步保存到持久化存储。
     async fn persist(&self, store: &OrderStore) -> ApiResult<()> {
@@ -1863,7 +1968,7 @@ async fn next_order_sequence_in_transaction(connection: &mut PgConnection) -> Ap
 }
 
 /// 使用 PostgreSQL 序列生成普通下注资金流水号，避免锁定资金运行时计数器行。
-async fn next_ledger_entry_sequence_in_transaction(
+pub(super) async fn next_ledger_entry_sequence_in_transaction(
     connection: &mut PgConnection,
 ) -> ApiResult<u64> {
     let sequence = sqlx::query_scalar::<_, i64>("SELECT nextval('ledger_entry_id_sequence')")
@@ -1877,7 +1982,7 @@ async fn next_ledger_entry_sequence_in_transaction(
 }
 
 /// 确保用户资金账户行存在，后续才能用行级锁保护余额。
-async fn ensure_financial_account_row_in_transaction(
+pub(super) async fn ensure_financial_account_row_in_transaction(
     connection: &mut PgConnection,
     user_id: &str,
 ) -> ApiResult<()> {
@@ -1897,7 +2002,7 @@ async fn ensure_financial_account_row_in_transaction(
 }
 
 /// 锁定当前下注用户的资金账户行，只让同一用户的余额变更串行执行。
-async fn lock_financial_account_in_transaction(
+pub(super) async fn lock_financial_account_in_transaction(
     connection: &mut PgConnection,
     user_id: &str,
 ) -> ApiResult<FinancialAccountSummary> {
@@ -1929,7 +2034,7 @@ async fn lock_financial_account_in_transaction(
 }
 
 /// 保存当前用户扣款后的资金账户余额。
-async fn update_financial_account_in_transaction(
+pub(super) async fn update_financial_account_in_transaction(
     connection: &mut PgConnection,
     account: &FinancialAccountSummary,
 ) -> ApiResult<()> {
@@ -1951,7 +2056,7 @@ async fn update_financial_account_in_transaction(
 }
 
 /// 追加本次投注扣款流水，资金流水保持 append-only 增量写入。
-async fn insert_ledger_entry_in_transaction(
+pub(super) async fn insert_ledger_entry_in_transaction(
     connection: &mut PgConnection,
     entry: &LedgerEntry,
 ) -> ApiResult<()> {
@@ -2008,7 +2113,7 @@ async fn sync_order_next_sequence_in_transaction(
 }
 
 /// 同步资金流水运行序号，供快照恢复兼容；热路径真实取号已经由 PostgreSQL 序列负责。
-async fn sync_finance_next_sequence_in_transaction(
+pub(super) async fn sync_finance_next_sequence_in_transaction(
     connection: &mut PgConnection,
     next_sequence: u64,
 ) -> ApiResult<()> {
