@@ -1144,7 +1144,7 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
         return Ok(seeded);
     }
 
-    let access_store = AccessStore {
+    let mut access_store = AccessStore {
         users: users.clone(),
         admins,
         admin_password_hashes,
@@ -1165,7 +1165,37 @@ async fn load_access_store(database: &BusinessDatabase) -> ApiResult<AccessStore
         registration,
     };
 
-    if !_has_missing_settings {
+    // 确保机器人补单用户（X90002-X90010）在数据库中存在，
+    // 避免合买机器人认购时因用户不存在而失败。
+    let robot_fill_user_ids = [
+        "X90002", "X90003", "X90004", "X90005", "X90006", "X90007", "X90008", "X90009", "X90010",
+    ];
+    let mut missing_robot_users = Vec::new();
+    for (index, robot_id) in robot_fill_user_ids.iter().enumerate() {
+        if !access_store.users.contains_key(*robot_id) {
+            let num = index + 2;
+            missing_robot_users.push(UserSummary {
+                id: robot_id.to_string(),
+                username: format!("robot_fill_{num:02}"),
+                email: None,
+                avatar_url: String::new(),
+                contact_qq: String::new(),
+                kind: crate::domain::user::UserKind::Regular,
+                status: UserStatus::Active,
+                balance_minor: 520_000,
+                agent_id: Some("U90001".to_string()),
+                invite_code: String::new(),
+                registration_location: UserRegistrationLocation::default(),
+                created_at: "2026-06-01 09:00:00".to_string(),
+            });
+        }
+    }
+    let needs_robot_user_persist = !missing_robot_users.is_empty();
+    for user in &missing_robot_users {
+        access_store.users.insert(user.id.clone(), user.clone());
+    }
+
+    if !_has_missing_settings && !needs_robot_user_persist {
         return Ok(access_store);
     }
 

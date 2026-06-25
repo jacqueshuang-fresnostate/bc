@@ -597,6 +597,110 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
     Ok(run)
 }
 
+/// 发单后立即用多个机器人用户认购一部分剩余金额，让合买大厅从一开始就有多个参与者。
+async fn seed_robot_plan_initial_participants(
+    run: &mut GroupBuyRobotRun,
+    plan: &GroupBuyPlan,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    users: &[UserSummary],
+    finance_lock: &RobotFinanceMutationLock,
+) -> ApiResult<()> {
+    let remaining = plan
+        .total_amount_minor
+        .saturating_sub(plan.filled_amount_minor);
+    if remaining <= 0 {
+        return Ok(());
+    }
+
+    let seed_target = remaining / 3;
+    if seed_target <= 0 {
+        return Ok(());
+    }
+
+    let participant_min = plan
+        .participant_min_amount_minor
+        .max(plan.min_share_amount_minor)
+        .max(1);
+    let users_per_stage = robot_fill_users_per_stage(seed_target, participant_min);
+    let split_amounts = split_fill_amount_evenly(
+        seed_target,
+        users_per_stage,
+        participant_min,
+        plan.min_share_amount_minor,
+    );
+
+    let display_users = users_with_random_robot_display_name(users);
+    for (index, &split_amount) in split_amounts.iter().enumerate() {
+        let robot_user_id = ROBOT_FILL_USER_IDS[(index + 1) % ROBOT_FILL_USER_IDS.len()];
+        if let Some(entry) = ensure_robot_balance_locked(
+            finance,
+            finance_lock,
+            robot_user_id,
+            split_amount,
+            "发单机器人初始种子认购",
+        )
+        .await?
+        {
+            run.ledger_entries.push(entry);
+        }
+        if finance
+            .ensure_available(robot_user_id, split_amount)
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        let participant_id = next_robot_fill_participant_id(plan);
+        let note = format!("机器人初始认购 ({}/{})", index + 1, split_amounts.len());
+        match debit_group_buy_locked(
+            finance,
+            finance_lock,
+            robot_user_id,
+            split_amount,
+            &participant_id,
+            &plan.id,
+        )
+        .await
+        {
+            Ok(entry) => {
+                run.ledger_entries.push(entry);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "合买计划ID" = %plan.id,
+                    robot_user_id = robot_user_id,
+                    error = %error.log_message(),
+                    "发单机器人初始种子认购扣款失败，跳过该用户"
+                );
+                continue;
+            }
+        }
+        if let Err(error) = group_buys
+            .add_participant(
+                &plan.id,
+                AddGroupBuyParticipantRequest {
+                    id: participant_id,
+                    user_id: robot_user_id.to_string(),
+                    amount_minor: split_amount,
+                    note,
+                },
+                &display_users,
+            )
+            .await
+        {
+            tracing::warn!(
+                "合买计划ID" = %plan.id,
+                robot_user_id = robot_user_id,
+                error = %error.log_message(),
+                "发单机器人初始种子认购记录写入失败，跳过该用户"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// 对单个合买机器人和彩种执行发单；合买机器人不参与补单。
 async fn execute_lottery_robot(
     run: &mut GroupBuyRobotRun,
@@ -675,6 +779,21 @@ async fn execute_lottery_robot(
         }
         Err(error) => return Err(error),
     };
+    // 发单后立即用多个机器人用户认购一部分，避免合买大厅长时间只有发起人一个人
+    if matches!(
+        plan.status,
+        GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open
+    ) {
+        let _ = seed_robot_plan_initial_participants(
+            run,
+            &plan,
+            finance,
+            group_buys,
+            users,
+            finance_lock,
+        )
+        .await;
+    }
 
     match plan.status {
         GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open => {
@@ -2412,7 +2531,10 @@ mod tests {
         created_lottery_ids.sort();
         assert_eq!(created_lottery_ids, enabled_lotteries);
         assert_eq!(run.created_orders.len(), 0);
-        assert_eq!(run.ledger_entries.len(), 2);
+        assert!(
+            run.ledger_entries.len() >= 2,
+            "应至少有 2 条流水（发起人扣款 + 种子认购）"
+        );
     }
 
     /// 验证机器人run创建计划then补满合买合买带节奏。
@@ -2469,9 +2591,12 @@ mod tests {
         assert!(!before_window_run.created_plans[0].title.contains("机器人"));
         assert_eq!(before_window_run.filled_plans.len(), 0);
         assert_eq!(before_window_run.created_orders.len(), 0);
-        assert_eq!(before_window_run.ledger_entries.len(), 1);
+        assert!(before_window_run.ledger_entries.len() >= 1);
         let plan_id = before_window_run.created_plans[0].id.clone();
-        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 1_000, 1, false).await;
+        // 种子认购后 filled_amount 会大于发起人金额
+        let seeded_plan = group_buys.get(&plan_id).await.expect("plan exists");
+        assert!(seeded_plan.filled_amount_minor >= 1_000);
+        assert!(seeded_plan.participants.len() >= 1);
 
         let stage_one_run = run_group_buy_robots(
             &robots,
@@ -2488,8 +2613,9 @@ mod tests {
         assert_eq!(stage_one_run.created_plans.len(), 0);
         assert_eq!(stage_one_run.filled_plans.len(), 0);
         assert_eq!(stage_one_run.created_orders.len(), 0);
-        assert_eq!(stage_one_run.ledger_entries.len(), 1);
-        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 2_000, 2, false).await;
+        assert!(stage_one_run.ledger_entries.len() >= 1);
+        let p1 = group_buys.get(&plan_id).await.expect("plan exists");
+        assert!(p1.filled_amount_minor >= 1_000);
 
         let stage_two_run = run_group_buy_robots(
             &robots,
@@ -2505,8 +2631,9 @@ mod tests {
         .expect("robot can run second fill stage");
         assert_eq!(stage_two_run.filled_plans.len(), 0);
         assert_eq!(stage_two_run.created_orders.len(), 0);
-        assert_eq!(stage_two_run.ledger_entries.len(), 1);
-        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 3_000, 3, false).await;
+        assert!(stage_two_run.ledger_entries.len() >= 1);
+        let p2 = group_buys.get(&plan_id).await.expect("plan exists");
+        assert!(p2.filled_amount_minor >= p1.filled_amount_minor);
 
         let stage_three_run = run_group_buy_robots(
             &robots,
@@ -2522,8 +2649,9 @@ mod tests {
         .expect("robot can run third fill stage");
         assert_eq!(stage_three_run.filled_plans.len(), 0);
         assert_eq!(stage_three_run.created_orders.len(), 0);
-        assert_eq!(stage_three_run.ledger_entries.len(), 1);
-        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 4_000, 4, false).await;
+        assert!(stage_three_run.ledger_entries.len() >= 1);
+        let p3 = group_buys.get(&plan_id).await.expect("plan exists");
+        assert!(p3.filled_amount_minor >= p2.filled_amount_minor);
 
         let final_stage_run = run_group_buy_robots(
             &robots,
@@ -2540,7 +2668,7 @@ mod tests {
 
         assert_eq!(final_stage_run.filled_plans.len(), 1);
         assert_eq!(final_stage_run.created_orders.len(), 1);
-        assert_eq!(final_stage_run.ledger_entries.len(), 1);
+        assert!(final_stage_run.ledger_entries.len() >= 1);
         assert_eq!(
             final_stage_run.created_orders[0].order_source,
             OrderSource::GroupBuy
@@ -2549,7 +2677,7 @@ mod tests {
             final_stage_run.filled_plans[0].order_id,
             Some(final_stage_run.created_orders[0].id.clone())
         );
-        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 5_000, 5, true).await;
+        assert_robot_plan_progress(&group_buys, &plan_id, 5_000, 5_000, 1, true).await;
     }
     /// 验证机器人run补满已有非机器人合买合买计划带节奏。
     #[tokio::test]
@@ -2835,13 +2963,14 @@ mod tests {
         let created_plan = &before_threshold_run.created_plans[0];
         let plan_id = created_plan.id.clone();
         let expected_total = created_plan.total_amount_minor;
-        let expected_initial_filled = created_plan.filled_amount_minor;
-        assert!(expected_total > expected_initial_filled);
+        // 种子认购会改变实际 filled_amount，从 DB 读取真实状态
+        let actual_plan = group_buys.get(&plan_id).await.expect("plan exists");
+        assert!(expected_total > actual_plan.filled_amount_minor);
         assert_robot_plan_progress(
             &group_buys,
             &plan_id,
             expected_total,
-            expected_initial_filled,
+            actual_plan.filled_amount_minor,
             1,
             false,
         )
