@@ -1931,9 +1931,23 @@ fn split_fill_amount_evenly(
 
 /// 生成机器人补满参与记录 ID。
 fn next_robot_fill_participant_id(plan: &GroupBuyPlan) -> String {
-    let mut index = 1;
+    // 用已有参与记录数量作为基数，加上当前时间戳毫秒后缀生成唯一 ID，
+    // 避免跨轮次内存快照不一致导致 ID 冲突。
+    let base = plan.participants.len() as u64;
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let sequence = (millis % 100_000) as u64;
+    let mut counter = 0_u64;
     loop {
-        let participant_id = format!("{}-{}-{:03}", plan.id, ROBOT_FILL_PARTICIPANT_SUFFIX, index);
+        let participant_id = format!(
+            "{}-{}-{:05}{:03}",
+            plan.id,
+            ROBOT_FILL_PARTICIPANT_SUFFIX,
+            sequence,
+            base + counter
+        );
         if !plan
             .participants
             .iter()
@@ -1941,7 +1955,7 @@ fn next_robot_fill_participant_id(plan: &GroupBuyPlan) -> String {
         {
             return participant_id;
         }
-        index += 1;
+        counter += 1;
     }
 }
 
