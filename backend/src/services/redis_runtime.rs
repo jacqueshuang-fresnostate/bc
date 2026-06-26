@@ -177,7 +177,7 @@ impl RedisRuntime {
             for (member, increment) in chunk {
                 pipe.cmd("ZINCRBY").arg(key).arg(*increment).arg(member);
             }
-            let _: () = pipe.query_async(&mut connection).await.map_err(|error| {
+            let _: Vec<f64> = pipe.query_async(&mut connection).await.map_err(|error| {
                 tracing::error!(%error, redis_key = key, "Redis ZSET 分数累加失败");
                 ApiError::Internal("Redis ZSET 分数累加失败".to_string())
             })?;

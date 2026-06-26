@@ -1,4 +1,14 @@
 # TODO
+## 2026-06-26 15:16 HKT Redis 避奖风险池下注写分返回解析修正
+
+- 完成任务：修正 Redis 风险池 `ZINCRBY` 批量写分时的返回值解析方式。
+- 解决问题：用户下注后检查 Redis 风险池分数仍为 0，排查发现批量 `ZINCRBY` 原先按空返回解析，容易让 Redis 返回的新分数列表被误判为写入失败或造成写分链路状态不清晰。
+- 实施内容：
+  1. `RedisRuntime::zincrby_many` 改为接收 `Vec<f64>` 类型的新分数列表，和 Redis `ZINCRBY` 实际返回保持一致。
+  2. 保持风险池主交易不回滚策略不变，真实 Redis 写入错误仍记录中文错误日志并交给开奖前 DB 复核兜底。
+  3. 同步更新 `.trellis/spec/backend/database-guidelines.md`，沉淀 Redis pipeline 返回值处理约定。
+- 验证结果：已通过 `cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_risk -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml redis_runtime -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml draw_avoidance -- --nocapture`；编译和测试输出中仍有既有未使用变量、未使用导入等警告，本次未引入新的警告。
+
 ## 2026-06-26 15:05 HKT Redis 避奖风险池 TTL 调整为 12 小时
 
 - 完成任务：将 Redis 开奖赔付风险池 key 的过期时间从 7 天调整为 12 小时。
