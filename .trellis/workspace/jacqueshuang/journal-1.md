@@ -1653,3 +1653,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 49: 修正 Redis 避奖风险池写分
+
+**Date**: 2026-06-26
+**Task**: 修正 Redis 避奖风险池写分
+**Branch**: `main`
+
+### Summary
+
+修正 Redis 避奖风险池批量 ZINCRBY 的返回解析，避免把新分数列表按空返回处理，并同步记录 TODO 与后端数据库规格。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `eb18475a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
