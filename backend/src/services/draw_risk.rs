@@ -19,7 +19,7 @@ use crate::{
 };
 
 const MAX_RISK_POOL_CANDIDATES: u64 = 200_000;
-const RISK_POOL_TTL_SECONDS: usize = 7 * 24 * 60 * 60;
+const RISK_POOL_TTL_SECONDS: usize = 12 * 60 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Redis 风险池返回的最低赔付候选号码。

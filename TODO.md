@@ -1,4 +1,13 @@
 # TODO
+## 2026-06-26 15:05 HKT Redis 避奖风险池 TTL 调整为 12 小时
+
+- 完成任务：将 Redis 开奖赔付风险池 key 的过期时间从 7 天调整为 12 小时。
+- 解决问题：避奖风险池只服务当前期号开奖前的最低赔付候选读取，7 天 TTL 过长，会让历史期号风险池 key 在 Redis 中保留过久。
+- 实施内容：
+  1. `draw_risk` 的 `RISK_POOL_TTL_SECONDS` 改为 `12 * 60 * 60`。
+  2. 同步更新 `架构设计.md` 和 `.trellis/spec/backend/database-guidelines.md` 中 Redis 风险池 TTL 规则。
+- 验证结果：已通过 `cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo check --manifest-path backend/Cargo.toml`、`cargo test --manifest-path backend/Cargo.toml draw_risk -- --nocapture`；编译和测试输出中仍有既有未使用变量、未使用导入等警告，本次未引入新的警告。
+
 ## 2026-06-26 13:18 HKT 补单机器人展示名随机化
 
 - 完成任务：修复补单机器人参与合买时展示固定内部账号名的问题。
