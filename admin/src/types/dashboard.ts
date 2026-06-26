@@ -161,6 +161,7 @@ export interface RobotConfigSummary {
   description: string;
   groupBuyFillStrategy: GroupBuyRobotFillStrategy;
   groupBuyFillBeforeDrawSeconds: number;
+  groupBuyRhythmFillMaxPercent: number;
   deletable: boolean;
 }
 

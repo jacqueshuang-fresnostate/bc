@@ -56,10 +56,6 @@ const ROBOT_GUARD_PROTECT_MAX_SECONDS: i64 = 180;
 const ROBOT_FILL_STAGE_ONE_SECONDS: i64 = 60;
 const ROBOT_FILL_STAGE_TWO_SECONDS: i64 = 30;
 const ROBOT_FILL_FINAL_STAGE_SECONDS: i64 = 15;
-const ROBOT_FILL_STAGE_ONE_TARGET_PERCENT: i64 = 40;
-const ROBOT_FILL_STAGE_TWO_TARGET_PERCENT: i64 = 60;
-const ROBOT_FILL_STAGE_THREE_TARGET_PERCENT: i64 = 80;
-const ROBOT_FILL_FINAL_TARGET_PERCENT: i64 = 100;
 const ROBOT_FILL_STAGE_COUNT: i64 = 5;
 const ROBOT_FILL_USERS_PER_STAGE_MIN: usize = 5;
 const ROBOT_FILL_USERS_PER_STAGE_MAX: usize = 10;
@@ -98,7 +94,16 @@ struct GroupBuyRobotJob {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RobotFillPolicy {
     GuaranteedUserPlan,
+    Rhythm { max_percent: u32 },
     BeforeDraw { fill_before_draw_seconds: i64 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RobotFillStage {
+    One,
+    Two,
+    Three,
+    Final,
 }
 
 /// 判断用户 ID 是否为系统合买或补单机器人账户。
@@ -636,6 +641,13 @@ async fn seed_robot_plan_initial_participants(
     if remaining <= 0 {
         return Ok(());
     }
+    if plan
+        .participants
+        .iter()
+        .any(|participant| participant.note.starts_with("机器人初始认购"))
+    {
+        return Ok(());
+    }
 
     let min_share = plan.min_share_amount_minor.max(1);
     let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
@@ -988,8 +1000,14 @@ async fn fill_robot_plan(
 
     let min_share = plan.min_share_amount_minor.max(1);
     let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
-    let split_amounts =
-        robot_fill_amount_splits(fill_amount_minor, participant_min, min_share, policy);
+    let split_seed = format!("{}:{}:{}", plan.id, issue.issue, fill_note);
+    let split_amounts = robot_fill_amount_splits(
+        fill_amount_minor,
+        participant_min,
+        min_share,
+        policy,
+        &split_seed,
+    );
 
     let mut participant_ids = Vec::with_capacity(split_amounts.len());
     let mut rollback_participant_ids = Vec::new();
@@ -1183,6 +1201,7 @@ fn robot_fill_amount_splits(
     participant_min: i64,
     min_share: i64,
     policy: RobotFillPolicy,
+    split_seed: &str,
 ) -> Vec<i64> {
     if matches!(policy, RobotFillPolicy::BeforeDraw { .. }) {
         return vec![fill_amount_minor];
@@ -1192,11 +1211,12 @@ fn robot_fill_amount_splits(
     let max_users_by_min = ((fill_amount_minor / participant_min) as usize).max(1);
     let users_per_stage =
         robot_fill_users_per_stage(fill_amount_minor, participant_min).min(max_users_by_min);
-    split_fill_amount_evenly(
+    split_fill_amount_varied(
         fill_amount_minor,
         users_per_stage,
         participant_min,
         min_share,
+        split_seed,
     )
 }
 
@@ -1951,6 +1971,73 @@ fn split_fill_amount_evenly(
     amounts
 }
 
+/// 将补单金额按稳定随机权重拆成多份，避免阶段性补单每个机器人认购金额完全一致。
+fn split_fill_amount_varied(
+    total: i64,
+    users: usize,
+    participant_min: i64,
+    min_share: i64,
+    seed: &str,
+) -> Vec<i64> {
+    let min_unit = min_share.max(1);
+    let total = total / min_unit * min_unit;
+    if users <= 1 || total <= 0 {
+        return vec![total];
+    }
+
+    let min_units = (participant_min.max(1) + min_unit - 1) / min_unit;
+    let total_units = total / min_unit;
+    let required_units = min_units.saturating_mul(users as i64);
+    if required_units > total_units {
+        let max_users = (total_units / min_units).max(1) as usize;
+        if max_users <= 1 || max_users >= users {
+            return vec![total];
+        }
+        tracing::info!(
+            total,
+            users,
+            participant_min,
+            max_users,
+            "补单金额随机拆分后低于最低认购额，降为 {max_users} 份"
+        );
+        return split_fill_amount_varied(total, max_users, participant_min, min_share, seed);
+    }
+
+    let remaining_units = total_units - required_units;
+    if remaining_units <= 0 {
+        return vec![min_units * min_unit; users];
+    }
+
+    let weights = (0..users)
+        .map(|index| {
+            let hash = stable_robot_fill_hash(seed, "split", index as u64);
+            (hash % 97 + 3) as i64
+        })
+        .collect::<Vec<_>>();
+    let total_weight = weights.iter().sum::<i64>().max(1);
+    let mut extra_units = vec![0_i64; users];
+    let mut allocated_units = 0_i64;
+    for (index, weight) in weights.iter().enumerate() {
+        let units = remaining_units * *weight / total_weight;
+        extra_units[index] = units;
+        allocated_units += units;
+    }
+
+    let mut order = (0..users).collect::<Vec<_>>();
+    order.sort_by_key(|index| stable_robot_fill_hash(seed, "split-remainder", *index as u64));
+    for index in order
+        .into_iter()
+        .take((remaining_units - allocated_units) as usize)
+    {
+        extra_units[index] += 1;
+    }
+
+    extra_units
+        .into_iter()
+        .map(|units| (min_units + units) * min_unit)
+        .collect()
+}
+
 /// 生成机器人补满参与记录 ID。
 fn next_robot_fill_participant_id(plan: &GroupBuyPlan) -> String {
     // 用已有参与记录数量作为基数，加上当前时间戳毫秒后缀生成唯一 ID，
@@ -2068,6 +2155,9 @@ fn robot_fill_decision(
                 amount_minor: remaining_amount_minor,
                 note: "补单机器人封盘兜底补满合买".to_string(),
             })),
+            RobotFillPolicy::Rhythm { .. } => Ok(RobotFillDecision::Skip(
+                "已到封盘时间，阶段性补单不再追加认购".to_string(),
+            )),
             RobotFillPolicy::BeforeDraw { .. } => unreachable!("开奖前补满策略已提前处理"),
         };
     }
@@ -2077,25 +2167,26 @@ fn robot_fill_decision(
         )));
     }
 
-    let (target_percent, stage_label) = robot_fill_stage(seconds_until_sale_close);
-    let target_amount = target_fill_amount(plan, target_percent)?;
-    if target_amount <= plan.filled_amount_minor {
+    let RobotFillPolicy::Rhythm { max_percent } = policy else {
+        return Err(ApiError::Internal("补单机器人策略无效".to_string()));
+    };
+    let (stage, stage_label) = robot_fill_stage(seconds_until_sale_close);
+    if stage != RobotFillStage::Final && robot_plan_has_rhythm_stage_fill(plan, stage_label) {
         return Ok(RobotFillDecision::Skip(format!(
-            "当前合买进度已达到机器人{stage_label}节奏目标 {target_percent}%"
+            "补单机器人{stage_label}节奏补单已执行，等待下一阶段"
         )));
     }
 
-    let mut amount_minor = target_amount
-        .checked_sub(plan.filled_amount_minor)
-        .ok_or_else(|| ApiError::BadRequest("机器人补单金额无效".to_string()))?;
-    amount_minor = if target_percent == ROBOT_FILL_FINAL_TARGET_PERCENT {
+    let amount_minor = if stage == RobotFillStage::Final {
         remaining_amount_minor
     } else {
-        round_down_to_multiple(
-            amount_minor.min(remaining_amount_minor),
-            plan.min_share_amount_minor.max(1),
-        )
+        rhythm_stage_fill_amount(plan, stage, max_percent, remaining_amount_minor)?
     };
+    if stage != RobotFillStage::Final && amount_minor >= remaining_amount_minor {
+        return Ok(RobotFillDecision::Skip(
+            "本轮补单会直接满单，等待最终阶段补满".to_string(),
+        ));
+    }
     if amount_minor <= 0 {
         return Ok(RobotFillDecision::Skip(
             "本轮机器人补单金额小于最小份额，等待下一阶段".to_string(),
@@ -2115,10 +2206,7 @@ fn robot_fill_decision(
     let remaining_after = remaining_amount_minor
         .checked_sub(amount_minor)
         .ok_or_else(|| ApiError::BadRequest("机器人补单后剩余金额无效".to_string()))?;
-    if target_percent < ROBOT_FILL_FINAL_TARGET_PERCENT
-        && remaining_after > 0
-        && remaining_after < participant_min
-    {
+    if stage != RobotFillStage::Final && remaining_after > 0 && remaining_after < participant_min {
         return Ok(RobotFillDecision::Skip(
             "本轮补单会导致剩余金额低于参与最低金额，等待最终阶段".to_string(),
         ));
@@ -2133,7 +2221,9 @@ fn robot_fill_decision(
 /// 计算补单机器人的补满策略，默认保留封盘兜底能力。
 fn fill_robot_policy(robot: &RobotConfigSummary) -> RobotFillPolicy {
     match robot.group_buy_fill_strategy {
-        GroupBuyRobotFillStrategy::Rhythm => RobotFillPolicy::GuaranteedUserPlan,
+        GroupBuyRobotFillStrategy::Rhythm => RobotFillPolicy::Rhythm {
+            max_percent: robot.group_buy_rhythm_fill_max_percent,
+        },
         GroupBuyRobotFillStrategy::BeforeDraw => RobotFillPolicy::BeforeDraw {
             fill_before_draw_seconds: i64::from(robot.group_buy_fill_before_draw_seconds),
         },
@@ -2165,30 +2255,90 @@ fn is_issue_sale_closed(issue: &DrawIssue, now_at: NaiveDateTime) -> ApiResult<b
     Ok(now_at >= parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?)
 }
 
-/// 根据距离封盘秒数返回机器人当前阶段目标。
-fn robot_fill_stage(seconds_until_sale_close: i64) -> (i64, &'static str) {
+/// 根据距离封盘秒数返回机器人当前阶段。
+fn robot_fill_stage(seconds_until_sale_close: i64) -> (RobotFillStage, &'static str) {
     if seconds_until_sale_close > ROBOT_FILL_STAGE_ONE_SECONDS {
-        (ROBOT_FILL_STAGE_ONE_TARGET_PERCENT, "第一阶段")
+        (RobotFillStage::One, "第一阶段")
     } else if seconds_until_sale_close > ROBOT_FILL_STAGE_TWO_SECONDS {
-        (ROBOT_FILL_STAGE_TWO_TARGET_PERCENT, "第二阶段")
+        (RobotFillStage::Two, "第二阶段")
     } else if seconds_until_sale_close > ROBOT_FILL_FINAL_STAGE_SECONDS {
-        (ROBOT_FILL_STAGE_THREE_TARGET_PERCENT, "第三阶段")
+        (RobotFillStage::Three, "第三阶段")
     } else {
-        (ROBOT_FILL_FINAL_TARGET_PERCENT, "临近封盘")
+        (RobotFillStage::Final, "临近封盘")
     }
 }
 
-/// 计算当前阶段应达到的认购金额，按最小份额向下取整。
-fn target_fill_amount(plan: &GroupBuyPlan, target_percent: i64) -> ApiResult<i64> {
+/// 使用 FNV-1a 派生稳定散列，避免机器人节奏在调度重试时抖动。
+fn stable_robot_fill_hash(seed: &str, salt: &str, number: u64) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in seed
+        .as_bytes()
+        .iter()
+        .chain(salt.as_bytes())
+        .chain(&number.to_le_bytes())
+    {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+/// 计算阶段性补单单阶段金额：不超过后台配置百分比，最终阶段之外不直接补满。
+fn rhythm_stage_fill_amount(
+    plan: &GroupBuyPlan,
+    stage: RobotFillStage,
+    max_percent: u32,
+    remaining_amount_minor: i64,
+) -> ApiResult<i64> {
+    let min_share = plan.min_share_amount_minor.max(1);
+    let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
+    let cap = rhythm_stage_fill_cap(plan, max_percent)?;
+    let max_amount = cap.min(remaining_amount_minor);
+    if max_amount < participant_min {
+        return Ok(0);
+    }
+    let min_amount = round_down_to_multiple((max_amount + 1) / 2, min_share).max(participant_min);
+    if min_amount >= max_amount {
+        return Ok(round_down_to_multiple(max_amount, min_share));
+    }
+    let span_units = (max_amount - min_amount) / min_share;
+    let offset_units = (stable_robot_fill_hash(
+        &plan.id,
+        robot_fill_stage_salt(stage),
+        plan.filled_amount_minor as u64,
+    ) % (span_units as u64 + 1)) as i64;
+    Ok(min_amount + offset_units * min_share)
+}
+
+/// 计算阶段性补单单阶段上限金额，按合买总金额和最小份额向下取整。
+fn rhythm_stage_fill_cap(plan: &GroupBuyPlan, max_percent: u32) -> ApiResult<i64> {
     let raw = plan
         .total_amount_minor
-        .checked_mul(target_percent)
-        .ok_or_else(|| ApiError::BadRequest("机器人节奏目标金额过大".to_string()))?
+        .checked_mul(i64::from(max_percent))
+        .ok_or_else(|| ApiError::BadRequest("机器人阶段补单上限金额过大".to_string()))?
         / 100;
     Ok(round_down_to_multiple(
-        raw.min(plan.total_amount_minor),
+        raw,
         plan.min_share_amount_minor.max(1),
     ))
+}
+
+/// 返回阶段散列盐值。
+fn robot_fill_stage_salt(stage: RobotFillStage) -> &'static str {
+    match stage {
+        RobotFillStage::One => "stage-one",
+        RobotFillStage::Two => "stage-two",
+        RobotFillStage::Three => "stage-three",
+        RobotFillStage::Final => "stage-final",
+    }
+}
+
+/// 判断某个阶段是否已写入过机器人补单参与记录，避免调度重复执行同一阶段。
+fn robot_plan_has_rhythm_stage_fill(plan: &GroupBuyPlan, stage_label: &str) -> bool {
+    let expected_note = format!("补单机器人{stage_label}节奏补单");
+    plan.participants
+        .iter()
+        .any(|participant| participant.note.starts_with(&expected_note))
 }
 
 /// 解析机器人使用的时间字符串。
@@ -2503,6 +2653,63 @@ mod tests {
         }
     }
 
+    /// 验证阶段性补单金额不会超过后台配置的单阶段最高百分比。
+    #[test]
+    fn robot_rhythm_stage_amounts_respect_configured_max_percent() {
+        let mut plan = robot_test_group_buy_plan("G-RHYTHM-MAX", 30_000, 3_000);
+        let max_percent = 20;
+        let cap = rhythm_stage_fill_cap(&plan, max_percent).expect("cap can calculate");
+        let mut stage_amounts = Vec::new();
+        for stage in [
+            RobotFillStage::One,
+            RobotFillStage::Two,
+            RobotFillStage::Three,
+        ] {
+            let remaining = plan.total_amount_minor - plan.filled_amount_minor;
+            let amount = rhythm_stage_fill_amount(&plan, stage, max_percent, remaining)
+                .expect("stage amount can calculate");
+            assert!(amount > 0);
+            assert!(
+                amount <= cap,
+                "单阶段补单金额 {amount} 不能超过配置上限 {cap}"
+            );
+            stage_amounts.push(amount);
+            plan.filled_amount_minor += amount;
+        }
+
+        assert!(
+            stage_amounts
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                > 1,
+            "金额充足时阶段性补单金额应该自然起伏：{stage_amounts:?}"
+        );
+    }
+
+    /// 验证阶段性补单的多用户拆分在金额充足时不会完全均分。
+    #[test]
+    fn robot_varied_split_amounts_are_not_all_equal_when_possible() {
+        let min_share = 100;
+        let participant_min = 500;
+        let amounts =
+            split_fill_amount_varied(10_000, 10, participant_min, min_share, "G-RHYTHM-SPLIT");
+
+        assert_eq!(amounts.iter().sum::<i64>(), 10_000);
+        for &amount in &amounts {
+            assert_eq!(amount % min_share, 0);
+            assert!(amount >= participant_min);
+        }
+        assert!(
+            amounts
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                > 1,
+            "金额充足时多用户补单不应完全均分：{amounts:?}"
+        );
+    }
+
     /// 验证机器人金额keep剩余参与有效。
     #[test]
     fn robot_amounts_keep_remaining_participation_valid() {
@@ -2786,7 +2993,6 @@ mod tests {
         .expect("robot can run third fill stage");
         assert_eq!(stage_three_run.filled_plans.len(), 0);
         assert_eq!(stage_three_run.created_orders.len(), 0);
-        assert!(stage_three_run.ledger_entries.len() >= 1);
         let p3 = group_buys.get(&plan_id).await.expect("plan exists");
         assert!(p3.filled_amount_minor >= p2.filled_amount_minor);
 
@@ -2906,7 +3112,10 @@ mod tests {
             .filled_plans
             .iter()
             .all(|plan| plan.id != "G-USER-OPEN"));
-        assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 2_000, 2, false).await;
+        let stage_one_plan = group_buys.get("G-USER-OPEN").await.expect("plan exists");
+        assert!(stage_one_plan.filled_amount_minor > 1_000);
+        assert!(stage_one_plan.filled_amount_minor < 5_000);
+        assert!(stage_one_plan.participants.len() >= 2);
 
         run_group_buy_robots(
             &robots,
@@ -2920,7 +3129,9 @@ mod tests {
         )
         .await
         .expect("robot can run second fill stage");
-        assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 3_000, 3, false).await;
+        let stage_two_plan = group_buys.get("G-USER-OPEN").await.expect("plan exists");
+        assert!(stage_two_plan.filled_amount_minor > stage_one_plan.filled_amount_minor);
+        assert!(stage_two_plan.filled_amount_minor < 5_000);
 
         run_group_buy_robots(
             &robots,
@@ -2934,7 +3145,9 @@ mod tests {
         )
         .await
         .expect("robot can run third fill stage");
-        assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 4_000, 4, false).await;
+        let stage_three_plan = group_buys.get("G-USER-OPEN").await.expect("plan exists");
+        assert!(stage_three_plan.filled_amount_minor > stage_two_plan.filled_amount_minor);
+        assert!(stage_three_plan.filled_amount_minor < 5_000);
 
         let final_stage_run = run_group_buy_robots(
             &robots,
@@ -3325,7 +3538,37 @@ mod tests {
             description: "测试机器人".to_string(),
             group_buy_fill_strategy: GroupBuyRobotFillStrategy::Rhythm,
             group_buy_fill_before_draw_seconds: 15,
+            group_buy_rhythm_fill_max_percent: 20,
             deletable: true,
+        }
+    }
+    /// 构造测试合买计划，供纯函数测试阶段金额。
+    fn robot_test_group_buy_plan(
+        id: &str,
+        total_amount_minor: i64,
+        filled_amount_minor: i64,
+    ) -> GroupBuyPlan {
+        GroupBuyPlan {
+            id: id.to_string(),
+            lottery_id: "robot-test".to_string(),
+            lottery_name: "机器人测试彩".to_string(),
+            order_id: None,
+            issue: "20260605200000".to_string(),
+            rule_code: "fiveFrontDirect".to_string(),
+            title: "测试合买".to_string(),
+            numbers: "1|2|3".to_string(),
+            initiator_user_id: "U10001".to_string(),
+            initiator_username: "真实用户".to_string(),
+            total_amount_minor,
+            filled_amount_minor,
+            min_share_amount_minor: 100,
+            participant_min_amount_minor: 500,
+            share_count: (total_amount_minor / 100) as u32,
+            status: GroupBuyPlanStatus::Open,
+            participants: Vec::new(),
+            note: "测试".to_string(),
+            created_at: "2026-06-05 19:00:00".to_string(),
+            updated_at: "2026-06-05 19:00:00".to_string(),
         }
     }
     /// 配置种子补单机器人的补满策略。

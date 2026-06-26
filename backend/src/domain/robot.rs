@@ -51,6 +51,9 @@ pub struct RobotConfigSummary {
     /// 补单机器人开奖前兜底补满提前秒数，字段名沿用历史接口。
     #[serde(default = "default_group_buy_fill_before_draw_seconds")]
     pub group_buy_fill_before_draw_seconds: u32,
+    /// 阶段性补单单阶段最高补单百分比，按合买总金额计算。
+    #[serde(default = "default_group_buy_rhythm_fill_max_percent")]
+    pub group_buy_rhythm_fill_max_percent: u32,
     /// 后台是否允许删除该配置。
     #[serde(default)]
     pub deletable: bool,
@@ -64,6 +67,11 @@ pub fn default_group_buy_fill_strategy() -> GroupBuyRobotFillStrategy {
 /// 返回补单机器人默认开奖前补满秒数，只有策略为开奖前补满时生效。
 pub fn default_group_buy_fill_before_draw_seconds() -> u32 {
     15
+}
+
+/// 返回阶段性补单默认单阶段最高百分比。
+pub fn default_group_buy_rhythm_fill_max_percent() -> u32 {
+    20
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

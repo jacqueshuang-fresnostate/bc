@@ -670,6 +670,7 @@ mod tests {
                 description: "只负责发起合买计划".to_string(),
                 group_buy_fill_strategy: crate::domain::robot::GroupBuyRobotFillStrategy::Rhythm,
                 group_buy_fill_before_draw_seconds: 15,
+                group_buy_rhythm_fill_max_percent: 20,
                 deletable: true,
             }],
         )
