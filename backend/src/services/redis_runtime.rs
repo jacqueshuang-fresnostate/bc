@@ -33,6 +33,11 @@ impl RedisRuntime {
         }
     }
 
+    /// 返回当前 Redis 是否启用，供可选缓存索引在禁用时快速跳过本地计算。
+    pub fn is_enabled(&self) -> bool {
+        self.manager.is_some()
+    }
+
     /// 从环境变量读取 Redis 配置；配置为空时禁用，配置错误或连接失败时阻止启动。
     pub async fn from_env() -> Result<Self, Box<dyn Error + Send + Sync>> {
         let Some(redis_url) = redis_url_from_env()? else {
@@ -102,6 +107,180 @@ impl RedisRuntime {
             ApiError::Internal("Redis 缓存删除失败".to_string())
         })?;
         Ok(())
+    }
+
+    /// 判断指定 Redis 键是否存在；Redis 未启用时返回 false。
+    pub async fn key_exists(&self, key: &str) -> ApiResult<bool> {
+        let Some(manager) = &self.manager else {
+            return Ok(false);
+        };
+        let mut connection = manager.clone();
+        connection.exists(key).await.map_err(|error| {
+            tracing::error!(%error, redis_key = key, "Redis 键存在性检查失败");
+            ApiError::Internal("Redis 键存在性检查失败".to_string())
+        })
+    }
+
+    /// 为 Redis 键设置秒级过期时间；Redis 未启用时静默跳过。
+    pub async fn expire_key_seconds(&self, key: &str, seconds: usize) -> ApiResult<()> {
+        let Some(manager) = &self.manager else {
+            return Ok(());
+        };
+        let seconds = i64::try_from(seconds)
+            .map_err(|_| ApiError::Internal("Redis 键过期时间过大".to_string()))?;
+        let mut connection = manager.clone();
+        let _: bool = connection.expire(key, seconds).await.map_err(|error| {
+            tracing::error!(%error, redis_key = key, "Redis 键过期时间设置失败");
+            ApiError::Internal("Redis 键过期时间设置失败".to_string())
+        })?;
+        Ok(())
+    }
+
+    /// 把一批 ZSET 成员按 0 分初始化，已存在成员不覆盖现有分数。
+    pub async fn zadd_nx_zero_members(&self, key: &str, members: &[String]) -> ApiResult<()> {
+        let Some(manager) = &self.manager else {
+            return Ok(());
+        };
+        if members.is_empty() {
+            return Ok(());
+        }
+        let mut connection = manager.clone();
+        for chunk in members.chunks(1_000) {
+            let mut command = redis::cmd("ZADD");
+            command.arg(key).arg("NX");
+            for member in chunk {
+                command.arg(0).arg(member);
+            }
+            let _: i64 = command
+                .query_async(&mut connection)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, redis_key = key, "Redis ZSET 初始化失败");
+                    ApiError::Internal("Redis ZSET 初始化失败".to_string())
+                })?;
+        }
+        Ok(())
+    }
+
+    /// 批量累加 ZSET 成员分数，用于把订单潜在赔付写入开奖风险池。
+    pub async fn zincrby_many(&self, key: &str, increments: &[(String, i64)]) -> ApiResult<()> {
+        let Some(manager) = &self.manager else {
+            return Ok(());
+        };
+        if increments.is_empty() {
+            return Ok(());
+        }
+        let mut connection = manager.clone();
+        for chunk in increments.chunks(1_000) {
+            let mut pipe = redis::pipe();
+            pipe.atomic();
+            for (member, increment) in chunk {
+                pipe.cmd("ZINCRBY").arg(key).arg(*increment).arg(member);
+            }
+            let _: () = pipe.query_async(&mut connection).await.map_err(|error| {
+                tracing::error!(%error, redis_key = key, "Redis ZSET 分数累加失败");
+                ApiError::Internal("Redis ZSET 分数累加失败".to_string())
+            })?;
+        }
+        Ok(())
+    }
+
+    /// 批量累加 ZSET 成员分数，累加后低于 0 的成员会被归零，避免取消异常订单污染风险池。
+    pub async fn zincrby_many_floor_zero(
+        &self,
+        key: &str,
+        increments: &[(String, i64)],
+    ) -> ApiResult<()> {
+        let Some(manager) = &self.manager else {
+            return Ok(());
+        };
+        if increments.is_empty() {
+            return Ok(());
+        }
+        let script = redis::Script::new(
+            r#"
+            local key = KEYS[1]
+            for i = 1, #ARGV, 2 do
+                local member = ARGV[i]
+                local delta = tonumber(ARGV[i + 1])
+                local score = redis.call('ZINCRBY', key, delta, member)
+                if tonumber(score) < 0 then
+                    redis.call('ZADD', key, 0, member)
+                end
+            end
+            return 1
+            "#,
+        );
+        let mut connection = manager.clone();
+        for chunk in increments.chunks(500) {
+            let mut invocation = script.prepare_invoke();
+            invocation.key(key);
+            for (member, increment) in chunk {
+                invocation.arg(member).arg(*increment);
+            }
+            let _: i64 = invocation
+                .invoke_async(&mut connection)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, redis_key = key, "Redis ZSET 分数累加归零失败");
+                    ApiError::Internal("Redis ZSET 分数累加归零失败".to_string())
+                })?;
+        }
+        Ok(())
+    }
+
+    /// 随机返回当前 ZSET 最低分成员，避免同分时长期固定选择排序最前的号码。
+    pub async fn lowest_zset_member_random(&self, key: &str) -> ApiResult<Option<(String, i64)>> {
+        let Some(manager) = &self.manager else {
+            return Ok(None);
+        };
+        let mut connection = manager.clone();
+        let lowest: Vec<(String, f64)> = redis::cmd("ZRANGE")
+            .arg(key)
+            .arg(0)
+            .arg(0)
+            .arg("WITHSCORES")
+            .query_async(&mut connection)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, redis_key = key, "Redis ZSET 最低分读取失败");
+                ApiError::Internal("Redis ZSET 最低分读取失败".to_string())
+            })?;
+        let Some((fallback_member, score)) = lowest.into_iter().next() else {
+            return Ok(None);
+        };
+        let score = score.round() as i64;
+        let same_score_count: i64 = redis::cmd("ZCOUNT")
+            .arg(key)
+            .arg(score)
+            .arg(score)
+            .query_async(&mut connection)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, redis_key = key, "Redis ZSET 同分成员数量读取失败");
+                ApiError::Internal("Redis ZSET 同分成员数量读取失败".to_string())
+            })?;
+        if same_score_count <= 1 {
+            return Ok(Some((fallback_member, score)));
+        }
+        let offset = (OsRng.next_u64() % same_score_count as u64) as i64;
+        let members: Vec<String> = redis::cmd("ZRANGEBYSCORE")
+            .arg(key)
+            .arg(score)
+            .arg(score)
+            .arg("LIMIT")
+            .arg(offset)
+            .arg(1)
+            .query_async(&mut connection)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, redis_key = key, "Redis ZSET 最低分随机成员读取失败");
+                ApiError::Internal("Redis ZSET 最低分随机成员读取失败".to_string())
+            })?;
+        Ok(Some((
+            members.into_iter().next().unwrap_or(fallback_member),
+            score,
+        )))
     }
 }
 

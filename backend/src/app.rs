@@ -138,7 +138,7 @@ impl AppState {
             advertisements: AdvertisementRepository::memory(),
             agent_applications: AgentApplicationRepository::memory(),
             chat_hall: ChatHallRepository::memory(),
-            draws: default_draw_repository(),
+            draws: default_draw_repository().with_redis(redis.clone()),
             finance: FinanceRepository::memory_seeded(),
             group_buys: GroupBuyRepository::memory_seeded(),
             invites: InviteRepository::memory_seeded(),
@@ -191,7 +191,8 @@ impl AppState {
                 api_sources,
                 business_database.clone(),
             )
-            .await?,
+            .await?
+            .with_redis(redis.clone()),
             finance: FinanceRepository::persistent(business_database.clone()).await?,
             group_buys: GroupBuyRepository::persistent(business_database.clone()).await?,
             invites: InviteRepository::persistent(business_database.clone()).await?,

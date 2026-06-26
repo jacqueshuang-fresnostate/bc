@@ -116,6 +116,84 @@ COMMENT ON COLUMN lotteries.logo_url IS '彩种 LOGO 链接地址';
 - `lotteries.schedule` 使用 JSONB 保存开奖时间配置；`timeNode` 表示自然时间节点周期，例如 `{"timeNode":{"intervalSeconds":300,"startTime":"00:00:00"}}` 会按 `00:05、00:10、00:15...` 生成开奖时间。
 - 新增或修改彩种字段时必须同步更新迁移字段注释，避免数据库结构说明落后于后台能力。
 
+## 场景：Redis 开奖赔付风险池
+
+### 1. 范围 / 触发条件
+
+- 触发条件：彩种开启 `avoidWinningEnabled` 后，期号创建、普通下注、合买成单、机器人补单、订单取消和开奖避奖会读写 Redis ZSET 风险池。
+- 范围：`DrawRepository::create`、`DrawRepository::record_avoidance_order_risk`、`DrawRepository::remove_avoidance_order_risk`、`draw_avoidance`、`draw_risk`、`RedisRuntime`。
+
+### 2. 签名
+
+- 风险池键：`draw:risk:<lotteryId>:<issue>`
+- 初始化：`DrawRepository::initialize_avoidance_risk_pool(lottery, issue)`
+- 订单写入：`DrawRepository::record_avoidance_order_risk(order)`
+- 订单扣回：`DrawRepository::remove_avoidance_order_risk(order)`
+- 候选读取：`DrawRepository::lowest_avoidance_risk_candidate(issue)`
+- Redis 命令：`ZADD NX` 初始化 0 分候选、`ZINCRBY` 累加/扣回预计派奖、`ZRANGE ... WITHSCORES` + `ZCOUNT` + `ZRANGEBYSCORE LIMIT` 读取最低分随机候选。
+
+### 3. 契约
+
+Redis ZSET 只保存当前期号“开奖号码 -> 预计派奖金额”的辅助索引，不保存订单事实、开奖结果事实或资金账本。订单、期号、派奖和结算仍以 PostgreSQL 或内存仓储为准。
+
+期号创建成功后，如果彩种开启避奖且 Redis 启用，必须初始化该期所有合法候选号码，score 初始为 0，并设置 TTL。下注订单最终保留后，必须按正式派奖公式计算每个命中候选的预计派奖金额并 `ZINCRBY`；取消待开奖真实订单时必须反向扣回。
+
+反向扣回必须带归零保护：如果历史订单没有成功写入风险池、重复扣回或 Redis 临时丢失部分增量，扣回后候选 score 低于 0 时必须重置为 0，不能让负分候选长期污染最低风险选择。
+
+开奖策略读取 Redis 最低分候选后，必须重新读取数据库/仓储中的当前待开奖订单，并用正式玩法计奖规则复核候选号码和原始号码的预计派奖金额；只有候选金额更低时才能替换开奖号码。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 预期行为 |
+|------|----------|
+| Redis 未配置 | 风险池初始化、写入、读取全部跳过，开奖回退 DB 穷举 |
+| Redis 风险池键不存在 | 下注风险写入跳过，避免为未开启避奖彩种做昂贵枚举 |
+| Redis 写入失败 | 主交易不回滚，记录中文 warning，开奖前 DB 复核兜底 |
+| Redis 最低候选高于或等于原始号码预计派奖 | 不替换开奖号码 |
+| Redis 候选与 DB 复核金额不一致 | 以 DB 复核金额为准 |
+| 取消订单扣回后候选分数小于 0 | 将该候选 score 重置为 0 |
+| 号码类型去重或候选数超过 200000 | 不初始化风险池，回退原 DB 避奖路径 |
+| 避奖找不到 0 赔付号码 | 回退原始号码正常开奖，不阻断调度 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：三位彩种创建期号后初始化 1000 个候选；用户直选 `1,2,3` 成功下单后，只给 `1,2,3` 累加正式预计派奖金额。
+- Good：Redis 返回最低分候选后，开奖服务再用待开奖订单复算，确认候选赔付低于原始号码才替换。
+- Base：Redis 未启用时，避奖仍按旧 DB 穷举逻辑寻找 0 赔付号码。
+- Bad：直接信任 Redis score 写入开奖结果，不做 DB 复核；Redis 漏写会导致开奖风险判断错误。
+- Bad：用下注本金作为 ZSET score；避奖要比较的是预计派奖金额，不是投注金额。
+
+### 6. 必要测试
+
+- 后端需要覆盖候选空间枚举数量，例如三位彩种为 1000 个候选。
+- 后端需要覆盖订单风险分使用正式派奖公式，而不是投注本金。
+- 后端需要覆盖 Redis 不存在或不可用时避奖仍走 DB 兜底。
+- 后续如新增 Redis 集成测试，必须覆盖同分最低候选随机读取和取消订单反向扣回。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let score = order.amount_minor;
+redis.zincrby_many(&key, &[(draw_number, score)]).await?;
+```
+
+这个写法把投注本金当成风险，无法反映真实派奖成本。
+
+#### Correct
+
+```rust
+let payout_minor = payout_amount_minor(
+    matched_bets.len(),
+    order.odds_basis_points,
+    order.unit_amount_minor,
+)?;
+redis.zincrby_many(&key, &[(draw_number, payout_minor)]).await?;
+```
+
+风险池 score 必须与正式结算派奖公式一致，开奖前还要用 DB 待开奖订单复核。
+
 ## 场景：跨仓储事务协调
 
 ### 1. 范围 / 触发条件
@@ -142,7 +220,7 @@ COMMENT ON COLUMN lotteries.logo_url IS '彩种 LOGO 链接地址';
 
 1. **数据库热路径模式**：普通下注这类高频路径在 PostgreSQL 模式下必须直接开启 SQLx 事务，使用 PostgreSQL sequence 生成业务编号，只锁定当前用户资金账户行，插入或更新本次变更行，提交成功后只把本次变更增量合并到内存快照。
 2. **快照协调模式**：内存模式、低频维护操作或尚未改造的跨仓储链路，可以从相关仓储读取并克隆当前快照，在快照上完成全部业务校验和状态变更；未配置 `DATABASE_URL` 时直接替换内存快照，配置 PostgreSQL 时用同一个 SQLx 事务按前后快照差异增量保存，提交成功后再替换运行时内存快照。
-3. **Redis 辅助模式**：Redis 只能用于分布式锁和热点缓存失效，不能作为订单、余额、流水或结算的最终账本；Redis 锁失败需要返回中文业务错误，数据库事务仍是资金一致性的最终保护。
+3. **Redis 辅助模式**：Redis 只能用于分布式锁、热点缓存失效和开奖前可复核的赔付风险索引，不能作为订单、余额、流水、开奖结果或结算的最终账本；Redis 锁失败需要返回中文业务错误，数据库事务仍是资金一致性的最终保护。
 4. 任何热路径都不能每次清空并重插全量订单、资金流水或账户历史。
 
 运行路径不得直接调用单仓储的“只创建订单不扣款”“只确认充值不入账”“只审核提现不处理冻结余额”入口。

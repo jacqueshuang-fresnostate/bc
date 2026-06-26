@@ -2728,7 +2728,7 @@ fn big_small_odd_even_position_key(position: &BigSmallOddEvenPosition) -> &'stat
 /// 结算时只能按 200 分基准反推倍数，不能把任意单注金额直接纳入派奖公式。
 /// 展示公式单位是“元”：命中注数 × oddsBasisPoints / 10000 × 倍数。
 /// 订单和资金流水保存的是“分”，因此这里需要再换算成最小货币单位。
-fn payout_amount_minor(
+pub(crate) fn payout_amount_minor(
     matched_bet_count: usize,
     odds_basis_points: i64,
     combined_unit_amount_minor: i64,

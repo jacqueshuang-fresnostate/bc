@@ -13,7 +13,7 @@ use crate::{
             draw_number_digits, draw_number_spec, format_draw_number, generated_draw_number,
             normalize_draw_number, DrawRepository,
         },
-        order::OrderRepository,
+        order::{payout_amount_minor, OrderRepository},
         play_rules::evaluate_play_rule,
     },
 };
@@ -29,7 +29,8 @@ pub async fn draw_with_avoid_winning_policy(
     let (payload, uses_control_number) = draws.resolve_draw_payload(id, payload).await?;
     let issue = draws.get(id).await?;
     let (payload, uses_control_number) =
-        apply_avoid_winning_policy(orders, lottery, &issue, payload, uses_control_number).await?;
+        apply_avoid_winning_policy(draws, orders, lottery, &issue, payload, uses_control_number)
+            .await?;
     draws
         .draw_resolved_payload(id, payload, uses_control_number)
         .await
@@ -49,7 +50,8 @@ pub async fn draw_prefetched_api_with_avoid_winning_policy(
         .await?;
     let issue = draws.get(id).await?;
     let (payload, uses_control_number) =
-        apply_avoid_winning_policy(orders, lottery, &issue, payload, uses_control_number).await?;
+        apply_avoid_winning_policy(draws, orders, lottery, &issue, payload, uses_control_number)
+            .await?;
     draws
         .draw_resolved_payload(id, payload, uses_control_number)
         .await
@@ -57,6 +59,7 @@ pub async fn draw_prefetched_api_with_avoid_winning_policy(
 
 /// 根据避开中奖开关和当前待开奖订单，决定是否调整最终开奖号码。
 async fn apply_avoid_winning_policy(
+    draws: &DrawRepository,
     orders: &OrderRepository,
     lottery: &LotteryKind,
     issue: &DrawIssue,
@@ -75,7 +78,20 @@ async fn apply_avoid_winning_policy(
     }
 
     let current_draw_number = resolved_draw_number(issue, &payload, uses_control_number)?;
-    if !candidate_hits_any_order(&pending_orders, &current_draw_number)? {
+    if let Some(replacement) =
+        lowest_redis_risk_replacement(draws, issue, &pending_orders, &current_draw_number).await?
+    {
+        let uses_replacement_for_platform =
+            uses_control_number || issue.draw_mode == DrawMode::Platform;
+        return Ok((
+            DrawIssueResultRequest {
+                draw_number: Some(replacement),
+            },
+            uses_replacement_for_platform,
+        ));
+    }
+
+    if candidate_payout_minor(&pending_orders, &current_draw_number)? == 0 {
         return Ok((payload, uses_control_number));
     }
 
@@ -166,8 +182,40 @@ fn resolved_draw_number(
     normalize_draw_number(&draw_number, &issue.number_type)
 }
 
-/// 判断候选开奖号码是否会让任意待开奖订单中奖。
-fn candidate_hits_any_order(orders: &[OrderDetail], draw_number: &str) -> ApiResult<bool> {
+/// 优先从 Redis 风险池读取最低预计赔付号码，并用数据库订单重新计算后再决定是否替换。
+async fn lowest_redis_risk_replacement(
+    draws: &DrawRepository,
+    issue: &DrawIssue,
+    pending_orders: &[OrderDetail],
+    current_draw_number: &str,
+) -> ApiResult<Option<String>> {
+    let Some(candidate) = draws.lowest_avoidance_risk_candidate(issue).await? else {
+        return Ok(None);
+    };
+
+    let current_payout_minor = candidate_payout_minor(pending_orders, current_draw_number)?;
+    let verified_payout_minor = candidate_payout_minor(pending_orders, &candidate.draw_number)?;
+    if verified_payout_minor >= current_payout_minor {
+        return Ok(None);
+    }
+
+    tracing::warn!(
+        lottery_id = %issue.lottery_id,
+        lottery_name = %issue.lottery_name,
+        issue = %issue.issue,
+        original_draw_number = %current_draw_number,
+        original_payout_minor = current_payout_minor,
+        replacement_draw_number = %candidate.draw_number,
+        redis_score_minor = candidate.score_minor,
+        verified_payout_minor,
+        "彩种自动避奖已使用 Redis 最低赔付风险候选号码"
+    );
+    Ok(Some(candidate.draw_number))
+}
+
+/// 计算候选开奖号码会触发的预计派奖金额，单位为分。
+fn candidate_payout_minor(orders: &[OrderDetail], draw_number: &str) -> ApiResult<i64> {
+    let mut total = 0_i64;
     for order in orders {
         let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
             number_type: order.number_type.clone(),
@@ -175,12 +223,20 @@ fn candidate_hits_any_order(orders: &[OrderDetail], draw_number: &str) -> ApiRes
             selection: order.selection.clone(),
             draw_number: draw_number.to_string(),
         })?;
-        if !evaluation.matched_bets.is_empty() {
-            return Ok(true);
+        if evaluation.matched_bets.is_empty() {
+            continue;
         }
+        let payout_minor = payout_amount_minor(
+            evaluation.matched_bets.len(),
+            order.odds_basis_points,
+            order.unit_amount_minor,
+        )?;
+        total = total
+            .checked_add(payout_minor)
+            .ok_or_else(|| ApiError::BadRequest("候选号码预计派奖金额过大".to_string()))?;
     }
 
-    Ok(false)
+    Ok(total)
 }
 
 /// 穷举当前号码类型的候选号码，返回第一组不会命中任何订单的开奖号码。
@@ -209,7 +265,7 @@ fn find_non_winning_draw_number(
     for offset in 1..=total {
         let index = (start_index + offset) % total;
         let candidate = format_draw_number(&index_to_digits(index, spec.len, spec.min, range));
-        if !candidate_hits_any_order(orders, &candidate)? {
+        if candidate_payout_minor(orders, &candidate)? == 0 {
             return Ok(Some(candidate));
         }
     }

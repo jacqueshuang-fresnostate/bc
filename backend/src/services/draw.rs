@@ -18,6 +18,7 @@ use crate::{
             SaveLotteryDrawControlRequest,
         },
         lottery::{DrawMode, DrawSource, LotteryKind, LotteryNumberType, SaveDrawSourceRequest},
+        order::OrderDetail,
     },
     error::{ApiError, ApiResult},
 };
@@ -28,7 +29,9 @@ use super::{
         ApiDrawSourceCrawlSnapshotQuery, ApiDrawSourceLatestIssue, ApiDrawSourceRepository,
     },
     draw_generation::plan_api_draw_source_target,
+    draw_risk::{self, DrawRiskCandidate},
     pagination::{ListPage, PageRequest},
+    redis_runtime::RedisRuntime,
 };
 
 #[derive(Clone)]
@@ -38,6 +41,7 @@ pub struct DrawRepository {
     api_sources: ApiDrawSourceRepository,
     controls: Arc<RwLock<DrawControlStore>>,
     persistence: Option<BusinessDatabase>,
+    redis: RedisRuntime,
 }
 
 /// 开奖期号与开奖控制仓储，负责该模块数据读取、业务变更和持久化协调。
@@ -55,6 +59,7 @@ impl DrawRepository {
             api_sources,
             controls: Arc::new(RwLock::new(DrawControlStore::default())),
             persistence: None,
+            redis: RedisRuntime::disabled(),
         }
     }
 
@@ -69,7 +74,14 @@ impl DrawRepository {
             api_sources,
             controls: Arc::new(RwLock::new(controls)),
             persistence: Some(persistence),
+            redis: RedisRuntime::disabled(),
         })
+    }
+
+    /// 绑定 Redis 运行时，供期号风险池初始化、下注风险累加和开奖最低赔付候选读取使用。
+    pub fn with_redis(mut self, redis: RedisRuntime) -> Self {
+        self.redis = redis;
+        self
     }
 
     #[allow(dead_code)]
@@ -289,7 +301,56 @@ impl DrawRepository {
             store.create(lottery, payload)?
         };
         self.persist_draw_issue(&result).await?;
+        self.initialize_avoidance_risk_pool(lottery, &result).await;
         Ok(result)
+    }
+
+    /// 将订单潜在派奖风险累加到 Redis 风险池；失败只记录日志，不回滚已经完成的主交易。
+    pub async fn record_avoidance_order_risk(&self, order: &OrderDetail) {
+        if let Err(error) = draw_risk::add_order_risk(&self.redis, order).await {
+            tracing::warn!(
+                order_id = %order.id,
+                lottery_id = %order.lottery_id,
+                issue = %order.issue,
+                error = %error.log_message(),
+                "订单赔付风险写入 Redis 风险池失败"
+            );
+        }
+    }
+
+    /// 从 Redis 风险池扣回订单潜在派奖风险；失败只记录日志，后续开奖仍会走数据库复核兜底。
+    pub async fn remove_avoidance_order_risk(&self, order: &OrderDetail) {
+        if let Err(error) = draw_risk::remove_order_risk(&self.redis, order).await {
+            tracing::warn!(
+                order_id = %order.id,
+                lottery_id = %order.lottery_id,
+                issue = %order.issue,
+                error = %error.log_message(),
+                "订单赔付风险从 Redis 风险池扣回失败"
+            );
+        }
+    }
+
+    /// 读取当前期号最低预计赔付候选号码，Redis 不可用时返回 None 让避奖策略回退数据库扫描。
+    pub(crate) async fn lowest_avoidance_risk_candidate(
+        &self,
+        issue: &DrawIssue,
+    ) -> ApiResult<Option<DrawRiskCandidate>> {
+        draw_risk::lowest_risk_candidate(&self.redis, issue).await
+    }
+
+    /// 创建期号后初始化 Redis 赔付风险池；初始化失败不影响期号落库。
+    async fn initialize_avoidance_risk_pool(&self, lottery: &LotteryKind, issue: &DrawIssue) {
+        if let Err(error) =
+            draw_risk::initialize_risk_pool(&self.redis, issue, lottery.avoid_winning_enabled).await
+        {
+            tracing::warn!(
+                lottery_id = %issue.lottery_id,
+                issue = %issue.issue,
+                error = %error.log_message(),
+                "开奖赔付风险池初始化失败，后续开奖将回退数据库避奖策略"
+            );
+        }
     }
 
     /// 将开奖期状态设置为关闭。

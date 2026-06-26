@@ -585,6 +585,7 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
         .await
         {
             Ok(Some((order, attached_plan))) => {
+                draws.record_avoidance_order_risk(&order).await;
                 run.created_orders.push(order);
                 run.filled_plans.push(attached_plan);
             }
@@ -1171,6 +1172,7 @@ async fn fill_robot_plan(
     }
 
     if let Some((order, attached_plan)) = created_order {
+        draws.record_avoidance_order_risk(&order).await;
         run.created_orders.push(order);
         run.filled_plans.push(attached_plan);
     }
@@ -1190,6 +1192,7 @@ async fn attach_order_for_plan(
     if let Some((order, attached_plan)) =
         create_order_for_filled_group_buy(draws, orders, group_buys, lottery, plan).await?
     {
+        draws.record_avoidance_order_risk(&order).await;
         run.created_orders.push(order);
         run.filled_plans.push(attached_plan);
     }

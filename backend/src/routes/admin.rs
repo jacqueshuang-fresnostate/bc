@@ -2538,6 +2538,7 @@ async fn create_group_buy_plan(
         return Err(error);
     }
     if let Some((order, _)) = &created_order {
+        state.draws.record_avoidance_order_risk(order).await;
         publish_user_order_changed(&state, order, "created");
     }
     publish_user_balance_changed(
@@ -2574,6 +2575,7 @@ async fn update_group_buy_plan(
     {
         if let Some(order_id) = existing.order_id.or_else(|| plan.order_id.clone()) {
             let order = state.orders.cancel(&order_id).await?;
+            state.draws.remove_avoidance_order_risk(&order).await;
             publish_user_order_changed(&state, &order, "cancelled");
         }
         let entries = state
@@ -2676,6 +2678,7 @@ async fn add_group_buy_participant(
         return Err(error);
     }
     if let Some((order, _)) = &created_order {
+        state.draws.record_avoidance_order_risk(order).await;
         publish_user_order_changed(&state, order, "created");
     }
     publish_user_balance_changed(
@@ -4210,6 +4213,7 @@ async fn create_order(
         .orders
         .create_with_debit(&state.finance, &lottery, payload, OrderSource::Direct)
         .await?;
+    state.draws.record_avoidance_order_risk(&order).await;
     publish_user_order_changed(&state, &order, "created");
     publish_user_balance_changed(&state, &order.user_id, "order_debit", Some(&order.id)).await;
     let order = admin_order_detail(&state, order).await?;
@@ -4223,6 +4227,7 @@ async fn cancel_order(
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<AdminOrderDetail>>> {
     let order = state.orders.cancel_with_refund(&state.finance, &id).await?;
+    state.draws.remove_avoidance_order_risk(&order).await;
     publish_user_order_changed(&state, &order, "cancelled");
     publish_user_balance_changed(&state, &order.user_id, "order_refund", Some(&order.id)).await;
     let order = admin_order_detail(&state, order).await?;

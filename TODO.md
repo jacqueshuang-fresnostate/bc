@@ -1,4 +1,20 @@
 # TODO
+## 2026-06-26 HKT 避奖改为 Redis ZSET 赔付风险池优先
+
+- 完成任务：把彩种避奖策略从“开奖前仅扫描订单并寻找第一个不中奖号码”升级为“Redis ZSET 赔付风险池优先 + 数据库复核 + 原 DB 穷举兜底”。
+- 解决问题：
+  1. 高频彩开奖时临时扫描当前期号全部待开奖订单并逐个候选判断，压力集中在开奖瞬间。
+  2. 原避奖只关心是否中奖，不能区分多个候选号码之间的预计派奖高低。
+  3. 文档中仍保留“覆盖全部号码空间时跳过开奖”的旧口径，与当前“避奖失败不阻断开奖”的实现不一致。
+- 实施内容：
+  1. `RedisRuntime` 新增 ZSET 辅助能力：判断键是否存在、设置过期、批量 `ZADD NX` 初始化、批量 `ZINCRBY` 累加风险分、扣回时最低归零、最低分同分随机读取。
+  2. 新增 `draw_risk` 服务：创建期号时初始化 `draw:risk:<lotteryId>:<issue>`，下注订单按正式派奖公式枚举命中候选并累加预计派奖金额，取消待开奖订单时扣回风险分。
+  3. `DrawRepository` 绑定 Redis 运行时，期号创建成功后自动初始化风险池，并提供订单风险累加、扣回和最低风险候选读取入口。
+  4. 用户普通下注、后台代下单、用户/后台合买满单成真实订单、机器人和开奖前兜底补建合买订单成功后，都会写入风险池；后台直接取消订单和取消已成单合买会扣回风险池。
+  5. `draw_avoidance` 开奖策略优先读取 Redis 最低风险候选，并用数据库待开奖订单重新计算原始号码和候选号码的预计派奖金额；只有候选金额更低才替换，Redis 不可用或候选不优时回退原 DB 穷举。
+  6. 更新 `架构设计.md`：新增 Redis ZSET 风险池规则，并修正避奖失败时不阻断开奖的旧描述。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml` 通过；`cargo check --manifest-path backend/Cargo.toml` 通过；`cargo test --manifest-path backend/Cargo.toml draw_risk -- --nocapture` 2 个测试通过；`cargo test --manifest-path backend/Cargo.toml draw_avoidance -- --nocapture` 1 个测试通过。
+
 ## 2026-06-25 HKT 资金模块派奖/退款/合买扣款改造为直写DB+行锁
 
 - 完成任务：把资金模块的派奖、退款、合买认购扣款、手工调账、代理返利提现、结算派奖等路径从"全量clone+diff+replace_store"低效模式改造为"DB事务+行锁+直写+增量内存同步"高效模式，与下注路径 `create_many_with_debit_in_database` 对齐。

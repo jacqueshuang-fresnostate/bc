@@ -2465,6 +2465,9 @@ async fn create_user_bet_orders(
         }
     }
     let created_orders = created_orders_result?;
+    for order in &created_orders {
+        state.draws.record_avoidance_order_risk(order).await;
+    }
     if let Err(error) = state
         .redis
         .delete_keys(&[format!("user:{}:balance", session.user.id)])
@@ -2723,6 +2726,7 @@ async fn create_user_group_buy_plan(
         return Err(error);
     }
     if let Some((order, _)) = &created_order {
+        state.draws.record_avoidance_order_risk(order).await;
         publish_user_order_changed(&state, order, "created");
     }
 
@@ -2847,6 +2851,7 @@ async fn join_user_group_buy_plan(
         return Err(error);
     }
     if let Some((order, _)) = &created_order {
+        state.draws.record_avoidance_order_risk(order).await;
         publish_user_order_changed(&state, order, "created");
     }
 
