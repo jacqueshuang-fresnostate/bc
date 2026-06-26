@@ -9,7 +9,7 @@ const ORDER_PAGE_SIZE = 20
 export type BetOrderView = 'groupBuy' | 'orders'
 
 export function useBetOrders(router: Router) {
-  const activeOrderView = ref<BetOrderView>('orders')
+  const activeOrderView = ref<BetOrderView>('groupBuy')
   const ordersByView = ref<Record<BetOrderView, any[]>>({
     groupBuy: [],
     orders: [],

@@ -1,4 +1,16 @@
 # TODO
+## 2026-06-26 16:13 HKT 手机端我的记录默认选中我的合买
+
+- 完成任务：修复手机端进入“我的记录”页面时没有默认展示“我的合买”的体验问题。
+- 解决问题：`HistoryView` 同时承载开奖页和注单页，用户曾切到“我的注单”后再次进入 `/orders` 可能沿用旧 tab 状态；当前需求要求“我的合买”排在前面并作为默认选中项。
+- 实施内容：
+  1. `mobile/src/views/HistoryView.vue` 的注单 tab 顺序保持为“我的合买”在前、“我的注单”在后。
+  2. `useBetOrders` 默认视图设置为 `groupBuy`，进入 `/orders` 时如果当前视图不是 `groupBuy`，自动切回“我的合买”并加载合买数据。
+  3. 区分进入页面和手动刷新：进入 `/orders` 重置默认 Tab，用户手动切换后点刷新只刷新当前 Tab。
+  4. 新增 `mobile/pnpm-workspace.yaml`，明确批准 `esbuild` 构建脚本，避免 pnpm 11 在手机端构建前被依赖脚本审批阻断。
+  5. 同步更新 `架构设计.md` 中手机端我的记录默认 tab 规则。
+- 验证结果：`git diff --check` 通过；`cd mobile && pnpm build` 通过；`cd mobile && pnpm test` 通过，当前测试脚本未发现测试用例。
+
 ## 2026-06-26 15:16 HKT Redis 避奖风险池下注写分返回解析修正
 
 - 完成任务：修正 Redis 风险池 `ZINCRBY` 批量写分时的返回值解析方式。

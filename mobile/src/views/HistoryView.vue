@@ -87,9 +87,13 @@ async function loadBalance() {
   } catch {}
 }
 
-function loadCurrentPage() {
+function loadCurrentPage(options: { resetOrderView?: boolean } = {}) {
   loadBalance()
   if (pageMode.value === 'orders') {
+    if (options.resetOrderView && activeOrderView.value !== 'groupBuy') {
+      setOrderView('groupBuy')
+      return
+    }
     loadOrders()
     return
   }
@@ -100,6 +104,10 @@ function loadCurrentPage() {
 function loadMoreOrders() {
   if (loadingOrders.value || !hasMoreOrders.value) return
   loadOrders({ append: true })
+}
+
+function refreshCurrentPage() {
+  loadCurrentPage()
 }
 
 function switchOrderTab(view: BetOrderView) {
@@ -128,7 +136,7 @@ watch(() => props.wsMessage, (msg) => {
   }
 })
 
-watch(() => route.path, () => loadCurrentPage(), { immediate: true })
+watch(() => route.path, () => loadCurrentPage({ resetOrderView: true }), { immediate: true })
 </script>
 
 <template>
@@ -157,7 +165,7 @@ watch(() => route.path, () => loadCurrentPage(), { immediate: true })
         <LucideIcon name="arrow_back" class="h-5 w-5" />
       </button>
       <strong class="font-headline text-base text-red-900">我的记录</strong>
-      <button class="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-50 text-red-900 disabled:opacity-60" type="button" :disabled="loadingOrders" @click="loadCurrentPage">
+      <button class="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-50 text-red-900 disabled:opacity-60" type="button" :disabled="loadingOrders" @click="refreshCurrentPage">
         <LucideIcon name="refresh" class="h-4.5 w-4.5" />
       </button>
     </header>
