@@ -44,7 +44,7 @@ use crate::{
     },
 };
 
-/// 系统合买机器人固定用户 ID，资金过滤和删除保护都依赖该值。
+/// 系统合买发单机器人固定用户 ID，资金过滤和删除保护都依赖该值。
 pub const ROBOT_GROUP_BUY_USER_ID: &str = "U90001";
 const ROBOT_GROUP_BUY_USERNAME: &str = "agent_alpha";
 const ROBOT_FILL_PARTICIPANT_SUFFIX: &str = "P-ROBOT-FILL";
@@ -63,6 +63,7 @@ const ROBOT_FILL_FINAL_TARGET_PERCENT: i64 = 100;
 const ROBOT_FILL_STAGE_COUNT: i64 = 5;
 const ROBOT_FILL_USERS_PER_STAGE_MIN: usize = 5;
 const ROBOT_FILL_USERS_PER_STAGE_MAX: usize = 10;
+/// 系统补单机器人预置用户 ID，资金过滤、清理保护和对外匿名展示都依赖该集合。
 const ROBOT_FILL_USER_IDS: [&str; 10] = [
     "U90001", "X90002", "X90003", "X90004", "X90005", "X90006", "X90007", "X90008", "X90009",
     "X90010",
@@ -100,9 +101,12 @@ enum RobotFillPolicy {
     BeforeDraw { fill_before_draw_seconds: i64 },
 }
 
-/// 判断用户 ID 是否为系统合买机器人账户。
+/// 判断用户 ID 是否为系统合买或补单机器人账户。
 pub fn is_group_buy_robot_user_id(user_id: &str) -> bool {
-    user_id.trim() == ROBOT_GROUP_BUY_USER_ID
+    let user_id = user_id.trim();
+    ROBOT_FILL_USER_IDS
+        .iter()
+        .any(|robot_user_id| user_id == *robot_user_id)
 }
 
 /// 构造空的合买机器人执行结果，供串行和并发任务统一汇总。
@@ -1709,15 +1713,14 @@ fn robot_user(users: &[UserSummary]) -> ApiResult<&UserSummary> {
         .ok_or_else(|| ApiError::NotFound("合买机器人资金账号不存在".to_string()))
 }
 
-/// 复制用户快照并只替换合买机器人展示名，真实用户 ID 和资金账户保持不变。
+/// 复制用户快照并替换合买/补单机器人展示名，真实用户 ID 和资金账户保持不变。
 fn users_with_random_robot_display_name(users: &[UserSummary]) -> Vec<UserSummary> {
-    let robot_display_name = random_robot_display_name();
     users
         .iter()
         .cloned()
         .map(|mut user| {
             if is_group_buy_robot_user_id(&user.id) {
-                user.username = robot_display_name.clone();
+                user.username = random_robot_display_name();
             }
             user
         })
@@ -2411,6 +2414,20 @@ mod tests {
                 registration_location: crate::domain::user::UserRegistrationLocation::default(),
                 created_at: "2026-06-05 10:00:00".to_string(),
             },
+            UserSummary {
+                id: "X90002".to_string(),
+                username: "robot_fill_02".to_string(),
+                email: None,
+                avatar_url: String::new(),
+                contact_qq: String::new(),
+                kind: crate::domain::user::UserKind::Regular,
+                status: crate::domain::user::UserStatus::Active,
+                balance_minor: 0,
+                agent_id: Some(ROBOT_GROUP_BUY_USER_ID.to_string()),
+                invite_code: "ROBOT-X90002".to_string(),
+                registration_location: crate::domain::user::UserRegistrationLocation::default(),
+                created_at: "2026-06-05 10:00:00".to_string(),
+            },
         ];
 
         let display_users = users_with_random_robot_display_name(&users);
@@ -2418,6 +2435,10 @@ mod tests {
             .iter()
             .find(|user| user.id == ROBOT_GROUP_BUY_USER_ID)
             .expect("robot user exists");
+        let fill_robot = display_users
+            .iter()
+            .find(|user| user.id == "X90002")
+            .expect("fill robot user exists");
         let real_user = display_users
             .iter()
             .find(|user| user.id == "U10001")
@@ -2426,6 +2447,9 @@ mod tests {
         assert_eq!(robot.id, ROBOT_GROUP_BUY_USER_ID);
         assert_ne!(robot.username, ROBOT_GROUP_BUY_USERNAME);
         assert!(is_valid_robot_display_name(&robot.username));
+        assert_eq!(fill_robot.id, "X90002");
+        assert_ne!(fill_robot.username, "robot_fill_02");
+        assert!(is_valid_robot_display_name(&fill_robot.username));
         assert_eq!(real_user.username, "真实用户");
     }
 

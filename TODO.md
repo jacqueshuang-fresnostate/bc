@@ -1,4 +1,17 @@
 # TODO
+## 2026-06-26 13:18 HKT 补单机器人展示名随机化
+
+- 完成任务：修复补单机器人参与合买时展示固定内部账号名的问题。
+- 解决问题：
+  1. 机器人展示名随机化此前只覆盖 `U90001`，补单阶段轮换使用的 `X90002`-`X90010` 仍可能以 `robot_fill_02` 等种子用户名写入合买参与记录。
+  2. 系统机器人判断只识别 `U90001`，导致补单机器人账号在资金过滤、清理保护和用户端匿名展示上的口径不一致。
+- 实施内容：
+  1. `is_group_buy_robot_user_id` 改为识别 `U90001`、`X90002`-`X90010` 全部合买/补单机器人账号。
+  2. `users_with_random_robot_display_name` 为每个机器人用户单独生成随机中文展示名，普通用户快照保持不变，真实 `user_id` 不变。
+  3. 补充后端单元测试，覆盖 `X90002` 补单机器人不会继续暴露 `robot_fill_02`。
+  4. 更新 `架构设计.md` 和 `.trellis/spec/backend/api-contracts.md`，明确补单机器人账号集合、随机展示名规则和后续维护要求。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check` 通过；`cargo check --manifest-path backend/Cargo.toml` 通过；`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture` 15 个相关测试通过；`cargo test --manifest-path backend/Cargo.toml --quiet` 全量 427 个测试通过。检查中仍看到既有 scheduler/user/order/finance 测试警告，本次未改动这些历史警告。
+
 ## 2026-06-26 HKT 避奖改为 Redis ZSET 赔付风险池优先
 
 - 完成任务：把彩种避奖策略从“开奖前仅扫描订单并寻找第一个不中奖号码”升级为“Redis ZSET 赔付风险池优先 + 数据库复核 + 原 DB 穷举兜底”。
