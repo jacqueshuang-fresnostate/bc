@@ -302,6 +302,7 @@ impl GroupBuyRepository {
                     }
             })
             .collect::<Vec<_>>();
+        let plans = sorted_group_buy_details_by_created_at(plans);
         Ok(ListPage::from_all(plans, page))
     }
 
@@ -1147,10 +1148,7 @@ async fn query_active_group_buy_details_page(
             }
         }
     }
-    let items = sorted_group_buy_plans(plans.values())
-        .into_iter()
-        .cloned()
-        .collect::<Vec<_>>();
+    let items = sorted_group_buy_details_by_created_at(plans.into_values().collect());
 
     Ok(ListPage::new(items, resolved))
 }
@@ -2389,6 +2387,44 @@ mod tests {
                 .map(|plan| plan.id.as_str())
                 .collect::<Vec<_>>(),
             ["G-UNFORMED-NEWER", "G-UNFORMED-OLDER"]
+        );
+    }
+
+    /// 验证用户端合买大厅分页按创建时间倒序，而不是沿用期号排序。
+    #[tokio::test]
+    async fn group_buy_repository_active_hall_page_sorts_by_created_at() {
+        let mut older = seed_group_buy_plans()
+            .into_iter()
+            .next()
+            .expect("seed plan exists");
+        older.id = "G-HALL-OLDER".to_string();
+        older.issue = "20260602099".to_string();
+        older.created_at = "2026-06-02 09:00:00".to_string();
+
+        let mut newer = older.clone();
+        newer.id = "G-HALL-NEWER".to_string();
+        newer.issue = "20260602001".to_string();
+        newer.created_at = "2026-06-02 10:00:00".to_string();
+
+        let repository = GroupBuyRepository {
+            inner: Arc::new(RwLock::new(GroupBuyStore {
+                plans: BTreeMap::from([(older.id.clone(), older), (newer.id.clone(), newer)]),
+            })),
+            persistence: None,
+            mutation_lock: Arc::new(Mutex::new(())),
+        };
+
+        let page = repository
+            .list_active_details_page(&[], None, PageRequest::new(Some(1), Some(10)))
+            .await
+            .expect("hall page can load");
+
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|plan| plan.id.as_str())
+                .collect::<Vec<_>>(),
+            ["G-HALL-NEWER", "G-HALL-OLDER"]
         );
     }
 

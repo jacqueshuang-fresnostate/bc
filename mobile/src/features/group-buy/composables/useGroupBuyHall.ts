@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { showToast } from 'vant'
 import { errorMessage } from '../../../api/user'
+import { sortByCreatedTimeDesc } from '../../../utils/timeSort'
 import { fetchGroupBuyHall, fetchLotteryGroups } from '../api'
 import { normalizeItems } from '../presentation'
 import type { GroupBuyPlan } from '../types'
@@ -52,7 +53,7 @@ export function useGroupBuyHall(lotteryCode: { value: string }) {
       const res = await fetchGroupBuyHall(params)
       if (requestId !== hallRequestSeq.value || lotteryCode.value !== requestedLotteryCode || activeFilter.value !== requestedFilter) return
       const items = normalizeItems(res.data)
-      hallItems.value = append ? mergePlans(hallItems.value, items) : items
+      hallItems.value = sortByCreatedTimeDesc(append ? mergePlans(hallItems.value, items) : items)
       hallPage.value = items.length > 0 ? requestedPage : (append ? hallPage.value : 0)
       hallHasMore.value = items.length >= GROUP_BUY_PAGE_SIZE
     } catch (e: any) {

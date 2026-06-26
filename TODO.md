@@ -1,4 +1,15 @@
 # TODO
+## 2026-06-26 21:19 HKT 手机端合买大厅按创建时间倒序
+
+- 完成任务：将手机端合买大厅列表调整为按合买计划创建时间倒序展示。
+- 解决问题：此前大厅接口在内存模式和 PostgreSQL 当前页组装后仍可能沿用期号倒序，导致期号较大的旧计划排在最新创建计划前面，不符合“合买大厅需要按照时间倒序”的需求。
+- 实施内容：
+  1. 后端 `GroupBuyRepository::list_active_details_page` 内存路径在过滤后按 `createdAt` 和计划 ID 倒序再分页。
+  2. PostgreSQL 大厅分页查询加载参与人后不再调用期号倒序工具，统一用创建时间倒序对当前页稳定排序。
+  3. 手机端 `useGroupBuyHall` 在刷新和追加分页后复用 `sortByCreatedTimeDesc` 兜底，避免合并去重或实时刷新打乱顺序。
+  4. 同步更新 `架构设计.md`、`.trellis/spec/backend/api-contracts.md` 和 `.trellis/spec/frontend/component-guidelines.md`，清理合买大厅按期号倒序的旧口径。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml group_buy_repository_active_hall_page_sorts_by_created_at -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、手机端 `pnpm --dir mobile build` 和 `git diff --check` 均通过；后端仍有既有 unused 警告。
+
 ## 2026-06-26 20:45 HKT 补单机器人阶段性补单支持动态阶段和最终补满秒数
 
 - 完成任务：调整补单机器人 `rhythm` 阶段性补单策略，让后台可以同时配置单阶段随机百分比上限、动态阶段数量和开奖前最终补满秒数。
