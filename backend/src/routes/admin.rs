@@ -1542,6 +1542,7 @@ struct FinancePageQuery {
     include_robot_data: Option<bool>,
     user_id: Option<String>,
     username: Option<String>,
+    kind: Option<LedgerEntryKind>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1735,6 +1736,11 @@ impl FinancePageQuery {
             .map(str::trim)
             .filter(|username| !username.is_empty())
     }
+
+    /// 读取可选资金流水类型过滤条件。
+    fn ledger_kind_filter(&self) -> Option<&LedgerEntryKind> {
+        self.kind.as_ref()
+    }
 }
 
 /// 后台合买计划列表查询参数。
@@ -1760,6 +1766,7 @@ impl UserListQuery {
     fn page_query(&self) -> FinancePageQuery {
         FinancePageQuery {
             include_robot_data: None,
+            kind: None,
             page: self.page,
             page_size: self.page_size,
             user_id: None,
@@ -1774,6 +1781,7 @@ impl AgentApplicationListQuery {
     fn page_query(&self) -> FinancePageQuery {
         FinancePageQuery {
             include_robot_data: None,
+            kind: None,
             page: self.page,
             page_size: self.page_size,
             user_id: None,
@@ -3894,6 +3902,7 @@ async fn list_ledger_entries(
         .ledger_entry_page(
             query.user_id_filter(),
             excluded_user_id,
+            query.ledger_kind_filter(),
             PageRequest::new(query.page, query.page_size),
         )
         .await?;
@@ -5186,6 +5195,7 @@ mod tests {
             ],
             FinancePageQuery {
                 include_robot_data: None,
+                kind: None,
                 page: Some(2),
                 page_size: Some(2),
                 user_id: None,
@@ -5286,6 +5296,7 @@ mod tests {
             users,
             FinancePageQuery {
                 include_robot_data: None,
+                kind: None,
                 page: Some(1),
                 page_size: Some(1),
                 user_id: None,
@@ -5371,6 +5382,7 @@ mod tests {
             accounts,
             FinancePageQuery {
                 include_robot_data: None,
+                kind: None,
                 page: Some(1),
                 page_size: Some(2),
                 user_id: None,
@@ -5400,6 +5412,7 @@ mod tests {
             ledger_entries,
             FinancePageQuery {
                 include_robot_data: None,
+                kind: None,
                 page: Some(1),
                 page_size: Some(2),
                 user_id: None,
@@ -5417,6 +5430,7 @@ mod tests {
 
         let user_filter = FinancePageQuery {
             include_robot_data: None,
+            kind: None,
             page: Some(1),
             page_size: Some(20),
             user_id: Some("U10001".to_string()),

@@ -58,6 +58,8 @@ interface UserRecordFilter {
   username?: string | null;
 }
 
+type LedgerKindFilter = LedgerEntryKind | 'all';
+
 interface AdjustmentFormState {
   amountYuan: string;
   description: string;
@@ -83,6 +85,8 @@ export function FinanceManagementPage({
   const [withdrawalPageSize, setWithdrawalPageSize] = useState(10);
   const [ledgerPage, setLedgerPage] = useState(1);
   const [ledgerPageSize, setLedgerPageSize] = useState(20);
+  const [ledgerKindFilter, setLedgerKindFilter] =
+    useState<LedgerKindFilter>('all');
   const [includeRobotData, setIncludeRobotData] = useState(false);
   const [accountUsernameSearch, setAccountUsernameSearch] = useState('');
   const {
@@ -113,6 +117,7 @@ export function FinanceManagementPage({
     includeRobotData,
     ledgerQuery: {
       includeRobotData,
+      kind: ledgerKindFilter === 'all' ? undefined : ledgerKindFilter,
       page: ledgerPage,
       pageSize: ledgerPageSize,
       userId: ledgerUserFilter?.userId,
@@ -147,6 +152,11 @@ export function FinanceManagementPage({
     setActiveFinanceTab('ledger');
     setLedgerPage(1);
   }, [ledgerUserFilter?.userId]);
+
+  const changeLedgerKindFilter = (value: unknown) => {
+    setLedgerPage(1);
+    setLedgerKindFilter(value === 'all' ? 'all' : (value as LedgerEntryKind));
+  };
 
   const refreshAll = () => {
     refresh();
@@ -783,6 +793,21 @@ export function FinanceManagementPage({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 text-sm text-slate-600">
+              <span className="text-xs font-medium text-slate-500">类型</span>
+              <Select
+                className="form-input min-w-[148px]"
+                value={ledgerKindFilter}
+                onChange={changeLedgerKindFilter}
+              >
+                <Select.Option value="all">全部类型</Select.Option>
+                {LEDGER_KIND_OPTIONS.map((kind) => (
+                  <Select.Option key={kind} value={kind}>
+                    {ledgerKindText(kind)}
+                  </Select.Option>
+                ))}
+              </Select>
+            </div>
             <Button
               disabled={saving || loading || ledgerEntries.totalCount === 0}
               icon={<Trash2 size={16} />}
@@ -1059,6 +1084,24 @@ function downloadBlob(blob: Blob, fileName: string) {
 function dateFileLabel() {
   return new Date().toISOString().slice(0, 10);
 }
+
+const LEDGER_KIND_OPTIONS: LedgerEntryKind[] = [
+  'agentRebateWithdrawal',
+  'groupBuyDebit',
+  'groupBuyRefund',
+  'manualAdjustment',
+  'orderDebit',
+  'orderRefund',
+  'payoutCredit',
+  'rechargeBonusCredit',
+  'rechargeCredit',
+  'rechargeRebateCredit',
+  'redPacketCredit',
+  'redPacketDebit',
+  'withdrawalFreeze',
+  'withdrawalPayout',
+  'withdrawalReject',
+];
 
 function ledgerKindText(kind: LedgerEntryKind) {
   const labels: Record<LedgerEntryKind, string> = {

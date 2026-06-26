@@ -347,6 +347,9 @@ function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery)
   if (pageQuery?.username?.trim()) {
     params.set('username', pageQuery.username.trim());
   }
+  if (pageQuery?.kind) {
+    params.set('kind', pageQuery.kind);
+  }
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
 }

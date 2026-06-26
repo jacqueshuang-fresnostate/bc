@@ -410,7 +410,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/ledger-entries",
         "财务管理",
         "资金流水列表",
-        "分页返回后台可查看的资金流水，包含用户 ID、用户名和中文可映射的流水类型；默认过滤机器人流水，可通过 includeRobotData=true 显示。",
+        "分页返回后台可查看的资金流水，包含用户 ID、用户名和中文可映射的流水类型；默认过滤机器人流水，可通过 includeRobotData=true 显示，可用 kind 按流水类型筛选。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),

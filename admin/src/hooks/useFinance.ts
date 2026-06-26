@@ -112,6 +112,7 @@ export function useFinance({
     ledgerQuery.pageSize,
     ledgerQuery.includeRobotData,
     ledgerQuery.userId,
+    ledgerQuery.kind,
     rechargeQuery.page,
     rechargeQuery.pageSize,
     refreshToken,

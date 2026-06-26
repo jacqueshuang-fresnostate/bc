@@ -241,6 +241,7 @@ impl FinanceRepository {
         &self,
         user_id: Option<&str>,
         excluded_user_id: Option<&str>,
+        kind: Option<&LedgerEntryKind>,
         page: PageRequest,
     ) -> ApiResult<ListPage<LedgerEntry>> {
         let user_id = normalized_optional_filter(user_id);
@@ -250,6 +251,7 @@ impl FinanceRepository {
                 persistence,
                 user_id.as_deref(),
                 excluded_user_id.as_deref(),
+                kind,
                 page,
             )
             .await;
@@ -268,6 +270,7 @@ impl FinanceRepository {
                     && excluded_user_id
                         .as_deref()
                         .map_or(true, |excluded| entry.user_id != excluded)
+                    && kind.map_or(true, |target| &entry.kind == target)
             })
             .collect::<Vec<_>>();
         entries.sort_by(|left, right| right.id.cmp(&left.id));
@@ -299,7 +302,8 @@ impl FinanceRepository {
             return Err(ApiError::BadRequest("user id is required".to_string()));
         }
 
-        self.ledger_entry_page(Some(user_id), None, page).await
+        self.ledger_entry_page(Some(user_id), None, None, page)
+            .await
     }
 
     /// 返回指定流水类型集合的数据，供返利统计等聚合场景避免读取全部流水。
@@ -1484,16 +1488,20 @@ async fn query_ledger_entry_page(
     database: &BusinessDatabase,
     user_id: Option<&str>,
     excluded_user_id: Option<&str>,
+    kind: Option<&LedgerEntryKind>,
     page: PageRequest,
 ) -> ApiResult<ListPage<LedgerEntry>> {
+    let kind_name = kind.map(enum_to_string).transpose()?;
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
          FROM ledger_entries
          WHERE ($1::text IS NULL OR user_id = $1)
-           AND ($2::text IS NULL OR user_id <> $2)",
+           AND ($2::text IS NULL OR user_id <> $2)
+           AND ($3::text IS NULL OR kind = $3)",
     )
     .bind(user_id)
     .bind(excluded_user_id)
+    .bind(kind_name.as_deref())
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("资金流水分页总数读取失败".to_string()))?;
@@ -1505,11 +1513,13 @@ async fn query_ledger_entry_page(
          FROM ledger_entries
          WHERE ($1::text IS NULL OR user_id = $1)
            AND ($2::text IS NULL OR user_id <> $2)
+           AND ($3::text IS NULL OR kind = $3)
          ORDER BY created_at DESC, id DESC
-         LIMIT $3 OFFSET $4",
+         LIMIT $4 OFFSET $5",
     )
     .bind(user_id)
     .bind(excluded_user_id)
+    .bind(kind_name.as_deref())
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
     .fetch_all(database.pool())
@@ -3208,6 +3218,42 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["U10004", "U10001"]
         );
+    }
+
+    #[tokio::test]
+    /// 资金流水分页会先按用户、机器人账号和流水类型过滤，再计算分页总数。
+    async fn repository_ledger_entry_page_filters_by_kind_before_pagination() {
+        let repository = FinanceRepository::memory_seeded();
+        repository
+            .manual_adjust(ManualBalanceAdjustmentRequest {
+                amount_minor: 500,
+                description: "后台补款".to_string(),
+                user_id: "U10001".to_string(),
+            })
+            .await
+            .expect("manual adjustment can be applied");
+        repository
+            .debit_group_buy("U10001", 100, "P-test-user", "G-test")
+            .await
+            .expect("user group buy debit can be applied");
+        repository
+            .debit_group_buy("U90001", 100, "P-test-robot", "G-test")
+            .await
+            .expect("robot group buy debit can be applied");
+
+        let page = repository
+            .ledger_entry_page(
+                Some("U10001"),
+                Some("U90001"),
+                Some(&LedgerEntryKind::GroupBuyDebit),
+                PageRequest::new(Some(1), Some(20)),
+            )
+            .await
+            .expect("ledger page can filter by kind");
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.items[0].user_id, "U10001");
+        assert_eq!(page.items[0].kind, LedgerEntryKind::GroupBuyDebit);
     }
 
     #[test]

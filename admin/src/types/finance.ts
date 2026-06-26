@@ -47,6 +47,7 @@ export interface FinancePageQuery {
   includeRobotData?: boolean;
   userId?: string;
   username?: string;
+  kind?: LedgerEntryKind;
 }
 
 export interface ClearRecordsResult {

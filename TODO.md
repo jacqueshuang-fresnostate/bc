@@ -1,4 +1,15 @@
 # TODO
+## 2026-06-26 19:18 HKT 后台资金流水支持按类型筛选
+
+- 完成任务：给后台财务管理“资金流水”列表增加按流水类型筛选能力。
+- 解决问题：运营此前只能通过分页查看全部资金流水，想集中核对合买认购、投注扣款、充值入账、提现打款、红包等某一类流水时，需要手动翻页辨认，排查效率低。
+- 实施内容：
+  1. 后端 `GET /api/admin/ledger-entries` 新增可选 `kind` 查询参数，并在 `FinanceRepository::ledger_entry_page` 内将用户过滤、机器人过滤、类型过滤和分页统一处理。
+  2. PostgreSQL 查询新增 `ledger_entries.kind` 条件，复用现有 `ledger_entries_kind_user_created_idx` 索引；内存模式同步按 `LedgerEntryKind` 过滤。
+  3. 管理后台 `FinancePageQuery`、API client、`useFinance` 和财务管理页新增类型筛选状态；“资金流水”标签页新增类型下拉，切换后回到第 1 页。
+  4. 同步更新 OpenAPI 摘要、`.trellis/spec` 前后端规范和 `架构设计.md`，明确类型筛选必须在仓储分页层完成。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml repository_ledger_entry_page_filters_by_kind_before_pagination -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、管理后台 `npm run build` 和 `git diff --check` 均通过；后端检查仍有既有 unused 警告，管理后台构建仍有既有 chunk size warning。
+
 ## 2026-06-26 18:42 HKT 补单机器人阶段性补单支持后台百分比上限
 
 - 完成任务：给补单机器人“阶段性补单”策略新增后台可配置的单阶段最高补单百分比，并调整阶段性补单执行规则。

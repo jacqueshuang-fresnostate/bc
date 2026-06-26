@@ -1670,7 +1670,7 @@ let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
 ### 2. 签名
 
 - `GET /api/admin/financial-accounts`
-- `GET /api/admin/ledger-entries`
+- `GET /api/admin/ledger-entries?page=1&pageSize=20&kind=orderDebit`
 - `POST /api/admin/financial-adjustments`
 - `POST /api/admin/orders` 创建成功后写入投注扣款流水。
 - `PATCH /api/admin/orders/{id}/cancel` 取消成功后写入退款流水。
@@ -1713,6 +1713,8 @@ let evaluation = evaluate_play_rule(PlayRuleEvaluateRequest {
 - `orderDebit`：投注扣款，金额为负数。
 - `orderRefund`：取消订单退款，金额为正数。
 - `payoutCredit`：中奖派奖入账，金额为正数。
+
+后台资金流水列表支持可选 `kind` 查询参数，取值必须使用 `LedgerEntryKind` 的 camelCase 枚举值；为空时返回全部类型。`kind` 必须和 `userId`、`includeRobotData`、`page/pageSize` 一起在仓储层过滤和分页，不能由前端读取全量流水后自行筛选。
 - `rechargeCredit`：充值入账，金额为正数。
 - `rechargeRebateCredit`：充值返利入账，金额为正数。
 - `withdrawalFreeze`：提现冻结，金额为负数。
@@ -4939,7 +4941,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 - `GET /api/admin/finance-overview?includeRobotData=false`
 - `GET /api/admin/financial-accounts?page=1&pageSize=20&includeRobotData=false`
 - `GET /api/admin/recharge-orders?page=1&pageSize=20`
-- `GET /api/admin/ledger-entries?page=1&pageSize=20&includeRobotData=false`
+- `GET /api/admin/ledger-entries?page=1&pageSize=20&includeRobotData=false&kind=groupBuyDebit`
 - `GET /api/admin/withdrawal-orders?page=1&pageSize=20`
 - `POST /api/admin/withdrawal-orders/{id}/approve`
 - `POST /api/admin/withdrawal-orders/{id}/reject`
@@ -4964,6 +4966,8 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 
 不传 `includeRobotData` 时等同于 `false`，财务总览、资金账户和资金流水必须排除 `U90001`、`X90002`-`X90010` 等系统机器人账户；开关打开时才纳入机器人自动授信、合买扣款和机器人订单相关流水，方便审计。
 
+资金流水列表的 `kind` 为可选类型筛选，必须使用 `manualAdjustment`、`orderDebit`、`orderRefund`、`payoutCredit`、`rechargeCredit`、`rechargeBonusCredit`、`rechargeRebateCredit`、`withdrawalFreeze`、`withdrawalPayout`、`withdrawalReject`、`groupBuyDebit`、`groupBuyRefund`、`redPacketDebit`、`redPacketCredit`、`agentRebateWithdrawal` 等当前枚举值；未传时返回全部类型。
+
 资金账户列表项必须包含用户名：
 
 ```json
@@ -4987,6 +4991,8 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 | 资金账户没有匹配用户 | `username=null`，不阻塞账户展示 |
 | 未传 `includeRobotData` | 默认过滤系统机器人账户和机器人流水 |
 | `includeRobotData=true` | 返回真实用户数据和机器人账户数据 |
+| `kind` 为有效流水类型 | 只返回该类型资金流水，分页总数按筛选后计算 |
+| `kind` 为空 | 不按类型过滤 |
 | 提现申请不存在 | HTTP 404 |
 | 提现申请已通过再驳回 | HTTP 400 |
 | 提现申请已驳回再通过 | HTTP 400 |
@@ -4996,6 +5002,7 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 
 - Good：财务管理页按分页请求资金账户，表格同时展示用户名和用户 ID，并且第一页优先展示用户编号最大的最新用户。
 - Good：充值订单、资金流水、提现申请都有分页控件，并且第一页按创建时间展示最新记录，翻页不会一次性拉取所有历史记录。
+- Good：后台资金流水选择“合买认购”等具体类型后，接口只返回该类型流水，并且用户过滤、机器人过滤和分页总数同时生效。
 - Good：默认进入财务管理页时，财务总览、资金账户和资金流水都不包含机器人账户；打开“显示机器人数据”后再纳入机器人流水。
 - Good：待审核提现点击“通过”后状态变为已通过，冻结余额减少，资金流水出现提现打款。
 - Good：待审核提现点击“驳回”后状态变为已驳回，冻结余额退回可用余额，资金流水出现提现驳回解冻。
@@ -5006,8 +5013,19 @@ let home = build_mobile_lottery_home(lotteries, categories, issues, featured_con
 
 - 后端需要覆盖提现通过、提现驳回和反向审核拒绝。
 - 后端需要覆盖 `U90001`、`X90002`-`X90010` 机器人账户默认被财务口径过滤、打开开关后纳入总览。
+- 后端需要覆盖资金流水按 `kind`、用户和机器人过滤后再分页。
 - OpenAPI 测试需要覆盖财务总览、提现申请列表和提现审核路径。
 - 管理后台需要运行 `npm run build`，确认分页响应、用户名字段和提现状态枚举类型一致。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+前端为了实现类型筛选，先不传 `kind` 拉取多页或全量资金流水，再在浏览器里按 `entry.kind` 过滤；这会让 `totalCount/totalPages` 与页面展示不一致，历史流水增多后也会拖慢后台财务页。
+
+#### Correct
+
+前端选择具体流水类型后直接传 `GET /api/admin/ledger-entries?...&kind=groupBuyDebit`，后端在 `FinanceRepository::ledger_entry_page` 中同时处理用户、机器人、类型和分页条件，PostgreSQL 模式把过滤下推到 `ledger_entries.kind` 查询条件。
 
 ---
 
