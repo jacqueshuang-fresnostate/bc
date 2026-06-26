@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/api-contracts.md", "reason": "Docker 镜像需要保持 /api 健康检查与管理后台接口契约不变。"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端 release 构建和测试需要遵守现有质量门禁。"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端静态构建需要通过 TypeScript 和 Vite build。"}

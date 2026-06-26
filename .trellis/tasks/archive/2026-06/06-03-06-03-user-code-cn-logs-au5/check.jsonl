@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/api-contracts.md", "reason": "验证 inviteCode、普通用户邀请码无效和澳洲 5 分彩 API 源契约。"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端模型、服务和日志改动后需要格式化、检查和测试。"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "用户管理展示字段改动后需要前端构建验证。"}

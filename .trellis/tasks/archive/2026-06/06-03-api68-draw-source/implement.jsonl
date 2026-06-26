@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/api-contracts.md","reason":"本任务修改开奖期号、API 开奖源和自动任务契约，需要同步后端 API 行为规范。"}
-{"file":".trellis/spec/backend/error-handling.md","reason":"外部 API 请求失败必须转换为统一 ApiError 和统一响应信封。"}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"开奖结果不能静默兜底，外部源缺失时不能生成假号码。"}
-{"file":".trellis/spec/backend/logging-guidelines.md","reason":"外部开奖 API 失败需要记录结构化日志，且不能暴露敏感信息。"}

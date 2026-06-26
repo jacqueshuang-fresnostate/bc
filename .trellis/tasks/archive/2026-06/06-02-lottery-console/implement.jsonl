@@ -1,8 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "确认前端管理后台开发规范"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "确认后台页面、Semi UI、卡片和控件使用约定"}
-{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "新增控制台数据 hook，需要遵循自定义 hook 与数据获取模式"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "倒计时和轮询涉及本地状态与服务端状态拆分"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "确认构建和浏览器验证要求"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "确认 TypeScript 类型安全约定"}
-{"file": ".trellis/spec/guides/index.md", "reason": "确认共享思考指南"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "需要复用现有 API client 与格式化工具，避免重复数据获取逻辑"}

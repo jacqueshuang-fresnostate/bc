@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查构建、可见状态和布局验证要求"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查 Semi UI Chat 使用与后台界面规范"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查类型安全和禁用 any"}

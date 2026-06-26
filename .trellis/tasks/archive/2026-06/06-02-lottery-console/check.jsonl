@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查构建、可见状态和布局验证要求"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查控制台页面是否符合后台工作流"}
-{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "检查轮询和数据获取 hook 是否符合约定"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查类型安全和禁用 any"}

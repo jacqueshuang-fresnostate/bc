@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "前端后台页面整体规范"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "维护表单使用 SideSheet、Semi UI 组件和后台布局约定"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "构建、加载错误状态、文本溢出和后台页面质量要求"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TypeScript 类型安全约定"}
-{"file": ".trellis/spec/guides/index.md", "reason": "跨层和复用思考指南"}

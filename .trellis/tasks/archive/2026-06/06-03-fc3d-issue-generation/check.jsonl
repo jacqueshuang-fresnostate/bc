@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "后端服务、API 契约和测试约定"}
-{"file": ".trellis/spec/backend/api-contracts.md", "reason": "核对开奖期号生成接口契约"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对 API 源失败和调度跳过错误处理"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对测试覆盖、开奖逻辑和无静默兜底"}
-{"file": ".trellis/spec/guides/index.md", "reason": "核对跨层数据格式与复用风险"}

@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "后端服务、API 契约和测试约定"}
-{"file": ".trellis/spec/backend/api-contracts.md", "reason": "开奖期号生成接口契约与 Good/Bad cases"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "API 源失败和期号生成失败需要统一 ApiError"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "开奖与调度逻辑属于高风险路径，需要补测试并避免静默兜底"}
-{"file": ".trellis/spec/guides/index.md", "reason": "跨层与复用思考指南"}

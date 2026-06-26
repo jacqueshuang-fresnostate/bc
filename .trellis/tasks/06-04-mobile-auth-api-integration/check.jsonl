@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端变更需要通过格式化、检查，并避免在请求路径中使用不安全兜底。"}
-{"file": ".trellis/spec/backend/api-contracts.md", "reason": "检查新增用户注册配置公开接口是否继续满足统一响应信封和字段命名契约。"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查移动端接口类型、登录响应和注册配置响应是否与后端一致。"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查登录态保存、退出和路由守卫是否只依赖必要 token 状态。"}

@@ -17,3 +17,7 @@ admin/.env.*.local
 *.log
 .DS_Store
 .idea/
+.codex/
+.agents/
+.agent/
+.trellis/
