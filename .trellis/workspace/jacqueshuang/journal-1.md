@@ -1620,3 +1620,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 48: 调整 Redis 避奖风险池 TTL
+
+**Date**: 2026-06-26
+**Task**: 调整 Redis 避奖风险池 TTL
+**Branch**: `main`
+
+### Summary
+
+将 Redis 开奖赔付风险池 key 的过期时间从 7 天调整为 12 小时，并同步更新架构设计、后端数据库规格和 TODO 验证记录。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1f5203b3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
