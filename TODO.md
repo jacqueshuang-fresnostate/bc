@@ -1,4 +1,15 @@
 # TODO
+## 2026-06-26 16:58 HKT 后台合买计划列表支持计划 ID 查询
+
+- 完成任务：给后台“合买管理 / 合买计划列表”增加按合买计划 ID 查找计划的能力。
+- 解决问题：运营只能通过成单状态、机器人数据开关和分页扫描合买计划，拿到具体计划编号时无法直接在列表里定位对应记录。
+- 实施内容：
+  1. 后端 `GET /api/admin/group-buy/plans` 新增 `planId` 查询参数，空字符串按未设置处理，设置后按完整计划 ID 精确匹配。
+  2. `GroupBuyRepository::list_page` 在内存模式和 PostgreSQL 模式都支持计划 ID 过滤；数据库模式下把计划 ID、成单状态、机器人过滤和分页一起下推到 SQL。
+  3. 管理后台合买计划列表新增“计划 ID”输入框，支持点击“查询”或回车查询，点击“清空”恢复当前其它筛选口径下的列表。
+  4. 同步更新 `架构设计.md`、`.trellis/spec/backend/api-contracts.md` 和 OpenAPI 摘要，明确 `planId` 参数语义与验证要求。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check` 通过；`git diff --check` 通过；`cargo check --manifest-path backend/Cargo.toml` 通过；`cargo test --manifest-path backend/Cargo.toml group_buy_repository_list_page_filters_formation_and_sorts_by_created_at -- --nocapture` 1 个相关测试通过；`cd admin && npm run build` 通过。检查输出仍有既有 unused/chunk size 警告，本次未新增失败。
+
 ## 2026-06-26 16:47 HKT 补单机器人开奖前补满改为单用户认购
 
 - 完成任务：调整补单机器人“开奖前补满”策略，到达配置秒数窗口后只用一个补单机器人一次性认购剩余金额。

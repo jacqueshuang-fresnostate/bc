@@ -3178,7 +3178,7 @@ await createInvitation({
 
 ### 2. 签名
 
-- `GET /api/admin/group-buy/plans?page=1&pageSize=20&includeRobotData=false`
+- `GET /api/admin/group-buy/plans?page=1&pageSize=20&includeRobotData=false&planId=G202606020001`
 - `GET /api/admin/group-buy/plans/{id}`
 - `POST /api/admin/group-buy/plans`
 - `DELETE /api/admin/group-buy/plans/clear`
@@ -3346,6 +3346,7 @@ await createInvitation({
 23. 后台计划列表摘要必须返回 `createdAt`，后台合买计划列表需要直接显示该创建时间，方便运营核对计划生成顺序。
 24. 用户端 `/api/user/group-buy/plans`、`/api/user/group-buy/plans/{id}` 和 `/api/user/group-buy/my` 返回的 `initiatorAvatarUrl` 只面向普通用户发起计划，从当前用户资料按 `initiatorUserId` 动态读取；机器人计划必须返回空字符串，避免暴露机器人账号头像。
 25. 用户端 `/api/user/group-buy/plans/{id}` 返回 `participants` 参与人摘要，字段包含 `id`、脱敏 `displayName`、`amountMinor`、`shareCount`、`isMine` 和 `createdAt`；用户端不得返回完整用户名、用户 ID 或机器人账号给普通用户页面，机器人判断必须覆盖 `U90001`、`X90002`-`X90010` 全部系统账号。
+26. 后台计划列表支持可选 `planId` 查询参数，空字符串按未设置处理；设置后按完整合买计划 ID 精确匹配，并可与 `formationStatus`、`includeRobotData` 和分页参数同时使用。数据库模式下该过滤必须下推到 `group_buy_plans.id` 条件，不能在路由层读取全量后过滤。
 
 ### 4. 校验与错误矩阵
 
@@ -3387,6 +3388,8 @@ await createInvitation({
 | 后台计划列表页码超过最大页 | 返回最后一页 |
 | 后台计划列表未传 `includeRobotData` | 默认过滤机器人发起计划 |
 | 后台计划列表传 `includeRobotData=true` | 返回普通用户和机器人发起计划 |
+| 后台计划列表传 `planId` 且存在匹配计划 | 返回该计划所在筛选口径下的分页结果，`totalCount=1` |
+| 后台计划列表传 `planId` 但不存在匹配计划 | 返回空列表，`totalCount=0` |
 
 ### 5. Good / Base / Bad Cases
 
@@ -3400,6 +3403,7 @@ await createInvitation({
 - Good：历史边界里 `filled + orderId=null` 的用户合买计划，在开奖前被补建真实订单并回写 `orderId`，随后可以正常派奖并标记为 `settled`。
 - Good：开奖结算时识别合买订单，中奖金额按参与金额比例拆给参与用户，普通订单仍按订单用户派奖。
 - Good：后台合买管理按 `page/pageSize` 请求计划列表，响应 `items` 只包含当前页，`totalCount` 返回全部计划数。
+- Good：后台合买管理输入完整计划 ID 后，请求 `GET /api/admin/group-buy/plans?planId=G202606020001&page=1&pageSize=10`，列表只返回匹配计划；清空后恢复当前成单状态和机器人数据口径下的分页列表。
 - Good：后台和手机端合买计划列表都按期号倒序展示，分页前已经完成排序，最新期号优先出现在第一页。
 - Good：后台合买计划列表显示每条计划的创建时间，且详情加载、创建计划和新增参与人后本地摘要仍保留 `createdAt`。
 - Good：后台合买管理默认只展示非机器人发起计划，打开“显示机器人数据”后才纳入机器人发起计划；机器人补单参与的用户计划仍保持可见。
@@ -3429,6 +3433,7 @@ await createInvitation({
 - 后端需要覆盖封盘流单退款写入 `groupBuyRefund` 且幂等。
 - 后端需要覆盖合买中奖按参与人份额拆分派奖。
 - 后端需要覆盖后台合买计划分页响应的当前页切片、总数和总页数。
+- 后端需要覆盖后台合买计划列表按 `planId` 精确过滤，过滤发生在分页前。
 - 后端需要覆盖合买计划摘要列表和详情列表均按期号倒序返回。
 - 后端需要覆盖后台合买计划默认过滤机器人发起计划，打开 `includeRobotData` 后才返回。
 - 后端需要覆盖用户端普通用户和机器人合买计划的 `initiatorDisplay` 脱敏，断言不会返回完整昵称、机器人账号或包含“机器人”的展示名。

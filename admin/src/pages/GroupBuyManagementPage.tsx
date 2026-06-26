@@ -11,7 +11,7 @@ import {
   TextArea,
   Toast,
 } from '@douyinfe/semi-ui';
-import { Eye, Plus, RefreshCcw, Save, Trash2, Users } from 'lucide-react';
+import { Eye, Plus, RefreshCcw, Save, Search, Trash2, Users, X } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -73,6 +73,8 @@ export function GroupBuyManagementPage({
   const [includeRobotData, setIncludeRobotData] = useState(false);
   const [formationFilter, setFormationFilter] =
     useState<GroupBuyFormationFilter>('all');
+  const [planIdInput, setPlanIdInput] = useState('');
+  const [planIdFilter, setPlanIdFilter] = useState('');
   const [planPageNumber, setPlanPageNumber] = useState(1);
   const [planPageSize, setPlanPageSize] = useState(10);
   const [createSheetVisible, setCreateSheetVisible] = useState(false);
@@ -102,6 +104,7 @@ export function GroupBuyManagementPage({
       includeRobotData,
       page: planPageNumber,
       pageSize: planPageSize,
+      planId: planIdFilter || undefined,
     },
   });
   const eligibleLotteries = useMemo(
@@ -201,6 +204,17 @@ export function GroupBuyManagementPage({
   const refreshAll = () => {
     refresh();
     onDashboardRefresh();
+  };
+
+  const applyPlanIdFilter = () => {
+    setPlanIdFilter(planIdInput.trim());
+    setPlanPageNumber(1);
+  };
+
+  const clearPlanIdFilter = () => {
+    setPlanIdInput('');
+    setPlanIdFilter('');
+    setPlanPageNumber(1);
   };
 
   const openDetailSheet = async (planId: string) => {
@@ -401,6 +415,34 @@ export function GroupBuyManagementPage({
                   <Tag color="teal">{planPage.totalCount} 个计划</Tag>
                 </div>
                 <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <span className="shrink-0">计划 ID</span>
+                    <Input
+                      className="w-48"
+                      placeholder="输入完整计划 ID"
+                      value={planIdInput}
+                      onChange={setPlanIdInput}
+                      onEnterPress={applyPlanIdFilter}
+                    />
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      icon={<Search size={14} />}
+                      size="small"
+                      theme="solid"
+                      onClick={applyPlanIdFilter}
+                    >
+                      查询
+                    </Button>
+                    <Button
+                      disabled={!planIdFilter && !planIdInput}
+                      icon={<X size={14} />}
+                      size="small"
+                      onClick={clearPlanIdFilter}
+                    >
+                      清空
+                    </Button>
+                  </div>
                   <label className="flex items-center gap-2 text-sm text-slate-600">
                     <span className="shrink-0">成单状态</span>
                     <Select

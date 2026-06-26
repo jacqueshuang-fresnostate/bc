@@ -12,6 +12,7 @@ export interface GroupBuyPlanListQuery {
   includeRobotData?: boolean;
   page?: number;
   pageSize?: number;
+  planId?: string;
 }
 
 export interface GroupBuyParticipant {

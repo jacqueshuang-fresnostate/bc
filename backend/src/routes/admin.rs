@@ -1552,6 +1552,7 @@ struct GroupBuyPlanListQuery {
     page_size: Option<usize>,
     include_robot_data: Option<bool>,
     formation_status: Option<GroupBuyFormationFilter>,
+    plan_id: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1741,6 +1742,14 @@ impl GroupBuyPlanListQuery {
     /// 后台合买列表默认隐藏机器人发起计划。
     fn include_robot_data(&self) -> bool {
         self.include_robot_data.unwrap_or(false)
+    }
+
+    /// 读取可选合买计划 ID，空字符串按未设置处理。
+    fn plan_id_filter(&self) -> Option<&str> {
+        self.plan_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|plan_id| !plan_id.is_empty())
     }
 }
 
@@ -2342,6 +2351,7 @@ async fn list_group_buy_plans(
         .list_page(
             excluded_initiator_user_id,
             query.formation_status,
+            query.plan_id_filter(),
             PageRequest::new(query.page, query.page_size),
         )
         .await?;

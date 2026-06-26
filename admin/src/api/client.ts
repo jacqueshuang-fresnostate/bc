@@ -365,6 +365,9 @@ function groupBuyPlanQueryPath(path: string, query?: GroupBuyPlanListQuery) {
   if (query?.formationStatus) {
     params.set('formationStatus', query.formationStatus);
   }
+  if (query?.planId?.trim()) {
+    params.set('planId', query.planId.trim());
+  }
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
 }

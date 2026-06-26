@@ -92,9 +92,14 @@ impl GroupBuyRepository {
         &self,
         excluded_initiator_user_id: Option<&str>,
         formation_filter: Option<GroupBuyFormationFilter>,
+        plan_id_filter: Option<&str>,
         page: PageRequest,
     ) -> ApiResult<ListPage<GroupBuyPlanSummary>> {
         let excluded_initiator_user_id = excluded_initiator_user_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        let plan_id_filter = plan_id_filter
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
@@ -103,6 +108,7 @@ impl GroupBuyRepository {
                 persistence,
                 excluded_initiator_user_id.as_deref(),
                 formation_filter,
+                plan_id_filter.as_deref(),
                 page,
             )
             .await;
@@ -120,6 +126,11 @@ impl GroupBuyRepository {
                     .map_or(true, |excluded| plan.initiator_user_id != excluded)
             })
             .filter(|plan| formation_filter.map_or(true, |filter| filter.matches_summary(plan)))
+            .filter(|plan| {
+                plan_id_filter
+                    .as_deref()
+                    .map_or(true, |plan_id| plan.id == plan_id)
+            })
             .collect::<Vec<_>>();
         let plans = sorted_group_buy_summaries_by_created_at(plans);
         Ok(ListPage::from_all(plans, page))
@@ -649,6 +660,7 @@ async fn query_group_buy_summary_page(
     database: &BusinessDatabase,
     excluded_initiator_user_id: Option<&str>,
     formation_filter: Option<GroupBuyFormationFilter>,
+    plan_id_filter: Option<&str>,
     page: PageRequest,
 ) -> ApiResult<ListPage<GroupBuyPlanSummary>> {
     let formation_filter = formation_filter.map(|filter| match filter {
@@ -663,10 +675,12 @@ async fn query_group_buy_summary_page(
                $2::text IS NULL
                OR ($2 = 'formed' AND order_id IS NOT NULL)
                OR ($2 = 'unformed' AND order_id IS NULL)
-           )",
+           )
+           AND ($3::text IS NULL OR id = $3)",
     )
     .bind(excluded_initiator_user_id)
     .bind(formation_filter)
+    .bind(plan_id_filter)
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("合买计划分页总数读取失败".to_string()))?;
@@ -685,11 +699,13 @@ async fn query_group_buy_summary_page(
                OR ($2 = 'formed' AND order_id IS NOT NULL)
                OR ($2 = 'unformed' AND order_id IS NULL)
            )
+           AND ($3::text IS NULL OR id = $3)
          ORDER BY created_at DESC, id DESC
-         LIMIT $3 OFFSET $4",
+         LIMIT $4 OFFSET $5",
     )
     .bind(excluded_initiator_user_id)
     .bind(formation_filter)
+    .bind(plan_id_filter)
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
     .fetch_all(database.pool())
@@ -2298,6 +2314,7 @@ mod tests {
             .list_page(
                 None,
                 Some(GroupBuyFormationFilter::Formed),
+                None,
                 PageRequest::new(Some(1), Some(10)),
             )
             .await
@@ -2306,10 +2323,20 @@ mod tests {
             .list_page(
                 None,
                 Some(GroupBuyFormationFilter::Unformed),
+                None,
                 PageRequest::new(Some(1), Some(10)),
             )
             .await
             .expect("unformed page can load");
+        let id_filtered_page = repository
+            .list_page(
+                None,
+                None,
+                Some("G-FORMED-OLDER"),
+                PageRequest::new(Some(1), Some(10)),
+            )
+            .await
+            .expect("plan id filtered page can load");
 
         assert_eq!(
             formed_page
@@ -2322,6 +2349,8 @@ mod tests {
         assert_eq!(formed_page.total_count, 2);
         assert_eq!(unformed_page.items[0].id, "G-UNFORMED");
         assert_eq!(unformed_page.total_count, 1);
+        assert_eq!(id_filtered_page.total_count, 1);
+        assert_eq!(id_filtered_page.items[0].id, "G-FORMED-OLDER");
     }
 
     /// 验证用户端未成单合买分页按创建时间倒序，而不是沿用期号排序。

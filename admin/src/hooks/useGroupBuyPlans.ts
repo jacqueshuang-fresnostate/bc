@@ -90,6 +90,7 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
     planQuery.formationStatus,
     planQuery.page,
     planQuery.pageSize,
+    planQuery.planId,
     refreshToken,
   ]);
 
