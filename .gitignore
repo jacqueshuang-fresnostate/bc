@@ -21,3 +21,8 @@ admin/.env.*.local
 .agents/
 .agent/
 .trellis/
+3个号码玩法规则说明.md
+5个玩法规则说明.md
+TODO.md
+架构设计.md
+部署说明.md
