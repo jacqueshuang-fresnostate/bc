@@ -793,6 +793,17 @@ export function FinanceManagementPage({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm text-slate-600">
+              <Switch
+                checked={includeRobotData}
+                onChange={(checked) => {
+                  setIncludeRobotData(checked);
+                  setAccountPage(1);
+                  setLedgerPage(1);
+                }}
+              />
+              <span>显示机器人流水</span>
+            </label>
             <div className="flex items-center gap-2 text-sm text-slate-600">
               <span className="text-xs font-medium text-slate-500">类型</span>
               <Select

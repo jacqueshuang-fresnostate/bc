@@ -236,21 +236,22 @@ impl FinanceRepository {
         Ok(ListPage::from_all(accounts, page))
     }
 
-    /// 分页返回资金流水；数据库模式下将用户过滤、机器人过滤和分页下推到 SQL。
+    /// 分页返回资金流水；数据库模式下将用户过滤、机器人集合过滤和分页下推到 SQL。
     pub async fn ledger_entry_page(
         &self,
         user_id: Option<&str>,
-        excluded_user_id: Option<&str>,
+        excluded_user_ids: &[&str],
         kind: Option<&LedgerEntryKind>,
         page: PageRequest,
     ) -> ApiResult<ListPage<LedgerEntry>> {
         let user_id = normalized_optional_filter(user_id);
-        let excluded_user_id = normalized_optional_filter(excluded_user_id);
+        let excluded_user_ids = normalized_filter_values(excluded_user_ids);
         if let Some(persistence) = &self.persistence {
+            let excluded_user_ids = excluded_user_ids.iter().cloned().collect::<Vec<_>>();
             return query_ledger_entry_page(
                 persistence,
                 user_id.as_deref(),
-                excluded_user_id.as_deref(),
+                &excluded_user_ids,
                 kind,
                 page,
             )
@@ -267,9 +268,7 @@ impl FinanceRepository {
                 user_id
                     .as_deref()
                     .map_or(true, |target| entry.user_id == target)
-                    && excluded_user_id
-                        .as_deref()
-                        .map_or(true, |excluded| entry.user_id != excluded)
+                    && !excluded_user_ids.contains(&entry.user_id)
                     && kind.map_or(true, |target| &entry.kind == target)
             })
             .collect::<Vec<_>>();
@@ -302,8 +301,7 @@ impl FinanceRepository {
             return Err(ApiError::BadRequest("user id is required".to_string()));
         }
 
-        self.ledger_entry_page(Some(user_id), None, None, page)
-            .await
+        self.ledger_entry_page(Some(user_id), &[], None, page).await
     }
 
     /// 返回指定流水类型集合的数据，供返利统计等聚合场景避免读取全部流水。
@@ -1155,6 +1153,16 @@ fn normalized_optional_filter(value: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// 归一化多个筛选值，空字符串不参与过滤并自动去重。
+fn normalized_filter_values(values: &[&str]) -> BTreeSet<String> {
+    values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
 /// 判断资金账户关联用户名是否命中后台关键字搜索；未知用户不命中过滤。
 fn username_matches_account(
     usernames_by_user_id: &BTreeMap<String, String>,
@@ -1487,7 +1495,7 @@ fn normalized_user_ids(user_ids: &[String]) -> BTreeSet<String> {
 async fn query_ledger_entry_page(
     database: &BusinessDatabase,
     user_id: Option<&str>,
-    excluded_user_id: Option<&str>,
+    excluded_user_ids: &[String],
     kind: Option<&LedgerEntryKind>,
     page: PageRequest,
 ) -> ApiResult<ListPage<LedgerEntry>> {
@@ -1496,11 +1504,11 @@ async fn query_ledger_entry_page(
         "SELECT COUNT(*)
          FROM ledger_entries
          WHERE ($1::text IS NULL OR user_id = $1)
-           AND ($2::text IS NULL OR user_id <> $2)
+           AND (cardinality($2::text[]) = 0 OR NOT (user_id = ANY($2)))
            AND ($3::text IS NULL OR kind = $3)",
     )
     .bind(user_id)
-    .bind(excluded_user_id)
+    .bind(excluded_user_ids)
     .bind(kind_name.as_deref())
     .fetch_one(database.pool())
     .await
@@ -1512,13 +1520,13 @@ async fn query_ledger_entry_page(
         "SELECT id, user_id, kind, amount_minor, balance_after_minor, reference_id, description, created_at
          FROM ledger_entries
          WHERE ($1::text IS NULL OR user_id = $1)
-           AND ($2::text IS NULL OR user_id <> $2)
+           AND (cardinality($2::text[]) = 0 OR NOT (user_id = ANY($2)))
            AND ($3::text IS NULL OR kind = $3)
          ORDER BY created_at DESC, id DESC
          LIMIT $4 OFFSET $5",
     )
     .bind(user_id)
-    .bind(excluded_user_id)
+    .bind(excluded_user_ids)
     .bind(kind_name.as_deref())
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
@@ -3240,11 +3248,15 @@ mod tests {
             .debit_group_buy("U90001", 100, "P-test-robot", "G-test")
             .await
             .expect("robot group buy debit can be applied");
+        repository
+            .debit_group_buy("X90002", 100, "P-test-fill-robot", "G-test")
+            .await
+            .expect("fill robot group buy debit can be applied");
 
         let page = repository
             .ledger_entry_page(
                 Some("U10001"),
-                Some("U90001"),
+                &["U90001", "X90002"],
                 Some(&LedgerEntryKind::GroupBuyDebit),
                 PageRequest::new(Some(1), Some(20)),
             )

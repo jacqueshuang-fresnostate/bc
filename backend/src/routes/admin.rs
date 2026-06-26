@@ -90,7 +90,7 @@ use crate::{
         group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
         group_buy_robot::{
             force_fill_user_group_buy_plans_before_refund, is_group_buy_robot_user_id,
-            run_group_buy_robots, ROBOT_GROUP_BUY_USER_ID,
+            run_group_buy_robots, ROBOT_GROUP_BUY_USER_ID, ROBOT_GROUP_BUY_USER_IDS,
         },
         image_bed::{upload_configured_image_bed_file, ImageBedUploadOptions},
         order::validate_draw_issue_accepts_order,
@@ -3892,16 +3892,16 @@ async fn list_ledger_entries(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminLedgerEntry>>>> {
-    let excluded_user_id = if query.include_robot_data() {
-        None
+    let excluded_user_ids: &[&str] = if query.include_robot_data() {
+        &[][..]
     } else {
-        Some(ROBOT_GROUP_BUY_USER_ID)
+        &ROBOT_GROUP_BUY_USER_IDS[..]
     };
     let page = state
         .finance
         .ledger_entry_page(
             query.user_id_filter(),
-            excluded_user_id,
+            excluded_user_ids,
             query.ledger_kind_filter(),
             PageRequest::new(query.page, query.page_size),
         )

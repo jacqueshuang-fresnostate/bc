@@ -1,4 +1,16 @@
 # TODO
+## 2026-06-26 23:00 HKT 后台资金流水新增机器人流水开关
+
+- 完成任务：在后台财务管理“资金流水”工具栏新增“显示机器人流水”开关，默认关闭。
+- 解决问题：此前资金流水虽然已有 `includeRobotData` 口径，但页面入口不够贴近资金流水表；后端过滤也只排除发单机器人 `U90001`，会漏掉补单机器人 `X90002-X90010` 的流水。
+- 实施内容：
+  1. `ROBOT_GROUP_BUY_USER_IDS` 公开为统一机器人账号集合，覆盖 `U90001` 和 `X90002-X90010`。
+  2. `FinanceRepository::ledger_entry_page` 从单个排除用户升级为排除用户集合，内存模式和 PostgreSQL 模式都在分页前完成机器人过滤、用户过滤和类型过滤。
+  3. 后台 `GET /api/admin/ledger-entries` 默认传入完整机器人账号集合过滤；打开 `includeRobotData=true` 时才纳入机器人流水。
+  4. 管理后台资金流水工具栏新增“显示机器人流水”开关，切换后回到第 1 页并重新请求列表。
+  5. 同步更新 `架构设计.md`，明确资金流水机器人过滤必须覆盖完整机器人账号集合。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml repository_ledger_entry_page_filters_by_kind_before_pagination -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、管理后台 `npm run build` 和 `git diff --check` 均通过；后端仍有既有 unused 警告，管理后台构建仍有既有 chunk size warning。
+
 ## 2026-06-26 21:19 HKT 手机端合买大厅按创建时间倒序
 
 - 完成任务：将手机端合买大厅列表调整为按合买计划创建时间倒序展示。

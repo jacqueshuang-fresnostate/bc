@@ -56,7 +56,7 @@ const ROBOT_FILL_STAGE_COUNT: i64 = 5;
 const ROBOT_FILL_USERS_PER_STAGE_MIN: usize = 5;
 const ROBOT_FILL_USERS_PER_STAGE_MAX: usize = 10;
 /// 系统补单机器人预置用户 ID，资金过滤、清理保护和对外匿名展示都依赖该集合。
-const ROBOT_FILL_USER_IDS: [&str; 10] = [
+pub const ROBOT_GROUP_BUY_USER_IDS: [&str; 10] = [
     "U90001", "X90002", "X90003", "X90004", "X90005", "X90006", "X90007", "X90008", "X90009",
     "X90010",
 ];
@@ -109,7 +109,7 @@ enum RobotFillStage {
 /// 判断用户 ID 是否为系统合买或补单机器人账户。
 pub fn is_group_buy_robot_user_id(user_id: &str) -> bool {
     let user_id = user_id.trim();
-    ROBOT_FILL_USER_IDS
+    ROBOT_GROUP_BUY_USER_IDS
         .iter()
         .any(|robot_user_id| user_id == *robot_user_id)
 }
@@ -673,7 +673,7 @@ async fn seed_robot_plan_initial_participants(
 
     let display_users = users_with_random_robot_display_name(users);
     for (index, &split_amount) in split_amounts.iter().enumerate() {
-        let robot_user_id = ROBOT_FILL_USER_IDS[(index + 1) % ROBOT_FILL_USER_IDS.len()];
+        let robot_user_id = ROBOT_GROUP_BUY_USER_IDS[(index + 1) % ROBOT_GROUP_BUY_USER_IDS.len()];
         if let Some(entry) = ensure_robot_balance_locked(
             finance,
             finance_lock,
@@ -1012,7 +1012,7 @@ async fn fill_robot_plan(
     let mut participant_ids = Vec::with_capacity(split_amounts.len());
     let mut rollback_participant_ids = Vec::new();
     for (index, &split_amount) in split_amounts.iter().enumerate() {
-        let robot_user_id = ROBOT_FILL_USER_IDS[index % ROBOT_FILL_USER_IDS.len()];
+        let robot_user_id = ROBOT_GROUP_BUY_USER_IDS[index % ROBOT_GROUP_BUY_USER_IDS.len()];
         if let Some(entry) = ensure_robot_balance_locked(
             finance,
             finance_lock,
@@ -1076,7 +1076,7 @@ async fn fill_robot_plan(
                 break;
             }
             let participant_id = &participant_ids[index];
-            let robot_user_id = ROBOT_FILL_USER_IDS[index % ROBOT_FILL_USER_IDS.len()];
+            let robot_user_id = ROBOT_GROUP_BUY_USER_IDS[index % ROBOT_GROUP_BUY_USER_IDS.len()];
             match debit_group_buy_locked(
                 finance,
                 finance_lock,
@@ -1145,7 +1145,7 @@ async fn fill_robot_plan(
             break;
         }
         let participant_id = &participant_ids[index];
-        let robot_user_id = ROBOT_FILL_USER_IDS[index % ROBOT_FILL_USER_IDS.len()];
+        let robot_user_id = ROBOT_GROUP_BUY_USER_IDS[index % ROBOT_GROUP_BUY_USER_IDS.len()];
         match debit_group_buy_locked(
             finance,
             finance_lock,
