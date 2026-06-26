@@ -1,4 +1,14 @@
 # TODO
+## 2026-06-26 16:47 HKT 补单机器人开奖前补满改为单用户认购
+
+- 完成任务：调整补单机器人“开奖前补满”策略，到达配置秒数窗口后只用一个补单机器人一次性认购剩余金额。
+- 解决问题：原补单实现复用阶段性补单的多用户拆分逻辑，`beforeDraw` 策略补满剩余份额时也会拆成多条机器人参与记录；当前需求要求一个机器人吃掉剩余额度即可。
+- 实施内容：
+  1. `fill_robot_plan` 根据补单策略生成认购拆分，`beforeDraw` 直接使用单笔剩余金额，`rhythm` 阶段性补单继续使用 5-10 个机器人分散认购。
+  2. 后端测试补充断言：`beforeDraw` 补满机器人发起计划时只新增一个补单参与记录；补满用户发起计划时最终只有用户发起人和一个补单机器人。
+  3. 同步更新 `架构设计.md` 和 `.trellis/spec/backend/api-contracts.md` 中补单机器人策略规则，明确开奖前补满不适用阶段性多用户拆分。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml --check` 通过；`cargo check --manifest-path backend/Cargo.toml` 通过；`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture` 15 个相关测试通过；`git diff --check` 通过。检查输出仍有既有 unused 警告，本次未新增失败。
+
 ## 2026-06-26 16:13 HKT 手机端我的记录默认选中我的合买
 
 - 完成任务：修复手机端进入“我的记录”页面时没有默认展示“我的合买”的体验问题。

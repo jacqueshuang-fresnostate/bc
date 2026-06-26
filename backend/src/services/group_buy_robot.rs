@@ -988,16 +988,8 @@ async fn fill_robot_plan(
 
     let min_share = plan.min_share_amount_minor.max(1);
     let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
-    // 拆分份数受限于每份不得低于最低认购额，避免拆出低于最低认购额的零头。
-    let max_users_by_min = ((fill_amount_minor / participant_min) as usize).max(1);
-    let users_per_stage =
-        robot_fill_users_per_stage(fill_amount_minor, participant_min).min(max_users_by_min);
-    let split_amounts = split_fill_amount_evenly(
-        fill_amount_minor,
-        users_per_stage,
-        participant_min,
-        min_share,
-    );
+    let split_amounts =
+        robot_fill_amount_splits(fill_amount_minor, participant_min, min_share, policy);
 
     let mut participant_ids = Vec::with_capacity(split_amounts.len());
     let mut rollback_participant_ids = Vec::new();
@@ -1182,6 +1174,30 @@ async fn fill_robot_plan(
     }
 
     Ok(())
+}
+
+/// 根据补单策略生成本轮认购金额拆分。
+/// 开奖前补满策略只使用一个补单机器人吃掉剩余金额，阶段性补单仍保留多用户模拟。
+fn robot_fill_amount_splits(
+    fill_amount_minor: i64,
+    participant_min: i64,
+    min_share: i64,
+    policy: RobotFillPolicy,
+) -> Vec<i64> {
+    if matches!(policy, RobotFillPolicy::BeforeDraw { .. }) {
+        return vec![fill_amount_minor];
+    }
+
+    // 拆分份数受限于每份不得低于最低认购额，避免拆出低于最低认购额的零头。
+    let max_users_by_min = ((fill_amount_minor / participant_min) as usize).max(1);
+    let users_per_stage =
+        robot_fill_users_per_stage(fill_amount_minor, participant_min).min(max_users_by_min);
+    split_fill_amount_evenly(
+        fill_amount_minor,
+        users_per_stage,
+        participant_min,
+        min_share,
+    )
 }
 
 /// 为历史遗留的已满单但未成单计划补建真实投注订单。
@@ -3085,6 +3101,7 @@ mod tests {
         let expected_total = created_plan.total_amount_minor;
         // 种子认购会改变实际 filled_amount，从 DB 读取真实状态
         let actual_plan = group_buys.get(&plan_id).await.expect("plan exists");
+        let participants_before_fill = actual_plan.participants.len();
         assert!(expected_total > actual_plan.filled_amount_minor);
         assert_robot_plan_progress(
             &group_buys,
@@ -3120,6 +3137,12 @@ mod tests {
             true,
         )
         .await;
+        let filled_plan = group_buys.get(&plan_id).await.expect("plan exists");
+        assert_eq!(
+            filled_plan.participants.len(),
+            participants_before_fill + 1,
+            "开奖前补满策略应只新增一个补单机器人参与记录"
+        );
     }
     /// 验证补单机器人按开奖前策略补满用户发起的计划。
     #[tokio::test]
@@ -3219,6 +3242,15 @@ mod tests {
             .expect("user plan should be filled by before-draw strategy");
         assert!(filled_user_plan.order_id.is_some());
         assert_robot_plan_progress(&group_buys, "G-USER-BEFORE-DRAW", 5_000, 5_000, 2, true).await;
+        let plan_after_fill = group_buys
+            .get("G-USER-BEFORE-DRAW")
+            .await
+            .expect("plan exists");
+        assert_eq!(
+            plan_after_fill.participants.len(),
+            2,
+            "用户合买开奖前补满应由一个补单机器人吃掉剩余份额"
+        );
     }
     /// 断言机器人计划progress满足测试要求。
     async fn assert_robot_plan_progress(
