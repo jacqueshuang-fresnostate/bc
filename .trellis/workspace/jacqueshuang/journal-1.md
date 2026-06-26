@@ -1719,3 +1719,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 51: 补单机器人开奖前补满单用户认购
+
+**Date**: 2026-06-26
+**Task**: 补单机器人开奖前补满单用户认购
+**Branch**: `main`
+
+### Summary
+
+调整补单机器人 beforeDraw 策略，到开奖前配置窗口后只用一个机器人账号一次性认购剩余合买金额；阶段性补单仍保留多用户拆分；同步更新架构设计、TODO 和后端接口契约，并通过后端格式化、编译和 group_buy_robot 测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `946498c2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
