@@ -1686,3 +1686,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 50: 手机端我的记录默认展示我的合买
+
+**Date**: 2026-06-26
+**Task**: 手机端我的记录默认展示我的合买
+**Branch**: `main`
+
+### Summary
+
+调整手机端 /orders 我的记录页：我的合买位于前面并在进入页面时默认选中，刷新按钮保留当前 Tab；同步更新架构设计、TODO，并补充 pnpm esbuild 构建脚本审批配置。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1ab945b7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
