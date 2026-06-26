@@ -4,6 +4,11 @@ import { errorMessage } from '../../../api/user'
 import { fetchGroupBuyDetail, joinGroupBuyPlan } from '../api'
 import type { GroupBuyPlan } from '../types'
 
+type QuickJoinAmountOption = {
+  label: string
+  value: string | 'all'
+}
+
 /** 创建合买详情和认购的模板方法状态流。 */
 export function useGroupBuyDetail(options: { loadBalance: (loadOptions?: { force?: boolean; silent?: boolean }) => Promise<void>; loadHall: () => Promise<void>; loadMyGroupBuys: () => Promise<void>; activeTab: { value: string } }) {
   const selectedGroupBuy = ref<any | null>(null)
@@ -14,6 +19,35 @@ export function useGroupBuyDetail(options: { loadBalance: (loadOptions?: { force
 
   const canJoin = computed(() => Boolean(selectedGroupBuy.value && selectedGroupBuy.value.status === 'open' && selectedGroupBuy.value.available_shares > 0))
   const joinAmount = computed(() => normalizeJoinAmount())
+  const joinSliderMin = computed(() => effectiveMinimumJoinAmountCents())
+  const joinSliderMax = computed(() => Math.max(joinSliderMin.value, maxJoinAmountCents()))
+  const joinSliderStep = computed(() => Math.max(1, shareAmountCents()))
+  const joinSliderDisabled = computed(() => joinSliderMax.value <= joinSliderMin.value)
+  const joinMinimumAmount = computed(() => centsToMoney(joinSliderMin.value))
+  const joinMaximumAmount = computed(() => centsToMoney(joinSliderMax.value))
+  const joinSliderValue = computed({
+    get: () => moneyToCents(normalizeJoinAmount()),
+    set: (value: number) => {
+      joinAmountInput.value = normalizeJoinAmount(centsToMoney(value))
+    },
+  })
+  const quickJoinAmountOptions = computed<QuickJoinAmountOption[]>(() => {
+    const minCents = effectiveMinimumJoinAmountCents()
+    const maxCents = maxJoinAmountCents()
+    if (minCents <= 0 || maxCents <= 0) return []
+
+    const options: QuickJoinAmountOption[] = [
+      { label: `最低${centsToCompactMoney(minCents)}元`, value: centsToMoney(minCents) },
+    ]
+    for (const cents of [1_000, 5_000]) {
+      if (cents <= minCents || cents >= maxCents) continue
+      options.push({ label: `${centsToCompactMoney(cents)}元`, value: centsToMoney(cents) })
+    }
+    if (maxCents > minCents) {
+      options.push({ label: '全包', value: 'all' })
+    }
+    return options
+  })
   const joinAmountHint = computed(() => {
     const maxCents = maxJoinAmountCents()
     const minCents = effectiveMinimumJoinAmountCents()
@@ -68,7 +102,7 @@ export function useGroupBuyDetail(options: { loadBalance: (loadOptions?: { force
   }
 
   /** 应用快捷认购金额。 */
-  function applyQuickAmount(value: number | 'all') {
+  function applyQuickAmount(value: string | 'all') {
     joinAmountInput.value = value === 'all' ? normalizeJoinAmount(maxJoinAmount()) : normalizeJoinAmount(value)
   }
 
@@ -170,6 +204,12 @@ export function useGroupBuyDetail(options: { loadBalance: (loadOptions?: { force
     return (cents / 100).toFixed(2)
   }
 
+  /** 把分格式化为快捷按钮上的紧凑金额。 */
+  function centsToCompactMoney(value: number) {
+    const text = centsToMoney(value)
+    return text.endsWith('.00') ? text.slice(0, -3) : text
+  }
+
   /** 向下取到完整份额。 */
   function roundDownToMultiple(value: number, step: number) {
     if (step <= 0) return Math.max(0, Math.trunc(value))
@@ -190,6 +230,14 @@ export function useGroupBuyDetail(options: { loadBalance: (loadOptions?: { force
     detailRequestSeq,
     canJoin,
     joinAmount,
+    joinSliderValue,
+    joinSliderMin,
+    joinSliderMax,
+    joinSliderStep,
+    joinSliderDisabled,
+    joinMinimumAmount,
+    joinMaximumAmount,
+    quickJoinAmountOptions,
     joinAmountHint,
     detailVisible,
     maxJoinAmount,

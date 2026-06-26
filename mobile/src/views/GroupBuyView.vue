@@ -35,14 +35,6 @@ const activeTab = ref(initialTab === 'my' ? 'my' : 'hall')
 const initialCreateVisible = initialTab === 'create'
 const lotteryCode = ref(String(route.query.lottery_code || ''))
 
-const quickAmountOptions: Array<{ label: string; value: number | 'all' }> = [
-  { label: '1元', value: 1 },
-  { label: '10元', value: 10 },
-  { label: '50元', value: 50 },
-  { label: '全包', value: 'all' },
-]
-
-
 const {
   loadingHall,
   activeFilter,
@@ -86,6 +78,14 @@ const {
   joinAmountInput,
   canJoin,
   joinAmount,
+  joinSliderValue,
+  joinSliderMin,
+  joinSliderMax,
+  joinSliderStep,
+  joinSliderDisabled,
+  joinMinimumAmount,
+  joinMaximumAmount,
+  quickJoinAmountOptions,
   joinAmountHint,
   detailVisible,
   commitJoinAmountInput,
@@ -537,8 +537,25 @@ onMounted(async () => {
                 <button class="flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl font-black text-red-900 shadow-sm" @click="increaseJoinAmount">＋</button>
               </div>
               <p class="mt-2 text-xs font-medium text-stone-500">{{ joinAmountHint }}</p>
-              <div class="mt-3 grid grid-cols-4 gap-2">
-                <button v-for="option in quickAmountOptions" :key="option.label" class="rounded-full bg-red-50 py-2 text-xs font-bold text-red-900" @click="applyQuickAmount(option.value)">{{ option.label }}</button>
+              <div class="mt-4 rounded-2xl bg-[#fff8f1] px-3 py-3">
+                <van-slider
+                  v-model="joinSliderValue"
+                  :disabled="joinSliderDisabled"
+                  :max="joinSliderMax"
+                  :min="joinSliderMin"
+                  :step="joinSliderStep"
+                  active-color="#8c0a15"
+                  bar-height="6px"
+                  inactive-color="#f0ded8"
+                  @change="commitJoinAmountInput"
+                />
+                <div class="mt-2 flex items-center justify-between text-[11px] font-bold text-stone-500">
+                  <span>最低 {{ formatMoney(joinMinimumAmount) }}</span>
+                  <span>最多 {{ formatMoney(joinMaximumAmount) }}</span>
+                </div>
+              </div>
+              <div v-if="quickJoinAmountOptions.length" class="mt-3 grid grid-cols-4 gap-2">
+                <button v-for="option in quickJoinAmountOptions" :key="option.label" class="rounded-full bg-red-50 py-2 text-xs font-bold text-red-900" @click="applyQuickAmount(option.value)">{{ option.label }}</button>
               </div>
             </div>
           </div>
