@@ -1540,6 +1540,7 @@ struct FinancePageQuery {
     page: Option<usize>,
     page_size: Option<usize>,
     include_robot_data: Option<bool>,
+    order_id: Option<String>,
     user_id: Option<String>,
     username: Option<String>,
     kind: Option<LedgerEntryKind>,
@@ -1741,6 +1742,14 @@ impl FinancePageQuery {
     fn ledger_kind_filter(&self) -> Option<&LedgerEntryKind> {
         self.kind.as_ref()
     }
+
+    /// 读取可选订单号过滤条件，空字符串按未设置处理。
+    fn order_id_filter(&self) -> Option<&str> {
+        self.order_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|order_id| !order_id.is_empty())
+    }
 }
 
 /// 后台合买计划列表查询参数。
@@ -1767,6 +1776,7 @@ impl UserListQuery {
         FinancePageQuery {
             include_robot_data: None,
             kind: None,
+            order_id: None,
             page: self.page,
             page_size: self.page_size,
             user_id: None,
@@ -1782,6 +1792,7 @@ impl AgentApplicationListQuery {
         FinancePageQuery {
             include_robot_data: None,
             kind: None,
+            order_id: None,
             page: self.page,
             page_size: self.page_size,
             user_id: None,
@@ -4149,6 +4160,7 @@ async fn list_orders(
         .list_page(
             query.user_id_filter(),
             excluded_user_id,
+            query.order_id_filter(),
             PageRequest::new(query.page, query.page_size),
         )
         .await?;
@@ -5196,6 +5208,7 @@ mod tests {
             FinancePageQuery {
                 include_robot_data: None,
                 kind: None,
+                order_id: None,
                 page: Some(2),
                 page_size: Some(2),
                 user_id: None,
@@ -5297,6 +5310,7 @@ mod tests {
             FinancePageQuery {
                 include_robot_data: None,
                 kind: None,
+                order_id: None,
                 page: Some(1),
                 page_size: Some(1),
                 user_id: None,
@@ -5383,6 +5397,7 @@ mod tests {
             FinancePageQuery {
                 include_robot_data: None,
                 kind: None,
+                order_id: None,
                 page: Some(1),
                 page_size: Some(2),
                 user_id: None,
@@ -5413,6 +5428,7 @@ mod tests {
             FinancePageQuery {
                 include_robot_data: None,
                 kind: None,
+                order_id: None,
                 page: Some(1),
                 page_size: Some(2),
                 user_id: None,
@@ -5431,6 +5447,7 @@ mod tests {
         let user_filter = FinancePageQuery {
             include_robot_data: None,
             kind: None,
+            order_id: None,
             page: Some(1),
             page_size: Some(20),
             user_id: Some("U10001".to_string()),

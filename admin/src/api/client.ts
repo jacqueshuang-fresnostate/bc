@@ -332,6 +332,7 @@ export function createManualBalanceAdjustment(payload: ManualBalanceAdjustmentRe
 function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery) {
   const params = new URLSearchParams();
   const pageQuery = query as FinancePageQuery | undefined;
+  const orderQuery = query as OrderListQuery | undefined;
   if (pageQuery?.page && pageQuery.page > 0) {
     params.set('page', String(pageQuery.page));
   }
@@ -343,6 +344,9 @@ function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery)
   }
   if (pageQuery?.userId?.trim()) {
     params.set('userId', pageQuery.userId.trim());
+  }
+  if (orderQuery?.orderId?.trim()) {
+    params.set('orderId', orderQuery.orderId.trim());
   }
   if (pageQuery?.username?.trim()) {
     params.set('username', pageQuery.username.trim());

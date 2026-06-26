@@ -195,20 +195,23 @@ impl OrderRepository {
             })
     }
 
-    /// 分页返回投注订单；数据库模式下把用户过滤、机器人过滤和分页下推到 SQL。
+    /// 分页返回投注订单；数据库模式下把订单号、用户、机器人过滤和分页下推到 SQL。
     pub async fn list_page(
         &self,
         user_id: Option<&str>,
         excluded_user_id: Option<&str>,
+        order_id: Option<&str>,
         page: PageRequest,
     ) -> ApiResult<ListPage<OrderDetail>> {
         let user_id = normalized_optional_filter(user_id);
         let excluded_user_id = normalized_optional_filter(excluded_user_id);
+        let order_id = normalized_optional_filter(order_id);
         if let Some(persistence) = &self.persistence {
             return query_order_page(
                 persistence,
                 user_id.as_deref(),
                 excluded_user_id.as_deref(),
+                order_id.as_deref(),
                 page,
             )
             .await;
@@ -227,6 +230,9 @@ impl OrderRepository {
                     && excluded_user_id
                         .as_deref()
                         .map_or(true, |excluded| order.user_id != excluded)
+                    && order_id
+                        .as_deref()
+                        .map_or(true, |target| order.id == target)
             })
             .collect::<Vec<_>>();
         Ok(ListPage::from_all(orders, page))
@@ -1276,16 +1282,19 @@ async fn query_order_page(
     database: &BusinessDatabase,
     user_id: Option<&str>,
     excluded_user_id: Option<&str>,
+    order_id: Option<&str>,
     page: PageRequest,
 ) -> ApiResult<ListPage<OrderDetail>> {
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
          FROM orders
          WHERE ($1::text IS NULL OR user_id = $1)
-           AND ($2::text IS NULL OR user_id <> $2)",
+           AND ($2::text IS NULL OR user_id <> $2)
+           AND ($3::text IS NULL OR id = $3)",
     )
     .bind(user_id)
     .bind(excluded_user_id)
+    .bind(order_id)
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("订单分页总数读取失败".to_string()))?;
@@ -1299,11 +1308,13 @@ async fn query_order_page(
          FROM orders
          WHERE ($1::text IS NULL OR user_id = $1)
            AND ($2::text IS NULL OR user_id <> $2)
+           AND ($3::text IS NULL OR id = $3)
          ORDER BY created_at DESC, id DESC
-         LIMIT $3 OFFSET $4",
+         LIMIT $4 OFFSET $5",
     )
     .bind(user_id)
     .bind(excluded_user_id)
+    .bind(order_id)
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
     .fetch_all(database.pool())
@@ -2784,6 +2795,7 @@ mod tests {
             finance::FinanceRepository,
             group_buy::GroupBuyRepository,
             order::{OrderRepository, OrderStore},
+            pagination::PageRequest,
         },
     };
 
@@ -2893,6 +2905,35 @@ mod tests {
             .expect("ledger can list")
             .into_iter()
             .all(|entry| entry.kind != LedgerEntryKind::OrderDebit));
+    }
+
+    #[tokio::test]
+    /// 后台订单分页按订单号精确查询时，必须先过滤再分页。
+    async fn repository_order_page_filters_by_order_id_before_pagination() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let orders = OrderRepository::memory();
+        let first = orders
+            .create(&lottery, direct_order_request("U10001", "2026155", 200))
+            .await
+            .expect("first order can be created");
+        let second = orders
+            .create(&lottery, direct_order_request("U10002", "2026155", 200))
+            .await
+            .expect("second order can be created");
+
+        let page = orders
+            .list_page(
+                None,
+                None,
+                Some(&first.id),
+                PageRequest::new(Some(1), Some(1)),
+            )
+            .await
+            .expect("order page can filter by id");
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.items[0].id, first.id);
+        assert_ne!(page.items[0].id, second.id);
     }
 
     #[tokio::test]

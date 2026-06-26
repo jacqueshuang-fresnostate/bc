@@ -10,7 +10,7 @@ import {
   Tag,
   Toast,
 } from '@douyinfe/semi-ui';
-import { Ban, Eye, Plus, RefreshCcw, Trash2, Users } from 'lucide-react';
+import { Ban, Eye, Plus, RefreshCcw, Search, Trash2, Users, X } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -86,6 +86,8 @@ export function OrderManagementPage({
   userFilter,
 }: OrderManagementPageProps) {
   const [includeRobotData, setIncludeRobotData] = useState(false);
+  const [orderIdInput, setOrderIdInput] = useState('');
+  const [orderIdFilter, setOrderIdFilter] = useState('');
   const [orderPageNumber, setOrderPageNumber] = useState(1);
   const [orderPageSize, setOrderPageSize] = useState(20);
   const {
@@ -100,6 +102,7 @@ export function OrderManagementPage({
     saving,
   } = useOrders({
     includeRobotData,
+    orderId: orderIdFilter || undefined,
     page: orderPageNumber,
     pageSize: orderPageSize,
     userId: userFilter?.userId,
@@ -259,6 +262,17 @@ export function OrderManagementPage({
     }
   };
 
+  const applyOrderIdFilter = () => {
+    setOrderIdFilter(orderIdInput.trim());
+    setOrderPageNumber(1);
+  };
+
+  const clearOrderIdFilter = () => {
+    setOrderIdInput('');
+    setOrderIdFilter('');
+    setOrderPageNumber(1);
+  };
+
   const loading = ordersLoading || lotteriesLoading || rulesLoading || drawsLoading;
   const error = orderError ?? lotteryError ?? drawsError ?? rulesError;
 
@@ -318,18 +332,48 @@ export function OrderManagementPage({
               <h2 className="text-base font-semibold text-ink">订单列表</h2>
               <Tag color="cyan">{orderPage.totalCount} 个订单</Tag>
             </div>
-            <PageControls
-              loading={loading}
-              page={orderPage.page}
-              pageSize={orderPageSize}
-              totalCount={orderPage.totalCount}
-              totalPages={orderPage.totalPages}
-              onPageChange={setOrderPageNumber}
-              onPageSizeChange={(nextPageSize) => {
-                setOrderPageNumber(1);
-                setOrderPageSize(nextPageSize);
-              }}
-            />
+            <div className="flex flex-col gap-2 md:flex-row md:items-center">
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <span className="shrink-0">订单号</span>
+                <Input
+                  className="w-48"
+                  placeholder="输入完整订单号"
+                  value={orderIdInput}
+                  onChange={setOrderIdInput}
+                  onEnterPress={applyOrderIdFilter}
+                />
+              </label>
+              <div className="flex items-center gap-2">
+                <Button
+                  icon={<Search size={14} />}
+                  size="small"
+                  theme="solid"
+                  onClick={applyOrderIdFilter}
+                >
+                  查询
+                </Button>
+                <Button
+                  disabled={!orderIdFilter && !orderIdInput}
+                  icon={<X size={14} />}
+                  size="small"
+                  onClick={clearOrderIdFilter}
+                >
+                  清空
+                </Button>
+              </div>
+              <PageControls
+                loading={loading}
+                page={orderPage.page}
+                pageSize={orderPageSize}
+                totalCount={orderPage.totalCount}
+                totalPages={orderPage.totalPages}
+                onPageChange={setOrderPageNumber}
+                onPageSizeChange={(nextPageSize) => {
+                  setOrderPageNumber(1);
+                  setOrderPageSize(nextPageSize);
+                }}
+              />
+            </div>
           </div>
           {createdOrder ? (
             <div className="mb-3 rounded-md border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">

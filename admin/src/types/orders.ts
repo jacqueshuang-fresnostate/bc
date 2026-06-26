@@ -16,6 +16,7 @@ export interface CreateOrderRequest {
 
 export interface OrderListQuery {
   includeRobotData?: boolean;
+  orderId?: string;
   page?: number;
   pageSize?: number;
   userId?: string;
