@@ -48,12 +48,15 @@ pub struct RobotConfigSummary {
     /// 补单机器人补满策略，字段名沿用历史接口。
     #[serde(default = "default_group_buy_fill_strategy")]
     pub group_buy_fill_strategy: GroupBuyRobotFillStrategy,
-    /// 补单机器人开奖前兜底补满提前秒数，字段名沿用历史接口。
+    /// 补单机器人开奖前兜底补满提前秒数，阶段性补单也使用该值作为最终补满阈值。
     #[serde(default = "default_group_buy_fill_before_draw_seconds")]
     pub group_buy_fill_before_draw_seconds: u32,
     /// 阶段性补单单阶段最高补单百分比，按合买总金额计算。
     #[serde(default = "default_group_buy_rhythm_fill_max_percent")]
     pub group_buy_rhythm_fill_max_percent: u32,
+    /// 阶段性补单动态切分的阶段数量，不包含开奖前最终补满。
+    #[serde(default = "default_group_buy_rhythm_stage_count")]
+    pub group_buy_rhythm_stage_count: u32,
     /// 后台是否允许删除该配置。
     #[serde(default)]
     pub deletable: bool,
@@ -64,7 +67,7 @@ pub fn default_group_buy_fill_strategy() -> GroupBuyRobotFillStrategy {
     GroupBuyRobotFillStrategy::Rhythm
 }
 
-/// 返回补单机器人默认开奖前补满秒数，只有策略为开奖前补满时生效。
+/// 返回补单机器人默认开奖前补满秒数，阶段性补单也用它判断最终补满点。
 pub fn default_group_buy_fill_before_draw_seconds() -> u32 {
     15
 }
@@ -72,6 +75,11 @@ pub fn default_group_buy_fill_before_draw_seconds() -> u32 {
 /// 返回阶段性补单默认单阶段最高百分比。
 pub fn default_group_buy_rhythm_fill_max_percent() -> u32 {
     20
+}
+
+/// 返回阶段性补单默认切分阶段数。
+pub fn default_group_buy_rhythm_stage_count() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

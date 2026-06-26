@@ -41,6 +41,7 @@ interface RobotFormState {
   description: string;
   groupBuyFillBeforeDrawSeconds: string;
   groupBuyRhythmFillMaxPercent: string;
+  groupBuyRhythmStageCount: string;
   groupBuyFillStrategy: GroupBuyRobotFillStrategy;
   id: string;
   kind: RobotKind;
@@ -470,7 +471,6 @@ export function RobotManagementPage({
               <Field label="开奖前补满秒数">
                 <Input
                   className="form-input"
-                  disabled={form.groupBuyFillStrategy !== 'beforeDraw'}
                   min={1}
                   max={86400}
                   type="number"
@@ -499,6 +499,19 @@ export function RobotManagementPage({
                       'groupBuyRhythmFillMaxPercent',
                       value,
                     )
+                  }
+                />
+              </Field>
+              <Field label="阶段数量">
+                <Input
+                  className="form-input"
+                  disabled={form.groupBuyFillStrategy !== 'rhythm'}
+                  min={1}
+                  max={20}
+                  type="number"
+                  value={form.groupBuyRhythmStageCount}
+                  onChange={(value) =>
+                    setFormValue(setForm, 'groupBuyRhythmStageCount', value)
                   }
                 />
               </Field>
@@ -759,6 +772,7 @@ function emptyRobotForm(kind: RobotKind): RobotFormState {
         : '只负责认购合买大厅未满单计划',
     groupBuyFillBeforeDrawSeconds: '15',
     groupBuyRhythmFillMaxPercent: '20',
+    groupBuyRhythmStageCount: '3',
     groupBuyFillStrategy: 'rhythm',
     id: kind === 'groupBuy' ? 'R-GROUP-NEW' : 'R-BUY-NEW',
     kind,
@@ -777,6 +791,7 @@ function robotFormFromSummary(robot: RobotConfigSummary): RobotFormState {
     groupBuyRhythmFillMaxPercent: String(
       robot.groupBuyRhythmFillMaxPercent ?? 20,
     ),
+    groupBuyRhythmStageCount: String(robot.groupBuyRhythmStageCount ?? 3),
     groupBuyFillStrategy: robot.groupBuyFillStrategy ?? 'rhythm',
     id: robot.id,
     kind: robot.kind,
@@ -795,9 +810,12 @@ function robotPayload(form: RobotFormState): RobotConfigPayload | null {
     form.groupBuyRhythmFillMaxPercent,
     10,
   );
+  const rhythmStageCount = Number.parseInt(
+    form.groupBuyRhythmStageCount,
+    10,
+  );
   if (
     form.kind === 'purchase' &&
-    form.groupBuyFillStrategy === 'beforeDraw' &&
     (!Number.isFinite(beforeDrawSeconds) ||
       beforeDrawSeconds <= 0 ||
       beforeDrawSeconds > 86400)
@@ -813,6 +831,15 @@ function robotPayload(form: RobotFormState): RobotConfigPayload | null {
   ) {
     return null;
   }
+  if (
+    form.kind === 'purchase' &&
+    form.groupBuyFillStrategy === 'rhythm' &&
+    (!Number.isFinite(rhythmStageCount) ||
+      rhythmStageCount <= 0 ||
+      rhythmStageCount > 20)
+  ) {
+    return null;
+  }
 
   return {
     description: form.description.trim(),
@@ -824,6 +851,10 @@ function robotPayload(form: RobotFormState): RobotConfigPayload | null {
       Number.isFinite(rhythmMaxPercent) && rhythmMaxPercent > 0
         ? rhythmMaxPercent
         : 20,
+    groupBuyRhythmStageCount:
+      Number.isFinite(rhythmStageCount) && rhythmStageCount > 0
+        ? rhythmStageCount
+        : 3,
     groupBuyFillStrategy:
       form.kind === 'purchase' ? form.groupBuyFillStrategy : 'rhythm',
     id: form.id.trim(),
@@ -876,7 +907,7 @@ function groupBuyFillStrategyText(robot: RobotConfigSummary) {
   if (robot.groupBuyFillStrategy === 'beforeDraw') {
     return `开奖前 ${robot.groupBuyFillBeforeDrawSeconds} 秒补满`;
   }
-  return `阶段性补单，单阶段 ≤ ${robot.groupBuyRhythmFillMaxPercent ?? 20}%`;
+  return `阶段性补单，${robot.groupBuyRhythmStageCount ?? 3} 阶段，单阶段随机 ≤ ${robot.groupBuyRhythmFillMaxPercent ?? 20}%，开奖前 ${robot.groupBuyFillBeforeDrawSeconds ?? 15} 秒补满`;
 }
 
 function robotStatusText(status: RobotStatus) {

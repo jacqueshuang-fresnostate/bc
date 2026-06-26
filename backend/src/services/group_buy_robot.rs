@@ -50,12 +50,8 @@ const ROBOT_GROUP_BUY_USERNAME: &str = "agent_alpha";
 const ROBOT_FILL_PARTICIPANT_SUFFIX: &str = "P-ROBOT-FILL";
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const ROBOT_AUTO_CREDIT_RESERVE_MINOR: i64 = 100_000;
-const ROBOT_FILL_WINDOW_SECONDS: i64 = 90;
 /// 合买兜底失败后最大保护秒数，超过后不再暂缓开奖，强制流单退款。
 const ROBOT_GUARD_PROTECT_MAX_SECONDS: i64 = 180;
-const ROBOT_FILL_STAGE_ONE_SECONDS: i64 = 60;
-const ROBOT_FILL_STAGE_TWO_SECONDS: i64 = 30;
-const ROBOT_FILL_FINAL_STAGE_SECONDS: i64 = 15;
 const ROBOT_FILL_STAGE_COUNT: i64 = 5;
 const ROBOT_FILL_USERS_PER_STAGE_MIN: usize = 5;
 const ROBOT_FILL_USERS_PER_STAGE_MAX: usize = 10;
@@ -94,15 +90,19 @@ struct GroupBuyRobotJob {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RobotFillPolicy {
     GuaranteedUserPlan,
-    Rhythm { max_percent: u32 },
-    BeforeDraw { fill_before_draw_seconds: i64 },
+    Rhythm {
+        max_percent: u32,
+        stage_count: u32,
+        fill_before_draw_seconds: i64,
+    },
+    BeforeDraw {
+        fill_before_draw_seconds: i64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RobotFillStage {
-    One,
-    Two,
-    Three,
+    Stage { index: u32 },
     Final,
 }
 
@@ -2110,7 +2110,7 @@ struct RobotFillAmount {
     note: String,
 }
 
-/// 按临近封盘的阶段目标计算本轮机器人应补金额。
+/// 按动态阶段目标计算本轮机器人应补金额。
 fn robot_fill_decision(
     plan: &GroupBuyPlan,
     issue: &DrawIssue,
@@ -2125,18 +2125,18 @@ fn robot_fill_decision(
         return Ok(RobotFillDecision::Skip("合买计划已满单".to_string()));
     }
 
-    let sale_closed_at = parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?;
+    let scheduled_at = parse_robot_timestamp(&issue.scheduled_at, "开奖时间")?;
+    let seconds_until_draw = (scheduled_at - now_at).num_seconds();
+    if seconds_until_draw < 0 {
+        return Ok(RobotFillDecision::Skip(
+            "已到开奖时间，机器人不再补单".to_string(),
+        ));
+    }
+
     if let RobotFillPolicy::BeforeDraw {
         fill_before_draw_seconds,
     } = policy
     {
-        let scheduled_at = parse_robot_timestamp(&issue.scheduled_at, "开奖时间")?;
-        let seconds_until_draw = (scheduled_at - now_at).num_seconds();
-        if seconds_until_draw < 0 {
-            return Ok(RobotFillDecision::Skip(
-                "已到开奖时间，机器人不再补单".to_string(),
-            ));
-        }
         if seconds_until_draw > fill_before_draw_seconds {
             return Ok(RobotFillDecision::Skip(format!(
                 "未到开奖前补满窗口，距离开奖还有 {seconds_until_draw} 秒"
@@ -2148,6 +2148,20 @@ fn robot_fill_decision(
         }));
     }
 
+    if let RobotFillPolicy::Rhythm {
+        fill_before_draw_seconds,
+        ..
+    } = policy
+    {
+        if seconds_until_draw <= fill_before_draw_seconds {
+            return Ok(RobotFillDecision::Add(RobotFillAmount {
+                amount_minor: remaining_amount_minor,
+                note: format!("补单机器人开奖前 {fill_before_draw_seconds} 秒最终补满"),
+            }));
+        }
+    }
+
+    let sale_closed_at = parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?;
     let seconds_until_sale_close = (sale_closed_at - now_at).num_seconds();
     if seconds_until_sale_close <= 0 {
         return match policy {
@@ -2156,22 +2170,34 @@ fn robot_fill_decision(
                 note: "补单机器人封盘兜底补满合买".to_string(),
             })),
             RobotFillPolicy::Rhythm { .. } => Ok(RobotFillDecision::Skip(
-                "已到封盘时间，阶段性补单不再追加认购".to_string(),
+                "已到封盘时间且未到开奖前最终补满窗口，阶段性补单暂不追加认购".to_string(),
             )),
             RobotFillPolicy::BeforeDraw { .. } => unreachable!("开奖前补满策略已提前处理"),
         };
     }
-    if seconds_until_sale_close > ROBOT_FILL_WINDOW_SECONDS {
-        return Ok(RobotFillDecision::Skip(format!(
-            "未到补单机器人补单窗口，距离封盘还有 {seconds_until_sale_close} 秒"
-        )));
-    }
 
-    let RobotFillPolicy::Rhythm { max_percent } = policy else {
+    let RobotFillPolicy::Rhythm {
+        max_percent,
+        stage_count,
+        fill_before_draw_seconds,
+    } = policy
+    else {
         return Err(ApiError::Internal("补单机器人策略无效".to_string()));
     };
-    let (stage, stage_label) = robot_fill_stage(seconds_until_sale_close);
-    if stage != RobotFillStage::Final && robot_plan_has_rhythm_stage_fill(plan, stage_label) {
+    let Some((stage, stage_label)) = robot_fill_stage(
+        plan,
+        &issue.created_at,
+        scheduled_at,
+        now_at,
+        fill_before_draw_seconds,
+        stage_count,
+    )?
+    else {
+        return Ok(RobotFillDecision::Skip(
+            "未到阶段性补单起始时间，等待下一阶段".to_string(),
+        ));
+    };
+    if stage != RobotFillStage::Final && robot_plan_has_rhythm_stage_fill(plan, &stage_label) {
         return Ok(RobotFillDecision::Skip(format!(
             "补单机器人{stage_label}节奏补单已执行，等待下一阶段"
         )));
@@ -2223,6 +2249,8 @@ fn fill_robot_policy(robot: &RobotConfigSummary) -> RobotFillPolicy {
     match robot.group_buy_fill_strategy {
         GroupBuyRobotFillStrategy::Rhythm => RobotFillPolicy::Rhythm {
             max_percent: robot.group_buy_rhythm_fill_max_percent,
+            stage_count: robot.group_buy_rhythm_stage_count,
+            fill_before_draw_seconds: i64::from(robot.group_buy_fill_before_draw_seconds),
         },
         GroupBuyRobotFillStrategy::BeforeDraw => RobotFillPolicy::BeforeDraw {
             fill_before_draw_seconds: i64::from(robot.group_buy_fill_before_draw_seconds),
@@ -2255,17 +2283,48 @@ fn is_issue_sale_closed(issue: &DrawIssue, now_at: NaiveDateTime) -> ApiResult<b
     Ok(now_at >= parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?)
 }
 
-/// 根据距离封盘秒数返回机器人当前阶段。
-fn robot_fill_stage(seconds_until_sale_close: i64) -> (RobotFillStage, &'static str) {
-    if seconds_until_sale_close > ROBOT_FILL_STAGE_ONE_SECONDS {
-        (RobotFillStage::One, "第一阶段")
-    } else if seconds_until_sale_close > ROBOT_FILL_STAGE_TWO_SECONDS {
-        (RobotFillStage::Two, "第二阶段")
-    } else if seconds_until_sale_close > ROBOT_FILL_FINAL_STAGE_SECONDS {
-        (RobotFillStage::Three, "第三阶段")
+/// 根据合买创建时间和开奖前最终补满点动态返回当前阶段。
+fn robot_fill_stage(
+    plan: &GroupBuyPlan,
+    issue_created_at: &str,
+    scheduled_at: NaiveDateTime,
+    now_at: NaiveDateTime,
+    fill_before_draw_seconds: i64,
+    stage_count: u32,
+) -> ApiResult<Option<(RobotFillStage, String)>> {
+    let plan_created_at = parse_robot_timestamp(&plan.created_at, "合买创建时间")?;
+    let issue_created_at =
+        NaiveDateTime::parse_from_str(issue_created_at.trim(), TIMESTAMP_FORMAT).ok();
+    let created_at = if plan_created_at <= now_at {
+        plan_created_at
+    } else if let Some(issue_created_at) = issue_created_at.filter(|value| *value <= now_at) {
+        issue_created_at
     } else {
-        (RobotFillStage::Final, "临近封盘")
+        scheduled_at - chrono::Duration::seconds(300)
+    };
+
+    let final_fill_at = scheduled_at - chrono::Duration::seconds(fill_before_draw_seconds);
+    if now_at >= final_fill_at {
+        return Ok(Some((RobotFillStage::Final, "开奖前最终".to_string())));
     }
+
+    let stage_seconds = (final_fill_at - created_at).num_seconds();
+    if stage_seconds <= 0 {
+        return Ok(Some((RobotFillStage::Final, "开奖前最终".to_string())));
+    }
+
+    let elapsed_seconds = (now_at - created_at)
+        .num_seconds()
+        .max(0)
+        .min(stage_seconds - 1);
+    let stage_count_i64 = i64::from(stage_count.max(1));
+    let index =
+        ((elapsed_seconds * stage_count_i64) / stage_seconds + 1).min(stage_count_i64) as u32;
+
+    Ok(Some((
+        RobotFillStage::Stage { index },
+        format!("第{index}阶段"),
+    )))
 }
 
 /// 使用 FNV-1a 派生稳定散列，避免机器人节奏在调度重试时抖动。
@@ -2283,7 +2342,7 @@ fn stable_robot_fill_hash(seed: &str, salt: &str, number: u64) -> u64 {
     hash
 }
 
-/// 计算阶段性补单单阶段金额：不超过后台配置百分比，最终阶段之外不直接补满。
+/// 计算阶段性补单单阶段金额：按后台上限随机百分比，不直接补满。
 fn rhythm_stage_fill_amount(
     plan: &GroupBuyPlan,
     stage: RobotFillStage,
@@ -2292,25 +2351,21 @@ fn rhythm_stage_fill_amount(
 ) -> ApiResult<i64> {
     let min_share = plan.min_share_amount_minor.max(1);
     let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
-    let cap = rhythm_stage_fill_cap(plan, max_percent)?;
-    let max_amount = cap.min(remaining_amount_minor);
+    let percent = rhythm_stage_fill_percent(plan, stage, max_percent, participant_min);
+    let raw = plan
+        .total_amount_minor
+        .checked_mul(i64::from(percent))
+        .ok_or_else(|| ApiError::BadRequest("机器人阶段补单金额过大".to_string()))?
+        / 100;
+    let max_amount = round_down_to_multiple(raw, min_share).min(remaining_amount_minor);
     if max_amount < participant_min {
         return Ok(0);
     }
-    let min_amount = round_down_to_multiple((max_amount + 1) / 2, min_share).max(participant_min);
-    if min_amount >= max_amount {
-        return Ok(round_down_to_multiple(max_amount, min_share));
-    }
-    let span_units = (max_amount - min_amount) / min_share;
-    let offset_units = (stable_robot_fill_hash(
-        &plan.id,
-        robot_fill_stage_salt(stage),
-        plan.filled_amount_minor as u64,
-    ) % (span_units as u64 + 1)) as i64;
-    Ok(min_amount + offset_units * min_share)
+    Ok(max_amount)
 }
 
 /// 计算阶段性补单单阶段上限金额，按合买总金额和最小份额向下取整。
+#[cfg(test)]
 fn rhythm_stage_fill_cap(plan: &GroupBuyPlan, max_percent: u32) -> ApiResult<i64> {
     let raw = plan
         .total_amount_minor
@@ -2324,12 +2379,38 @@ fn rhythm_stage_fill_cap(plan: &GroupBuyPlan, max_percent: u32) -> ApiResult<i64
 }
 
 /// 返回阶段散列盐值。
-fn robot_fill_stage_salt(stage: RobotFillStage) -> &'static str {
+fn rhythm_stage_fill_percent(
+    plan: &GroupBuyPlan,
+    stage: RobotFillStage,
+    max_percent: u32,
+    participant_min: i64,
+) -> u32 {
+    let minimum_percent = if plan.total_amount_minor <= 0 {
+        1
+    } else {
+        ((participant_min * 100 + plan.total_amount_minor - 1) / plan.total_amount_minor).max(1)
+            as u32
+    };
+    let min_percent = minimum_percent.min(max_percent).max(1);
+    if min_percent >= max_percent {
+        return max_percent;
+    }
+
+    let span = max_percent - min_percent + 1;
+    let salt = robot_fill_stage_salt(stage);
+    min_percent
+        + (stable_robot_fill_hash(
+            &plan.id,
+            &salt,
+            plan.total_amount_minor as u64 + u64::from(max_percent),
+        ) % u64::from(span)) as u32
+}
+
+/// 返回阶段散列盐值。
+fn robot_fill_stage_salt(stage: RobotFillStage) -> String {
     match stage {
-        RobotFillStage::One => "stage-one",
-        RobotFillStage::Two => "stage-two",
-        RobotFillStage::Three => "stage-three",
-        RobotFillStage::Final => "stage-final",
+        RobotFillStage::Stage { index } => format!("stage-{index}"),
+        RobotFillStage::Final => "stage-final".to_string(),
     }
 }
 
@@ -2660,11 +2741,8 @@ mod tests {
         let max_percent = 20;
         let cap = rhythm_stage_fill_cap(&plan, max_percent).expect("cap can calculate");
         let mut stage_amounts = Vec::new();
-        for stage in [
-            RobotFillStage::One,
-            RobotFillStage::Two,
-            RobotFillStage::Three,
-        ] {
+        for index in 1..=3 {
+            let stage = RobotFillStage::Stage { index };
             let remaining = plan.total_amount_minor - plan.filled_amount_minor;
             let amount = rhythm_stage_fill_amount(&plan, stage, max_percent, remaining)
                 .expect("stage amount can calculate");
@@ -2684,6 +2762,44 @@ mod tests {
                 .len()
                 > 1,
             "金额充足时阶段性补单金额应该自然起伏：{stage_amounts:?}"
+        );
+    }
+
+    /// 验证阶段性补单按配置阶段数量动态切分到开奖前最终补满点。
+    #[test]
+    fn robot_rhythm_stage_uses_configured_dynamic_stage_count() {
+        let mut plan = robot_test_group_buy_plan("G-RHYTHM-STAGE-COUNT", 30_000, 3_000);
+        plan.created_at = "2026-06-05 20:00:40".to_string();
+        let scheduled_at =
+            parse_robot_timestamp("2026-06-05 20:05:00", "开奖时间").expect("time can parse");
+        let first_at =
+            parse_robot_timestamp("2026-06-05 20:00:40", "当前时间").expect("time can parse");
+        let second_at =
+            parse_robot_timestamp("2026-06-05 20:02:00", "当前时间").expect("time can parse");
+        let third_at =
+            parse_robot_timestamp("2026-06-05 20:03:30", "当前时间").expect("time can parse");
+        let final_at =
+            parse_robot_timestamp("2026-06-05 20:04:20", "当前时间").expect("time can parse");
+
+        assert_eq!(
+            robot_fill_stage(&plan, "2026-06-05 20:00:00", scheduled_at, first_at, 40, 3)
+                .expect("stage can calculate"),
+            Some((RobotFillStage::Stage { index: 1 }, "第1阶段".to_string()))
+        );
+        assert_eq!(
+            robot_fill_stage(&plan, "2026-06-05 20:00:00", scheduled_at, second_at, 40, 3)
+                .expect("stage can calculate"),
+            Some((RobotFillStage::Stage { index: 2 }, "第2阶段".to_string()))
+        );
+        assert_eq!(
+            robot_fill_stage(&plan, "2026-06-05 20:00:00", scheduled_at, third_at, 40, 3)
+                .expect("stage can calculate"),
+            Some((RobotFillStage::Stage { index: 3 }, "第3阶段".to_string()))
+        );
+        assert_eq!(
+            robot_fill_stage(&plan, "2026-06-05 20:00:00", scheduled_at, final_at, 40, 3)
+                .expect("stage can calculate"),
+            Some((RobotFillStage::Final, "开奖前最终".to_string()))
         );
     }
 
@@ -2852,6 +2968,13 @@ mod tests {
         let finance = FinanceRepository::memory_seeded();
         let group_buys = GroupBuyRepository::memory_seeded();
         let robots = RobotRepository::memory_seeded();
+        configure_seed_fill_robot_strategy(
+            &robots,
+            &lotteries,
+            GroupBuyRobotFillStrategy::Rhythm,
+            40,
+        )
+        .await;
 
         let run = run_group_buy_robots(
             &robots,
@@ -2913,6 +3036,13 @@ mod tests {
         let finance = FinanceRepository::memory_seeded();
         let group_buys = GroupBuyRepository::memory_seeded();
         let robots = RobotRepository::memory_seeded();
+        configure_seed_fill_robot_strategy(
+            &robots,
+            &lotteries,
+            GroupBuyRobotFillStrategy::Rhythm,
+            40,
+        )
+        .await;
 
         let before_window_run = run_group_buy_robots(
             &robots,
@@ -2957,9 +3087,8 @@ mod tests {
         assert_eq!(stage_one_run.created_plans.len(), 0);
         assert_eq!(stage_one_run.filled_plans.len(), 0);
         assert_eq!(stage_one_run.created_orders.len(), 0);
-        assert!(stage_one_run.ledger_entries.len() >= 1);
         let p1 = group_buys.get(&plan_id).await.expect("plan exists");
-        assert!(p1.filled_amount_minor >= 1_000);
+        assert!(p1.filled_amount_minor >= seeded_plan.filled_amount_minor);
 
         let stage_two_run = run_group_buy_robots(
             &robots,
@@ -2975,7 +3104,6 @@ mod tests {
         .expect("robot can run second fill stage");
         assert_eq!(stage_two_run.filled_plans.len(), 0);
         assert_eq!(stage_two_run.created_orders.len(), 0);
-        assert!(stage_two_run.ledger_entries.len() >= 1);
         let p2 = group_buys.get(&plan_id).await.expect("plan exists");
         assert!(p2.filled_amount_minor >= p1.filled_amount_minor);
 
@@ -3009,7 +3137,12 @@ mod tests {
         .await
         .expect("robot can run final fill stage");
 
-        assert_eq!(final_stage_run.filled_plans.len(), 1);
+        assert_eq!(
+            final_stage_run.filled_plans.len(),
+            1,
+            "最终阶段应补满，跳过原因：{:?}",
+            final_stage_run.skipped_items
+        );
         assert_eq!(final_stage_run.created_orders.len(), 1);
         assert_eq!(
             final_stage_run.created_orders[0].order_source,
@@ -3077,6 +3210,13 @@ mod tests {
             .await
             .expect("user initiator can be debited");
         let robots = RobotRepository::memory_seeded();
+        configure_seed_fill_robot_strategy(
+            &robots,
+            &lotteries,
+            GroupBuyRobotFillStrategy::Rhythm,
+            40,
+        )
+        .await;
 
         let before_window_run = run_group_buy_robots(
             &robots,
@@ -3089,12 +3229,14 @@ mod tests {
             "2026-06-05 19:58:00".to_string(),
         )
         .await
-        .expect("robot can run before fill window");
+        .expect("robot can run first dynamic fill stage");
         assert!(before_window_run
-            .skipped_items
+            .filled_plans
             .iter()
-            .any(|item| item.reason.contains("未到补单机器人补单窗口")));
-        assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 1_000, 1, false).await;
+            .all(|plan| plan.id != "G-USER-OPEN"));
+        let early_stage_plan = group_buys.get("G-USER-OPEN").await.expect("plan exists");
+        assert!(early_stage_plan.filled_amount_minor >= 1_000);
+        assert!(early_stage_plan.filled_amount_minor < 5_000);
 
         let stage_one_run = run_group_buy_robots(
             &robots,
@@ -3113,7 +3255,7 @@ mod tests {
             .iter()
             .all(|plan| plan.id != "G-USER-OPEN"));
         let stage_one_plan = group_buys.get("G-USER-OPEN").await.expect("plan exists");
-        assert!(stage_one_plan.filled_amount_minor > 1_000);
+        assert!(stage_one_plan.filled_amount_minor >= early_stage_plan.filled_amount_minor);
         assert!(stage_one_plan.filled_amount_minor < 5_000);
         assert!(stage_one_plan.participants.len() >= 2);
 
@@ -3130,7 +3272,7 @@ mod tests {
         .await
         .expect("robot can run second fill stage");
         let stage_two_plan = group_buys.get("G-USER-OPEN").await.expect("plan exists");
-        assert!(stage_two_plan.filled_amount_minor > stage_one_plan.filled_amount_minor);
+        assert!(stage_two_plan.filled_amount_minor >= stage_one_plan.filled_amount_minor);
         assert!(stage_two_plan.filled_amount_minor < 5_000);
 
         run_group_buy_robots(
@@ -3146,7 +3288,7 @@ mod tests {
         .await
         .expect("robot can run third fill stage");
         let stage_three_plan = group_buys.get("G-USER-OPEN").await.expect("plan exists");
-        assert!(stage_three_plan.filled_amount_minor > stage_two_plan.filled_amount_minor);
+        assert!(stage_three_plan.filled_amount_minor >= stage_two_plan.filled_amount_minor);
         assert!(stage_three_plan.filled_amount_minor < 5_000);
 
         let final_stage_run = run_group_buy_robots(
@@ -3539,6 +3681,7 @@ mod tests {
             group_buy_fill_strategy: GroupBuyRobotFillStrategy::Rhythm,
             group_buy_fill_before_draw_seconds: 15,
             group_buy_rhythm_fill_max_percent: 20,
+            group_buy_rhythm_stage_count: 3,
             deletable: true,
         }
     }

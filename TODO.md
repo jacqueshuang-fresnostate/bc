@@ -1,4 +1,16 @@
 # TODO
+## 2026-06-26 20:45 HKT 补单机器人阶段性补单支持动态阶段和最终补满秒数
+
+- 完成任务：调整补单机器人 `rhythm` 阶段性补单策略，让后台可以同时配置单阶段随机百分比上限、动态阶段数量和开奖前最终补满秒数。
+- 解决问题：此前阶段性补单仍按固定窗口和固定阶段推进，不能表达“剩余 260 秒切成 3 个阶段、每阶段随机 15%/5%/10%、开奖前 40 秒无论剩多少都补满”的运营需求。
+- 实施内容：
+  1. 后端 `RobotConfigSummary` 新增 `groupBuyRhythmStageCount`，默认 3，校验范围 1-20，并新增迁移 `20260626203000_add_group_buy_rhythm_stage_count.sql` 持久化该配置。
+  2. `groupBuyFillBeforeDrawSeconds` 改为 `rhythm` 和 `beforeDraw` 共用：`rhythm` 在距离开奖小于等于该秒数时直接补满剩余金额；`beforeDraw` 仍按单用户一次性补满。
+  3. `rhythm` 非最终阶段按合买创建时间到开奖前最终补满点动态切分阶段，并按计划+阶段稳定随机生成 1 到 `groupBuyRhythmFillMaxPercent` 内的百分比，用户期间认购会自然减少机器人剩余额度。
+  4. 管理后台补单机器人表单新增“阶段数量”，开奖前补满秒数在补单机器人下始终可编辑；列表策略文案展示阶段数量、随机百分比上限和开奖前最终补满秒数。
+  5. 同步更新 `架构设计.md`、`.trellis/spec/backend/api-contracts.md`、前端组件规范和 OpenAPI 摘要，清理历史固定 90 秒窗口说明的冲突口径。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml -- --check`、`cargo test --manifest-path backend/Cargo.toml group_buy_robot -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml robot_repository -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、管理后台 `npm run build` 和 `git diff --check` 均通过；后端仍有既有 unused 警告，管理后台构建仍有既有 chunk size warning。
+
 ## 2026-06-26 20:16 HKT 手机端注册 QQ 改为必填
 
 - 完成任务：把手机端用户注册 QQ 从选填改为必填，并在后端注册接口增加兜底校验。

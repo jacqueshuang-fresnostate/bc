@@ -13,8 +13,8 @@ use crate::{
         lottery::LotteryKind,
         robot::{
             default_group_buy_fill_before_draw_seconds, default_group_buy_fill_strategy,
-            default_group_buy_rhythm_fill_max_percent, GroupBuyRobotFillStrategy,
-            RobotConfigSummary, RobotKind, RobotStatus,
+            default_group_buy_rhythm_fill_max_percent, default_group_buy_rhythm_stage_count,
+            GroupBuyRobotFillStrategy, RobotConfigSummary, RobotKind, RobotStatus,
         },
     },
     error::{ApiError, ApiResult},
@@ -193,7 +193,8 @@ async fn load_robot_store(database: &BusinessDatabase) -> ApiResult<RobotStore> 
                 description,
                 group_buy_fill_strategy,
                 group_buy_fill_before_draw_seconds,
-                group_buy_rhythm_fill_max_percent
+                group_buy_rhythm_fill_max_percent,
+                group_buy_rhythm_stage_count
          FROM robot_configs
          ORDER BY id ASC",
     )
@@ -237,6 +238,11 @@ async fn load_robot_store(database: &BusinessDatabase) -> ApiResult<RobotStore> 
                     .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?
                     .try_into()
                     .map_err(|_| ApiError::Internal("机器人阶段补单百分比数据无效".to_string()))?,
+                group_buy_rhythm_stage_count: row
+                    .try_get::<i32, _>("group_buy_rhythm_stage_count")
+                    .map_err(|_| ApiError::Internal("机器人配置数据读取失败".to_string()))?
+                    .try_into()
+                    .map_err(|_| ApiError::Internal("机器人阶段数量数据无效".to_string()))?,
                 deletable: is_robot_deletable(&id),
             },
         );
@@ -276,9 +282,10 @@ async fn save_robot_store(database: &BusinessDatabase, store: &RobotStore) -> Ap
                  description,
                  group_buy_fill_strategy,
                  group_buy_fill_before_draw_seconds,
-                 group_buy_rhythm_fill_max_percent
+                 group_buy_rhythm_fill_max_percent,
+                 group_buy_rhythm_stage_count
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind(&robot.id)
         .bind(&robot.name)
@@ -293,6 +300,10 @@ async fn save_robot_store(database: &BusinessDatabase, store: &RobotStore) -> Ap
         .bind(
             i32::try_from(robot.group_buy_rhythm_fill_max_percent)
                 .map_err(|_| ApiError::BadRequest("补单机器人阶段补单百分比过大".to_string()))?,
+        )
+        .bind(
+            i32::try_from(robot.group_buy_rhythm_stage_count)
+                .map_err(|_| ApiError::BadRequest("补单机器人阶段数量过大".to_string()))?,
         )
         .execute(&mut *tx)
         .await
@@ -460,6 +471,7 @@ fn normalize_group_buy_fill_config(robot: &mut RobotConfigSummary) -> ApiResult<
         robot.group_buy_fill_strategy = default_group_buy_fill_strategy();
         robot.group_buy_fill_before_draw_seconds = default_group_buy_fill_before_draw_seconds();
         robot.group_buy_rhythm_fill_max_percent = default_group_buy_rhythm_fill_max_percent();
+        robot.group_buy_rhythm_stage_count = default_group_buy_rhythm_stage_count();
         return Ok(());
     }
 
@@ -481,6 +493,16 @@ fn normalize_group_buy_fill_config(robot: &mut RobotConfigSummary) -> ApiResult<
     if robot.group_buy_rhythm_fill_max_percent > 100 {
         return Err(ApiError::BadRequest(
             "补单机器人阶段补单最高百分比不能超过 100".to_string(),
+        ));
+    }
+    if robot.group_buy_rhythm_stage_count == 0 {
+        return Err(ApiError::BadRequest(
+            "补单机器人阶段数量必须大于 0".to_string(),
+        ));
+    }
+    if robot.group_buy_rhythm_stage_count > 20 {
+        return Err(ApiError::BadRequest(
+            "补单机器人阶段数量不能超过 20".to_string(),
         ));
     }
 
@@ -516,6 +538,7 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
             group_buy_fill_strategy: default_group_buy_fill_strategy(),
             group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(),
             group_buy_rhythm_fill_max_percent: default_group_buy_rhythm_fill_max_percent(),
+            group_buy_rhythm_stage_count: default_group_buy_rhythm_stage_count(),
             deletable: false,
         },
         RobotConfigSummary {
@@ -528,6 +551,7 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
             group_buy_fill_strategy: default_group_buy_fill_strategy(),
             group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(),
             group_buy_rhythm_fill_max_percent: default_group_buy_rhythm_fill_max_percent(),
+            group_buy_rhythm_stage_count: default_group_buy_rhythm_stage_count(),
             deletable: false,
         },
         RobotConfigSummary {
@@ -540,6 +564,7 @@ fn seed_robots() -> Vec<RobotConfigSummary> {
             group_buy_fill_strategy: default_group_buy_fill_strategy(),
             group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(),
             group_buy_rhythm_fill_max_percent: default_group_buy_rhythm_fill_max_percent(),
+            group_buy_rhythm_stage_count: default_group_buy_rhythm_stage_count(),
             deletable: true,
         },
     ]
@@ -567,6 +592,7 @@ mod tests {
                     group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(
                     ),
                     group_buy_rhythm_fill_max_percent: default_group_buy_rhythm_fill_max_percent(),
+                    group_buy_rhythm_stage_count: default_group_buy_rhythm_stage_count(),
                     deletable: true,
                 },
                 &lotteries,
@@ -602,6 +628,7 @@ mod tests {
                     group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(
                     ),
                     group_buy_rhythm_fill_max_percent: default_group_buy_rhythm_fill_max_percent(),
+                    group_buy_rhythm_stage_count: default_group_buy_rhythm_stage_count(),
                     deletable: true,
                 },
                 &lotteries,
@@ -629,6 +656,7 @@ mod tests {
                     group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(
                     ),
                     group_buy_rhythm_fill_max_percent: default_group_buy_rhythm_fill_max_percent(),
+                    group_buy_rhythm_stage_count: default_group_buy_rhythm_stage_count(),
                     deletable: true,
                 },
                 &lotteries,
@@ -656,6 +684,7 @@ mod tests {
                     group_buy_fill_before_draw_seconds: default_group_buy_fill_before_draw_seconds(
                     ),
                     group_buy_rhythm_fill_max_percent: default_group_buy_rhythm_fill_max_percent(),
+                    group_buy_rhythm_stage_count: default_group_buy_rhythm_stage_count(),
                     deletable: true,
                 },
                 &lotteries,
