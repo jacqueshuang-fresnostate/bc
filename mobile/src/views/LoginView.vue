@@ -78,7 +78,11 @@ async function doRegister() {
     showToast('邀请码必填')
     return
   }
-  if (qq && (!/^\d+$/.test(qq) || qq.length < 5 || qq.length > 12)) {
+  if (!qq) {
+    showToast('请输入 QQ 号码')
+    return
+  }
+  if (!/^\d+$/.test(qq) || qq.length < 5 || qq.length > 12) {
     showToast('QQ 号码需要是 5-12 位数字')
     return
   }
@@ -93,7 +97,7 @@ async function doRegister() {
   try {
     const registrationPosition = await collectRegistrationPosition()
     const basePayload = {
-      contactQq: qq || undefined,
+      contactQq: qq,
       password: password.value,
       inviteCode: invite || undefined,
       registrationPosition,
@@ -294,7 +298,7 @@ async function doRegister() {
                   class="auth-input w-full bg-surface-container-low border-none focus:ring-2 focus:ring-primary/10 focus:bg-white transition-all duration-300 text-on-surface outline-none placeholder:text-outline"
                   inputmode="numeric"
                   maxlength="12"
-                  placeholder="选填"
+                  placeholder="必填"
                   type="text"
                 />
               </div>

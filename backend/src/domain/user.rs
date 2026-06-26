@@ -100,7 +100,7 @@ pub struct UserRegisterRequest {
     /// 邮箱地址；为空表示尚未绑定。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
-    /// 用户选填 QQ 联系方式。
+    /// 用户注册 QQ 联系方式，注册时必填。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_qq: Option<String>,
     /// 用户输入的登录密码明文，仅用于请求校验和哈希生成。

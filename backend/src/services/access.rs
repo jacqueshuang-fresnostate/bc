@@ -1881,11 +1881,7 @@ impl AccessStore {
             .map(|value| required_trimmed(value, "email"))
             .transpose()?
             .filter(|value| !value.is_empty() && value.contains('@'));
-        let contact_qq = payload
-            .contact_qq
-            .map(normalize_contact_qq)
-            .transpose()?
-            .unwrap_or_default();
+        let contact_qq = normalize_required_contact_qq(payload.contact_qq)?;
 
         if email_provided && email.is_none() {
             return Err(ApiError::BadRequest("邮箱格式不正确".to_string()));
@@ -2748,7 +2744,16 @@ fn inactive_user_status_message(status: &UserStatus) -> &'static str {
     }
 }
 
-/// 标准化用户 QQ 联系方式：允许为空，填写时必须是 5-12 位数字。
+/// 标准化注册 QQ 联系方式：注册时必须填写 5-12 位数字。
+fn normalize_required_contact_qq(value: Option<String>) -> ApiResult<String> {
+    let value = normalize_contact_qq(value.unwrap_or_default())?;
+    if value.is_empty() {
+        return Err(ApiError::BadRequest("QQ 号码不能为空".to_string()));
+    }
+    Ok(value)
+}
+
+/// 标准化用户 QQ 联系方式：后台维护允许为空，填写时必须是 5-12 位数字。
 fn normalize_contact_qq(value: String) -> ApiResult<String> {
     let value = value.trim().to_string();
     if value.is_empty() {
@@ -4084,7 +4089,7 @@ mod tests {
             .register_user(UserRegisterRequest {
                 username: None,
                 email: Some("mail_reg@example.com".to_string()),
-                contact_qq: None,
+                contact_qq: Some("7654321".to_string()),
                 password: "emailPassword123".to_string(),
                 invite_code: None,
                 registration_location: None,
@@ -4093,6 +4098,7 @@ mod tests {
             .expect("email register should succeed");
 
         assert_eq!(email_user.username, "mail_reg@example.com");
+        assert_eq!(email_user.contact_qq, "7654321");
         assert!(access
             .login_user(UserLoginRequest {
                 login_key: "mail_reg@example.com".to_string(),
@@ -4113,6 +4119,27 @@ mod tests {
 
         assert_ne!(username_user.username, email_user.username);
     }
+
+    /// 验证用户注册必须填写 QQ 联系方式，避免手机端必填规则被绕过。
+    #[tokio::test]
+    async fn access_repository_rejects_register_without_contact_qq() {
+        let access = AccessRepository::memory_seeded();
+
+        let err = access
+            .register_user(UserRegisterRequest {
+                username: Some("missing_qq".to_string()),
+                email: None,
+                contact_qq: None,
+                password: "newPassword123".to_string(),
+                invite_code: None,
+                registration_location: None,
+            })
+            .await
+            .expect_err("register without QQ should be rejected");
+
+        assert!(matches!(err, ApiError::BadRequest(message) if message == "QQ 号码不能为空"));
+    }
+
     /// 验证客户端推断的注册地不会覆盖服务端来源。
     #[tokio::test]
     async fn access_repository_discards_client_inferred_registration_location() {
@@ -4122,7 +4149,7 @@ mod tests {
             .register_user(UserRegisterRequest {
                 username: Some("client_location_user".to_string()),
                 email: None,
-                contact_qq: None,
+                contact_qq: Some("2233445".to_string()),
                 password: "locationPass123".to_string(),
                 invite_code: None,
                 registration_location: Some(UserRegistrationLocation {
@@ -4151,7 +4178,7 @@ mod tests {
             .register_user(UserRegisterRequest {
                 username: Some("server_ip_country_user".to_string()),
                 email: None,
-                contact_qq: None,
+                contact_qq: Some("3344556".to_string()),
                 password: "locationPass123".to_string(),
                 invite_code: None,
                 registration_location: Some(UserRegistrationLocation {
@@ -4183,7 +4210,7 @@ mod tests {
             .register_user(UserRegisterRequest {
                 username: Some("gps_location_user".to_string()),
                 email: None,
-                contact_qq: None,
+                contact_qq: Some("4455667".to_string()),
                 password: "locationPass123".to_string(),
                 invite_code: None,
                 registration_location: Some(UserRegistrationLocation {
@@ -4311,7 +4338,7 @@ mod tests {
             .register_user(UserRegisterRequest {
                 username: Some("still_forbidden".to_string()),
                 email: None,
-                contact_qq: None,
+                contact_qq: Some("5566778".to_string()),
                 password: "forbidPassword123".to_string(),
                 invite_code: None,
                 registration_location: None,

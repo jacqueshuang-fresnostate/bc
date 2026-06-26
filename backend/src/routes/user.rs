@@ -4068,7 +4068,7 @@ mod tests {
         let mut payload = UserRegisterRequest {
             username: Some("proxy_user".to_string()),
             email: None,
-            contact_qq: None,
+            contact_qq: Some("1234501".to_string()),
             password: "password123".to_string(),
             invite_code: None,
             registration_location: Some(crate::domain::user::UserRegistrationLocation {
@@ -4104,7 +4104,7 @@ mod tests {
         let mut payload = UserRegisterRequest {
             username: Some("proxy_region_user".to_string()),
             email: None,
-            contact_qq: None,
+            contact_qq: Some("1234502".to_string()),
             password: "password123".to_string(),
             invite_code: None,
             registration_location: Some(crate::domain::user::UserRegistrationLocation {
@@ -4140,7 +4140,7 @@ mod tests {
         let mut payload = UserRegisterRequest {
             username: Some("gps_user".to_string()),
             email: None,
-            contact_qq: None,
+            contact_qq: Some("1234503".to_string()),
             password: "password123".to_string(),
             invite_code: None,
             registration_location: Some(crate::domain::user::UserRegistrationLocation {

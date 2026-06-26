@@ -1,4 +1,16 @@
 # TODO
+## 2026-06-26 20:16 HKT 手机端注册 QQ 改为必填
+
+- 完成任务：把手机端用户注册 QQ 从选填改为必填，并在后端注册接口增加兜底校验。
+- 解决问题：此前手机端注册页允许 QQ 为空，后端也会把缺失 `contactQq` 保存为空字符串，后续客服、充值或账号异常核对用户时缺少联系方式。
+- 实施内容：
+  1. 手机端 `LoginView` 注册提交前先校验 QQ 非空，再校验 5-12 位数字；输入框占位改为“必填”，注册 payload 始终提交合法 `contactQq`。
+  2. 手机端 `RegisterPayload.contactQq` 类型改为必填，避免后续新增注册调用点漏传 QQ。
+  3. 后端 `AccessRepository::register_user` 新增注册 QQ 必填兜底，缺失时返回 `QQ 号码不能为空`；后台用户维护仍保留历史空 QQ 的维护兼容。
+  4. 后端注册测试补充“缺少 QQ 被拒绝”用例，并更新原邮箱注册、注册地相关测试数据。
+  5. 同步更新 OpenAPI 摘要、后端接口契约、前端组件规范和 `架构设计.md`。
+- 验证结果：`cargo fmt --manifest-path backend/Cargo.toml`、`cargo fmt --manifest-path backend/Cargo.toml --check`、`cargo test --manifest-path backend/Cargo.toml access_repository_rejects_register_without_contact_qq -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml access_repository_registers_user_by_username_or_email -- --nocapture`、`cargo test --manifest-path backend/Cargo.toml openapi -- --nocapture`、`cargo check --manifest-path backend/Cargo.toml`、手机端 `npm run build`、手机端 `npm test` 和 `git diff --check` 均通过；后端仍有既有 unused 警告，手机端测试脚本当前测试套件为空。
+
 ## 2026-06-26 19:58 HKT 手机端合买认购金额支持最低额首选和拖动调整
 
 - 完成任务：调整手机端合买详情弹窗的认购金额控件，让快捷金额首项按当前计划最低认购金额生成，并新增可拖动金额滑块。

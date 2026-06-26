@@ -3849,6 +3849,8 @@ if !session.scopes.contains(&required_scope) {
 
 用户登录 token 必须和管理员登录 token 使用同一安全策略：返回给客户端的是 `bcst_` 前缀 opaque Bearer token，不能包含用户 ID、用户名、邮箱、时间戳或计数器；内存会话索引和数据库 `user_sessions.token` 只能保存 `sha256:` 摘要。上线迁移清理旧明文会话后，用户端历史登录态需要重新登录。
 
+用户注册请求必须提交 `contactQq`，取值为 5-12 位数字；用户名注册和邮箱注册都适用。手机端注册页必须把 QQ 输入框标记为必填，提交前先做空值和数字长度校验；后端 `POST /api/user/register` 继续兜底拒绝空 QQ，避免绕过前端直接注册。后台用户维护仍可编辑历史用户 QQ，历史空值不影响登录。
+
 用户注册来源审计字段 `registrationLocation` 只允许后端服务端识别到的请求 IP 作为默认事实来源；手机端不得再用浏览器语言、系统国家或时区推断注册地。Android/iOS Tauri App 注册时可通过 `@tauri-apps/plugin-geolocation` 获取经纬度，H5 注册时可通过浏览器 `navigator.geolocation` 获取经纬度，并统一以 `registrationPosition: { latitude, longitude, accuracy, source }` 提交；后端收到合法经纬度后调用 Nominatim `reverse?format=jsonv2&lat=...&lon=...&accept-language=zh-CN` 反查中文粗粒度地址，再写入现有 `registrationLocation`。定位失败、用户拒绝授权、Nominatim 请求失败或经纬度无效时，注册不得失败，由后端从 `cf-connecting-ip`、`true-client-ip`、`x-forwarded-for`、`Forwarded`、`x-real-ip` 或 `x-client-ip` 中提取 IP 兜底，且 Cloudflare 专用头优先级最高。后端仍不直接持久化精确经纬度，只保存国家、省市、注册 IP 和来源；后端读取到 `source=client` 或未知来源时必须清空国家、省份和城市字段，避免把语言/时区误展示成 IP 定位结果。
 
 ### 4. 校验与错误矩阵
@@ -3862,18 +3864,33 @@ if !session.scopes.contains(&required_scope) {
 | Authorization 不是 Bearer 格式 | HTTP 401，`authorization bearer token is required` |
 | token 无效或已登出 | HTTP 401，`invalid user session` |
 | 登出成功 | HTTP 200，`loggedOut=true`，后续同 token 请求返回 401 |
+| 注册缺少 `contactQq` | HTTP 400，`QQ 号码不能为空` |
+| 注册 `contactQq` 不是 5-12 位数字 | HTTP 400，`QQ 号码需要是 5-12 位数字` 或 `QQ 号码只能填写数字` |
 
 ### 5. Good / Base / Bad Cases
 
 - Good：用户登录返回 `bcst_` 前缀随机 token，数据库只保存 `sha256:` 摘要，手机端带 Bearer token 可访问余额和提现接口。
+- Good：手机端注册页填写合法 QQ 后提交 `contactQq`，后端保存到用户资料，后台可继续查看和维护。
 - Base：无数据库阶段使用内存摘要索引；服务重启后 token 失效，手机端清理本地 token 并回到登录页。
 - Bad：后端把 token 做成 `user-U10001-时间戳-序号`，或把原始 Bearer token 直接保存进 `user_sessions`。
+- Bad：手机端 QQ 输入框显示选填，或前端不传 `contactQq` 只依赖后端默认空字符串。
 
 ### 6. 必要测试
 
 - 后端测试需要覆盖用户登录 token 不包含用户 ID，且仓储或数据库只保存摘要。
 - 后端测试需要覆盖用户登出后同 token 失效。
+- 后端测试需要覆盖注册缺少 `contactQq` 被拒绝。
 - API 冒烟需要确认无 token 为 401、有效 token 可访问用户资料、余额、资金流水、充值和提现接口。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+手机端注册页把 QQ 显示为“选填”，提交时把空字符串转成 `contactQq=undefined`；后端注册接口继续 `unwrap_or_default()` 保存为空字符串。
+
+#### Correct
+
+手机端注册页先校验 QQ 非空和 5-12 位数字，再提交 `contactQq`；后端注册接口调用必填 QQ 归一化函数，缺失时返回 `QQ 号码不能为空`，后台维护历史用户时才允许 QQ 为空。
 
 ---
 

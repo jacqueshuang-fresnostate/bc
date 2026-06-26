@@ -444,7 +444,7 @@ type LoginPayload = {
 type RegisterPayload = {
   username?: string
   email?: string
-  contactQq?: string
+  contactQq: string
   password: string
   inviteCode?: string
   registrationLocation?: Partial<UserRegistrationLocation>
