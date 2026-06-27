@@ -19,12 +19,15 @@ usage() {
                        指定用于同步打包 Logo 和 iOS 图标的后端地址；未指定时复用 --api-base
   --bundle-id <包名>   指定本次 IPA 使用的 iOS Bundle Identifier，只修改临时构建工程
   --random-bundle-id   每次打包自动生成新包名，格式为 <当前包名>.build<时间戳>
+  --force-native-build 强制重新生成 iOS 真机原生库 libapp.a
+  --skip-native-build  跳过 iOS 原生库自动构建，直接复用已有 libapp.a
   --skip-branding-sync 跳过后台品牌资源同步
   --keep-temp          保留临时 iOS 工程，方便排查构建问题
   -h, --help           显示帮助
 
 说明：
   这个脚本会跳过 Xcode 签名，只生成 Payload/*.app 格式的无签名 IPA。
+  新电脑首次执行时会自动初始化 iOS 工程并生成 Externals/arm64/release/libapp.a。
   无签名 IPA 不能直接安装到普通 iPhone，需要后续重签名或使用签名工具处理。
   每次变更包名会让 iOS 认为这是一个全新的 App，旧登录态和本地缓存不会继承。
 EOF
@@ -47,12 +50,86 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "缺少命令：$1，请先安装或配置后再重试。"
 }
 
+optional_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
 validate_bundle_id() {
   local value="$1"
   case "$value" in
     *..*|.*|*.) return 1 ;;
   esac
   printf '%s' "$value" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*$'
+}
+
+setup_ios_build_env() {
+  local existing_git_config_count="${GIT_CONFIG_COUNT:-0}"
+  export GIT_CONFIG_COUNT="$((existing_git_config_count + 1))"
+  export "GIT_CONFIG_KEY_${existing_git_config_count}=safe.bareRepository"
+  export "GIT_CONFIG_VALUE_${existing_git_config_count}=all"
+
+  export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$MOBILE_DIR/src-tauri/target/swift-module-cache}"
+  mkdir -p "$CLANG_MODULE_CACHE_PATH"
+}
+
+ensure_ios_project() {
+  if [ -f "$IOS_DIR/hongfu-mobile.xcodeproj/project.pbxproj" ]; then
+    return
+  fi
+
+  warn "未找到 iOS Xcode 工程，将自动执行 pnpm tauri ios init --ci。"
+  (cd "$MOBILE_DIR" && pnpm tauri ios init --ci)
+  [ -f "$IOS_DIR/hongfu-mobile.xcodeproj/project.pbxproj" ] || fail "iOS 工程初始化失败：未生成 $IOS_DIR/hongfu-mobile.xcodeproj/project.pbxproj"
+}
+
+ensure_ios_rust_target() {
+  if ! optional_command rustup; then
+    warn "未找到 rustup，无法自动确认或安装 aarch64-apple-ios target；如果原生库构建失败，请先安装 Rust iOS target。"
+    return
+  fi
+
+  if rustup target list --installed | grep -qx 'aarch64-apple-ios'; then
+    return
+  fi
+
+  warn "未安装 Rust iOS 真机 target：aarch64-apple-ios，将自动安装。"
+  rustup target add aarch64-apple-ios
+}
+
+native_source_newer_than_lib() {
+  [ -f "$LIBAPP" ] || return 1
+  find "$MOBILE_DIR/src-tauri/src" \
+    "$MOBILE_DIR/src-tauri/Cargo.toml" \
+    "$MOBILE_DIR/src-tauri/Cargo.lock" \
+    "$MOBILE_DIR/src-tauri/tauri.conf.json" \
+    -newer "$LIBAPP" -print -quit 2>/dev/null || true
+}
+
+build_native_lib() {
+  local reason="$1"
+  local native_log="$OUT_DIR/ios-native-lib-build.log"
+  local built_lib="$MOBILE_DIR/src-tauri/target/aarch64-apple-ios/release/libhongfu_mobile_lib.a"
+  local rustflags="${RUSTFLAGS:-}"
+
+  require_command cargo
+  ensure_ios_rust_target
+  setup_ios_build_env
+  case " $rustflags " in
+    *" --cfg mobile "*) ;;
+    *) rustflags="${rustflags:+$rustflags }--cfg mobile" ;;
+  esac
+
+  log "开始生成 iOS 真机原生库 libapp.a：$reason"
+  if ! (cd "$MOBILE_DIR/src-tauri" && RUSTFLAGS="$rustflags" cargo build --target aarch64-apple-ios --release) >"$native_log" 2>&1; then
+    warn "iOS 原生库构建失败，最近日志如下："
+    tail -n 160 "$native_log" >&2 || true
+    fail "完整日志：$native_log"
+  fi
+
+  [ -f "$built_lib" ] || fail "iOS 原生库构建结束但未找到 $built_lib，请查看日志：$native_log"
+  mkdir -p "$(dirname "$LIBAPP")"
+  cp "$built_lib" "$LIBAPP"
+  log "iOS 真机原生库已生成：$LIBAPP"
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,6 +151,8 @@ BRANDING_API_BASE_EXPLICIT=0
 OUTPUT_IPA=""
 SKIP_WEB_BUILD=0
 SKIP_BRANDING_SYNC=0
+SKIP_NATIVE_BUILD=0
+FORCE_NATIVE_BUILD=0
 KEEP_TEMP=0
 BUNDLE_ID_OVERRIDE=""
 RANDOM_BUNDLE_ID=0
@@ -116,6 +195,14 @@ while [ "$#" -gt 0 ]; do
       RANDOM_BUNDLE_ID=1
       shift
       ;;
+    --force-native-build)
+      FORCE_NATIVE_BUILD=1
+      shift
+      ;;
+    --skip-native-build)
+      SKIP_NATIVE_BUILD=1
+      shift
+      ;;
     --skip-branding-sync)
       SKIP_BRANDING_SYNC=1
       shift
@@ -140,6 +227,7 @@ done
 [ "$(uname -s)" = "Darwin" ] || fail "该脚本只能在 macOS 上执行。"
 require_command pnpm
 require_command xcodebuild
+require_command xcrun
 require_command rsync
 require_command perl
 require_command zip
@@ -148,8 +236,9 @@ require_command curl
 require_command node
 require_command sips
 
-[ -d "$IOS_DIR" ] || fail "未找到 iOS 工程目录：$IOS_DIR。请先执行 pnpm tauri:ios:init。"
-[ -f "$IOS_DIR/hongfu-mobile.xcodeproj/project.pbxproj" ] || fail "未找到 Xcode 工程文件，请先初始化 iOS 工程。"
+ensure_ios_project
+xcodebuild -version >/dev/null 2>&1 || fail "xcodebuild 不可用，请先安装 Xcode 并执行 xcode-select 切换到完整 Xcode。"
+xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1 || fail "当前 Xcode 没有可用的 iPhoneOS SDK，请安装 iOS Platform/Simulator 支持后重试。"
 APP_API_BASE="$(printf '%s' "$APP_API_BASE" | sed 's:/*$::')"
 BRANDING_API_BASE="$(printf '%s' "$BRANDING_API_BASE" | sed 's:/*$::')"
 [ "$APP_API_BASE" != "" ] || fail "缺少 App 后端地址，请通过 --api-base、--branding-api-base 或 VITE_API_BASE_URL 指定。"
@@ -159,22 +248,11 @@ fi
 if [ "$RANDOM_BUNDLE_ID" -eq 1 ] && [ "$BUNDLE_ID_OVERRIDE" != "" ]; then
   fail "--bundle-id 和 --random-bundle-id 只能选择一个。"
 fi
+if [ "$SKIP_NATIVE_BUILD" -eq 1 ] && [ "$FORCE_NATIVE_BUILD" -eq 1 ]; then
+  fail "--skip-native-build 和 --force-native-build 只能选择一个。"
+fi
 
 LIBAPP="$IOS_DIR/Externals/arm64/release/libapp.a"
-if [ ! -f "$LIBAPP" ]; then
-  cat >&2 <<EOF
-缺少 iOS 真机原生库：
-  $LIBAPP
-
-这个无签名脚本会跳过 Tauri 的 Rust iOS 构建脚本，因此需要先存在 libapp.a。
-如果你已经配置好 Apple Developer Team，可以先运行一次：
-  cd "$MOBILE_DIR"
-  pnpm tauri:build:ios
-
-生成过 Externals/arm64/release/libapp.a 后，再重新执行本脚本。
-EOF
-  exit 1
-fi
 
 if [ "$SKIP_WEB_BUILD" -eq 0 ]; then
   log "开始构建手机端前端资源，后端地址：$APP_API_BASE"
@@ -186,6 +264,27 @@ fi
 [ -f "$DIST_DIR/index.html" ] || fail "未找到 $DIST_DIR/index.html，请先执行 pnpm build。"
 mkdir -p "$OUT_DIR"
 
+NATIVE_SOURCE_NEWER=""
+if [ -f "$LIBAPP" ]; then
+  NATIVE_SOURCE_NEWER="$(native_source_newer_than_lib)"
+fi
+if [ "$SKIP_NATIVE_BUILD" -eq 1 ]; then
+  [ -f "$LIBAPP" ] || fail "已指定 --skip-native-build，但缺少 iOS 真机原生库：$LIBAPP"
+  if [ "$NATIVE_SOURCE_NEWER" != "" ]; then
+    warn "检测到 iOS 原生源码或 Tauri 配置比 libapp.a 更新：$NATIVE_SOURCE_NEWER"
+    warn "你指定了 --skip-native-build，本次会继续复用旧 libapp.a。"
+  fi
+elif [ "$FORCE_NATIVE_BUILD" -eq 1 ]; then
+  build_native_lib "已指定 --force-native-build"
+elif [ ! -f "$LIBAPP" ]; then
+  build_native_lib "新电脑或首次打包缺少 $LIBAPP"
+elif [ "$NATIVE_SOURCE_NEWER" != "" ]; then
+  warn "检测到 iOS 原生源码或 Tauri 配置比 libapp.a 更新：$NATIVE_SOURCE_NEWER"
+  build_native_lib "原生代码或 Tauri 配置已更新"
+else
+  log "复用已有 iOS 真机原生库：$LIBAPP"
+fi
+
 if [ "$SKIP_BRANDING_SYNC" -eq 0 ]; then
   log "同步后台品牌 Logo 到前端打包资源..."
   node "$SCRIPT_DIR/sync-branding-assets.mjs" \
@@ -194,12 +293,6 @@ if [ "$SKIP_BRANDING_SYNC" -eq 0 ]; then
     --work-dir "$OUT_DIR/branding"
 else
   warn "已跳过后台品牌资源同步，IPA 将继续使用当前 dist 和 iOS 工程里的图标资源。"
-fi
-
-NATIVE_SOURCE_NEWER="$(find "$MOBILE_DIR/src-tauri/src" "$MOBILE_DIR/src-tauri/Cargo.toml" "$MOBILE_DIR/src-tauri/tauri.conf.json" -newer "$LIBAPP" -print -quit 2>/dev/null || true)"
-if [ "$NATIVE_SOURCE_NEWER" != "" ]; then
-  warn "检测到 iOS 原生源码或 Tauri 配置比 libapp.a 更新：$NATIVE_SOURCE_NEWER"
-  warn "本脚本会继续复用现有 libapp.a；如果改过 Rust/Tauri 原生代码，请先重新生成 iOS 原生库。"
 fi
 
 APP_NAME="$(awk -F': *' '/PRODUCT_NAME:/ {print $2; exit}' "$IOS_DIR/project.yml" | tr -d '"' || true)"

@@ -27,6 +27,41 @@ npm run dev
 npm run build
 ```
 
+## iOS 无签名 IPA 打包
+
+无签名 IPA 只用于后续企业签名、重签名或第三方签名工具处理，不能直接安装到普通 iPhone。
+
+新电脑首次打包前需要准备：
+
+- macOS + 完整 Xcode，并在 Xcode 中安装 iPhoneOS SDK。
+- Rust 工具链和 `rustup`。
+- Node.js、`pnpm`。
+
+首次或日常打包统一执行：
+
+```bash
+pnpm install
+pnpm tauri:build:ios-unsigned -- --api-base https://bcbbc.hippoweb3.net
+```
+
+脚本会自动完成这些动作：
+
+- 缺少 iOS 工程时执行 `pnpm tauri ios init --ci`。
+- 缺少 `aarch64-apple-ios` Rust target 时自动安装。
+- 缺少或需要更新 `src-tauri/gen/apple/Externals/arm64/release/libapp.a` 时，通过 `cargo build --target aarch64-apple-ios --release` 生成真机静态库并复制为 `libapp.a`。
+- 构建前端资源，同步后台品牌 Logo，并封装 `Payload/HongFu.app` 为无签名 IPA。
+
+常用参数：
+
+```bash
+pnpm tauri:build:ios-unsigned -- --output src-tauri/gen/apple/build/HongFu-unsigned.ipa
+pnpm tauri:build:ios-unsigned -- --random-bundle-id
+pnpm tauri:build:ios-unsigned -- --force-native-build
+pnpm tauri:build:ios-unsigned -- --skip-native-build
+```
+
+其中 `--skip-native-build` 只适合确认现有 `libapp.a` 已经匹配当前 Rust/Tauri 代码时使用；新电脑不要使用这个参数。
+
 ## Tauri 原生开发
 
 ```bash
