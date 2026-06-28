@@ -1677,18 +1677,21 @@ fn withdrawal_turnover_summary(
     })
 }
 
-/// 根据资金流水类型计算提现流水累计表需要追加的充值和有效投注变化量。
+/// 根据资金流水类型计算提现流水累计表需要追加的本金、要求投注和已完成投注变化量。
 fn withdrawal_turnover_deltas_for_ledger_entry(
     kind: &LedgerEntryKind,
     amount_minor: i64,
-) -> Option<(i64, i64)> {
+) -> Option<(i64, i64, i64)> {
     match kind {
-        LedgerEntryKind::RechargeCredit if amount_minor > 0 => Some((amount_minor, 0)),
+        LedgerEntryKind::RechargeCredit if amount_minor > 0 => {
+            Some((amount_minor, amount_minor, 0))
+        }
+        LedgerEntryKind::RechargeBonusCredit if amount_minor > 0 => Some((0, amount_minor, 0)),
         LedgerEntryKind::OrderDebit | LedgerEntryKind::GroupBuyDebit if amount_minor < 0 => {
-            Some((0, amount_minor.checked_neg()?))
+            Some((0, 0, amount_minor.checked_neg()?))
         }
         LedgerEntryKind::OrderRefund | LedgerEntryKind::GroupBuyRefund if amount_minor > 0 => {
-            Some((0, amount_minor.checked_neg()?))
+            Some((0, 0, amount_minor.checked_neg()?))
         }
         _ => None,
     }
@@ -1848,7 +1851,7 @@ async fn ensure_withdrawal_turnover_event_in_transaction(
     connection: &mut PgConnection,
     entry: &LedgerEntry,
 ) -> ApiResult<()> {
-    let Some((recharge_delta, effective_delta)) =
+    let Some((cumulative_recharge_delta, required_effective_bet_delta, effective_delta)) =
         withdrawal_turnover_deltas_for_ledger_entry(&entry.kind, entry.amount_minor)
     else {
         return Ok(());
@@ -1890,18 +1893,19 @@ async fn ensure_withdrawal_turnover_event_in_transaction(
             created_at,
             updated_at
          )
-         VALUES ($1, $2, $2, GREATEST(0::BIGINT, $3), now(), now())
+         VALUES ($1, $2, $3, GREATEST(0::BIGINT, $4), now(), now())
          ON CONFLICT (user_id) DO UPDATE SET
             cumulative_recharge_minor = user_withdrawal_turnovers.cumulative_recharge_minor + EXCLUDED.cumulative_recharge_minor,
             required_effective_bet_minor = user_withdrawal_turnovers.required_effective_bet_minor + EXCLUDED.required_effective_bet_minor,
             completed_effective_bet_minor = GREATEST(
                 0,
-                user_withdrawal_turnovers.completed_effective_bet_minor + $3
+                user_withdrawal_turnovers.completed_effective_bet_minor + $4
             ),
             updated_at = now()",
     )
     .bind(&entry.user_id)
-    .bind(recharge_delta)
+    .bind(cumulative_recharge_delta)
+    .bind(required_effective_bet_delta)
     .bind(effective_delta)
     .execute(&mut *connection)
     .await
@@ -2262,6 +2266,7 @@ impl FinanceStore {
     /// 内存模式下从当前资金流水临时计算提现流水要求摘要。
     fn withdrawal_turnover_for_user(&self, user_id: &str) -> ApiResult<WithdrawalTurnoverSummary> {
         let mut cumulative_recharge_minor = 0_i64;
+        let mut required_effective_bet_minor = 0_i64;
         let mut completed_effective_bet_minor = 0_i64;
         for entry in self
             .ledger_entries
@@ -2273,6 +2278,18 @@ impl FinanceStore {
                     cumulative_recharge_minor = cumulative_recharge_minor
                         .checked_add(entry.amount_minor)
                         .ok_or_else(|| ApiError::Internal("用户累计充值金额溢出".to_string()))?;
+                    required_effective_bet_minor = required_effective_bet_minor
+                        .checked_add(entry.amount_minor)
+                        .ok_or_else(|| {
+                            ApiError::Internal("用户提现投注要求金额溢出".to_string())
+                        })?;
+                }
+                LedgerEntryKind::RechargeBonusCredit if entry.amount_minor > 0 => {
+                    required_effective_bet_minor = required_effective_bet_minor
+                        .checked_add(entry.amount_minor)
+                        .ok_or_else(|| {
+                            ApiError::Internal("用户提现投注要求金额溢出".to_string())
+                        })?;
                 }
                 LedgerEntryKind::OrderDebit | LedgerEntryKind::GroupBuyDebit
                     if entry.amount_minor < 0 =>
@@ -2298,7 +2315,7 @@ impl FinanceStore {
         withdrawal_turnover_summary(
             user_id,
             cumulative_recharge_minor,
-            cumulative_recharge_minor,
+            required_effective_bet_minor,
             completed_effective_bet_minor,
         )
     }
@@ -3631,42 +3648,42 @@ mod tests {
     }
 
     #[test]
-    /// 验证数据库累计表补偿逻辑只把真实充值本金和有效投注写入资格累计。
-    fn withdrawal_turnover_deltas_ignore_bonus_rebate_and_adjustment() {
+    /// 验证数据库累计表补偿逻辑会把充值赠送计入提现投注要求，但不计入真实充值本金。
+    fn withdrawal_turnover_deltas_include_bonus_in_required_turnover() {
         assert_eq!(
             super::withdrawal_turnover_deltas_for_ledger_entry(
                 &LedgerEntryKind::RechargeCredit,
                 50_000
             ),
-            Some((50_000, 0))
+            Some((50_000, 50_000, 0))
         );
         assert_eq!(
             super::withdrawal_turnover_deltas_for_ledger_entry(
                 &LedgerEntryKind::OrderDebit,
                 -2_000
             ),
-            Some((0, 2_000))
+            Some((0, 0, 2_000))
         );
         assert_eq!(
             super::withdrawal_turnover_deltas_for_ledger_entry(
                 &LedgerEntryKind::GroupBuyDebit,
                 -3_000
             ),
-            Some((0, 3_000))
+            Some((0, 0, 3_000))
         );
         assert_eq!(
             super::withdrawal_turnover_deltas_for_ledger_entry(
                 &LedgerEntryKind::OrderRefund,
                 1_000
             ),
-            Some((0, -1_000))
+            Some((0, 0, -1_000))
         );
         assert_eq!(
             super::withdrawal_turnover_deltas_for_ledger_entry(
                 &LedgerEntryKind::RechargeBonusCredit,
                 500
             ),
-            None
+            Some((0, 500, 0))
         );
         assert_eq!(
             super::withdrawal_turnover_deltas_for_ledger_entry(
@@ -3685,7 +3702,7 @@ mod tests {
     }
 
     #[test]
-    /// 提现流水累计只统计真实充值本金和有效投注，充值赠送不计入门槛，退款会扣回有效投注。
+    /// 提现流水累计用真实充值本金加充值赠送形成投注任务，退款会扣回有效投注。
     fn store_calculates_withdrawal_turnover_from_ledger_entries() {
         let mut store = FinanceStore::seeded();
         store
@@ -3706,9 +3723,9 @@ mod tests {
             .expect("withdrawal turnover can be calculated");
 
         assert_eq!(turnover.cumulative_recharge_minor, 10_000);
-        assert_eq!(turnover.required_effective_bet_minor, 10_000);
+        assert_eq!(turnover.required_effective_bet_minor, 10_500);
         assert_eq!(turnover.completed_effective_bet_minor, 2_000);
-        assert_eq!(turnover.remaining_effective_bet_minor, 8_000);
+        assert_eq!(turnover.remaining_effective_bet_minor, 8_500);
     }
 
     #[test]
