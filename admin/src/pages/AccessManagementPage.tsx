@@ -969,7 +969,7 @@ function UserSection({
                     >
                       {user.username}
                     </button>
-                    <div className="mt-1 text-xs text-slate-400">
+                    <div className="mt-1 text-xs text-slate-500">
                       {user.id}
                       {user.email ? ` · ${user.email}` : ''}
                       {user.contactQq ? ` · QQ ${user.contactQq}` : ''}
