@@ -295,11 +295,23 @@ async function submitApplication() {
               </div>
               <span class="shrink-0 rounded-full bg-white px-3 py-1 text-[11px] font-bold text-primary">{{ statusText(item.status) }}</span>
             </div>
-            <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-on-surface-variant">
-              <span class="rounded-full bg-white px-2.5 py-1 font-bold text-emerald-700">余额 ¥{{ formatMoney(item.availableBalanceMinor) }}</span>
-              <span class="rounded-full bg-white px-2.5 py-1">充值 ¥{{ formatMoney(item.totalDepositMinor) }}</span>
-              <span class="rounded-full bg-white px-2.5 py-1">提现 ¥{{ formatMoney(item.totalWithdrawalMinor) }}</span>
-              <span class="rounded-full bg-white px-2.5 py-1 font-bold text-red-900">投注 ¥{{ formatMoney(item.totalBetAmountMinor) }}</span>
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <div class="min-w-0 rounded-2xl border border-emerald-100 bg-white px-3 py-2">
+                <p class="text-[10px] font-medium text-on-surface-variant">余额</p>
+                <strong class="mt-1 block truncate text-[13px] font-black tabular-nums text-emerald-700">¥{{ formatMoney(item.availableBalanceMinor) }}</strong>
+              </div>
+              <div class="min-w-0 rounded-2xl border border-red-100 bg-white px-3 py-2">
+                <p class="text-[10px] font-medium text-on-surface-variant">投注</p>
+                <strong class="mt-1 block truncate text-[13px] font-black tabular-nums text-red-900">¥{{ formatMoney(item.totalBetAmountMinor) }}</strong>
+              </div>
+              <div class="min-w-0 rounded-2xl border border-stone-100 bg-white px-3 py-2">
+                <p class="text-[10px] font-medium text-on-surface-variant">充值</p>
+                <strong class="mt-1 block truncate text-[13px] font-bold tabular-nums text-on-surface">¥{{ formatMoney(item.totalDepositMinor) }}</strong>
+              </div>
+              <div class="min-w-0 rounded-2xl border border-stone-100 bg-white px-3 py-2">
+                <p class="text-[10px] font-medium text-on-surface-variant">提现</p>
+                <strong class="mt-1 block truncate text-[13px] font-bold tabular-nums text-on-surface">¥{{ formatMoney(item.totalWithdrawalMinor) }}</strong>
+              </div>
             </div>
             <div class="mt-3 rounded-2xl border border-red-900/5 bg-white/80 px-3 py-2.5">
               <div class="flex items-center justify-between gap-3">
