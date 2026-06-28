@@ -29,6 +29,7 @@ import { useRebatePolicy } from '../hooks/useRebatePolicy';
 import type {
   AgentApplication,
   AgentApplicationStatus,
+  AgentRebateInviteeSummary,
   AgentRebateSummary,
   InvitePolicySummary,
   InvitePolicyUpdateRequest,
@@ -65,18 +66,22 @@ export function RebateManagementPage({
   const [applicationStatusFilter, setApplicationStatusFilter] = useState<
     AgentApplicationStatus | 'all'
   >('pending');
+  const [inviteesPage, setInviteesPage] = useState(1);
+  const [inviteesPageSize, setInviteesPageSize] = useState(10);
   const [recordsPage, setRecordsPage] = useState(1);
   const [recordsPageSize, setRecordsPageSize] = useState(10);
   const [selectedAgent, setSelectedAgent] = useState<AgentRebateSummary | null>(null);
-  const [selectedApplication, setSelectedApplication] = useState<AgentApplication | null>(
-    null,
-  );
+  const [selectedInvitee, setSelectedInvitee] = useState<AgentRebateInviteeSummary | null>(null);
+  const [selectedApplication, setSelectedApplication] = useState<AgentApplication | null>(null);
   const [reviewNote, setReviewNote] = useState('');
   const [withdrawAmountYuan, setWithdrawAmountYuan] = useState('');
   const [withdrawDescription, setWithdrawDescription] = useState('代理返利提现处理');
   const {
     applications,
     error,
+    invitees,
+    inviteesLoading,
+    loadInvitees,
     loadRecords,
     loading,
     policy,
@@ -111,9 +116,11 @@ export function RebateManagementPage({
   const currentSelectedAgent =
     statistics.items.find((item) => item.agentUserId === selectedAgent?.agentUserId) ??
     selectedAgent;
+  const currentSelectedInvitee =
+    invitees.items.find((item) => item.inviteeUserId === selectedInvitee?.inviteeUserId) ??
+    selectedInvitee;
   const currentSelectedApplication =
-    applications.items.find((item) => item.id === selectedApplication?.id) ??
-    selectedApplication;
+    applications.items.find((item) => item.id === selectedApplication?.id) ?? selectedApplication;
 
   useEffect(() => {
     if (policy) {
@@ -129,13 +136,26 @@ export function RebateManagementPage({
     if (!selectedAgent) {
       return;
     }
+    void loadInvitees(selectedAgent.agentUserId, {
+      page: inviteesPage,
+      pageSize: inviteesPageSize,
+    }).catch(() => {
+      Toast.error('下级列表加载失败');
+    });
+  }, [inviteesPage, inviteesPageSize, loadInvitees, selectedAgent]);
+
+  useEffect(() => {
+    if (!selectedAgent || !selectedInvitee) {
+      return;
+    }
     void loadRecords(selectedAgent.agentUserId, {
+      inviteeUserId: selectedInvitee.inviteeUserId,
       page: recordsPage,
       pageSize: recordsPageSize,
     }).catch(() => {
       Toast.error('返利明细加载失败');
     });
-  }, [loadRecords, recordsPage, recordsPageSize, selectedAgent]);
+  }, [loadRecords, recordsPage, recordsPageSize, selectedAgent, selectedInvitee]);
 
   const refreshAll = () => {
     refresh();
@@ -162,17 +182,23 @@ export function RebateManagementPage({
 
   const openAgentDetail = (agent: AgentRebateSummary) => {
     setSelectedAgent(agent);
+    setSelectedInvitee(null);
+    setInviteesPage(1);
     setRecordsPage(1);
     setWithdrawAmountYuan(
-      agent.withdrawableRebateMinor > 0
-        ? (agent.withdrawableRebateMinor / 100).toFixed(2)
-        : '',
+      agent.withdrawableRebateMinor > 0 ? (agent.withdrawableRebateMinor / 100).toFixed(2) : '',
     );
     setWithdrawDescription(`代理返利提现处理：${agent.agentUsername}`);
   };
 
   const closeAgentDetail = () => {
     setSelectedAgent(null);
+    setSelectedInvitee(null);
+  };
+
+  const openInviteeRecords = (invitee: AgentRebateInviteeSummary) => {
+    setSelectedInvitee(invitee);
+    setRecordsPage(1);
   };
 
   const openApplicationReview = (application: AgentApplication) => {
@@ -205,10 +231,17 @@ export function RebateManagementPage({
     });
     Toast.success('代理返利提现已处理');
     onDashboardRefresh();
-    await loadRecords(currentSelectedAgent.agentUserId, {
-      page: recordsPage,
-      pageSize: recordsPageSize,
+    await loadInvitees(currentSelectedAgent.agentUserId, {
+      page: inviteesPage,
+      pageSize: inviteesPageSize,
     });
+    if (currentSelectedInvitee) {
+      await loadRecords(currentSelectedAgent.agentUserId, {
+        inviteeUserId: currentSelectedInvitee.inviteeUserId,
+        page: recordsPage,
+        pageSize: recordsPageSize,
+      });
+    }
   };
 
   const submitApplicationReview = async (approved: boolean) => {
@@ -240,17 +273,10 @@ export function RebateManagementPage({
 
       {error ? <Banner type="danger" title="返利接口错误" description={error} /> : null}
 
-      <Tabs
-        activeKey={activeTab}
-        onChange={(key) => setActiveTab(normalizeRebateTabKey(key))}
-      >
+      <Tabs activeKey={activeTab} onChange={(key) => setActiveTab(normalizeRebateTabKey(key))}>
         <Tabs.TabPane itemKey="statistics" tab="返利统计">
           <section className="grid gap-3 pt-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard
-              label="代理数量"
-              trend="统计范围"
-              value={`${statistics.totalCount}`}
-            />
+            <MetricCard label="代理数量" trend="统计范围" value={`${statistics.totalCount}`} />
             <MetricCard
               label="本页总返利"
               trend="充值返利入账"
@@ -348,22 +374,16 @@ export function RebateManagementPage({
                       <tr key={agent.agentUserId} className="border-b border-slate-100">
                         <td className="py-3 pr-4">
                           <div className="font-semibold text-ink">{agent.agentUsername}</div>
-                          <div className="mt-1 text-xs text-slate-400">
-                            {agent.agentUserId}
-                          </div>
+                          <div className="mt-1 text-xs text-slate-400">{agent.agentUserId}</div>
                         </td>
                         <td className="py-3 pr-4">
                           <Tag color="teal">{agent.inviteCode}</Tag>
                         </td>
-                        <td className="py-3 pr-4 text-slate-600">
-                          {agent.directInviteeCount}
-                        </td>
+                        <td className="py-3 pr-4 text-slate-600">{agent.directInviteeCount}</td>
                         <td className="py-3 pr-4 text-slate-600">
                           {formatMoney(agent.directInviteeRechargeMinor)}
                         </td>
-                        <td className="py-3 pr-4 text-slate-600">
-                          {agent.rebateRecordCount}
-                        </td>
+                        <td className="py-3 pr-4 text-slate-600">{agent.rebateRecordCount}</td>
                         <td className="py-3 pr-4 font-semibold text-emerald-700">
                           {formatMoney(agent.totalRebateMinor)}
                         </td>
@@ -463,9 +483,7 @@ export function RebateManagementPage({
                       <tr key={application.id} className="border-b border-slate-100">
                         <td className="py-3 pr-4">
                           <div className="font-semibold text-ink">{application.username}</div>
-                          <div className="mt-1 text-xs text-slate-400">
-                            {application.userId}
-                          </div>
+                          <div className="mt-1 text-xs text-slate-400">{application.userId}</div>
                         </td>
                         <td className="py-3 pr-4">
                           <Tag color="teal">{application.inviteCode}</Tag>
@@ -486,14 +504,9 @@ export function RebateManagementPage({
                         <td className="py-3 pr-4 text-slate-600">
                           {application.reviewedAt ? (
                             <div>
-                              <div>
-                                {application.reviewedByAdminUsername ?? '未知管理员'}
-                              </div>
+                              <div>{application.reviewedByAdminUsername ?? '未知管理员'}</div>
                               <div className="mt-1 text-xs text-slate-400">
-                                {formatDateTime(
-                                  application.reviewedAt,
-                                  application.reviewedAt,
-                                )}
+                                {formatDateTime(application.reviewedAt, application.reviewedAt)}
                               </div>
                             </div>
                           ) : (
@@ -530,11 +543,7 @@ export function RebateManagementPage({
               trend="当前开启"
               value={`${totals.enabledInviteEntries}`}
             />
-            <MetricCard
-              label="返利模式"
-              trend="当前策略"
-              value={rebateModeText(currentMode)}
-            />
+            <MetricCard label="返利模式" trend="当前策略" value={rebateModeText(currentMode)} />
             <MetricCard
               label="默认充值返利"
               trend="basis points"
@@ -795,8 +804,7 @@ export function RebateManagementPage({
               ) : (
                 <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-slate-500">
                   审核人：
-                  {currentSelectedApplication.reviewedByAdminUsername ?? '未知管理员'}，
-                  审核时间：
+                  {currentSelectedApplication.reviewedByAdminUsername ?? '未知管理员'}， 审核时间：
                   {currentSelectedApplication.reviewedAt
                     ? formatDateTime(
                         currentSelectedApplication.reviewedAt,
@@ -905,33 +913,142 @@ export function RebateManagementPage({
             <Card className="rounded-md border border-line">
               <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-2">
-                  <h2 className="text-base font-semibold text-ink">下级返利记录</h2>
-                  <Tag color="blue">{records.totalCount} 笔</Tag>
+                  <h2 className="text-base font-semibold text-ink">直属下级列表</h2>
+                  <Tag color="blue">{invitees.totalCount} 人</Tag>
                 </div>
                 <PageControls
-                  loading={recordsLoading}
-                  page={records.page}
-                  pageSize={recordsPageSize}
-                  totalCount={records.totalCount}
-                  totalPages={records.totalPages}
-                  onPageChange={setRecordsPage}
+                  loading={inviteesLoading}
+                  page={invitees.page}
+                  pageSize={inviteesPageSize}
+                  totalCount={invitees.totalCount}
+                  totalPages={invitees.totalPages}
+                  onPageChange={setInviteesPage}
                   onPageSizeChange={(nextPageSize) => {
-                    setRecordsPage(1);
-                    setRecordsPageSize(nextPageSize);
+                    setInviteesPage(1);
+                    setInviteesPageSize(nextPageSize);
                   }}
                 />
               </div>
 
-              {recordsLoading ? (
+              {inviteesLoading ? (
+                <div className="grid min-h-[220px] place-items-center">
+                  <Spin tip="正在加载直属下级" />
+                </div>
+              ) : invitees.items.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[980px] text-left text-sm">
+                    <thead className="border-b border-line text-xs text-slate-500">
+                      <tr>
+                        <th className="py-2 pr-4 font-medium">下级用户</th>
+                        <th className="py-2 pr-4 font-medium">下级总充值</th>
+                        <th className="py-2 pr-4 font-medium">下级总提现</th>
+                        <th className="py-2 pr-4 font-medium">返利笔数</th>
+                        <th className="py-2 pr-4 font-medium">返利金额</th>
+                        <th className="py-2 pr-4 font-medium">最近返利</th>
+                        <th className="py-2 pr-4 font-medium">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invitees.items.map((invitee) => (
+                        <tr
+                          key={invitee.inviteeUserId}
+                          className={`cursor-pointer border-b border-slate-100 ${
+                            currentSelectedInvitee?.inviteeUserId === invitee.inviteeUserId
+                              ? 'bg-rose-50/60'
+                              : 'hover:bg-slate-50'
+                          }`}
+                          onClick={() => openInviteeRecords(invitee)}
+                        >
+                          <td className="py-3 pr-4">
+                            <div className="font-medium text-ink">{invitee.inviteeUsername}</div>
+                            <div className="mt-1 text-xs text-slate-600">
+                              {invitee.inviteeUserId}
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4 text-slate-600">
+                            {formatMoney(invitee.totalRechargeMinor)}
+                          </td>
+                          <td className="py-3 pr-4 text-slate-600">
+                            {formatMoney(invitee.totalWithdrawalMinor)}
+                          </td>
+                          <td className="py-3 pr-4 text-slate-600">{invitee.rebateRecordCount}</td>
+                          <td className="py-3 pr-4 font-semibold text-emerald-700">
+                            {formatMoney(invitee.totalRebateMinor)}
+                          </td>
+                          <td className="py-3 pr-4 text-slate-600">
+                            {invitee.lastRebateAt
+                              ? formatDateTime(invitee.lastRebateAt, invitee.lastRebateAt)
+                              : '-'}
+                          </td>
+                          <td className="py-3 pr-4">
+                            <Button
+                              icon={<Eye size={15} />}
+                              size="small"
+                              theme={
+                                currentSelectedInvitee?.inviteeUserId === invitee.inviteeUserId
+                                  ? 'solid'
+                                  : 'light'
+                              }
+                              type="primary"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openInviteeRecords(invitee);
+                              }}
+                            >
+                              详情
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+                  当前代理暂无直属下级。
+                </div>
+              )}
+            </Card>
+
+            <Card className="rounded-md border border-line">
+              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-ink">
+                    {currentSelectedInvitee
+                      ? `${currentSelectedInvitee.inviteeUsername} 的返利记录`
+                      : '下级返利记录'}
+                  </h2>
+                  <Tag color="blue">{currentSelectedInvitee ? records.totalCount : 0} 笔</Tag>
+                </div>
+                {currentSelectedInvitee ? (
+                  <PageControls
+                    loading={recordsLoading}
+                    page={records.page}
+                    pageSize={recordsPageSize}
+                    totalCount={records.totalCount}
+                    totalPages={records.totalPages}
+                    onPageChange={setRecordsPage}
+                    onPageSizeChange={(nextPageSize) => {
+                      setRecordsPage(1);
+                      setRecordsPageSize(nextPageSize);
+                    }}
+                  />
+                ) : null}
+              </div>
+
+              {!currentSelectedInvitee ? (
+                <div className="rounded-md border border-line p-4 text-sm text-slate-500">
+                  请选择一个直属下级查看返利记录。
+                </div>
+              ) : recordsLoading ? (
                 <div className="grid min-h-[220px] place-items-center">
                   <Spin tip="正在加载返利明细" />
                 </div>
               ) : records.items.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1040px] text-left text-sm">
+                  <table className="w-full min-w-[940px] text-left text-sm">
                     <thead className="border-b border-line text-xs text-slate-500">
                       <tr>
-                        <th className="py-2 pr-4 font-medium">下级用户</th>
                         <th className="py-2 pr-4 font-medium">充值订单</th>
                         <th className="py-2 pr-4 font-medium">充值金额</th>
                         <th className="py-2 pr-4 font-medium">用户总充值</th>
@@ -943,14 +1060,6 @@ export function RebateManagementPage({
                     <tbody>
                       {records.items.map((record) => (
                         <tr key={record.ledgerEntryId} className="border-b border-slate-100">
-                          <td className="py-3 pr-4">
-                            <div className="font-medium text-ink">
-                              {record.inviteeUsername ?? '未知下级'}
-                            </div>
-                            <div className="mt-1 text-xs text-slate-400">
-                              {record.inviteeUserId ?? '-'}
-                            </div>
-                          </td>
                           <td className="py-3 pr-4 text-slate-600">
                             {record.rechargeOrderId ?? '-'}
                           </td>
@@ -978,7 +1087,7 @@ export function RebateManagementPage({
                 </div>
               ) : (
                 <div className="rounded-md border border-line p-4 text-sm text-slate-500">
-                  当前代理暂无下级返利记录。
+                  当前下级暂无返利记录。
                 </div>
               )}
             </Card>
@@ -1065,9 +1174,7 @@ function emptyForm(): RebateFormState {
 function formFromPolicy(policy: InvitePolicySummary): RebateFormState {
   return {
     agentsCanInvite: policy.agentsCanInvite,
-    defaultRechargeRebatePercent: (
-      policy.defaultRechargeRebateBasisPoints / 100
-    ).toFixed(2),
+    defaultRechargeRebatePercent: (policy.defaultRechargeRebateBasisPoints / 100).toFixed(2),
     rebateMode: policy.rebateMode,
     regularUsersCanInvite: policy.regularUsersCanInvite,
   };
@@ -1085,10 +1192,8 @@ function policyPayload(form: RebateFormState): InvitePolicyUpdateRequest {
 
 function policyTotals(policy: InvitePolicySummary | null) {
   return {
-    enabledInviteEntries: [
-      policy?.agentsCanInvite,
-      policy?.regularUsersCanInvite,
-    ].filter(Boolean).length,
+    enabledInviteEntries: [policy?.agentsCanInvite, policy?.regularUsersCanInvite].filter(Boolean)
+      .length,
   };
 }
 
@@ -1097,8 +1202,7 @@ function visibleStatisticTotals(items: AgentRebateSummary[]) {
     (totals, item) => ({
       pendingRebateMinor: totals.pendingRebateMinor + item.pendingRebateMinor,
       totalRebateMinor: totals.totalRebateMinor + item.totalRebateMinor,
-      withdrawableRebateMinor:
-        totals.withdrawableRebateMinor + item.withdrawableRebateMinor,
+      withdrawableRebateMinor: totals.withdrawableRebateMinor + item.withdrawableRebateMinor,
     }),
     {
       pendingRebateMinor: 0,

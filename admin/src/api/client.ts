@@ -6,10 +6,7 @@ import type {
   LotteryCategoryConfig,
 } from '../types/dashboard';
 import type { DrawSource } from '../types/dashboard';
-import type {
-  AdvertisementSummary,
-  SaveAdvertisementRequest,
-} from '../types/advertisements';
+import type { AdvertisementSummary, SaveAdvertisementRequest } from '../types/advertisements';
 import type {
   AdminUserSummary,
   AdminPasswordResetRequest,
@@ -82,12 +79,7 @@ import type {
   PlayRuleEvaluation,
   PlayRuleSummary,
 } from '../types/playRules';
-import type {
-  CreateOrderRequest,
-  OrderDetail,
-  OrderListQuery,
-  OrderPage,
-} from '../types/orders';
+import type { CreateOrderRequest, OrderDetail, OrderListQuery, OrderPage } from '../types/orders';
 import type { DrawSchedulerConfig, DrawSchedulerStatus } from '../types/scheduler';
 import type {
   GroupBuyRobotRun,
@@ -98,6 +90,7 @@ import type {
   RobotStatusUpdateRequest,
 } from '../types/robots';
 import type {
+  AgentRebateInviteePage,
   AgentRebatePage,
   AgentRebateQuery,
   AgentRebateRecordPage,
@@ -171,9 +164,7 @@ async function requestBlob(
     signal,
   });
   if (!response.ok) {
-    const envelope = (await response
-      .json()
-      .catch(() => null)) as ApiEnvelope<unknown> | null;
+    const envelope = (await response.json().catch(() => null)) as ApiEnvelope<unknown> | null;
     throw new Error(envelope?.message || '文件下载请求失败');
   }
 
@@ -232,16 +223,12 @@ export function fetchDashboard(signal?: AbortSignal) {
 }
 
 export function fetchFinanceOverview(signal?: AbortSignal, query?: FinancePageQuery) {
-  return requestJson<FinanceOverview>(
-    adminQueryPath('/api/admin/finance-overview', query),
-    { signal },
-  );
+  return requestJson<FinanceOverview>(adminQueryPath('/api/admin/finance-overview', query), {
+    signal,
+  });
 }
 
-export function fetchFinancialAccounts(
-  signal?: AbortSignal,
-  query?: FinancePageQuery,
-) {
+export function fetchFinancialAccounts(signal?: AbortSignal, query?: FinancePageQuery) {
   return requestJson<FinancePage<AdminFinancialAccountSummary>>(
     adminQueryPath('/api/admin/financial-accounts', query),
     { signal },
@@ -249,10 +236,9 @@ export function fetchFinancialAccounts(
 }
 
 export function fetchLedgerEntries(signal?: AbortSignal, query?: FinancePageQuery) {
-  return requestJson<FinancePage<LedgerEntry>>(
-    adminQueryPath('/api/admin/ledger-entries', query),
-    { signal },
-  );
+  return requestJson<FinancePage<LedgerEntry>>(adminQueryPath('/api/admin/ledger-entries', query), {
+    signal,
+  });
 }
 
 export function clearLedgerEntries() {
@@ -278,10 +264,7 @@ export function clearRechargeOrders() {
   });
 }
 
-export function confirmRechargeOrder(
-  id: string,
-  payload: ConfirmRechargeOrderRequest = {},
-) {
+export function confirmRechargeOrder(id: string, payload: ConfirmRechargeOrderRequest = {}) {
   return requestJson<RechargeOrderSummary>(
     `/api/admin/recharge-orders/${encodeURIComponent(id)}/confirm`,
     {
@@ -344,6 +327,9 @@ function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery)
   }
   if (pageQuery?.userId?.trim()) {
     params.set('userId', pageQuery.userId.trim());
+  }
+  if (pageQuery?.inviteeUserId?.trim()) {
+    params.set('inviteeUserId', pageQuery.inviteeUserId.trim());
   }
   if (orderQuery?.orderId?.trim()) {
     params.set('orderId', orderQuery.orderId.trim());
@@ -417,10 +403,9 @@ export function fetchGroupBuyPlans(signal?: AbortSignal, query?: GroupBuyPlanLis
 }
 
 export function fetchGroupBuyPlan(id: string, signal?: AbortSignal) {
-  return requestJson<GroupBuyPlan>(
-    `/api/admin/group-buy/plans/${encodeURIComponent(id)}`,
-    { signal },
-  );
+  return requestJson<GroupBuyPlan>(`/api/admin/group-buy/plans/${encodeURIComponent(id)}`, {
+    signal,
+  });
 }
 
 export function fetchGroupBuyPlansByIssue(
@@ -431,10 +416,9 @@ export function fetchGroupBuyPlansByIssue(
     issue: query.issue,
     lotteryId: query.lotteryId,
   });
-  return requestJson<GroupBuyPlan[]>(
-    `/api/admin/group-buy/plans/by-issue?${params.toString()}`,
-    { signal },
-  );
+  return requestJson<GroupBuyPlan[]>(`/api/admin/group-buy/plans/by-issue?${params.toString()}`, {
+    signal,
+  });
 }
 
 export function createGroupBuyPlan(payload: CreateGroupBuyPlanRequest) {
@@ -445,28 +429,19 @@ export function createGroupBuyPlan(payload: CreateGroupBuyPlanRequest) {
 }
 
 export function updateGroupBuyPlan(id: string, payload: UpdateGroupBuyPlanRequest) {
-  return requestJson<GroupBuyPlan>(
-    `/api/admin/group-buy/plans/${encodeURIComponent(id)}`,
-    {
-      body: payload,
-      method: 'PUT',
-    },
-  );
+  return requestJson<GroupBuyPlan>(`/api/admin/group-buy/plans/${encodeURIComponent(id)}`, {
+    body: payload,
+    method: 'PUT',
+  });
 }
 
 export function deleteRobotGroupBuyPlan(id: string) {
-  return requestJson<GroupBuyPlan>(
-    `/api/admin/group-buy/plans/${encodeURIComponent(id)}`,
-    {
-      method: 'DELETE',
-    },
-  );
+  return requestJson<GroupBuyPlan>(`/api/admin/group-buy/plans/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 }
 
-export function addGroupBuyParticipant(
-  id: string,
-  payload: AddGroupBuyParticipantRequest,
-) {
+export function addGroupBuyParticipant(id: string, payload: AddGroupBuyParticipantRequest) {
   return requestJson<GroupBuyPlan>(
     `/api/admin/group-buy/plans/${encodeURIComponent(id)}/participants`,
     {
@@ -515,19 +490,14 @@ export function fetchSupportConversations(signal?: AbortSignal) {
   });
 }
 
-export function createSupportConversation(
-  payload: CreateSupportConversationRequest,
-) {
+export function createSupportConversation(payload: CreateSupportConversationRequest) {
   return requestJson<SupportConversation>('/api/admin/support/conversations', {
     body: payload,
     method: 'POST',
   });
 }
 
-export function updateSupportConversation(
-  id: string,
-  payload: UpdateSupportConversationRequest,
-) {
+export function updateSupportConversation(id: string, payload: UpdateSupportConversationRequest) {
   return requestJson<SupportConversation>(
     `/api/admin/support/conversations/${encodeURIComponent(id)}`,
     {
@@ -567,7 +537,9 @@ export async function fetchUsers(signal?: AbortSignal) {
 }
 
 export function fetchUserPage(signal?: AbortSignal, query?: UserListQuery) {
-  return requestJson<UserPage>(userQueryPath('/api/admin/users', query), { signal });
+  return requestJson<UserPage>(userQueryPath('/api/admin/users', query), {
+    signal,
+  });
 }
 
 export function createUser(payload: UserSummary) {
@@ -591,23 +563,17 @@ export function deleteUser(id: string) {
 }
 
 export function setUserStatus(id: string, payload: StatusUpdateRequest) {
-  return requestJson<AdminUserSummary>(
-    `/api/admin/users/${encodeURIComponent(id)}/status`,
-    {
-      body: payload,
-      method: 'PATCH',
-    },
-  );
+  return requestJson<AdminUserSummary>(`/api/admin/users/${encodeURIComponent(id)}/status`, {
+    body: payload,
+    method: 'PATCH',
+  });
 }
 
 export function resetUserPassword(id: string, payload: UserPasswordResetRequest) {
-  return requestJson<AdminUserSummary>(
-    `/api/admin/users/${encodeURIComponent(id)}/password`,
-    {
-      body: payload,
-      method: 'PATCH',
-    },
-  );
+  return requestJson<AdminUserSummary>(`/api/admin/users/${encodeURIComponent(id)}/password`, {
+    body: payload,
+    method: 'PATCH',
+  });
 }
 
 export function fetchAdmins(signal?: AbortSignal) {
@@ -629,23 +595,17 @@ export function updateAdmin(id: string, payload: AdminSaveRequest) {
 }
 
 export function resetAdminPassword(id: string, payload: AdminPasswordResetRequest) {
-  return requestJson<AdminSummary>(
-    `/api/admin/admins/${encodeURIComponent(id)}/password`,
-    {
-      body: payload,
-      method: 'PATCH',
-    },
-  );
+  return requestJson<AdminSummary>(`/api/admin/admins/${encodeURIComponent(id)}/password`, {
+    body: payload,
+    method: 'PATCH',
+  });
 }
 
 export function setAdminStatus(id: string, payload: StatusUpdateRequest) {
-  return requestJson<AdminSummary>(
-    `/api/admin/admins/${encodeURIComponent(id)}/status`,
-    {
-      body: payload,
-      method: 'PATCH',
-    },
-  );
+  return requestJson<AdminSummary>(`/api/admin/admins/${encodeURIComponent(id)}/status`, {
+    body: payload,
+    method: 'PATCH',
+  });
 }
 
 export function fetchRoles(signal?: AbortSignal) {
@@ -676,35 +636,23 @@ export function fetchSystemSettings(signal?: AbortSignal) {
   return requestJson<SystemSetting[]>('/api/admin/system-settings', { signal });
 }
 
-export function updateSystemSetting(
-  key: string,
-  payload: UpdateSystemSettingRequest,
-) {
-  return requestJson<SystemSetting>(
-    `/api/admin/system-settings/${encodeURIComponent(key)}`,
-    {
-      body: payload,
-      method: 'PATCH',
-    },
-  );
+export function updateSystemSetting(key: string, payload: UpdateSystemSettingRequest) {
+  return requestJson<SystemSetting>(`/api/admin/system-settings/${encodeURIComponent(key)}`, {
+    body: payload,
+    method: 'PATCH',
+  });
 }
 
 export function reloadBackendMemoryCache() {
-  return requestJson<MemoryCacheReloadResult>(
-    '/api/admin/system-settings/cache/reload',
-    {
-      method: 'POST',
-    },
-  );
+  return requestJson<MemoryCacheReloadResult>('/api/admin/system-settings/cache/reload', {
+    method: 'POST',
+  });
 }
 
 export function clearChatHallMessages() {
-  return requestJson<ClearRecordsResult>(
-    '/api/admin/system-settings/chat-hall/messages/clear',
-    {
-      method: 'DELETE',
-    },
-  );
+  return requestJson<ClearRecordsResult>('/api/admin/system-settings/chat-hall/messages/clear', {
+    method: 'DELETE',
+  });
 }
 
 export function fetchAdvertisements(signal?: AbortSignal) {
@@ -720,32 +668,20 @@ export function createAdvertisement(payload: SaveAdvertisementRequest) {
   });
 }
 
-export function updateAdvertisement(
-  id: string,
-  payload: SaveAdvertisementRequest,
-) {
-  return requestJson<AdvertisementSummary>(
-    `/api/admin/advertisements/${encodeURIComponent(id)}`,
-    {
-      body: payload,
-      method: 'PUT',
-    },
-  );
+export function updateAdvertisement(id: string, payload: SaveAdvertisementRequest) {
+  return requestJson<AdvertisementSummary>(`/api/admin/advertisements/${encodeURIComponent(id)}`, {
+    body: payload,
+    method: 'PUT',
+  });
 }
 
 export function deleteAdvertisement(id: string) {
-  return requestJson<AdvertisementSummary>(
-    `/api/admin/advertisements/${encodeURIComponent(id)}`,
-    {
-      method: 'DELETE',
-    },
-  );
+  return requestJson<AdvertisementSummary>(`/api/admin/advertisements/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 }
 
-export async function uploadImageBedFile(
-  file: File,
-  uploadFieldName: string = 'file',
-) {
+export async function uploadImageBedFile(file: File, uploadFieldName: string = 'file') {
   const token = getStoredAuthToken();
   const headers = new Headers();
   if (token) {
@@ -769,10 +705,7 @@ export async function uploadImageBedFile(
   return envelope.data;
 }
 
-export async function uploadAppPackageFile(
-  file: File,
-  uploadFieldName: string = 'file',
-) {
+export async function uploadAppPackageFile(file: File, uploadFieldName: string = 'file') {
   const token = getStoredAuthToken();
   const headers = new Headers();
   if (token) {
@@ -808,7 +741,9 @@ export function updateRegistrationConfig(payload: RegistrationConfig) {
 }
 
 export function fetchInvitePolicy(signal?: AbortSignal) {
-  return requestJson<InvitePolicySummary>('/api/admin/invite-policy', { signal });
+  return requestJson<InvitePolicySummary>('/api/admin/invite-policy', {
+    signal,
+  });
 }
 
 export function updateInvitePolicy(payload: InvitePolicyUpdateRequest) {
@@ -818,14 +753,10 @@ export function updateInvitePolicy(payload: InvitePolicyUpdateRequest) {
   });
 }
 
-export function fetchAgentRebateStatistics(
-  signal?: AbortSignal,
-  query?: AgentRebateQuery,
-) {
-  return requestJson<AgentRebatePage>(
-    adminQueryPath('/api/admin/rebate-statistics', query),
-    { signal },
-  );
+export function fetchAgentRebateStatistics(signal?: AbortSignal, query?: AgentRebateQuery) {
+  return requestJson<AgentRebatePage>(adminQueryPath('/api/admin/rebate-statistics', query), {
+    signal,
+  });
 }
 
 export function fetchAgentRebateRecords(
@@ -836,6 +767,20 @@ export function fetchAgentRebateRecords(
   return requestJson<AgentRebateRecordPage>(
     adminQueryPath(
       `/api/admin/rebate-statistics/${encodeURIComponent(agentUserId)}/records`,
+      query,
+    ),
+    { signal },
+  );
+}
+
+export function fetchAgentRebateInvitees(
+  agentUserId: string,
+  signal?: AbortSignal,
+  query?: AgentRebateQuery,
+) {
+  return requestJson<AgentRebateInviteePage>(
+    adminQueryPath(
+      `/api/admin/rebate-statistics/${encodeURIComponent(agentUserId)}/invitees`,
       query,
     ),
     { signal },
@@ -855,20 +800,13 @@ export function processAgentRebateWithdrawal(
   );
 }
 
-export function fetchAgentApplications(
-  signal?: AbortSignal,
-  query?: AgentApplicationQuery,
-) {
-  return requestJson<AgentApplicationPage>(
-    adminQueryPath('/api/admin/agent-applications', query),
-    { signal },
-  );
+export function fetchAgentApplications(signal?: AbortSignal, query?: AgentApplicationQuery) {
+  return requestJson<AgentApplicationPage>(adminQueryPath('/api/admin/agent-applications', query), {
+    signal,
+  });
 }
 
-export function reviewAgentApplication(
-  id: string,
-  payload: ReviewAgentApplicationRequest,
-) {
+export function reviewAgentApplication(id: string, payload: ReviewAgentApplicationRequest) {
   return requestJson<AgentApplication>(
     `/api/admin/agent-applications/${encodeURIComponent(id)}/review`,
     {
@@ -903,13 +841,10 @@ export function deleteRobot(id: string) {
 }
 
 export function setRobotStatus(id: string, payload: RobotStatusUpdateRequest) {
-  return requestJson<RobotConfigSummary>(
-    `/api/admin/robots/${encodeURIComponent(id)}/status`,
-    {
-      body: payload,
-      method: 'PATCH',
-    },
-  );
+  return requestJson<RobotConfigSummary>(`/api/admin/robots/${encodeURIComponent(id)}/status`, {
+    body: payload,
+    method: 'PATCH',
+  });
 }
 
 export function runGroupBuyRobots() {
@@ -948,10 +883,7 @@ export function createLotteryCategory(payload: LotteryCategoryConfig) {
   });
 }
 
-export function updateLotteryCategory(
-  code: string,
-  payload: LotteryCategoryConfig,
-) {
+export function updateLotteryCategory(code: string, payload: LotteryCategoryConfig) {
   return requestJson<LotteryCategoryConfig>(
     `/api/admin/lottery-categories/${encodeURIComponent(code)}`,
     {
@@ -991,26 +923,17 @@ export function deleteLottery(id: string) {
 }
 
 export function setLotterySaleStatus(id: string, saleEnabled: boolean) {
-  return requestJson<LotteryKind>(
-    `/api/admin/lotteries/${encodeURIComponent(id)}/sale`,
-    {
-      body: { saleEnabled },
-      method: 'PATCH',
-    },
-  );
+  return requestJson<LotteryKind>(`/api/admin/lotteries/${encodeURIComponent(id)}/sale`, {
+    body: { saleEnabled },
+    method: 'PATCH',
+  });
 }
 
-export function setLotteryAvoidWinningStatus(
-  id: string,
-  avoidWinningEnabled: boolean,
-) {
-  return requestJson<LotteryKind>(
-    `/api/admin/lotteries/${encodeURIComponent(id)}/avoid-winning`,
-    {
-      body: { avoidWinningEnabled },
-      method: 'PATCH',
-    },
-  );
+export function setLotteryAvoidWinningStatus(id: string, avoidWinningEnabled: boolean) {
+  return requestJson<LotteryKind>(`/api/admin/lotteries/${encodeURIComponent(id)}/avoid-winning`, {
+    body: { avoidWinningEnabled },
+    method: 'PATCH',
+  });
 }
 
 export function syncLotteryDrawSource(id: string) {
@@ -1109,7 +1032,9 @@ export function fetchDrawIssues(signal?: AbortSignal, query?: DrawIssueQuery) {
 }
 
 export function fetchLotteryDrawControls(signal?: AbortSignal) {
-  return requestJson<LotteryDrawControl[]>('/api/admin/draw-controls', { signal });
+  return requestJson<LotteryDrawControl[]>('/api/admin/draw-controls', {
+    signal,
+  });
 }
 
 export function fetchLotteryDrawControl(lotteryId: string, signal?: AbortSignal) {
@@ -1119,10 +1044,7 @@ export function fetchLotteryDrawControl(lotteryId: string, signal?: AbortSignal)
   );
 }
 
-export function saveLotteryDrawControl(
-  lotteryId: string,
-  payload: SaveLotteryDrawControlRequest,
-) {
+export function saveLotteryDrawControl(lotteryId: string, payload: SaveLotteryDrawControlRequest) {
   return requestJson<LotteryDrawControl>(
     `/api/admin/draw-controls/${encodeURIComponent(lotteryId)}`,
     {
@@ -1147,13 +1069,10 @@ export function generateNextDrawIssue(payload: GenerateDrawIssueRequest) {
 }
 
 export function previewDrawIssueGeneration(payload: GenerateDrawIssuesRequest) {
-  return requestJson<DrawIssueGenerationPreview[]>(
-    '/api/admin/draw-issues/preview-generation',
-    {
-      body: payload,
-      method: 'POST',
-    },
-  );
+  return requestJson<DrawIssueGenerationPreview[]>('/api/admin/draw-issues/preview-generation', {
+    body: payload,
+    method: 'POST',
+  });
 }
 
 export function generateDrawIssueBatch(payload: GenerateDrawIssuesRequest) {
@@ -1164,31 +1083,22 @@ export function generateDrawIssueBatch(payload: GenerateDrawIssuesRequest) {
 }
 
 export function closeDrawIssue(id: string) {
-  return requestJson<DrawIssue>(
-    `/api/admin/draw-issues/${encodeURIComponent(id)}/close`,
-    {
-      method: 'PATCH',
-    },
-  );
+  return requestJson<DrawIssue>(`/api/admin/draw-issues/${encodeURIComponent(id)}/close`, {
+    method: 'PATCH',
+  });
 }
 
 export function drawIssueResult(id: string, payload: DrawIssueResultRequest) {
-  return requestJson<DrawIssue>(
-    `/api/admin/draw-issues/${encodeURIComponent(id)}/draw`,
-    {
-      body: payload,
-      method: 'PATCH',
-    },
-  );
+  return requestJson<DrawIssue>(`/api/admin/draw-issues/${encodeURIComponent(id)}/draw`, {
+    body: payload,
+    method: 'PATCH',
+  });
 }
 
 export function cancelDrawIssue(id: string) {
-  return requestJson<DrawIssue>(
-    `/api/admin/draw-issues/${encodeURIComponent(id)}/cancel`,
-    {
-      method: 'PATCH',
-    },
-  );
+  return requestJson<DrawIssue>(`/api/admin/draw-issues/${encodeURIComponent(id)}/cancel`, {
+    method: 'PATCH',
+  });
 }
 
 export function runDrawAutomation(payload: DrawAutomationRunRequest) {
@@ -1223,14 +1133,15 @@ export function evaluatePlayRule(payload: PlayRuleEvaluateRequest) {
 }
 
 export function fetchOrders(signal?: AbortSignal, query?: OrderListQuery) {
-  return requestJson<OrderPage>(adminQueryPath('/api/admin/orders', query), { signal });
+  return requestJson<OrderPage>(adminQueryPath('/api/admin/orders', query), {
+    signal,
+  });
 }
 
 export function fetchOrderGroupBuyPlan(id: string, signal?: AbortSignal) {
-  return requestJson<GroupBuyPlan>(
-    `/api/admin/orders/${encodeURIComponent(id)}/group-buy-plan`,
-    { signal },
-  );
+  return requestJson<GroupBuyPlan>(`/api/admin/orders/${encodeURIComponent(id)}/group-buy-plan`, {
+    signal,
+  });
 }
 
 export function createOrder(payload: CreateOrderRequest) {
@@ -1253,17 +1164,11 @@ export function clearBetOrders() {
 }
 
 export function fetchSettlements(signal?: AbortSignal, query?: FinancePageQuery) {
-  return requestJson<SettlementPage>(
-    adminQueryPath('/api/admin/settlements', query),
-    { signal },
-  );
+  return requestJson<SettlementPage>(adminQueryPath('/api/admin/settlements', query), { signal });
 }
 
 export function fetchSettlement(id: string, signal?: AbortSignal) {
-  return requestJson<SettlementRun>(
-    `/api/admin/settlements/${encodeURIComponent(id)}`,
-    { signal },
-  );
+  return requestJson<SettlementRun>(`/api/admin/settlements/${encodeURIComponent(id)}`, { signal });
 }
 
 export function settleDrawIssue(drawIssueId: string) {

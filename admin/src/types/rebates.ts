@@ -40,14 +40,28 @@ export interface AgentRebateRecord {
   rechargeOrderId: string | null;
 }
 
+export interface AgentRebateInviteeSummary {
+  inviteeUserId: string;
+  inviteeUsername: string;
+  totalRechargeMinor: number;
+  totalWithdrawalMinor: number;
+  totalRebateMinor: number;
+  rebateRecordCount: number;
+  lastRebateAt: string | null;
+}
+
 export interface AgentRebateWithdrawalRequest {
   amountMinor: number;
   description: string;
 }
 
 export type AgentRebatePage = FinancePage<AgentRebateSummary>;
+export type AgentRebateInviteePage = FinancePage<AgentRebateInviteeSummary>;
 export type AgentRebateRecordPage = FinancePage<AgentRebateRecord>;
-export type AgentRebateQuery = Pick<FinancePageQuery, 'page' | 'pageSize' | 'username'>;
+export type AgentRebateQuery = Pick<
+  FinancePageQuery,
+  'page' | 'pageSize' | 'username' | 'inviteeUserId'
+>;
 export type AgentRebateWithdrawalResult = LedgerEntry;
 
 export type AgentApplicationStatus = 'pending' | 'approved' | 'rejected';

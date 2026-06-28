@@ -74,6 +74,26 @@ pub struct AgentRebateSummary {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台代理返利详情中的直属下级汇总项，用于先定位下级再查看该下级返利流水。
+pub struct AgentRebateInviteeSummary {
+    /// 被邀请用户 ID。
+    pub invitee_user_id: String,
+    /// 被邀请用户名。
+    pub invitee_username: String,
+    /// 该下级累计已入账充值金额，单位为分。
+    pub total_recharge_minor: i64,
+    /// 该下级累计已通过提现金额，单位为分。
+    pub total_withdrawal_minor: i64,
+    /// 该下级带来的累计返利金额，单位为分。
+    pub total_rebate_minor: i64,
+    /// 该下级带来的返利流水笔数。
+    pub rebate_record_count: usize,
+    /// 该下级最近一笔返利时间。
+    pub last_rebate_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 /// 后台代理返利明细，按充值返利流水还原下级用户、充值单和返利金额。
 pub struct AgentRebateRecord {
     /// 关联资金流水 ID。

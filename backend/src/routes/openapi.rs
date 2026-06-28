@@ -635,7 +635,16 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/rebate-statistics/{agentUserId}/records",
         "邀请返利",
         "代理返利明细",
-        "分页返回指定代理每一笔下级充值返利记录，包含下级用户、充值订单、充值金额、下级累计已入账充值金额、下级累计已通过提现金额和返利金额。",
+        "分页返回指定代理每一笔下级充值返利记录，可用 inviteeUserId 限定某个直属下级；记录包含下级用户、充值订单、充值金额、下级累计已入账充值金额、下级累计已通过提现金额和返利金额。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "get",
+        "/admin/rebate-statistics/{agentUserId}/invitees",
+        "邀请返利",
+        "代理返利直属下级",
+        "分页返回指定代理的直属下级汇总，包含下级充值、提现、返利总额、返利笔数和最近返利时间；前端点击某个下级后再读取该下级返利明细。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -1836,6 +1845,25 @@ fn query_parameters(route: &RouteDoc) -> Vec<Value> {
         ];
     }
 
+    if route.method == "get" && route.path == "/admin/rebate-statistics/{agentUserId}/invitees" {
+        return vec![
+            query_parameter("page", "页码，从 1 开始；不传时兼容返回全量。", "integer"),
+            query_parameter("pageSize", "每页数量；不传时兼容返回全量。", "integer"),
+        ];
+    }
+
+    if route.method == "get" && route.path == "/admin/rebate-statistics/{agentUserId}/records" {
+        return vec![
+            query_parameter("page", "页码，从 1 开始；不传时兼容返回全量。", "integer"),
+            query_parameter("pageSize", "每页数量；不传时兼容返回全量。", "integer"),
+            query_parameter(
+                "inviteeUserId",
+                "下级用户 ID；传入后只返回该下级带来的返利记录。",
+                "string",
+            ),
+        ];
+    }
+
     if route.method == "get"
         && matches!(
             route.path,
@@ -2243,5 +2271,23 @@ mod tests {
         assert!(parameters
             .iter()
             .any(|parameter| parameter["name"].as_str() == Some("username")));
+    }
+
+    #[test]
+    /// 验证代理返利详情在 OpenAPI 中声明下级列表和按下级筛选记录参数。
+    fn admin_rebate_details_document_invitee_drilldown_contract() {
+        let document = openapi_document();
+
+        assert!(
+            document["paths"]["/admin/rebate-statistics/{agentUserId}/invitees"]["get"].is_object()
+        );
+        let parameters = document["paths"]["/admin/rebate-statistics/{agentUserId}/records"]["get"]
+            ["parameters"]
+            .as_array()
+            .expect("rebate records should document query parameters");
+
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("inviteeUserId")));
     }
 }

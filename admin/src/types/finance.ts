@@ -19,17 +19,9 @@ export type LedgerEntryKind =
 
 export type RechargeChannel = 'rainbowEpay' | 'customerService';
 
-export type RechargeOrderStatus =
-  | 'pending'
-  | 'waitingCustomerService'
-  | 'paid'
-  | 'cancelled';
+export type RechargeOrderStatus = 'pending' | 'waitingCustomerService' | 'paid' | 'cancelled';
 
-export type WithdrawalOrderStatus =
-  | 'pending'
-  | 'approved'
-  | 'rejected'
-  | 'cancelled';
+export type WithdrawalOrderStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
 export type WithdrawalMethodType = 'alipay' | 'wechat' | 'bankCard';
 
@@ -45,6 +37,7 @@ export interface FinancePageQuery {
   page?: number;
   pageSize?: number;
   includeRobotData?: boolean;
+  inviteeUserId?: string;
   userId?: string;
   username?: string;
   kind?: LedgerEntryKind;

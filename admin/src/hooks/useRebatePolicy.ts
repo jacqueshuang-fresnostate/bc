@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   fetchAgentApplications,
+  fetchAgentRebateInvitees,
   fetchAgentRebateRecords,
   fetchAgentRebateStatistics,
   fetchInvitePolicy,
@@ -11,6 +12,7 @@ import {
 } from '../api/client';
 import type { RegistrationConfig } from '../types/dashboard';
 import type {
+  AgentRebateInviteePage,
   AgentRebatePage,
   AgentRebateQuery,
   AgentRebateRecordPage,
@@ -35,9 +37,11 @@ export function useRebatePolicy(
   const [policy, setPolicy] = useState<InvitePolicySummary | null>(null);
   const [registration, setRegistration] = useState<RegistrationConfig | null>(null);
   const [statistics, setStatistics] = useState<AgentRebatePage>(() => emptyPage());
+  const [invitees, setInvitees] = useState<AgentRebateInviteePage>(() => emptyPage());
   const [records, setRecords] = useState<AgentRebateRecordPage>(() => emptyPage());
   const [applications, setApplications] = useState<AgentApplicationPage>(() => emptyPage());
   const [loading, setLoading] = useState(true);
+  const [inviteesLoading, setInviteesLoading] = useState(false);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +131,21 @@ export function useRebatePolicy(
     }
   }, []);
 
+  const loadInvitees = useCallback(async (agentUserId: string, query: AgentRebateQuery) => {
+    setInviteesLoading(true);
+    setError(null);
+    try {
+      const nextInvitees = await fetchAgentRebateInvitees(agentUserId, undefined, query);
+      setInvitees(nextInvitees);
+      return nextInvitees;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setInviteesLoading(false);
+    }
+  }, []);
+
   const withdraw = useCallback(
     async (agentUserId: string, payload: AgentRebateWithdrawalRequest) => {
       setSaving(true);
@@ -166,6 +185,9 @@ export function useRebatePolicy(
   return {
     applications,
     error,
+    invitees,
+    inviteesLoading,
+    loadInvitees,
     loadRecords,
     loading,
     policy,
@@ -185,12 +207,15 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : '接口请求失败';
 }
 
-function emptyPage(): AgentRebatePage & AgentRebateRecordPage & AgentApplicationPage {
+function emptyPage(): AgentRebatePage &
+  AgentRebateInviteePage &
+  AgentRebateRecordPage &
+  AgentApplicationPage {
   return {
     items: [],
     page: 1,
     pageSize: 20,
     totalCount: 0,
     totalPages: 0,
-  } as AgentRebatePage & AgentRebateRecordPage & AgentApplicationPage;
+  } as AgentRebatePage & AgentRebateInviteePage & AgentRebateRecordPage & AgentApplicationPage;
 }
