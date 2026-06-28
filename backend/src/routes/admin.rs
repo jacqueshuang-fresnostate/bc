@@ -2366,15 +2366,11 @@ async fn list_group_buy_plans(
     State(state): State<AppState>,
     Query(query): Query<GroupBuyPlanListQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<GroupBuyPlanSummary>>>> {
-    let excluded_initiator_user_id = if query.include_robot_data() {
-        None
-    } else {
-        Some(ROBOT_GROUP_BUY_USER_ID)
-    };
+    let excluded_initiator_user_ids = excluded_robot_user_ids(query.include_robot_data());
     let page = state
         .group_buys
         .list_page(
-            excluded_initiator_user_id,
+            excluded_initiator_user_ids,
             query.formation_status,
             query.plan_id_filter(),
             PageRequest::new(query.page, query.page_size),
@@ -3750,6 +3746,15 @@ fn should_include_user_scoped_record(include_robot_data: bool, user_id: &str) ->
     include_robot_data || !is_group_buy_robot_user_id(user_id)
 }
 
+/// 根据后台机器人数据开关返回需要排除的系统机器人账号集合。
+fn excluded_robot_user_ids(include_robot_data: bool) -> &'static [&'static str] {
+    if include_robot_data {
+        &[]
+    } else {
+        &ROBOT_GROUP_BUY_USER_IDS
+    }
+}
+
 /// 判断列表行是否命中指定用户筛选；未传用户 ID 时不过滤。
 #[cfg(test)]
 fn should_match_user_filter(query: &FinancePageQuery, user_id: &str) -> bool {
@@ -3854,11 +3859,7 @@ async fn list_financial_accounts(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminFinancialAccountSummary>>>> {
-    let excluded_user_id = if query.include_robot_data() {
-        None
-    } else {
-        Some(ROBOT_GROUP_BUY_USER_ID)
-    };
+    let excluded_user_ids = excluded_robot_user_ids(query.include_robot_data());
     let usernames_for_memory_filter = if query.username_filter().is_some() {
         admin_usernames(&state).await?
     } else {
@@ -3870,7 +3871,7 @@ async fn list_financial_accounts(
             query.user_id_filter(),
             query.username_filter(),
             &usernames_for_memory_filter,
-            excluded_user_id,
+            excluded_user_ids,
             PageRequest::new(query.page, query.page_size),
         )
         .await?;
@@ -3910,11 +3911,7 @@ async fn list_ledger_entries(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminLedgerEntry>>>> {
-    let excluded_user_ids: &[&str] = if query.include_robot_data() {
-        &[][..]
-    } else {
-        &ROBOT_GROUP_BUY_USER_IDS[..]
-    };
+    let excluded_user_ids = excluded_robot_user_ids(query.include_robot_data());
     let page = state
         .finance
         .ledger_entry_page(
@@ -4157,16 +4154,12 @@ async fn list_orders(
     State(state): State<AppState>,
     Query(query): Query<FinancePageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminOrderDetail>>>> {
-    let excluded_user_id = if query.include_robot_data() {
-        None
-    } else {
-        Some(ROBOT_GROUP_BUY_USER_ID)
-    };
+    let excluded_user_ids = excluded_robot_user_ids(query.include_robot_data());
     let page = state
         .orders
         .list_page(
             query.user_id_filter(),
-            excluded_user_id,
+            excluded_user_ids,
             query.order_id_filter(),
             PageRequest::new(query.page, query.page_size),
         )
@@ -5180,10 +5173,12 @@ mod tests {
             false,
             ROBOT_GROUP_BUY_USER_ID
         ));
+        assert!(!should_include_user_scoped_record(false, "X90002"));
         assert!(should_include_user_scoped_record(
             true,
             ROBOT_GROUP_BUY_USER_ID
         ));
+        assert!(should_include_user_scoped_record(true, "X90002"));
         assert!(should_include_user_scoped_record(false, "U10001"));
     }
 
@@ -5194,9 +5189,15 @@ mod tests {
             false,
             ROBOT_GROUP_BUY_USER_ID
         ));
+        assert!(!should_include_robot_initiated_group_buy_plan(
+            false, "X90002"
+        ));
         assert!(should_include_robot_initiated_group_buy_plan(
             true,
             ROBOT_GROUP_BUY_USER_ID
+        ));
+        assert!(should_include_robot_initiated_group_buy_plan(
+            true, "X90002"
         ));
         assert!(should_include_robot_initiated_group_buy_plan(
             false, "U10001"

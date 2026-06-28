@@ -196,18 +196,19 @@ impl FinanceRepository {
         user_id: Option<&str>,
         username: Option<&str>,
         usernames_by_user_id: &BTreeMap<String, String>,
-        excluded_user_id: Option<&str>,
+        excluded_user_ids: &[&str],
         page: PageRequest,
     ) -> ApiResult<ListPage<FinancialAccountSummary>> {
         let user_id = normalized_optional_filter(user_id);
         let username = normalized_optional_filter(username);
-        let excluded_user_id = normalized_optional_filter(excluded_user_id);
+        let excluded_user_ids = normalized_filter_values(excluded_user_ids);
         if let Some(persistence) = &self.persistence {
+            let excluded_user_ids = excluded_user_ids.iter().cloned().collect::<Vec<_>>();
             return query_financial_account_page(
                 persistence,
                 user_id.as_deref(),
                 username.as_deref(),
-                excluded_user_id.as_deref(),
+                &excluded_user_ids,
                 page,
             )
             .await;
@@ -226,9 +227,7 @@ impl FinanceRepository {
                     && username.as_deref().map_or(true, |target| {
                         username_matches_account(usernames_by_user_id, &account.user_id, target)
                     })
-                    && excluded_user_id
-                        .as_deref()
-                        .map_or(true, |excluded| account.user_id != excluded)
+                    && !excluded_user_ids.contains(&account.user_id)
             })
             .collect::<Vec<_>>();
         let mut accounts = accounts;
@@ -1387,7 +1386,7 @@ async fn query_financial_account_page(
     database: &BusinessDatabase,
     user_id: Option<&str>,
     username: Option<&str>,
-    excluded_user_id: Option<&str>,
+    excluded_user_ids: &[String],
     page: PageRequest,
 ) -> ApiResult<ListPage<FinancialAccountSummary>> {
     let total_count = sqlx::query_scalar::<_, i64>(
@@ -1396,11 +1395,11 @@ async fn query_financial_account_page(
          LEFT JOIN users AS app_user ON app_user.id = account.user_id
          WHERE ($1::text IS NULL OR account.user_id = $1)
            AND ($2::text IS NULL OR app_user.username ILIKE '%' || $2 || '%')
-           AND ($3::text IS NULL OR account.user_id <> $3)",
+           AND (cardinality($3::text[]) = 0 OR NOT (account.user_id = ANY($3)))",
     )
     .bind(user_id)
     .bind(username)
-    .bind(excluded_user_id)
+    .bind(excluded_user_ids)
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("资金账户分页总数读取失败".to_string()))?;
@@ -1413,7 +1412,7 @@ async fn query_financial_account_page(
          LEFT JOIN users AS app_user ON app_user.id = account.user_id
          WHERE ($1::text IS NULL OR account.user_id = $1)
            AND ($2::text IS NULL OR app_user.username ILIKE '%' || $2 || '%')
-           AND ($3::text IS NULL OR account.user_id <> $3)
+           AND (cardinality($3::text[]) = 0 OR NOT (account.user_id = ANY($3)))
          ORDER BY
            CASE WHEN account.user_id ~ '^U[0-9]+$' THEN substring(account.user_id from 2)::bigint ELSE 0 END DESC,
            account.user_id DESC
@@ -1421,7 +1420,7 @@ async fn query_financial_account_page(
     )
     .bind(user_id)
     .bind(username)
-    .bind(excluded_user_id)
+    .bind(excluded_user_ids)
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
     .fetch_all(database.pool())
@@ -3229,7 +3228,7 @@ mod tests {
                 None,
                 Some("alice"),
                 &usernames,
-                None,
+                &[],
                 PageRequest::new(Some(1), Some(10)),
             )
             .await
@@ -3243,6 +3242,27 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["U10004", "U10001"]
         );
+    }
+
+    #[tokio::test]
+    /// 资金账户分页默认按完整机器人账号集合过滤，避免补单机器人账号漏出。
+    async fn repository_account_page_excludes_robot_user_set_before_pagination() {
+        let repository = FinanceRepository::memory_seeded();
+        let usernames = BTreeMap::new();
+
+        let page = repository
+            .account_page(
+                None,
+                None,
+                &usernames,
+                &["U90001", "X90002"],
+                PageRequest::new(Some(1), Some(20)),
+            )
+            .await
+            .expect("account page can exclude robot user ids");
+
+        assert!(!page.items.iter().any(|account| account.user_id == "U90001"));
+        assert!(!page.items.iter().any(|account| account.user_id == "X90002"));
     }
 
     #[tokio::test]

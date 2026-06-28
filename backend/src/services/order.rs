@@ -199,18 +199,19 @@ impl OrderRepository {
     pub async fn list_page(
         &self,
         user_id: Option<&str>,
-        excluded_user_id: Option<&str>,
+        excluded_user_ids: &[&str],
         order_id: Option<&str>,
         page: PageRequest,
     ) -> ApiResult<ListPage<OrderDetail>> {
         let user_id = normalized_optional_filter(user_id);
-        let excluded_user_id = normalized_optional_filter(excluded_user_id);
+        let excluded_user_ids = normalized_filter_values(excluded_user_ids);
         let order_id = normalized_optional_filter(order_id);
         if let Some(persistence) = &self.persistence {
+            let excluded_user_ids = excluded_user_ids.iter().cloned().collect::<Vec<_>>();
             return query_order_page(
                 persistence,
                 user_id.as_deref(),
-                excluded_user_id.as_deref(),
+                &excluded_user_ids,
                 order_id.as_deref(),
                 page,
             )
@@ -227,9 +228,7 @@ impl OrderRepository {
                 user_id
                     .as_deref()
                     .map_or(true, |target| order.user_id == target)
-                    && excluded_user_id
-                        .as_deref()
-                        .map_or(true, |excluded| order.user_id != excluded)
+                    && !excluded_user_ids.contains(&order.user_id)
                     && order_id
                         .as_deref()
                         .map_or(true, |target| order.id == target)
@@ -1117,6 +1116,16 @@ fn normalized_optional_filter(value: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// 归一化多个筛选值，空字符串不参与过滤并自动去重。
+fn normalized_filter_values(values: &[&str]) -> BTreeSet<String> {
+    values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
 /// 从数据库行恢复订单详情，供启动加载和分页查询复用。
 fn order_detail_from_row(row: PgRow) -> ApiResult<OrderDetail> {
     let stake_count: i32 = row
@@ -1281,7 +1290,7 @@ fn settlement_run_from_row(row: PgRow, orders: Vec<OrderSettlement>) -> ApiResul
 async fn query_order_page(
     database: &BusinessDatabase,
     user_id: Option<&str>,
-    excluded_user_id: Option<&str>,
+    excluded_user_ids: &[String],
     order_id: Option<&str>,
     page: PageRequest,
 ) -> ApiResult<ListPage<OrderDetail>> {
@@ -1289,11 +1298,11 @@ async fn query_order_page(
         "SELECT COUNT(*)
          FROM orders
          WHERE ($1::text IS NULL OR user_id = $1)
-           AND ($2::text IS NULL OR user_id <> $2)
+           AND (cardinality($2::text[]) = 0 OR NOT (user_id = ANY($2)))
            AND ($3::text IS NULL OR id = $3)",
     )
     .bind(user_id)
-    .bind(excluded_user_id)
+    .bind(excluded_user_ids)
     .bind(order_id)
     .fetch_one(database.pool())
     .await
@@ -1307,13 +1316,13 @@ async fn query_order_page(
                 draw_number, matched_bets, payout_minor, status, settled_at, created_at
          FROM orders
          WHERE ($1::text IS NULL OR user_id = $1)
-           AND ($2::text IS NULL OR user_id <> $2)
+           AND (cardinality($2::text[]) = 0 OR NOT (user_id = ANY($2)))
            AND ($3::text IS NULL OR id = $3)
          ORDER BY created_at DESC, id DESC
          LIMIT $4 OFFSET $5",
     )
     .bind(user_id)
-    .bind(excluded_user_id)
+    .bind(excluded_user_ids)
     .bind(order_id)
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
@@ -2924,7 +2933,7 @@ mod tests {
         let page = orders
             .list_page(
                 None,
-                None,
+                &[],
                 Some(&first.id),
                 PageRequest::new(Some(1), Some(1)),
             )
@@ -2934,6 +2943,38 @@ mod tests {
         assert_eq!(page.total_count, 1);
         assert_eq!(page.items[0].id, first.id);
         assert_ne!(page.items[0].id, second.id);
+    }
+
+    #[tokio::test]
+    /// 后台订单分页默认按完整机器人账号集合过滤，避免补单机器人订单漏出。
+    async fn repository_order_page_excludes_robot_user_set_before_pagination() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let orders = OrderRepository::memory();
+        orders
+            .create(&lottery, direct_order_request("U10001", "2026155", 200))
+            .await
+            .expect("user order can be created");
+        orders
+            .create(&lottery, direct_order_request("U90001", "2026155", 200))
+            .await
+            .expect("group buy robot order can be created");
+        orders
+            .create(&lottery, direct_order_request("X90002", "2026155", 200))
+            .await
+            .expect("fill robot order can be created");
+
+        let page = orders
+            .list_page(
+                None,
+                &["U90001", "X90002"],
+                None,
+                PageRequest::new(Some(1), Some(20)),
+            )
+            .await
+            .expect("order page can exclude robot user ids");
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.items[0].user_id, "U10001");
     }
 
     #[tokio::test]

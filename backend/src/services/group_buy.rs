@@ -90,23 +90,24 @@ impl GroupBuyRepository {
     /// 分页返回合买摘要；数据库模式下把机器人发起人、成单状态和分页下推到 SQL。
     pub async fn list_page(
         &self,
-        excluded_initiator_user_id: Option<&str>,
+        excluded_initiator_user_ids: &[&str],
         formation_filter: Option<GroupBuyFormationFilter>,
         plan_id_filter: Option<&str>,
         page: PageRequest,
     ) -> ApiResult<ListPage<GroupBuyPlanSummary>> {
-        let excluded_initiator_user_id = excluded_initiator_user_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string);
+        let excluded_initiator_user_ids = normalized_filter_values(excluded_initiator_user_ids);
         let plan_id_filter = plan_id_filter
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
         if let Some(persistence) = &self.persistence {
+            let excluded_initiator_user_ids = excluded_initiator_user_ids
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
             return query_group_buy_summary_page(
                 persistence,
-                excluded_initiator_user_id.as_deref(),
+                &excluded_initiator_user_ids,
                 formation_filter,
                 plan_id_filter.as_deref(),
                 page,
@@ -120,11 +121,7 @@ impl GroupBuyRepository {
             .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
             .list()
             .into_iter()
-            .filter(|plan| {
-                excluded_initiator_user_id
-                    .as_deref()
-                    .map_or(true, |excluded| plan.initiator_user_id != excluded)
-            })
+            .filter(|plan| !excluded_initiator_user_ids.contains(&plan.initiator_user_id))
             .filter(|plan| formation_filter.map_or(true, |filter| filter.matches_summary(plan)))
             .filter(|plan| {
                 plan_id_filter
@@ -659,7 +656,7 @@ fn group_buy_plan_related_to_user(plan: &GroupBuyPlan, user_id: &str) -> bool {
 /// 数据库模式下分页读取合买摘要，避免后台合买列表先拉全量再裁剪。
 async fn query_group_buy_summary_page(
     database: &BusinessDatabase,
-    excluded_initiator_user_id: Option<&str>,
+    excluded_initiator_user_ids: &[String],
     formation_filter: Option<GroupBuyFormationFilter>,
     plan_id_filter: Option<&str>,
     page: PageRequest,
@@ -671,7 +668,7 @@ async fn query_group_buy_summary_page(
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
          FROM group_buy_plans
-         WHERE ($1::text IS NULL OR initiator_user_id <> $1)
+         WHERE (cardinality($1::text[]) = 0 OR NOT (initiator_user_id = ANY($1)))
            AND (
                $2::text IS NULL
                OR ($2 = 'formed' AND order_id IS NOT NULL)
@@ -679,7 +676,7 @@ async fn query_group_buy_summary_page(
            )
            AND ($3::text IS NULL OR id = $3)",
     )
-    .bind(excluded_initiator_user_id)
+    .bind(excluded_initiator_user_ids)
     .bind(formation_filter)
     .bind(plan_id_filter)
     .fetch_one(database.pool())
@@ -694,7 +691,7 @@ async fn query_group_buy_summary_page(
                 total_amount_minor, filled_amount_minor, min_share_amount_minor,
                 participant_min_amount_minor, share_count, status, note, created_at, updated_at
          FROM group_buy_plans
-         WHERE ($1::text IS NULL OR initiator_user_id <> $1)
+         WHERE (cardinality($1::text[]) = 0 OR NOT (initiator_user_id = ANY($1)))
            AND (
                $2::text IS NULL
                OR ($2 = 'formed' AND order_id IS NOT NULL)
@@ -704,7 +701,7 @@ async fn query_group_buy_summary_page(
          ORDER BY created_at DESC, id DESC
          LIMIT $4 OFFSET $5",
     )
-    .bind(excluded_initiator_user_id)
+    .bind(excluded_initiator_user_ids)
     .bind(formation_filter)
     .bind(plan_id_filter)
     .bind(resolved.limit_i64()?)
@@ -2026,6 +2023,16 @@ fn normalized_user_ids(user_ids: &[String]) -> BTreeSet<String> {
         .collect()
 }
 
+/// 归一化多个筛选值，空字符串不参与过滤并自动去重。
+fn normalized_filter_values(values: &[&str]) -> BTreeSet<String> {
+    values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
 /// 计算合买计划当前最小可认购金额。
 fn participant_min_amount(plan: &GroupBuyPlan) -> i64 {
     plan.participant_min_amount_minor
@@ -2310,7 +2317,7 @@ mod tests {
 
         let formed_page = repository
             .list_page(
-                None,
+                &[],
                 Some(GroupBuyFormationFilter::Formed),
                 None,
                 PageRequest::new(Some(1), Some(10)),
@@ -2319,7 +2326,7 @@ mod tests {
             .expect("formed page can load");
         let unformed_page = repository
             .list_page(
-                None,
+                &[],
                 Some(GroupBuyFormationFilter::Unformed),
                 None,
                 PageRequest::new(Some(1), Some(10)),
@@ -2328,7 +2335,7 @@ mod tests {
             .expect("unformed page can load");
         let id_filtered_page = repository
             .list_page(
-                None,
+                &[],
                 None,
                 Some("G-FORMED-OLDER"),
                 PageRequest::new(Some(1), Some(10)),
@@ -2349,6 +2356,50 @@ mod tests {
         assert_eq!(unformed_page.total_count, 1);
         assert_eq!(id_filtered_page.total_count, 1);
         assert_eq!(id_filtered_page.items[0].id, "G-FORMED-OLDER");
+    }
+
+    /// 验证后台合买分页按完整机器人账号集合过滤机器人发起计划。
+    #[tokio::test]
+    async fn group_buy_repository_list_page_excludes_robot_initiator_set() {
+        let mut user_plan = seed_group_buy_plans()
+            .into_iter()
+            .next()
+            .expect("seed plan exists");
+        user_plan.id = "G-USER".to_string();
+        user_plan.initiator_user_id = "U10001".to_string();
+
+        let mut group_robot_plan = user_plan.clone();
+        group_robot_plan.id = "G-ROBOT-U".to_string();
+        group_robot_plan.initiator_user_id = "U90001".to_string();
+
+        let mut fill_robot_plan = user_plan.clone();
+        fill_robot_plan.id = "G-ROBOT-X".to_string();
+        fill_robot_plan.initiator_user_id = "X90002".to_string();
+
+        let repository = GroupBuyRepository {
+            inner: Arc::new(RwLock::new(GroupBuyStore {
+                plans: BTreeMap::from([
+                    (user_plan.id.clone(), user_plan),
+                    (group_robot_plan.id.clone(), group_robot_plan),
+                    (fill_robot_plan.id.clone(), fill_robot_plan),
+                ]),
+            })),
+            persistence: None,
+            mutation_lock: Arc::new(Mutex::new(())),
+        };
+
+        let page = repository
+            .list_page(
+                &["U90001", "X90002"],
+                None,
+                None,
+                PageRequest::new(Some(1), Some(20)),
+            )
+            .await
+            .expect("group buy page can exclude robot initiators");
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.items[0].id, "G-USER");
     }
 
     /// 验证用户端未成单合买分页按创建时间倒序，而不是沿用期号排序。
