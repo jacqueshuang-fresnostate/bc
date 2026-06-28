@@ -64,7 +64,7 @@ function badgeContent(item: SettingsListItem) {
 <style scoped>
 .settings-list-group {
   border-radius: 1.35rem;
-  background: #f3f3f3;
+  background: var(--mobile-color-surface-container-low);
   padding: 0.375rem;
   box-shadow: inset 0 0 0 1px rgba(26, 28, 28, 0.02);
 }
@@ -72,16 +72,16 @@ function badgeContent(item: SettingsListItem) {
 .settings-list-group > div {
   overflow: hidden;
   border-radius: 1.05rem;
-  background: #ffffff;
+  background: var(--mobile-color-surface-container-lowest);
 }
 
 .settings-list-group button {
   min-height: 4rem;
-  background: #ffffff;
+  background: var(--mobile-color-surface-container-lowest);
 }
 
 .settings-list-group button + button {
-  border-top: 1px solid #eeeeee;
+  border-top: 1px solid var(--mobile-color-surface-container);
 }
 
 .settings-list-group button span {
@@ -92,8 +92,8 @@ function badgeContent(item: SettingsListItem) {
   width: 2rem;
   height: 2rem;
   border-radius: 0.55rem;
-  background: #f3f3f3;
-  color: #5a403e;
+  background: var(--mobile-color-surface-container-low);
+  color: var(--mobile-color-on-surface-variant);
 }
 
 .settings-list-group__badge-anchor {

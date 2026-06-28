@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import 'vant/lib/index.css'
 import './index.css'
-import './styles/vant-cinnabar.css'
+import './styles/vant-theme.css'
 import {
   Badge, Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem,
   Tab, Tabs, Tag, Grid, GridItem, Loading, Empty, NoticeBar,
@@ -12,6 +12,7 @@ import App from './App.vue'
 import router from './router'
 import { useAuthStore } from './stores/auth'
 import { useBrandingStore } from './stores/branding'
+import { useMobileThemeStore } from './stores/mobileTheme'
 import { checkAppUpdateOnce } from './composables/useAppUpdateCheck'
 import { installMobileTouchZoomGuard } from './utils/mobileTouchZoomGuard'
 import { installMobileViewportInsets } from './utils/mobileViewportInsets'
@@ -27,6 +28,8 @@ async function bootstrap() {
 
   const auth = useAuthStore(pinia)
   const branding = useBrandingStore(pinia)
+  const mobileTheme = useMobileThemeStore(pinia)
+  mobileTheme.applyTheme()
   await auth.loadTokens()
   await branding.loadPackagedBranding()
 

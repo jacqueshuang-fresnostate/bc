@@ -14,6 +14,7 @@ import SettingsListGroup from '../components/mobile/SettingsListGroup.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import WalletHeaderAmount from '../components/mobile/WalletHeaderAmount.vue'
 import { useMobileUserDataStore } from '../stores/mobileUserData'
+import { useMobileThemeStore, type MobileThemeId } from '../stores/mobileTheme'
 import { useSupportUnreadStore } from '../stores/supportUnread'
 import type { MobileRealtimeEvent } from '../types/realtime'
 
@@ -23,6 +24,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const brandingStore = useBrandingStore()
 const userDataStore = useMobileUserDataStore()
+const mobileThemeStore = useMobileThemeStore()
 const supportUnreadStore = useSupportUnreadStore()
 const { branding } = storeToRefs(brandingStore)
 const {
@@ -31,8 +33,10 @@ const {
   loadingWithdrawalTurnoverProgress,
 } = storeToRefs(userDataStore)
 const { hasUnread: hasSupportUnread, unreadTotal: supportUnreadTotal } = storeToRefs(supportUnreadStore)
+const { currentTheme, currentThemeLabel } = storeToRefs(mobileThemeStore)
 const uploadingAvatar = ref(false)
 const avatarInput = ref<HTMLInputElement | null>(null)
+const themeSheetVisible = ref(false)
 const balanceText = computed(() => String(profile.value?.balance || '0.00'))
 const username = computed(() => profile.value?.username || '会员')
 const avatarUrl = computed(() => profile.value?.avatar_url || profile.value?.avatarUrl || '')
@@ -69,6 +73,7 @@ const primaryItems = computed(() => [
 ])
 
 const secondaryItems = computed(() => [
+  { key: 'theme', label: '主题配色', icon: 'color_lens', value: currentThemeLabel.value, hint: '彩虹 / 殷红' },
   { key: 'security', label: '安全中心与密码', icon: 'shield_lock', value: profile.value?.email ? '已绑定' : '未绑定', hint: profile.value?.email || '' },
   { key: 'help', label: '帮助中心', icon: 'help', hint: '查看常见问题' },
   { key: 'inviter', label: '邀请人', icon: 'group', value: inviterText.value },
@@ -108,6 +113,10 @@ function statusText(status: string) {
 }
 
 function onProfileItem(item: { key: string }) {
+  if (item.key === 'theme') {
+    themeSheetVisible.value = true
+    return
+  }
   if (item.key === 'security') router.push('/security-center')
   if (item.key === 'orders') router.push('/orders')
   if (item.key === 'agentCenter') router.push('/agent-center')
@@ -116,6 +125,12 @@ function onProfileItem(item: { key: string }) {
   if (item.key === 'chatHall') router.push('/chat-hall')
   if (item.key === 'support') router.push('/support')
   if (item.key === 'help') showToast('帮助中心建设中')
+}
+
+function selectMobileTheme(themeId: MobileThemeId) {
+  mobileThemeStore.setTheme(themeId)
+  themeSheetVisible.value = false
+  showToast(`已切换为${mobileThemeStore.currentThemeLabel}主题`)
 }
 
 function openAvatarPicker() {
@@ -246,6 +261,51 @@ async function logout() {
         </button>
       </section>
     </main>
+
+    <van-popup
+      v-model:show="themeSheetVisible"
+      position="bottom"
+      round
+      teleport="body"
+      :style="{ maxHeight: '64dvh' }"
+    >
+      <section class="theme-sheet px-4 pb-5 pt-4">
+        <div class="mx-auto mb-4 h-1.5 w-12 rounded-full bg-surface-container"></div>
+        <div class="mb-3 flex items-center justify-between">
+          <div>
+            <p class="text-xs font-black text-primary">主题配色</p>
+            <h2 class="mt-1 font-headline text-xl font-black text-on-surface">选择喜欢的视觉风格</h2>
+          </div>
+          <button class="flex h-9 w-9 items-center justify-center rounded-full bg-surface-container-low text-on-surface-variant active:scale-95" type="button" @click="themeSheetVisible = false">
+            <LucideIcon name="close" class="h-4.5 w-4.5" />
+          </button>
+        </div>
+        <div class="space-y-2">
+          <button
+            v-for="theme in mobileThemeStore.themeOptions"
+            :key="theme.id"
+            class="theme-option flex w-full items-center gap-3 rounded-2xl border bg-white px-3 py-3 text-left transition active:scale-[0.99]"
+            :class="currentTheme === theme.id ? 'border-primary shadow-[0_10px_30px_var(--mobile-primary-shadow)]' : 'border-surface-container'"
+            type="button"
+            @click="selectMobileTheme(theme.id)"
+          >
+            <span
+              class="theme-option__swatch flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
+              :class="theme.id === 'cinnabar' ? 'theme-option__swatch--cinnabar' : 'theme-option__swatch--rainbow'"
+            >
+              <LucideIcon v-if="currentTheme === theme.id" name="check_circle" class="h-5 w-5" />
+            </span>
+            <span class="min-w-0 flex-1">
+              <span class="block text-sm font-black text-on-surface">{{ theme.label }}</span>
+              <span class="mt-1 block truncate text-[11px] font-medium text-on-surface-variant">{{ theme.description }}</span>
+            </span>
+            <span class="rounded-full px-2.5 py-1 text-[10px] font-black" :class="currentTheme === theme.id ? 'bg-primary-fixed text-primary' : 'bg-surface-container-low text-on-surface-variant'">
+              {{ currentTheme === theme.id ? '当前' : '切换' }}
+            </span>
+          </button>
+        </div>
+      </section>
+    </van-popup>
   </div>
 </template>
 
@@ -256,5 +316,26 @@ async function logout() {
 
 .account-dashboard-main {
   padding-bottom: calc(var(--mobile-bottom-nav-space) + 1rem);
+}
+
+.theme-sheet {
+  background: var(--mobile-color-background);
+}
+
+.theme-option {
+  background: var(--mobile-color-surface-container-lowest);
+}
+
+.theme-option__swatch--rainbow {
+  background:
+    radial-gradient(circle at 78% 14%, rgba(255, 255, 255, 0.9), transparent 30%),
+    linear-gradient(135deg, #c8f5ff 0%, #d7c8ff 48%, #ffc4d7 100%);
+  color: #8c0a15;
+}
+
+.theme-option__swatch--cinnabar {
+  background:
+    radial-gradient(circle at 78% 12%, rgba(255, 224, 153, 0.9), transparent 30%),
+    linear-gradient(135deg, #7d1018 0%, #b51f2b 58%, #d69a2d 100%);
 }
 </style>

@@ -74,6 +74,129 @@ button:disabled,
   --mobile-app-header-shadow: 0 8px 20px rgba(123, 82, 156, 0.12);
 }
 
+:root,
+:root[data-mobile-theme='rainbow'] {
+  --mobile-color-tertiary: #444545;
+  --mobile-color-secondary: #735c00;
+  --mobile-color-on-primary-container: #ffc8c3;
+  --mobile-color-background: #f9f9f9;
+  --mobile-color-surface-container: #eeeeee;
+  --mobile-color-surface-container-low: #f3f3f3;
+  --mobile-color-inverse-primary: #ffb3ad;
+  --mobile-color-primary-fixed-dim: #ffb3ad;
+  --mobile-color-outline-variant: #e2beba;
+  --mobile-color-surface-container-high: #e8e8e8;
+  --mobile-color-surface: #f9f9f9;
+  --mobile-color-on-tertiary-fixed-variant: #474747;
+  --mobile-color-on-secondary: #ffffff;
+  --mobile-color-on-surface-variant: #5a403e;
+  --mobile-color-primary: #8c0a15;
+  --mobile-color-on-primary-fixed-variant: #8f0d17;
+  --mobile-color-error: #ba1a1a;
+  --mobile-color-on-primary: #ffffff;
+  --mobile-color-secondary-fixed-dim: #e9c349;
+  --mobile-color-secondary-container: #fed65b;
+  --mobile-color-surface-dim: #dadada;
+  --mobile-color-tertiary-fixed-dim: #c8c6c6;
+  --mobile-color-surface-tint: #b22a2b;
+  --mobile-color-on-tertiary: #ffffff;
+  --mobile-color-tertiary-fixed: #e4e2e2;
+  --mobile-color-on-tertiary-fixed: #1b1c1c;
+  --mobile-color-inverse-surface: #2f3131;
+  --mobile-color-tertiary-container: #5c5c5c;
+  --mobile-color-on-tertiary-container: #d6d4d4;
+  --mobile-color-error-container: #ffdad6;
+  --mobile-color-outline: #8e706d;
+  --mobile-color-on-secondary-fixed-variant: #574500;
+  --mobile-color-on-error-container: #93000a;
+  --mobile-color-surface-container-highest: #e2e2e2;
+  --mobile-color-on-surface: #1a1c1c;
+  --mobile-color-primary-fixed: #ffdad7;
+  --mobile-color-secondary-fixed: #ffe088;
+  --mobile-color-primary-container: #af2829;
+  --mobile-color-on-background: #1a1c1c;
+  --mobile-color-inverse-on-surface: #f1f1f1;
+  --mobile-color-surface-variant: #e2e2e2;
+  --mobile-color-on-error: #ffffff;
+  --mobile-color-surface-bright: #f9f9f9;
+  --mobile-color-on-primary-fixed: #410004;
+  --mobile-color-on-secondary-fixed: #241a00;
+  --mobile-color-surface-container-lowest: #ffffff;
+  --mobile-color-on-secondary-container: #745c00;
+  --mobile-primary-gradient: linear-gradient(135deg, #8c0a15 0%, #af2829 100%);
+  --mobile-primary-soft-gradient: linear-gradient(135deg, rgba(140, 10, 21, 0.86), rgba(175, 40, 41, 0.74));
+  --mobile-primary-shadow: rgba(140, 10, 21, 0.15);
+  --mobile-primary-shadow-strong: rgba(140, 10, 21, 0.26);
+  --mobile-app-header-background:
+    radial-gradient(circle at 92% 5%, rgba(255, 255, 255, 0.78), transparent 30%),
+    linear-gradient(135deg, #c8f5ff 0%, #d7c8ff 48%, #ffc4d7 100%);
+  --mobile-app-header-border: rgba(255, 255, 255, 0.72);
+  --mobile-app-header-shadow: 0 8px 20px rgba(123, 82, 156, 0.12);
+  --mobile-bottom-nav-active-color: #af2829;
+  --mobile-bottom-nav-inactive-color: #78716c;
+}
+
+:root[data-mobile-theme='cinnabar'] {
+  --mobile-color-tertiary: #4d3a2d;
+  --mobile-color-secondary: #9d6b00;
+  --mobile-color-on-primary-container: #ffd8cf;
+  --mobile-color-background: #fff8f0;
+  --mobile-color-surface-container: #f5e6d8;
+  --mobile-color-surface-container-low: #fff0e3;
+  --mobile-color-inverse-primary: #ffb4a6;
+  --mobile-color-primary-fixed-dim: #ffb4a6;
+  --mobile-color-outline-variant: #e7c0ad;
+  --mobile-color-surface-container-high: #ecd9cb;
+  --mobile-color-surface: #fff8f0;
+  --mobile-color-on-tertiary-fixed-variant: #6a3f1e;
+  --mobile-color-on-secondary: #ffffff;
+  --mobile-color-on-surface-variant: #6e4036;
+  --mobile-color-primary: #7d1018;
+  --mobile-color-on-primary-fixed-variant: #a41722;
+  --mobile-color-error: #ba1a1a;
+  --mobile-color-on-primary: #ffffff;
+  --mobile-color-secondary-fixed-dim: #e7b94f;
+  --mobile-color-secondary-container: #f4c85a;
+  --mobile-color-surface-dim: #ead7c8;
+  --mobile-color-tertiary-fixed-dim: #d3b99e;
+  --mobile-color-surface-tint: #a41722;
+  --mobile-color-on-tertiary: #ffffff;
+  --mobile-color-tertiary-fixed: #f0dcc6;
+  --mobile-color-on-tertiary-fixed: #251407;
+  --mobile-color-inverse-surface: #39251d;
+  --mobile-color-tertiary-container: #7d4b25;
+  --mobile-color-on-tertiary-container: #ffdcc2;
+  --mobile-color-error-container: #ffdad6;
+  --mobile-color-outline: #9a6a5b;
+  --mobile-color-on-secondary-fixed-variant: #704d00;
+  --mobile-color-on-error-container: #93000a;
+  --mobile-color-surface-container-highest: #e5ccbd;
+  --mobile-color-on-surface: #241815;
+  --mobile-color-primary-fixed: #ffe0d8;
+  --mobile-color-secondary-fixed: #ffe19a;
+  --mobile-color-primary-container: #b51f2b;
+  --mobile-color-on-background: #241815;
+  --mobile-color-inverse-on-surface: #fff1e8;
+  --mobile-color-surface-variant: #f1ded1;
+  --mobile-color-on-error: #ffffff;
+  --mobile-color-surface-bright: #fffaf5;
+  --mobile-color-on-primary-fixed: #3a0005;
+  --mobile-color-on-secondary-fixed: #271900;
+  --mobile-color-surface-container-lowest: #ffffff;
+  --mobile-color-on-secondary-container: #5b3f00;
+  --mobile-primary-gradient: linear-gradient(135deg, #7d1018 0%, #b51f2b 54%, #d69a2d 100%);
+  --mobile-primary-soft-gradient: linear-gradient(135deg, rgba(125, 16, 24, 0.92), rgba(181, 31, 43, 0.82) 58%, rgba(214, 154, 45, 0.76));
+  --mobile-primary-shadow: rgba(125, 16, 24, 0.18);
+  --mobile-primary-shadow-strong: rgba(125, 16, 24, 0.3);
+  --mobile-app-header-background:
+    radial-gradient(circle at 86% 0%, rgba(255, 226, 151, 0.72), transparent 31%),
+    linear-gradient(135deg, #7d1018 0%, #b51f2b 55%, #f1bf5b 100%);
+  --mobile-app-header-border: rgba(255, 228, 183, 0.72);
+  --mobile-app-header-shadow: 0 10px 26px rgba(125, 16, 24, 0.2);
+  --mobile-bottom-nav-active-color: #7d1018;
+  --mobile-bottom-nav-inactive-color: #84645b;
+}
+
 @supports (padding-bottom: max(1px, 2px)) {
   :root {
     --mobile-status-safe-top: max(1.75rem, env(safe-area-inset-top, 0px));
@@ -120,53 +243,53 @@ button:disabled,
   --font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-label: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
-  --color-tertiary: #444545;
-  --color-secondary: #735c00;
-  --color-on-primary-container: #ffc8c3;
-  --color-background: #f9f9f9;
-  --color-surface-container: #eeeeee;
-  --color-surface-container-low: #f3f3f3;
-  --color-inverse-primary: #ffb3ad;
-  --color-primary-fixed-dim: #ffb3ad;
-  --color-outline-variant: #e2beba;
-  --color-surface-container-high: #e8e8e8;
-  --color-surface: #f9f9f9;
-  --color-on-tertiary-fixed-variant: #474747;
-  --color-on-secondary: #ffffff;
-  --color-on-surface-variant: #5a403e;
-  --color-primary: #8c0a15;
-  --color-on-primary-fixed-variant: #8f0d17;
-  --color-error: #ba1a1a;
-  --color-on-primary: #ffffff;
-  --color-secondary-fixed-dim: #e9c349;
-  --color-secondary-container: #fed65b;
-  --color-surface-dim: #dadada;
-  --color-tertiary-fixed-dim: #c8c6c6;
-  --color-surface-tint: #b22a2b;
-  --color-on-tertiary: #ffffff;
-  --color-tertiary-fixed: #e4e2e2;
-  --color-on-tertiary-fixed: #1b1c1c;
-  --color-inverse-surface: #2f3131;
-  --color-tertiary-container: #5c5c5c;
-  --color-on-tertiary-container: #d6d4d4;
-  --color-error-container: #ffdad6;
-  --color-outline: #8e706d;
-  --color-on-secondary-fixed-variant: #574500;
-  --color-on-error-container: #93000a;
-  --color-surface-container-highest: #e2e2e2;
-  --color-on-surface: #1a1c1c;
-  --color-primary-fixed: #ffdad7;
-  --color-secondary-fixed: #ffe088;
-  --color-primary-container: #af2829;
-  --color-on-background: #1a1c1c;
-  --color-inverse-on-surface: #f1f1f1;
-  --color-surface-variant: #e2e2e2;
-  --color-on-error: #ffffff;
-  --color-surface-bright: #f9f9f9;
-  --color-on-primary-fixed: #410004;
-  --color-on-secondary-fixed: #241a00;
-  --color-surface-container-lowest: #ffffff;
-  --color-on-secondary-container: #745c00;
+  --color-tertiary: var(--mobile-color-tertiary);
+  --color-secondary: var(--mobile-color-secondary);
+  --color-on-primary-container: var(--mobile-color-on-primary-container);
+  --color-background: var(--mobile-color-background);
+  --color-surface-container: var(--mobile-color-surface-container);
+  --color-surface-container-low: var(--mobile-color-surface-container-low);
+  --color-inverse-primary: var(--mobile-color-inverse-primary);
+  --color-primary-fixed-dim: var(--mobile-color-primary-fixed-dim);
+  --color-outline-variant: var(--mobile-color-outline-variant);
+  --color-surface-container-high: var(--mobile-color-surface-container-high);
+  --color-surface: var(--mobile-color-surface);
+  --color-on-tertiary-fixed-variant: var(--mobile-color-on-tertiary-fixed-variant);
+  --color-on-secondary: var(--mobile-color-on-secondary);
+  --color-on-surface-variant: var(--mobile-color-on-surface-variant);
+  --color-primary: var(--mobile-color-primary);
+  --color-on-primary-fixed-variant: var(--mobile-color-on-primary-fixed-variant);
+  --color-error: var(--mobile-color-error);
+  --color-on-primary: var(--mobile-color-on-primary);
+  --color-secondary-fixed-dim: var(--mobile-color-secondary-fixed-dim);
+  --color-secondary-container: var(--mobile-color-secondary-container);
+  --color-surface-dim: var(--mobile-color-surface-dim);
+  --color-tertiary-fixed-dim: var(--mobile-color-tertiary-fixed-dim);
+  --color-surface-tint: var(--mobile-color-surface-tint);
+  --color-on-tertiary: var(--mobile-color-on-tertiary);
+  --color-tertiary-fixed: var(--mobile-color-tertiary-fixed);
+  --color-on-tertiary-fixed: var(--mobile-color-on-tertiary-fixed);
+  --color-inverse-surface: var(--mobile-color-inverse-surface);
+  --color-tertiary-container: var(--mobile-color-tertiary-container);
+  --color-on-tertiary-container: var(--mobile-color-on-tertiary-container);
+  --color-error-container: var(--mobile-color-error-container);
+  --color-outline: var(--mobile-color-outline);
+  --color-on-secondary-fixed-variant: var(--mobile-color-on-secondary-fixed-variant);
+  --color-on-error-container: var(--mobile-color-on-error-container);
+  --color-surface-container-highest: var(--mobile-color-surface-container-highest);
+  --color-on-surface: var(--mobile-color-on-surface);
+  --color-primary-fixed: var(--mobile-color-primary-fixed);
+  --color-secondary-fixed: var(--mobile-color-secondary-fixed);
+  --color-primary-container: var(--mobile-color-primary-container);
+  --color-on-background: var(--mobile-color-on-background);
+  --color-inverse-on-surface: var(--mobile-color-inverse-on-surface);
+  --color-surface-variant: var(--mobile-color-surface-variant);
+  --color-on-error: var(--mobile-color-on-error);
+  --color-surface-bright: var(--mobile-color-surface-bright);
+  --color-on-primary-fixed: var(--mobile-color-on-primary-fixed);
+  --color-on-secondary-fixed: var(--mobile-color-on-secondary-fixed);
+  --color-surface-container-lowest: var(--mobile-color-surface-container-lowest);
+  --color-on-secondary-container: var(--mobile-color-on-secondary-container);
 
   --radius-full: 0.75rem;
   --radius-xl: 0.5rem;
@@ -175,19 +298,20 @@ button:disabled,
 }
 
 .text-on-surface-variant {
-  color: #5a403e;
+  color: var(--mobile-color-on-surface-variant);
 }
 
 .bg-on-surface-variant {
-  background-color: #5a403e;
+  background-color: var(--mobile-color-on-surface-variant);
 }
 
 .placeholder\:text-on-surface-variant\/50::placeholder {
-  color: rgb(90 64 62 / 50%);
+  color: var(--mobile-color-outline);
+  opacity: 0.5;
 }
 
 @utility lacquer-gradient {
-  background: linear-gradient(135deg, #8c0a15 0%, #af2829 100%);
+  background: var(--mobile-primary-gradient);
 }
 
 @utility glass-header {
@@ -195,7 +319,7 @@ button:disabled,
 }
 
 input::placeholder {
-  color: #8e706d;
+  color: var(--mobile-color-outline);
   opacity: 0.5;
 }
 

@@ -93,10 +93,10 @@ onMounted(() => {
           v-for="(item, index) in navItems"
           :key="item.label"
           class="relative flex min-w-0 flex-1 flex-col items-center justify-center rounded-[1.5rem] px-1 py-1.5 transition-all duration-200 active:scale-95"
-          :class="active === index ? 'liquid-glass-active text-[#af2829]' : 'text-stone-500 hover:text-red-800'"
+          :class="active === index ? 'liquid-glass-active text-primary' : 'text-on-surface-variant hover:text-primary'"
           @click="onChange(item.path)"
         >
-          <span class="relative z-10 mb-0.5 flex h-7 w-7 items-center justify-center rounded-full transition-transform duration-200" :class="active === index ? 'scale-110 text-[#af2829]' : 'text-stone-500'">
+          <span class="relative z-10 mb-0.5 flex h-7 w-7 items-center justify-center rounded-full transition-transform duration-200" :class="active === index ? 'scale-110 text-primary' : 'text-on-surface-variant'">
             <component :is="item.icon" class="h-5 w-5 mobile-bottom-nav-icon" :stroke-width="2.4" />
             <van-badge
               v-if="badgeContent(item.unreadCount)"
@@ -106,7 +106,7 @@ onMounted(() => {
               <span class="mobile-bottom-nav__badge-anchor"></span>
             </van-badge>
           </span>
-          <span class="relative z-10 max-w-full truncate" :class="active === index ? 'font-bold text-red-900' : ''">{{ item.label }}</span>
+          <span class="relative z-10 max-w-full truncate" :class="active === index ? 'font-bold text-primary' : ''">{{ item.label }}</span>
         </button>
       </div>
     </nav>
