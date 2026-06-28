@@ -109,10 +109,6 @@ export function RebateManagementPage({
   const [form, setForm] = useState<RebateFormState>(() => emptyForm());
   const currentMode = policy?.rebateMode ?? form.rebateMode;
   const totals = useMemo(() => policyTotals(policy), [policy]);
-  const statisticTotals = useMemo(
-    () => visibleStatisticTotals(statistics.items),
-    [statistics.items],
-  );
   const currentSelectedAgent =
     statistics.items.find((item) => item.agentUserId === selectedAgent?.agentUserId) ??
     selectedAgent;
@@ -280,25 +276,6 @@ export function RebateManagementPage({
 
       <Tabs activeKey={activeTab} onChange={(key) => setActiveTab(normalizeRebateTabKey(key))}>
         <Tabs.TabPane itemKey="statistics" tab="返利统计">
-          <section className="grid gap-3 pt-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard label="代理数量" trend="统计范围" value={`${statistics.totalCount}`} />
-            <MetricCard
-              label="本页总返利"
-              trend="充值返利入账"
-              value={formatMoney(statisticTotals.totalRebateMinor)}
-            />
-            <MetricCard
-              label="本页待处理"
-              trend="未提现返利"
-              value={formatMoney(statisticTotals.pendingRebateMinor)}
-            />
-            <MetricCard
-              label="本页可处理"
-              trend="受账户余额限制"
-              value={formatMoney(statisticTotals.withdrawableRebateMinor)}
-            />
-          </section>
-
           <Card className="mt-3 rounded-md border border-line">
             <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex items-center gap-2">
@@ -1207,21 +1184,6 @@ function policyTotals(policy: InvitePolicySummary | null) {
     enabledInviteEntries: [policy?.agentsCanInvite, policy?.regularUsersCanInvite].filter(Boolean)
       .length,
   };
-}
-
-function visibleStatisticTotals(items: AgentRebateSummary[]) {
-  return items.reduce(
-    (totals, item) => ({
-      pendingRebateMinor: totals.pendingRebateMinor + item.pendingRebateMinor,
-      totalRebateMinor: totals.totalRebateMinor + item.totalRebateMinor,
-      withdrawableRebateMinor: totals.withdrawableRebateMinor + item.withdrawableRebateMinor,
-    }),
-    {
-      pendingRebateMinor: 0,
-      totalRebateMinor: 0,
-      withdrawableRebateMinor: 0,
-    },
-  );
 }
 
 function rebateModeText(mode: RebateMode) {
