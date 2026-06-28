@@ -1138,6 +1138,10 @@ export function fetchOrders(signal?: AbortSignal, query?: OrderListQuery) {
   });
 }
 
+export function fetchOrder(id: string, signal?: AbortSignal) {
+  return requestJson<OrderDetail>(`/api/admin/orders/${encodeURIComponent(id)}`, { signal });
+}
+
 export function fetchOrderGroupBuyPlan(id: string, signal?: AbortSignal) {
   return requestJson<GroupBuyPlan>(`/api/admin/orders/${encodeURIComponent(id)}/group-buy-plan`, {
     signal,

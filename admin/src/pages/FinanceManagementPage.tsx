@@ -16,6 +16,7 @@ import {
 import {
   CheckCircle2,
   Download,
+  Eye,
   Plus,
   RefreshCcw,
   Trash2,
@@ -29,9 +30,12 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import { fetchGroupBuyPlan, fetchOrder, fetchOrderGroupBuyPlan } from '../api/client';
 import { MetricCard } from '../components/MetricCard';
+import { OrderBetInfo } from '../components/OrderBetInfo';
 import { PageControls } from '../components/PageControls';
 import { useFinance } from '../hooks/useFinance';
+import type { GroupBuyPlan, GroupBuyPlanStatus } from '../types/groupBuy';
 import type {
   AdminFinancialAccountSummary,
   LedgerEntry,
@@ -43,6 +47,7 @@ import type {
   WithdrawalMethodType,
   WithdrawalOrderStatus,
 } from '../types/finance';
+import type { OrderDetail, OrderStatus } from '../types/orders';
 import { formatDateTime, formatMoney, formatSignedMoney } from '../utils/format';
 import { yuanInputToMinor } from '../utils/moneyInput';
 
@@ -139,6 +144,11 @@ export function FinanceManagementPage({
   const [adjustmentSheetVisible, setAdjustmentSheetVisible] = useState(false);
   const [adjustmentAccount, setAdjustmentAccount] =
     useState<AdminFinancialAccountSummary | null>(null);
+  const [ledgerDetailEntry, setLedgerDetailEntry] = useState<LedgerEntry | null>(null);
+  const [ledgerDetailLoading, setLedgerDetailLoading] = useState(false);
+  const [ledgerDetailError, setLedgerDetailError] = useState<string | null>(null);
+  const [ledgerDetailOrder, setLedgerDetailOrder] = useState<OrderDetail | null>(null);
+  const [ledgerDetailPlan, setLedgerDetailPlan] = useState<GroupBuyPlan | null>(null);
 
   useEffect(() => {
     if (!ledgerUserFilter?.userId) {
@@ -171,6 +181,39 @@ export function FinanceManagementPage({
   const closeAdjustmentSheet = () => {
     setAdjustmentSheetVisible(false);
     setAdjustmentAccount(null);
+  };
+
+  const openLedgerDetail = async (entry: LedgerEntry) => {
+    setLedgerDetailEntry(entry);
+    setLedgerDetailError(null);
+    setLedgerDetailOrder(null);
+    setLedgerDetailPlan(null);
+    setLedgerDetailLoading(true);
+    try {
+      const orderId = orderIdFromLedgerEntry(entry);
+      const planId = groupBuyPlanIdFromLedgerEntry(entry);
+      const nextOrder = orderId ? await fetchOrder(orderId) : null;
+      setLedgerDetailOrder(nextOrder);
+
+      if (nextOrder?.orderSource === 'groupBuy') {
+        const plan = await fetchOrderGroupBuyPlan(nextOrder.id);
+        setLedgerDetailPlan(plan);
+      } else if (planId) {
+        const plan = await fetchGroupBuyPlan(planId);
+        setLedgerDetailPlan(plan);
+      }
+    } catch (requestError) {
+      setLedgerDetailError(errorMessage(requestError));
+    } finally {
+      setLedgerDetailLoading(false);
+    }
+  };
+
+  const closeLedgerDetail = () => {
+    setLedgerDetailEntry(null);
+    setLedgerDetailError(null);
+    setLedgerDetailOrder(null);
+    setLedgerDetailPlan(null);
   };
 
   const openRechargeConfirmModal = (order: RechargeOrderSummary) => {
@@ -847,8 +890,8 @@ export function FinanceManagementPage({
                   <th className="py-2 pr-4 font-medium">类型</th>
                   <th className="py-2 pr-4 font-medium">金额</th>
                   <th className="py-2 pr-4 font-medium">变更后余额</th>
-                  <th className="py-2 pr-4 font-medium">关联单据</th>
                   <th className="py-2 pr-4 font-medium">说明</th>
+                  <th className="py-2 pr-4 font-medium">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -881,10 +924,17 @@ export function FinanceManagementPage({
                     <td className="py-3 pr-4 text-slate-600">
                       {formatMoney(entry.balanceAfterMinor)}
                     </td>
-                    <td className="py-3 pr-4 text-slate-600">
-                      {entry.referenceId ?? '-'}
-                    </td>
                     <td className="py-3 pr-4 text-slate-600">{entry.description}</td>
+                    <td className="py-3 pr-4">
+                      <Button
+                        icon={<Eye size={14} />}
+                        loading={ledgerDetailLoading && ledgerDetailEntry?.id === entry.id}
+                        size="small"
+                        onClick={() => void openLedgerDetail(entry)}
+                      >
+                        查看详情
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -953,6 +1003,95 @@ export function FinanceManagementPage({
           </div>
         ) : null}
       </Modal>
+
+      <SideSheet
+        aria-label="资金流水详情"
+        title="资金流水详情"
+        visible={Boolean(ledgerDetailEntry)}
+        width="80%"
+        onCancel={closeLedgerDetail}
+      >
+        {ledgerDetailEntry ? (
+          <div className="space-y-4">
+            <section className="rounded-md border border-line bg-slate-50 p-4">
+              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-ink">流水信息</h2>
+                  <p className="mt-1 break-all text-sm text-slate-500">
+                    流水号：{ledgerDetailEntry.id}
+                  </p>
+                </div>
+                <Tag color={ledgerKindColor(ledgerDetailEntry.kind)}>
+                  {ledgerKindText(ledgerDetailEntry.kind)}
+                </Tag>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <InfoLine
+                  label="用户"
+                  value={`${ledgerDetailEntry.username ?? '未知用户'}（${ledgerDetailEntry.userId}）`}
+                />
+                <InfoLine
+                  label="变动金额"
+                  value={formatSignedMoney(ledgerDetailEntry.amountMinor)}
+                />
+                <InfoLine
+                  label="变更后余额"
+                  value={formatMoney(ledgerDetailEntry.balanceAfterMinor)}
+                />
+                <InfoLine
+                  label="关联单据"
+                  value={ledgerDetailEntry.referenceId ?? '-'}
+                />
+                <InfoLine
+                  label="创建时间"
+                  value={formatDateTime(
+                    ledgerDetailEntry.createdAt,
+                    ledgerDetailEntry.createdAt || '-',
+                  )}
+                />
+                <InfoLine label="说明" value={ledgerDetailEntry.description || '-'} />
+              </div>
+            </section>
+
+            <section className="rounded-md border border-line p-4">
+              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-ink">
+                    {ledgerBusinessTitle(ledgerDetailEntry, ledgerDetailOrder)}
+                  </h2>
+                </div>
+                {ledgerDetailPlan ? (
+                  <Tag color={groupBuyStatusColor(ledgerDetailPlan.status)}>
+                    {groupBuyStatusText(ledgerDetailPlan.status)}
+                  </Tag>
+                ) : ledgerDetailOrder ? (
+                  <Tag color={orderStatusColor(ledgerDetailOrder.status)}>
+                    {orderStatusText(ledgerDetailOrder.status)}
+                  </Tag>
+                ) : null}
+              </div>
+
+              {ledgerDetailLoading ? (
+                <div className="grid min-h-[240px] place-items-center">
+                  <Spin tip="正在加载关联业务详情" />
+                </div>
+              ) : ledgerDetailError ? (
+                <Banner
+                  type="danger"
+                  title="关联业务详情加载失败"
+                  description={ledgerDetailError}
+                />
+              ) : (
+                <LedgerBusinessDetail
+                  entry={ledgerDetailEntry}
+                  order={ledgerDetailOrder}
+                  plan={ledgerDetailPlan}
+                />
+              )}
+            </section>
+          </div>
+        ) : null}
+      </SideSheet>
 
       <SideSheet
         aria-label="手动调账"
@@ -1047,6 +1186,218 @@ function Field({ children, label }: FieldProps) {
   );
 }
 
+interface InfoLineProps {
+  label: string;
+  value: ReactNode;
+}
+
+function InfoLine({ label, value }: InfoLineProps) {
+  return (
+    <div className="rounded-md border border-line bg-white px-3 py-2">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 break-all text-sm font-medium text-ink">{value}</div>
+    </div>
+  );
+}
+
+interface LedgerBusinessDetailProps {
+  entry: LedgerEntry;
+  order: OrderDetail | null;
+  plan: GroupBuyPlan | null;
+}
+
+function LedgerBusinessDetail({ entry, order, plan }: LedgerBusinessDetailProps) {
+  const participant = plan ? groupBuyParticipantFromLedgerEntry(plan, entry) : null;
+
+  if (!order && !plan) {
+    return (
+      <div className="rounded-md border border-dashed border-line py-10 text-center text-sm text-slate-500">
+        当前流水没有可直接查看的投注或合买业务详情。
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {order ? (
+        <section className="rounded-md border border-line bg-slate-50 p-4">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">投注订单</h3>
+              <p className="mt-1 break-all text-xs text-slate-500">订单号：{order.id}</p>
+            </div>
+            <Tag color={orderStatusColor(order.status)}>{orderStatusText(order.status)}</Tag>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <InfoLine label="下单类型" value={orderSourceText(order.orderSource)} />
+            <InfoLine label="用户" value={`${order.username ?? '未知用户'}（${order.userId}）`} />
+            <InfoLine label="彩种" value={`${order.lotteryName}（${order.lotteryId}）`} />
+            <InfoLine label="期号" value={order.issue} />
+            <InfoLine label="玩法" value={order.ruleCode} />
+            <InfoLine label="投注金额" value={formatMoney(order.amountMinor)} />
+            <InfoLine label="注数" value={`${order.stakeCount} 注`} />
+            <InfoLine label="开奖号码" value={order.drawNumber ?? '未开奖'} />
+            <InfoLine label="派奖金额" value={formatMoney(order.payoutMinor)} />
+            <InfoLine
+              label="结算时间"
+              value={formatDateTime(order.settledAt, order.settledAt ?? '-')}
+            />
+          </div>
+          <div className="mt-4 rounded-md border border-line bg-white px-3 py-3">
+            <div className="mb-2 text-xs text-slate-500">投注内容</div>
+            <OrderBetInfo order={order} />
+          </div>
+          {order.matchedBets.length > 0 ? (
+            <div className="mt-4 rounded-md border border-line bg-white px-3 py-3">
+              <div className="mb-2 text-xs text-slate-500">命中注码</div>
+              <div className="flex flex-wrap gap-1">
+                {order.matchedBets.map((bet) => (
+                  <Tag key={bet} color="green">
+                    {bet}
+                  </Tag>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {plan ? (
+        <section className="rounded-md border border-line bg-slate-50 p-4">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">合买计划</h3>
+              <p className="mt-1 break-all text-xs text-slate-500">计划编号：{plan.id}</p>
+            </div>
+            <Tag color={groupBuyStatusColor(plan.status)}>{groupBuyStatusText(plan.status)}</Tag>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <InfoLine label="彩种" value={`${plan.lotteryName}（${plan.lotteryId}）`} />
+            <InfoLine label="期号" value={plan.issue || '-'} />
+            <InfoLine label="玩法" value={plan.ruleCode} />
+            <InfoLine label="关联订单" value={plan.orderId ?? '未成单'} />
+            <InfoLine
+              label="中奖状态"
+              value={groupBuyOrderStatusText(plan)}
+            />
+            <InfoLine label="开奖号码" value={plan.orderDrawNumber ?? '-'} />
+            <InfoLine
+              label="整单派奖"
+              value={plan.orderPayoutMinor == null ? '-' : formatMoney(plan.orderPayoutMinor)}
+            />
+            <InfoLine
+              label="发起人"
+              value={`${plan.initiatorUsername}（${plan.initiatorUserId}）`}
+            />
+            <InfoLine label="计划总额" value={formatMoney(plan.totalAmountMinor)} />
+            <InfoLine label="已认购" value={formatMoney(plan.filledAmountMinor)} />
+            <InfoLine label="进度" value={`${groupBuyProgressPercent(plan)}%`} />
+            <InfoLine label="总份数" value={`${plan.shareCount} 份`} />
+          </div>
+          <div className="mt-4">
+            <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+              <span>合买进度</span>
+              <span>{groupBuyProgressPercent(plan)}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-white ring-1 ring-line">
+              <div
+                className="h-full rounded-full bg-teal-500"
+                style={{ width: `${groupBuyProgressPercent(plan)}%` }}
+              />
+            </div>
+          </div>
+          <div className="mt-4 rounded-md border border-line bg-white px-3 py-2">
+            <div className="text-xs text-slate-500">投注内容</div>
+            <div className="mt-1 whitespace-pre-wrap break-all text-sm font-medium text-ink">
+              {plan.numbers || '-'}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {plan ? (
+        <section className="rounded-md border border-line p-4">
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-ink">
+              {participant ? '本流水认购记录' : '参与记录'}
+            </h3>
+            <Tag color="orange">{plan.participants.length} 条</Tag>
+          </div>
+          {participant ? (
+            <div className="mb-4 grid gap-3 md:grid-cols-4">
+              <InfoLine
+                label="认购用户"
+                value={`${participant.username}（${participant.userId}）`}
+              />
+              <InfoLine label="认购金额" value={formatMoney(participant.amountMinor)} />
+              <InfoLine label="认购份数" value={`${participant.shareCount} 份`} />
+              <InfoLine
+                label="占比"
+                value={`${participantPercent(participant.amountMinor, plan)}%`}
+              />
+              <InfoLine
+                label="个人派奖"
+                value={
+                  entry.kind === 'payoutCredit'
+                    ? formatMoney(entry.amountMinor)
+                    : '-'
+                }
+              />
+              <InfoLine
+                label="认购时间"
+                value={formatDateTime(participant.createdAt, participant.createdAt || '-')}
+              />
+              <InfoLine label="参与编号" value={participant.id} />
+              <InfoLine label="备注" value={participant.note || '-'} />
+            </div>
+          ) : null}
+          {plan.participants.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[680px] text-left text-sm">
+                <thead className="border-b border-line text-xs text-slate-500">
+                  <tr>
+                    <th className="py-2 pr-4 font-medium">用户</th>
+                    <th className="py-2 pr-4 font-medium">金额</th>
+                    <th className="py-2 pr-4 font-medium">份数</th>
+                    <th className="py-2 pr-4 font-medium">占比</th>
+                    <th className="py-2 pr-4 font-medium">创建时间</th>
+                    <th className="py-2 pr-4 font-medium">备注</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {plan.participants.map((item) => (
+                    <tr key={item.id}>
+                      <td className="py-3 pr-4">
+                        <div className="font-medium text-ink">{item.username}</div>
+                        <div className="mt-1 text-xs text-slate-400">{item.userId}</div>
+                      </td>
+                      <td className="py-3 pr-4 font-semibold text-ink">
+                        {formatMoney(item.amountMinor)}
+                      </td>
+                      <td className="py-3 pr-4 text-slate-600">{item.shareCount} 份</td>
+                      <td className="py-3 pr-4 text-slate-600">
+                        {participantPercent(item.amountMinor, plan)}%
+                      </td>
+                      <td className="py-3 pr-4 text-slate-500">
+                        {formatDateTime(item.createdAt, item.createdAt || '-')}
+                      </td>
+                      <td className="py-3 pr-4 text-slate-500">{item.note || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed border-line py-8 text-center text-sm text-slate-500">
+              暂无参与记录
+            </div>
+          )}
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 interface AgentCellProps {
   agentId?: string | null;
   agentUsername?: string | null;
@@ -1084,6 +1435,162 @@ function downloadBlob(blob: Blob, fileName: string) {
 
 function dateFileLabel() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function orderIdFromLedgerEntry(entry: LedgerEntry) {
+  const referenceId = entry.referenceId?.trim();
+  if (!referenceId) {
+    return null;
+  }
+  if (entry.kind === 'orderDebit' || entry.kind === 'orderRefund') {
+    return referenceId;
+  }
+  if (entry.kind === 'payoutCredit') {
+    return referenceId.split(':')[1]?.trim() || null;
+  }
+  return null;
+}
+
+function participantIdFromLedgerEntry(entry: LedgerEntry) {
+  const referenceId = entry.referenceId?.trim();
+  if (!referenceId) {
+    return null;
+  }
+  if (entry.kind === 'groupBuyDebit' || entry.kind === 'groupBuyRefund') {
+    return referenceId;
+  }
+  if (entry.kind === 'payoutCredit') {
+    return referenceId.split(':')[2]?.trim() || null;
+  }
+  return null;
+}
+
+function groupBuyPlanIdFromLedgerEntry(entry: LedgerEntry) {
+  const participantId = participantIdFromLedgerEntry(entry);
+  if (!participantId) {
+    return null;
+  }
+  return groupBuyPlanIdFromParticipantId(participantId);
+}
+
+function groupBuyPlanIdFromParticipantId(participantId: string) {
+  const match = participantId.match(/^(.+)-P\d+$/i);
+  return match?.[1] ?? null;
+}
+
+function groupBuyParticipantFromLedgerEntry(plan: GroupBuyPlan, entry: LedgerEntry) {
+  const participantId = participantIdFromLedgerEntry(entry);
+  if (participantId) {
+    const byId = plan.participants.find((participant) => participant.id === participantId);
+    if (byId) {
+      return byId;
+    }
+  }
+  return plan.participants.find((participant) => participant.userId === entry.userId) ?? null;
+}
+
+function ledgerBusinessTitle(entry: LedgerEntry, order: OrderDetail | null) {
+  if (entry.kind === 'groupBuyDebit') {
+    return '合买认购详情';
+  }
+  if (entry.kind === 'orderDebit') {
+    return '投注扣款详情';
+  }
+  if (entry.kind === 'payoutCredit') {
+    return order?.orderSource === 'groupBuy' ? '合买派奖详情' : '独立下单派奖详情';
+  }
+  if (entry.kind === 'groupBuyRefund') {
+    return '合买退款详情';
+  }
+  if (entry.kind === 'orderRefund') {
+    return '投注退款详情';
+  }
+  return '关联业务详情';
+}
+
+function groupBuyProgressPercent(plan: GroupBuyPlan) {
+  if (plan.totalAmountMinor <= 0) {
+    return 0;
+  }
+
+  return Math.min(
+    100,
+    Math.round((plan.filledAmountMinor / plan.totalAmountMinor) * 100),
+  );
+}
+
+function participantPercent(amountMinor: number, plan: GroupBuyPlan) {
+  if (plan.totalAmountMinor <= 0) {
+    return 0;
+  }
+
+  return Math.round((amountMinor / plan.totalAmountMinor) * 10000) / 100;
+}
+
+function orderStatusText(status: OrderStatus) {
+  const labels: Record<OrderStatus, string> = {
+    cancelled: '已取消',
+    lost: '未中奖',
+    pendingDraw: '待开奖',
+    won: '已中奖',
+  };
+  return labels[status];
+}
+
+function orderStatusColor(status: OrderStatus) {
+  const colors = {
+    cancelled: 'grey',
+    lost: 'red',
+    pendingDraw: 'blue',
+    won: 'green',
+  } as const;
+  return colors[status];
+}
+
+function orderSourceText(source: OrderDetail['orderSource']) {
+  return source === 'groupBuy' ? '合买下单' : '独立下单';
+}
+
+function groupBuyStatusText(status: GroupBuyPlanStatus) {
+  const labels: Record<GroupBuyPlanStatus, string> = {
+    cancelled: '已取消',
+    draft: '草稿',
+    filled: '已满单',
+    open: '进行中',
+    settled: '已结算',
+  };
+  return labels[status];
+}
+
+function groupBuyStatusColor(status: GroupBuyPlanStatus) {
+  const colors = {
+    cancelled: 'grey',
+    draft: 'blue',
+    filled: 'green',
+    open: 'cyan',
+    settled: 'teal',
+  } as const;
+  return colors[status];
+}
+
+function groupBuyOrderStatusText(plan: GroupBuyPlan) {
+  if (!plan.orderId) {
+    return '未成单';
+  }
+  if (!plan.orderStatus) {
+    return '订单缺失';
+  }
+  const labels = {
+    cancelled: '已取消',
+    lost: '未中奖',
+    pendingDraw: '待开奖',
+    won: '已中奖',
+  } as const;
+  return labels[plan.orderStatus];
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : '接口请求失败';
 }
 
 const LEDGER_KIND_OPTIONS: LedgerEntryKind[] = [
