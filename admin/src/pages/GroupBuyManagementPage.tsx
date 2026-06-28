@@ -431,7 +431,7 @@ export function GroupBuyManagementPage({
                         >
                           <td className="py-3 pr-4">
                             <div className="font-semibold text-ink">{plan.id}</div>
-                            <div className="mt-1 text-xs text-slate-400">
+                            <div className="mt-1 text-xs text-black">
                               发起人：{plan.initiatorUsername}
                               {isRobotGroupBuyPlan(plan) ? (
                                 <Tag className="ml-2" color="purple">
