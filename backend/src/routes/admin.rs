@@ -3531,13 +3531,17 @@ async fn list_agent_rebate_statistics(
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AgentRebateSummary>>>> {
     if let Some(page) = state
         .rebates
-        .agent_rebate_summary_page(PageRequest::new(query.page, query.page_size))
+        .agent_rebate_summary_page(
+            PageRequest::new(query.page, query.page_size),
+            query.username_filter(),
+        )
         .await?
     {
         return Ok(Json(ApiEnvelope::success(page.into_finance_page())));
     }
 
-    let summaries = agent_rebate_summaries(&state).await?;
+    let mut summaries = agent_rebate_summaries(&state).await?;
+    filter_agent_rebate_summaries_by_username(&mut summaries, query.username_filter());
 
     Ok(Json(ApiEnvelope::success(page_items(summaries, query))))
 }
@@ -4771,6 +4775,23 @@ fn sort_agent_rebate_summaries(summaries: &mut [AgentRebateSummary]) {
     });
 }
 
+/// 按代理用户名过滤返利统计，内存模式必须在分页前执行，保持与数据库分页口径一致。
+fn filter_agent_rebate_summaries_by_username(
+    summaries: &mut Vec<AgentRebateSummary>,
+    username: Option<&str>,
+) {
+    let Some(username) = optional_query_text(username) else {
+        return;
+    };
+    let username = username.to_ascii_lowercase();
+    summaries.retain(|summary| {
+        summary
+            .agent_username
+            .to_ascii_lowercase()
+            .contains(&username)
+    });
+}
+
 /// 代理返利明细按返利流水创建时间倒序展示。
 #[cfg(test)]
 fn sort_agent_rebate_records_by_time_desc(records: &mut [AgentRebateRecord]) {
@@ -5064,15 +5085,16 @@ mod tests {
         admin_support_conversation_with_user_display, admin_user_summary_with_usernames,
         admin_withdrawal_order_with_user_display, agent_rebate_records_from_data,
         agent_rebate_summary_from_data, align_draw_issue_plan_after_sale_on,
-        filter_users_by_status, filter_users_by_username, finance_overview_for_query,
-        first_admin_audit_ip, group_buy_summary_with_order_settlement,
-        normalize_admin_draw_control_target, page_items, required_permission_for_request,
-        required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
-        should_include_robot_initiated_group_buy_plan, should_include_user_scoped_record,
-        should_match_user_filter, sort_agent_rebate_records_by_time_desc,
-        sort_financial_accounts_by_latest_user_desc, sort_ledger_entries_by_time_desc,
-        sort_recharge_orders_by_time_desc, sort_users, sort_withdrawal_orders_by_time_desc,
-        username_map_from_users, AdminFinanceUserDisplay, FinancePageQuery, UserListQuery,
+        filter_agent_rebate_summaries_by_username, filter_users_by_status,
+        filter_users_by_username, finance_overview_for_query, first_admin_audit_ip,
+        group_buy_summary_with_order_settlement, normalize_admin_draw_control_target, page_items,
+        required_permission_for_request, required_scope_for_path,
+        should_align_draw_issue_plan_after_sale_on, should_include_robot_initiated_group_buy_plan,
+        should_include_user_scoped_record, should_match_user_filter,
+        sort_agent_rebate_records_by_time_desc, sort_financial_accounts_by_latest_user_desc,
+        sort_ledger_entries_by_time_desc, sort_recharge_orders_by_time_desc, sort_users,
+        sort_withdrawal_orders_by_time_desc, username_map_from_users, AdminFinanceUserDisplay,
+        FinancePageQuery, UserListQuery,
     };
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
@@ -5091,6 +5113,7 @@ mod tests {
             order::{CreateOrderRequest, OrderDetail, OrderSource, OrderStatus},
             permission::PermissionScope,
             play::{PlayRuleCode, PlaySelection},
+            rebate::AgentRebateSummary,
             recharge::{RechargeChannel, RechargeOrderStatus, RechargeOrderSummary},
             support::{SupportConversation, SupportConversationStatus, SupportPriority},
             user::{UserKind, UserStatus, UserSummary, WithdrawalMethodType},
@@ -5673,6 +5696,28 @@ mod tests {
     }
 
     #[test]
+    /// 代理返利统计用户名筛选需要在分页前执行，并且大小写不敏感。
+    fn agent_rebate_summary_username_filter_runs_before_pagination() {
+        let mut summaries = vec![
+            test_agent_rebate_summary("U90001", "agent_alpha"),
+            test_agent_rebate_summary("U90002", "agent_beta"),
+        ];
+
+        filter_agent_rebate_summaries_by_username(&mut summaries, Some("ALPHA"));
+        let page = page_items(
+            summaries,
+            FinancePageQuery {
+                page: Some(1),
+                page_size: Some(1),
+                ..FinancePageQuery::default()
+            },
+        );
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.items[0].agent_username, "agent_alpha");
+    }
+
+    #[test]
     /// 代理返利明细可以从返利流水和充值订单中还原下级用户、充值单和充值金额。
     fn agent_rebate_records_include_invitee_and_recharge_order() {
         let mut agent = test_user("U90001", "agent_alpha", 0);
@@ -5966,6 +6011,26 @@ mod tests {
             created_at: "2026-06-05 10:00:00".to_string(),
         }
     }
+
+    /// 构造测试用代理返利统计摘要。
+    fn test_agent_rebate_summary(agent_user_id: &str, agent_username: &str) -> AgentRebateSummary {
+        AgentRebateSummary {
+            account_available_balance_minor: 0,
+            agent_user_id: agent_user_id.to_string(),
+            agent_username: agent_username.to_string(),
+            direct_invitee_count: 0,
+            direct_invitee_recharge_minor: 0,
+            direct_invitee_withdrawal_minor: 0,
+            invite_code: format!("{agent_user_id}CODE"),
+            last_rebate_at: None,
+            pending_rebate_minor: 0,
+            rebate_record_count: 0,
+            total_rebate_minor: 0,
+            withdrawable_rebate_minor: 0,
+            withdrawn_rebate_minor: 0,
+        }
+    }
+
     /// 构造测试用资金流水。
     fn test_ledger_entry(id: &str, created_at: &str) -> LedgerEntry {
         LedgerEntry {

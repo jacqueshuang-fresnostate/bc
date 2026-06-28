@@ -101,12 +101,13 @@ impl RebateRepository {
     pub async fn agent_rebate_summary_page(
         &self,
         page: PageRequest,
+        username: Option<&str>,
     ) -> ApiResult<Option<ListPage<AgentRebateSummary>>> {
         let Some(persistence) = &self.persistence else {
             return Ok(None);
         };
 
-        query_agent_rebate_summary_page(persistence, page)
+        query_agent_rebate_summary_page(persistence, page, username)
             .await
             .map(Some)
     }
@@ -191,6 +192,7 @@ async fn save_rebate_store(database: &BusinessDatabase, store: &RebateStore) -> 
 async fn query_agent_rebate_summary_page(
     database: &BusinessDatabase,
     page: PageRequest,
+    username: Option<&str>,
 ) -> ApiResult<ListPage<AgentRebateSummary>> {
     let agent_kind = enum_to_string(&UserKind::Agent)?;
     let active_invite_status = enum_to_string(&InviteStatus::Active)?;
@@ -200,13 +202,16 @@ async fn query_agent_rebate_summary_page(
         enum_to_string(&crate::domain::finance::LedgerEntryKind::AgentRebateWithdrawal)?;
     let paid_recharge_status = enum_to_string(&RechargeOrderStatus::Paid)?;
     let approved_withdrawal_status = enum_to_string(&WithdrawalOrderStatus::Approved)?;
+    let username_filter = normalized_agent_rebate_username_filter(username);
 
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
          FROM users
-         WHERE kind = $1",
+         WHERE kind = $1
+           AND ($2::text IS NULL OR strpos(lower(username), lower($2::text)) > 0)",
     )
     .bind(&agent_kind)
+    .bind(username_filter.as_deref())
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("代理返利统计总数读取失败".to_string()))?;
@@ -277,12 +282,13 @@ async fn query_agent_rebate_summary_page(
          LEFT JOIN direct_recharges ON direct_recharges.agent_user_id = agent.id
          LEFT JOIN direct_withdrawals ON direct_withdrawals.agent_user_id = agent.id
          WHERE agent.kind = $1
+           AND ($7::text IS NULL OR strpos(lower(agent.username), lower($7::text)) > 0)
          ORDER BY
            CASE WHEN ledger_totals.last_rebate_at IS NULL OR ledger_totals.last_rebate_at = '' THEN 1 ELSE 0 END ASC,
            ledger_totals.last_rebate_at DESC,
            GREATEST(COALESCE(ledger_totals.total_rebate_minor, 0) - COALESCE(ledger_totals.withdrawn_rebate_minor, 0), 0) DESC,
            agent.id DESC
-         LIMIT $7 OFFSET $8",
+         LIMIT $8 OFFSET $9",
     )
     .bind(&agent_kind)
     .bind(&active_invite_status)
@@ -290,6 +296,7 @@ async fn query_agent_rebate_summary_page(
     .bind(&withdrawal_kind)
     .bind(&paid_recharge_status)
     .bind(&approved_withdrawal_status)
+    .bind(username_filter.as_deref())
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
     .fetch_all(database.pool())
@@ -347,6 +354,14 @@ async fn query_agent_rebate_summary_page(
         .collect::<ApiResult<Vec<_>>>()?;
 
     Ok(ListPage::new(items, resolved))
+}
+
+/// 归一化代理返利统计用户名筛选条件，空字符串按未筛选处理。
+fn normalized_agent_rebate_username_filter(username: Option<&str>) -> Option<String> {
+    username
+        .map(str::trim)
+        .filter(|username| !username.is_empty())
+        .map(ToString::to_string)
 }
 
 /// 邀请返利策略运行时数据快照，用于内存模式和数据库持久化前的业务校验。

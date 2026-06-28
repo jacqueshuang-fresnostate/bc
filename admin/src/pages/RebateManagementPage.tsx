@@ -16,9 +16,11 @@ import {
   Percent,
   RefreshCcw,
   Save,
+  Search,
   UserPlus,
   Users,
   WalletCards,
+  X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MetricCard } from '../components/MetricCard';
@@ -56,6 +58,8 @@ export function RebateManagementPage({
   const [activeTab, setActiveTab] = useState<RebateTabKey>(initialTab);
   const [statisticsPage, setStatisticsPage] = useState(1);
   const [statisticsPageSize, setStatisticsPageSize] = useState(10);
+  const [statisticsUsernameDraft, setStatisticsUsernameDraft] = useState('');
+  const [statisticsUsernameFilter, setStatisticsUsernameFilter] = useState('');
   const [applicationPage, setApplicationPage] = useState(1);
   const [applicationPageSize, setApplicationPageSize] = useState(10);
   const [applicationStatusFilter, setApplicationStatusFilter] = useState<
@@ -86,7 +90,11 @@ export function RebateManagementPage({
     statistics,
     withdraw,
   } = useRebatePolicy(
-    { page: statisticsPage, pageSize: statisticsPageSize },
+    {
+      page: statisticsPage,
+      pageSize: statisticsPageSize,
+      username: statisticsUsernameFilter || undefined,
+    },
     {
       page: applicationPage,
       pageSize: applicationPageSize,
@@ -132,6 +140,17 @@ export function RebateManagementPage({
   const refreshAll = () => {
     refresh();
     onDashboardRefresh();
+  };
+
+  const applyStatisticsUsernameFilter = () => {
+    setStatisticsUsernameFilter(statisticsUsernameDraft.trim());
+    setStatisticsPage(1);
+  };
+
+  const clearStatisticsUsernameFilter = () => {
+    setStatisticsUsernameDraft('');
+    setStatisticsUsernameFilter('');
+    setStatisticsPage(1);
   };
 
   const submit = async () => {
@@ -255,18 +274,51 @@ export function RebateManagementPage({
                 <h2 className="text-base font-semibold text-ink">代理返利统计</h2>
                 <Tag color="purple">{statistics.totalCount} 个代理</Tag>
               </div>
-              <PageControls
-                loading={loading}
-                page={statistics.page}
-                pageSize={statisticsPageSize}
-                totalCount={statistics.totalCount}
-                totalPages={statistics.totalPages}
-                onPageChange={setStatisticsPage}
-                onPageSizeChange={(nextPageSize) => {
-                  setStatisticsPage(1);
-                  setStatisticsPageSize(nextPageSize);
-                }}
-              />
+              <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <span className="shrink-0">代理用户名</span>
+                  <Input
+                    className="w-48"
+                    placeholder="输入用户名搜索"
+                    prefix={<Search size={14} />}
+                    showClear
+                    value={statisticsUsernameDraft}
+                    onChange={setStatisticsUsernameDraft}
+                    onClear={clearStatisticsUsernameFilter}
+                    onEnterPress={applyStatisticsUsernameFilter}
+                  />
+                </label>
+                <div className="flex items-center gap-2">
+                  <Button
+                    icon={<Search size={14} />}
+                    size="small"
+                    theme="solid"
+                    onClick={applyStatisticsUsernameFilter}
+                  >
+                    查询
+                  </Button>
+                  <Button
+                    disabled={!statisticsUsernameFilter && !statisticsUsernameDraft}
+                    icon={<X size={14} />}
+                    size="small"
+                    onClick={clearStatisticsUsernameFilter}
+                  >
+                    清空
+                  </Button>
+                </div>
+                <PageControls
+                  loading={loading}
+                  page={statistics.page}
+                  pageSize={statisticsPageSize}
+                  totalCount={statistics.totalCount}
+                  totalPages={statistics.totalPages}
+                  onPageChange={setStatisticsPage}
+                  onPageSizeChange={(nextPageSize) => {
+                    setStatisticsPage(1);
+                    setStatisticsPageSize(nextPageSize);
+                  }}
+                />
+              </div>
             </div>
 
             {loading ? (

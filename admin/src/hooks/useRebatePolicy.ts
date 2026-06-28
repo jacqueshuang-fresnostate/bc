@@ -28,6 +28,7 @@ export function useRebatePolicy(
 ) {
   const statisticsPage = statisticsQuery.page;
   const statisticsPageSize = statisticsQuery.pageSize;
+  const statisticsUsername = statisticsQuery.username;
   const applicationPage = applicationQuery.page;
   const applicationPageSize = applicationQuery.pageSize;
   const applicationStatus = applicationQuery.status;
@@ -58,6 +59,7 @@ export function useRebatePolicy(
       fetchAgentRebateStatistics(controller.signal, {
         page: statisticsPage,
         pageSize: statisticsPageSize,
+        username: statisticsUsername,
       }),
       fetchAgentApplications(controller.signal, {
         page: applicationPage,
@@ -92,6 +94,7 @@ export function useRebatePolicy(
     refreshToken,
     statisticsPage,
     statisticsPageSize,
+    statisticsUsername,
   ]);
 
   const save = useCallback(async (payload: InvitePolicyUpdateRequest) => {

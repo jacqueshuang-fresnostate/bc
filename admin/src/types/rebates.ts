@@ -47,7 +47,7 @@ export interface AgentRebateWithdrawalRequest {
 
 export type AgentRebatePage = FinancePage<AgentRebateSummary>;
 export type AgentRebateRecordPage = FinancePage<AgentRebateRecord>;
-export type AgentRebateQuery = Pick<FinancePageQuery, 'page' | 'pageSize'>;
+export type AgentRebateQuery = Pick<FinancePageQuery, 'page' | 'pageSize' | 'username'>;
 export type AgentRebateWithdrawalResult = LedgerEntry;
 
 export type AgentApplicationStatus = 'pending' | 'approved' | 'rejected';

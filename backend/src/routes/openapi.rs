@@ -1828,6 +1828,14 @@ fn query_parameters(route: &RouteDoc) -> Vec<Value> {
         ];
     }
 
+    if route.method == "get" && route.path == "/admin/rebate-statistics" {
+        return vec![
+            query_parameter("page", "页码，从 1 开始；不传时兼容返回全量。", "integer"),
+            query_parameter("pageSize", "每页数量；不传时兼容返回全量。", "integer"),
+            query_parameter("username", "代理用户名关键字搜索，大小写不敏感。", "string"),
+        ];
+    }
+
     if route.method == "get"
         && matches!(
             route.path,
@@ -2216,5 +2224,24 @@ mod tests {
         assert!(parameters
             .iter()
             .any(|parameter| parameter["name"].as_str() == Some("agentId")));
+    }
+
+    #[test]
+    /// 验证代理返利统计在 OpenAPI 中声明用户名查询参数。
+    fn admin_rebate_statistics_documents_username_query_parameter() {
+        let document = openapi_document();
+        let parameters = document["paths"]["/admin/rebate-statistics"]["get"]["parameters"]
+            .as_array()
+            .expect("rebate statistics should document query parameters");
+
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("page")));
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("pageSize")));
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("username")));
     }
 }
