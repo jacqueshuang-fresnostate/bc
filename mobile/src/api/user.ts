@@ -78,6 +78,7 @@ export type UserInvitationLatestBet = {
   betSource: 'direct' | 'groupBuy'
   groupBuyPlanId?: string | null
   groupBuyInitiatorDisplay?: string | null
+  stakeCount: number
   amountMinor: number
   createdAt: string
 }
@@ -95,6 +96,7 @@ export type UserInvitationDirectUser = {
   betLotterySummaries: UserInvitationBetLotterySummary[]
   betPlaySummaries: UserInvitationBetPlaySummary[]
   latestBet?: UserInvitationLatestBet | null
+  betRecords: UserInvitationLatestBet[]
   registeredAt: string
   createdAt: string
 }

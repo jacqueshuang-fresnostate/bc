@@ -1207,6 +1207,7 @@ async fn get_user_invitation_summary(
                 bet_lottery_summaries: bet_profile.lottery_summary_items(),
                 bet_play_summaries: bet_profile.play_summary_items(),
                 latest_bet: bet_profile.latest_bet.clone(),
+                bet_records: bet_profile.bet_record_items(),
                 registered_at: candidate.user.created_at.clone(),
                 created_at: candidate.created_at,
             });
@@ -1336,21 +1337,23 @@ struct DirectUserBetInput {
     bet_source: UserInvitationBetSource,
     group_buy_plan_id: Option<String>,
     group_buy_initiator_display: Option<String>,
+    stake_count: u32,
     amount_minor: i64,
     created_at: String,
 }
 
 #[derive(Debug, Clone, Default)]
-/// 邀请中心下级投注画像聚合结果，按用户累计总金额、彩种、玩法和最近投注。
+/// 邀请中心下级投注画像聚合结果，按用户累计总金额、彩种、玩法和逐笔明细聚合。
 struct DirectUserBetProfile {
     total_bet_amount_minor: i64,
     lottery_summaries: BTreeMap<String, DirectUserBetLotteryAccumulator>,
     play_summaries: BTreeMap<String, DirectUserBetPlayAccumulator>,
     latest_bet: Option<UserInvitationLatestBet>,
+    bet_records: Vec<UserInvitationLatestBet>,
 }
 
 impl DirectUserBetProfile {
-    /// 纳入一笔下级投注，正向金额才进入统计并同步刷新最近投注。
+    /// 纳入一笔下级投注，正向金额才进入统计并同步刷新明细和最近投注。
     fn add_bet(&mut self, bet: DirectUserBetInput) -> ApiResult<()> {
         if bet.amount_minor <= 0 {
             return Ok(());
@@ -1405,6 +1408,7 @@ impl DirectUserBetProfile {
             bet_source: bet.bet_source,
             group_buy_plan_id: bet.group_buy_plan_id,
             group_buy_initiator_display: bet.group_buy_initiator_display,
+            stake_count: bet.stake_count,
             amount_minor: bet.amount_minor,
             created_at: bet.created_at,
         };
@@ -1418,8 +1422,9 @@ impl DirectUserBetProfile {
             })
             .unwrap_or(true)
         {
-            self.latest_bet = Some(latest_bet);
+            self.latest_bet = Some(latest_bet.clone());
         }
+        self.bet_records.push(latest_bet);
 
         Ok(())
     }
@@ -1455,6 +1460,18 @@ impl DirectUserBetProfile {
                 .then_with(|| right.order_count.cmp(&left.order_count))
                 .then_with(|| left.lottery_name.cmp(&right.lottery_name))
                 .then_with(|| left.play_name.cmp(&right.play_name))
+        });
+        items
+    }
+
+    /// 转成按时间倒序的投注明细，供手机端逐笔查看下级投注记录。
+    fn bet_record_items(&self) -> Vec<UserInvitationLatestBet> {
+        let mut items = self.bet_records.clone();
+        items.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.order_id.cmp(&left.order_id))
         });
         items
     }
@@ -1563,6 +1580,7 @@ async fn direct_user_bet_profiles(
                 bet_source: UserInvitationBetSource::Direct,
                 group_buy_plan_id: None,
                 group_buy_initiator_display: None,
+                stake_count: order.stake_count,
                 amount_minor: order.amount_minor,
                 created_at: order.created_at,
             })?;
@@ -1600,6 +1618,7 @@ async fn direct_user_bet_profiles(
                     bet_source: UserInvitationBetSource::GroupBuy,
                     group_buy_plan_id: Some(group_buy_plan_id.clone()),
                     group_buy_initiator_display: Some(group_buy_initiator_display.clone()),
+                    stake_count: participant.share_count,
                     amount_minor: participant.amount_minor,
                     created_at: participant.created_at,
                 })?;
@@ -4233,6 +4252,7 @@ mod tests {
                 bet_source: UserInvitationBetSource::Direct,
                 group_buy_plan_id: None,
                 group_buy_initiator_display: None,
+                stake_count: 3,
                 amount_minor: 1_000,
                 created_at: "2026-06-17 10:00:00".to_string(),
             })
@@ -4249,6 +4269,7 @@ mod tests {
                 bet_source: UserInvitationBetSource::GroupBuy,
                 group_buy_plan_id: Some("G-1".to_string()),
                 group_buy_initiator_display: Some("爱情81****".to_string()),
+                stake_count: 2,
                 amount_minor: 2_500,
                 created_at: "2026-06-17 10:02:00".to_string(),
             })
@@ -4258,16 +4279,22 @@ mod tests {
         let play_summaries = profile.play_summary_items();
         assert_eq!(play_summaries[0].play_name, "后 3 直选");
         assert_eq!(play_summaries[0].amount_minor, 2_500);
-        let latest_bet = profile.latest_bet.expect("应存在最近投注");
+        let latest_bet = profile.latest_bet.as_ref().expect("应存在最近投注");
         assert_eq!(latest_bet.order_id, "O-2");
         assert_eq!(latest_bet.issue, "202606170002");
         assert_eq!(latest_bet.number_summary, "第3位 7；第4位 8；第5位 9");
         assert_eq!(latest_bet.bet_source, UserInvitationBetSource::GroupBuy);
+        assert_eq!(latest_bet.stake_count, 2);
         assert_eq!(latest_bet.group_buy_plan_id.as_deref(), Some("G-1"));
         assert_eq!(
             latest_bet.group_buy_initiator_display.as_deref(),
             Some("爱情81****")
         );
+        let bet_records = profile.bet_record_items();
+        assert_eq!(bet_records.len(), 2);
+        assert_eq!(bet_records[0].order_id, "O-2");
+        assert_eq!(bet_records[1].order_id, "O-1");
+        assert_eq!(bet_records[1].stake_count, 3);
     }
 
     #[test]

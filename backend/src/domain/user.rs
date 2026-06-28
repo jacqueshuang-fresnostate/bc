@@ -338,6 +338,8 @@ pub struct UserInvitationLatestBet {
     pub group_buy_plan_id: Option<String>,
     /// 合买发起人脱敏展示名，仅合买跟单时存在。
     pub group_buy_initiator_display: Option<String>,
+    /// 普通下注为注数，合买认购为参与份数。
+    pub stake_count: u32,
     /// 业务金额，单位为分。
     pub amount_minor: i64,
     /// 创建时间。
@@ -372,6 +374,8 @@ pub struct UserInvitationDirectUser {
     pub bet_play_summaries: Vec<UserInvitationBetPlaySummary>,
     /// 最新bet字段。
     pub latest_bet: Option<UserInvitationLatestBet>,
+    /// 投注明细列表，按时间倒序返回直属下级每一笔独立下注或合买认购。
+    pub bet_records: Vec<UserInvitationLatestBet>,
     /// registeredat字段。
     pub registered_at: String,
     /// 创建时间。

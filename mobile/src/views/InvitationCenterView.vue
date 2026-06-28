@@ -11,7 +11,7 @@ import {
   type AgentApplication,
   type AgentApplicationStatus,
   type RebateMode,
-  type UserInvitationBetPlaySummary,
+  type UserInvitationLatestBet,
   type UserInvitationDirectUser,
   type UserInvitationSummary,
   type UserStatus,
@@ -108,12 +108,8 @@ function formatMoney(value: number) {
   return (Number(value || 0) / 100).toFixed(2)
 }
 
-function topBetPlaySummaries(item: UserInvitationDirectUser): UserInvitationBetPlaySummary[] {
-  return (item.betPlaySummaries || []).slice(0, 3)
-}
-
 function hasBetProfile(item: UserInvitationDirectUser) {
-  return Number(item.totalBetAmountMinor || 0) > 0 || Boolean(item.latestBet)
+  return betRecords(item).length > 0
 }
 
 function openBetDetail(item: UserInvitationDirectUser) {
@@ -125,29 +121,24 @@ function resetBetDetail() {
   selectedBetUser.value = null
 }
 
-function latestBetMainText(item: UserInvitationDirectUser) {
-  const latestBet = item.latestBet
-  if (!latestBet) return '暂无投注记录'
-  return `${latestBet.lotteryName || '未知彩种'} · ${latestBet.playName || latestBet.ruleCode || '未知玩法'}`
+function betRecords(item: UserInvitationDirectUser | null): UserInvitationLatestBet[] {
+  if (!item) return []
+  return Array.isArray(item.betRecords) ? item.betRecords : item.latestBet ? [item.latestBet] : []
 }
 
-function latestBetMetaText(item: UserInvitationDirectUser) {
-  const latestBet = item.latestBet
-  if (!latestBet) return ''
-  const issue = latestBet.issue ? `第 ${latestBet.issue} 期` : '期号未记录'
-  return `${issue} · ¥${formatMoney(latestBet.amountMinor)}`
+function betRecordTitle(record: UserInvitationLatestBet) {
+  return `${record.lotteryName || '未知彩种'} · ${record.playName || record.ruleCode || '未知玩法'}`
 }
 
-function latestBetNumberText(item: UserInvitationDirectUser) {
-  const latestBet = item.latestBet
-  if (!latestBet) return ''
-  return latestBet.numberSummary || '号码未记录'
+function betRecordStakeText(record: UserInvitationLatestBet) {
+  const count = Number(record.stakeCount || 0)
+  const unit = record.betSource === 'groupBuy' ? '份' : '注'
+  return `${Number.isFinite(count) && count > 0 ? count : 0} ${unit}`
 }
 
-function latestBetFollowText(item: UserInvitationDirectUser) {
-  const latestBet = item.latestBet
-  if (!latestBet || latestBet.betSource !== 'groupBuy') return ''
-  const initiator = latestBet.groupBuyInitiatorDisplay || '合买发起人'
+function betRecordFollowText(record: UserInvitationLatestBet) {
+  if (record.betSource !== 'groupBuy') return ''
+  const initiator = record.groupBuyInitiatorDisplay || '合买发起人'
   return `跟单：${initiator} 的合买`
 }
 
@@ -324,7 +315,7 @@ async function submitApplication() {
                   :disabled="!hasBetProfile(item)"
                   @click="openBetDetail(item)"
                 >
-                  查看最近投注
+                  查看投注明细
                 </button>
               </div>
             </div>
@@ -347,7 +338,9 @@ async function submitApplication() {
           <div>
             <p class="text-xs font-bold text-red-900">下级投注详情</p>
             <h3 class="mt-1 font-headline text-xl font-black text-on-surface">{{ selectedBetUser.username }}</h3>
-            <p class="mt-1 text-xs text-on-surface-variant">累计投注 ¥{{ formatMoney(selectedBetUser.totalBetAmountMinor) }}</p>
+            <p class="mt-1 text-xs text-on-surface-variant">
+              累计投注 ¥{{ formatMoney(selectedBetUser.totalBetAmountMinor) }} · {{ betRecords(selectedBetUser).length }} 笔
+            </p>
           </div>
           <button class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-red-900 shadow-sm" type="button" @click="betDetailVisible = false">
             <LucideIcon name="close" class="h-4.5 w-4.5" />
@@ -355,42 +348,45 @@ async function submitApplication() {
         </div>
 
         <div class="rounded-[1.25rem] bg-white p-3 shadow-sm">
-          <p class="text-xs font-bold text-red-900">最近投注</p>
-          <p class="mt-2 text-sm font-black text-on-surface">{{ latestBetMainText(selectedBetUser) }}</p>
-          <template v-if="selectedBetUser.latestBet">
-            <p class="mt-1 text-xs text-on-surface-variant">{{ latestBetMetaText(selectedBetUser) }}</p>
-            <p class="mt-2 rounded-2xl bg-stone-50 px-3 py-2 text-xs font-semibold leading-5 text-on-surface">
-              号码：{{ latestBetNumberText(selectedBetUser) }}
-            </p>
-            <p v-if="latestBetFollowText(selectedBetUser)" class="mt-2 rounded-2xl bg-red-50 px-3 py-2 text-xs font-bold text-primary">
-              {{ latestBetFollowText(selectedBetUser) }}
-            </p>
-          </template>
+          <div class="flex items-center justify-between gap-3">
+            <p class="text-xs font-bold text-red-900">投注明细</p>
+            <span class="text-[11px] text-on-surface-variant">每一笔投注</span>
+          </div>
+          <div v-if="betRecords(selectedBetUser).length" class="mt-2 space-y-2">
+            <article
+              v-for="record in betRecords(selectedBetUser)"
+              :key="`${selectedBetUser.id}-${record.orderId}`"
+              class="rounded-2xl bg-stone-50 px-3 py-3 text-xs"
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-black text-on-surface">{{ betRecordTitle(record) }}</p>
+                  <p class="mt-1 text-[11px] text-on-surface-variant">第 {{ record.issue || '-' }} 期 · {{ formatDate(record.createdAt) }}</p>
+                </div>
+                <span class="shrink-0 rounded-full bg-white px-2.5 py-1 font-bold text-red-900">
+                  {{ record.betSource === 'groupBuy' ? '合买' : '独立' }}
+                </span>
+              </div>
+              <div class="mt-3 grid grid-cols-2 gap-2">
+                <div class="rounded-xl bg-white px-2.5 py-2">
+                  <p class="text-[10px] text-on-surface-variant">注数</p>
+                  <strong class="mt-1 block text-on-surface">{{ betRecordStakeText(record) }}</strong>
+                </div>
+                <div class="rounded-xl bg-white px-2.5 py-2">
+                  <p class="text-[10px] text-on-surface-variant">金额</p>
+                  <strong class="mt-1 block text-red-900">¥{{ formatMoney(record.amountMinor) }}</strong>
+                </div>
+              </div>
+              <p class="mt-2 rounded-2xl bg-white px-3 py-2 font-semibold leading-5 text-on-surface">
+                下注信息：{{ record.numberSummary || '号码未记录' }}
+              </p>
+              <p v-if="betRecordFollowText(record)" class="mt-2 rounded-2xl bg-red-50 px-3 py-2 font-bold text-primary">
+                {{ betRecordFollowText(record) }}
+              </p>
+            </article>
+          </div>
           <p v-else class="mt-2 rounded-2xl bg-stone-50 px-3 py-3 text-center text-xs text-on-surface-variant">
             暂无投注记录
-          </p>
-        </div>
-
-        <div class="mt-3 rounded-[1.25rem] bg-white p-3 shadow-sm">
-          <div class="flex items-center justify-between gap-3">
-            <p class="text-xs font-bold text-red-900">玩法汇总</p>
-            <span class="text-[11px] text-on-surface-variant">{{ topBetPlaySummaries(selectedBetUser).length }} 类玩法</span>
-          </div>
-          <div v-if="topBetPlaySummaries(selectedBetUser).length" class="mt-2 space-y-2">
-            <div
-              v-for="play in topBetPlaySummaries(selectedBetUser)"
-              :key="`${selectedBetUser.id}-${play.lotteryId}-${play.ruleCode}`"
-              class="rounded-2xl bg-stone-50 px-3 py-2 text-xs"
-            >
-              <div class="flex items-center justify-between gap-2">
-                <span class="min-w-0 truncate font-bold text-on-surface">{{ play.lotteryName }} · {{ play.playName }}</span>
-                <span class="shrink-0 font-bold text-red-900">¥{{ formatMoney(play.amountMinor) }}</span>
-              </div>
-              <p class="mt-1 text-[11px] text-on-surface-variant">{{ play.orderCount }} 笔</p>
-            </div>
-          </div>
-          <p v-else class="mt-2 rounded-2xl bg-stone-50 px-3 py-3 text-center text-xs text-on-surface-variant">
-            暂无玩法汇总
           </p>
         </div>
       </section>
