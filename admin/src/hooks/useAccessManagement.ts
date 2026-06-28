@@ -104,6 +104,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     refreshToken,
     userQuery.page,
     userQuery.pageSize,
+    userQuery.includeRobotData,
     userQuery.sortBy,
     userQuery.sortDirection,
     userQuery.status,

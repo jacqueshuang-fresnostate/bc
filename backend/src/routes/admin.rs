@@ -1580,6 +1580,7 @@ struct AgentApplicationListQuery {
 struct UserListQuery {
     page: Option<usize>,
     page_size: Option<usize>,
+    include_robot_data: Option<bool>,
     sort_by: Option<String>,
     sort_direction: Option<String>,
     status: Option<UserStatus>,
@@ -1768,13 +1769,18 @@ impl GroupBuyPlanListQuery {
     }
 }
 
-#[cfg(test)]
 /// 后台用户列表查询参数。
 impl UserListQuery {
-    /// 复用后台通用分页结构，用户列表不涉及机器人数据开关。
+    /// 用户列表默认隐藏机器人账号，只有显式打开开关时才显示。
+    fn include_robot_data(&self) -> bool {
+        self.include_robot_data.unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    /// 复用后台通用分页结构，保留机器人数据开关供测试分页口径使用。
     fn page_query(&self) -> FinancePageQuery {
         FinancePageQuery {
-            include_robot_data: None,
+            include_robot_data: self.include_robot_data,
             kind: None,
             order_id: None,
             page: self.page,
@@ -2849,6 +2855,7 @@ async fn list_users(
     let page = state
         .access
         .user_page(
+            query.include_robot_data(),
             query.status.clone(),
             optional_query_text(query.username.as_deref()),
             query.sort_by.as_deref().unwrap_or_default(),
@@ -5232,6 +5239,7 @@ mod tests {
             test_user("U10003", "carol", 200),
         ];
         let query = UserListQuery {
+            include_robot_data: None,
             page: Some(2),
             page_size: Some(2),
             sort_by: Some("balanceMinor".to_string()),
@@ -5259,6 +5267,7 @@ mod tests {
             test_user("U10003", "carol", 200),
         ];
         let query = UserListQuery {
+            include_robot_data: None,
             page: Some(1),
             page_size: Some(2),
             sort_by: Some("id".to_string()),

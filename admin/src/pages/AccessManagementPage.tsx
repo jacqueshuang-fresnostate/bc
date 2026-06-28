@@ -6,6 +6,7 @@ import {
   Select,
   SideSheet,
   Spin,
+  Switch,
   Tabs,
   Tag,
   Toast,
@@ -337,8 +338,10 @@ export function AccessManagementPage({
     useState<UserStatusFilter>('all');
   const [userUsernameDraft, setUserUsernameDraft] = useState('');
   const [userUsernameSearch, setUserUsernameSearch] = useState('');
+  const [includeRobotData, setIncludeRobotData] = useState(false);
   const userQuery = useMemo(
     () => ({
+      includeRobotData,
       page: userPageNumber,
       pageSize: userPageSize,
       sortBy: userSortBy,
@@ -347,6 +350,7 @@ export function AccessManagementPage({
       username: userUsernameSearch || undefined,
     }),
     [
+      includeRobotData,
       userPageNumber,
       userPageSize,
       userSortBy,
@@ -594,6 +598,7 @@ export function AccessManagementPage({
           statusFilter={userStatusFilter}
           totalCount={userPage.totalCount}
           totalPages={userPage.totalPages}
+          includeRobotData={includeRobotData}
           usernameDraft={userUsernameDraft}
           usernameSearch={userUsernameSearch}
           users={users}
@@ -627,6 +632,10 @@ export function AccessManagementPage({
           }}
           onStatusFilterChange={(status) => {
             setUserStatusFilter(status);
+            setUserPageNumber(1);
+          }}
+          onIncludeRobotDataChange={(checked) => {
+            setIncludeRobotData(checked);
             setUserPageNumber(1);
           }}
           onUsernameDraftChange={setUserUsernameDraft}
@@ -726,6 +735,7 @@ export function AccessManagementPage({
 function UserSection({
   editingId,
   form,
+  includeRobotData,
   loading,
   onClose,
   onDelete,
@@ -735,6 +745,7 @@ function UserSection({
   onOpenOrders,
   onPageChange,
   onPageSizeChange,
+  onIncludeRobotDataChange,
   onSetForm,
   onSortByChange,
   onSortDirectionChange,
@@ -759,6 +770,7 @@ function UserSection({
 }: {
   editingId: string | null;
   form: UserFormState;
+  includeRobotData: boolean;
   loading: boolean;
   onClose: () => void;
   onDelete: (user: AdminUserSummary) => void;
@@ -768,6 +780,7 @@ function UserSection({
   onOpenOrders: (user: AdminUserSummary) => void;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
+  onIncludeRobotDataChange: (checked: boolean) => void;
   onSetForm: Dispatch<SetStateAction<UserFormState>>;
   onSortByChange: (sortBy: UserListSortBy) => void;
   onSortDirectionChange: (sortDirection: UserListSortDirection) => void;
@@ -881,6 +894,10 @@ function UserSection({
               >
                 清空
               </Button>
+              <label className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600">
+                <Switch checked={includeRobotData} onChange={onIncludeRobotDataChange} />
+                <span>显示机器人数据</span>
+              </label>
             </div>
             <PageControls
               loading={loading}

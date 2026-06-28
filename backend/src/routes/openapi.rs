@@ -131,7 +131,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/users",
         "用户管理",
         "用户列表",
-        "分页返回后台用户列表，支持 page、pageSize、sortBy、sortDirection、status 和 username 查询。",
+        "分页返回后台用户列表，默认过滤机器人账号；支持 page、pageSize、includeRobotData、sortBy、sortDirection、status 和 username 查询。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -1808,6 +1808,11 @@ fn query_parameters(route: &RouteDoc) -> Vec<Value> {
             query_parameter("page", "页码，从 1 开始。", "integer"),
             query_parameter("pageSize", "每页数量，默认 20。", "integer"),
             query_parameter(
+                "includeRobotData",
+                "是否显示机器人账号，默认 false。",
+                "boolean",
+            ),
+            query_parameter(
                 "sortBy",
                 "排序字段，可选 id、username、email、kind、status、balanceMinor、agentId、inviteCode。",
                 "string",
@@ -2192,6 +2197,9 @@ mod tests {
         assert!(parameters
             .iter()
             .any(|parameter| parameter["name"].as_str() == Some("pageSize")));
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("includeRobotData")));
         assert!(parameters
             .iter()
             .any(|parameter| parameter["name"].as_str() == Some("sortBy")));

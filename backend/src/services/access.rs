@@ -40,6 +40,7 @@ use crate::{
 
 use super::{
     business_database::{enum_from_string, enum_to_string, to_json, BusinessDatabase},
+    group_buy_robot::{is_group_buy_robot_user_id, ROBOT_GROUP_BUY_USER_IDS},
     pagination::{ListPage, PageRequest},
 };
 
@@ -181,6 +182,7 @@ impl AccessRepository {
     /// 分页返回用户列表；数据库模式下将状态、用户名搜索、排序、余额联查和分页下推到 SQL。
     pub async fn user_page(
         &self,
+        include_robot_data: bool,
         status: Option<UserStatus>,
         username: Option<&str>,
         sort_by: &str,
@@ -195,12 +197,16 @@ impl AccessRepository {
                 username.as_deref(),
                 sort_by,
                 sort_direction,
+                include_robot_data,
                 page,
             )
             .await;
         }
 
         let mut users = self.users().await?;
+        if !include_robot_data {
+            users.retain(|user| !is_group_buy_robot_user_id(&user.id));
+        }
         if let Some(status) = status.as_ref() {
             users.retain(|user| &user.status == status);
         }
@@ -1210,18 +1216,26 @@ async fn query_user_page(
     username: Option<&str>,
     sort_by: &str,
     sort_direction: &str,
+    include_robot_data: bool,
     page: PageRequest,
 ) -> ApiResult<ListPage<UserSummary>> {
     let status = status.as_ref().map(enum_to_string).transpose()?;
     let order_clause = user_page_order_clause(sort_by, sort_direction)?;
+    let robot_user_ids = ROBOT_GROUP_BUY_USER_IDS
+        .iter()
+        .map(|user_id| (*user_id).to_string())
+        .collect::<Vec<_>>();
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
          FROM users u
          WHERE ($1::text IS NULL OR u.status = $1)
-           AND ($2::text IS NULL OR strpos(lower(u.username), lower($2::text)) > 0)",
+           AND ($2::text IS NULL OR strpos(lower(u.username), lower($2::text)) > 0)
+           AND ($3::bool OR NOT (u.id = ANY($4::text[])))",
     )
     .bind(status.as_deref())
     .bind(username)
+    .bind(include_robot_data)
+    .bind(&robot_user_ids)
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("用户分页总数读取失败".to_string()))?;
@@ -1242,12 +1256,15 @@ async fn query_user_page(
          LEFT JOIN financial_accounts account ON account.user_id = u.id
          WHERE ($1::text IS NULL OR u.status = $1)
            AND ($2::text IS NULL OR strpos(lower(u.username), lower($2::text)) > 0)
+           AND ($3::bool OR NOT (u.id = ANY($4::text[])))
          ORDER BY {order_clause}
-         LIMIT $3 OFFSET $4"
+         LIMIT $5 OFFSET $6"
     );
     let rows = sqlx::query(&sql)
         .bind(status.as_deref())
         .bind(username)
+        .bind(include_robot_data)
+        .bind(&robot_user_ids)
         .bind(resolved.limit_i64()?)
         .bind(resolved.offset_i64()?)
         .fetch_all(database.pool())
@@ -3644,6 +3661,7 @@ mod tests {
 
         let page = access
             .user_page(
+                false,
                 None,
                 Some("target"),
                 "id",
@@ -3656,6 +3674,40 @@ mod tests {
         assert_eq!(page.total_count, 1);
         assert_eq!(page.items[0].username, "Search_Target");
     }
+
+    /// 验证后台用户分页默认隐藏机器人账号，显式打开开关后才返回。
+    #[tokio::test]
+    async fn access_repository_user_page_hides_robot_users_by_default() {
+        let access = AccessRepository::memory_seeded();
+
+        let default_page = access
+            .user_page(
+                false,
+                None,
+                Some("agent_alpha"),
+                "id",
+                "desc",
+                PageRequest::new(Some(1), Some(10)),
+            )
+            .await
+            .expect("user page can filter robot users by default");
+        let visible_page = access
+            .user_page(
+                true,
+                None,
+                Some("agent_alpha"),
+                "id",
+                "desc",
+                PageRequest::new(Some(1), Some(10)),
+            )
+            .await
+            .expect("user page can include robot users");
+
+        assert_eq!(default_page.total_count, 0);
+        assert_eq!(visible_page.total_count, 1);
+        assert_eq!(visible_page.items[0].id, "U90001");
+    }
+
     /// 验证存在直属邀请下级时不允许删除用户。
     #[tokio::test]
     async fn access_repository_rejects_delete_user_with_direct_invitees() {

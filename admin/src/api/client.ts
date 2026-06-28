@@ -387,6 +387,9 @@ function userQueryPath(path: string, query?: UserListQuery) {
   if (query?.pageSize && query.pageSize > 0) {
     params.set('pageSize', String(query.pageSize));
   }
+  if (query?.includeRobotData) {
+    params.set('includeRobotData', 'true');
+  }
   if (query?.sortBy) {
     params.set('sortBy', query.sortBy);
   }

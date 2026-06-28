@@ -63,6 +63,7 @@ export type UserListSortBy =
 export type UserListSortDirection = 'asc' | 'desc';
 
 export interface UserListQuery {
+  includeRobotData?: boolean;
   page?: number;
   pageSize?: number;
   sortBy?: UserListSortBy;
