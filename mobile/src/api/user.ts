@@ -233,6 +233,15 @@ export type CreateWithdrawalOrderPayload = {
   amountMinor: number
 }
 
+export type WithdrawalTurnoverProgress = {
+  enabled: boolean
+  userId: string
+  cumulativeRechargeMinor: number
+  requiredEffectiveBetMinor: number
+  completedEffectiveBetMinor: number
+  remainingEffectiveBetMinor: number
+}
+
 export type RechargeChannel = 'rainbowEpay' | 'customerService'
 
 export type RechargeOrderStatus = 'pending' | 'waitingCustomerService' | 'paid' | 'cancelled'
@@ -672,6 +681,12 @@ export async function deleteWithdrawalMethod(id: string) {
 
 export async function fetchWithdrawalOrders(query: UserListQuery = {}) {
   return unwrapApiData<WithdrawalOrder[]>(await http.get('/user/withdrawals', { params: normalizeUserListQuery(query) }))
+}
+
+export async function fetchWithdrawalTurnoverProgress() {
+  return unwrapApiData<WithdrawalTurnoverProgress>(
+    await http.get('/user/withdrawals/turnover'),
+  )
 }
 
 export async function createWithdrawalOrder(payload: CreateWithdrawalOrderPayload) {

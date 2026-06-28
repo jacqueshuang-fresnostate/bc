@@ -29,7 +29,9 @@ use crate::{
         ShareChatHallGroupBuyPlanRequest,
     },
     domain::draw::{DrawIssue, DrawIssueStatus},
-    domain::finance::{FinancialAccountSummary, LedgerEntry, LedgerEntryKind},
+    domain::finance::{
+        FinancialAccountSummary, LedgerEntry, LedgerEntryKind, WithdrawalTurnoverSummary,
+    },
     domain::group_buy::{
         AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyCreateOptions,
         GroupBuyCreateSettings, GroupBuyParticipationSummary, GroupBuyPlan, GroupBuyPlanStatus,
@@ -115,6 +117,16 @@ const ROBOT_GROUP_BUY_NICKNAME_BASES: &[&str] = &[
 /// 用户端客服图片上传响应，只返回可写入客服消息的图片链接。
 struct SupportImageUploadResponse {
     image_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// 用户端提现投注任务进度响应，附带后台开关状态。
+struct UserWithdrawalTurnoverProgress {
+    /// 后台是否开启提现前投注任务校验。
+    enabled: bool,
+    #[serde(flatten)]
+    turnover: WithdrawalTurnoverSummary,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -253,6 +265,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/withdrawal-methods/{method_id}",
             put(update_withdrawal_method).delete(delete_withdrawal_method),
+        )
+        .route(
+            "/withdrawals/turnover",
+            get(get_withdrawal_turnover_progress),
         )
         .route(
             "/withdrawals",
@@ -3818,6 +3834,24 @@ async fn list_withdrawal_orders(
         .await?;
 
     Ok(Json(ApiEnvelope::success(page.items)))
+}
+
+/// 返回当前用户提现前投注任务进度。
+async fn get_withdrawal_turnover_progress(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserAuthSession>,
+) -> ApiResult<Json<ApiEnvelope<UserWithdrawalTurnoverProgress>>> {
+    let settings = state.access.settings().await?;
+    let policy = withdrawal_turnover_policy_from_system_settings(&settings);
+    let turnover = state
+        .finance
+        .withdrawal_turnover_for_user(&session.user.id)
+        .await?;
+
+    Ok(Json(ApiEnvelope::success(UserWithdrawalTurnoverProgress {
+        enabled: policy.enabled,
+        turnover,
+    })))
 }
 
 /// 解析用户列表展示中的时间字符串，兼容 unix 秒字段。

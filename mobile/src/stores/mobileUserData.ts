@@ -7,12 +7,14 @@ import {
   fetchUserLedgerEntries,
   fetchWithdrawalMethods,
   fetchWithdrawalOrders,
+  fetchWithdrawalTurnoverProgress,
   type LedgerEntry,
   type MobileUserProfile,
   type RechargeConfig,
   type RechargeOrder,
   type WithdrawalMethod,
   type WithdrawalOrder,
+  type WithdrawalTurnoverProgress,
 } from '../api/user'
 import { useAuthStore } from './auth'
 
@@ -44,6 +46,7 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
   const rechargeOrders = ref<RechargeOrder[]>([])
   const withdrawalMethods = ref<WithdrawalMethod[]>([])
   const withdrawalOrders = ref<WithdrawalOrder[]>([])
+  const withdrawalTurnoverProgress = ref<WithdrawalTurnoverProgress | null>(null)
   const ledgerEntries = ref<LedgerEntry[]>([])
 
   const loadingProfile = ref(false)
@@ -51,6 +54,7 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
   const loadingRechargeOrders = ref(false)
   const loadingWithdrawalMethods = ref(false)
   const loadingWithdrawalOrders = ref(false)
+  const loadingWithdrawalTurnoverProgress = ref(false)
   const loadingLedgerEntries = ref(false)
 
   const profileFetchedAt = ref(0)
@@ -58,6 +62,7 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
   const rechargeOrdersFetchedAt = ref(0)
   const withdrawalMethodsFetchedAt = ref(0)
   const withdrawalOrdersFetchedAt = ref(0)
+  const withdrawalTurnoverProgressFetchedAt = ref(0)
   const ledgerEntriesFetchedAt = ref(0)
   const userScopeId = ref('')
   const rechargeOrdersPage = ref(0)
@@ -72,6 +77,7 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
   let rechargeOrdersRequest: Promise<LoadResult<RechargeOrder[]>> | null = null
   let withdrawalMethodsRequest: Promise<LoadResult<WithdrawalMethod[]>> | null = null
   let withdrawalOrdersRequest: Promise<LoadResult<WithdrawalOrder[]>> | null = null
+  let withdrawalTurnoverProgressRequest: Promise<LoadResult<WithdrawalTurnoverProgress | null>> | null = null
   let ledgerEntriesRequest: Promise<LoadResult<LedgerEntry[]>> | null = null
 
   function currentUserId() {
@@ -83,11 +89,13 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     rechargeOrders.value = []
     withdrawalMethods.value = []
     withdrawalOrders.value = []
+    withdrawalTurnoverProgress.value = null
     ledgerEntries.value = []
     profileFetchedAt.value = 0
     rechargeOrdersFetchedAt.value = 0
     withdrawalMethodsFetchedAt.value = 0
     withdrawalOrdersFetchedAt.value = 0
+    withdrawalTurnoverProgressFetchedAt.value = 0
     ledgerEntriesFetchedAt.value = 0
     rechargeOrdersPage.value = 0
     withdrawalOrdersPage.value = 0
@@ -239,6 +247,35 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     return withdrawalOrdersRequest
   }
 
+  async function loadWithdrawalTurnoverProgress(
+    options: LoadOptions = {},
+  ): Promise<LoadResult<WithdrawalTurnoverProgress | null>> {
+    syncUserScope()
+    if (
+      !options.force
+      && withdrawalTurnoverProgress.value
+      && hasFreshCache(withdrawalTurnoverProgressFetchedAt.value, USER_LIST_CACHE_MS)
+    ) {
+      return { data: withdrawalTurnoverProgress.value, refreshed: false }
+    }
+    if (withdrawalTurnoverProgressRequest) return withdrawalTurnoverProgressRequest
+
+    if (!options.silent && !withdrawalTurnoverProgress.value) {
+      loadingWithdrawalTurnoverProgress.value = true
+    }
+    withdrawalTurnoverProgressRequest = (async () => {
+      try {
+        withdrawalTurnoverProgress.value = await fetchWithdrawalTurnoverProgress()
+        withdrawalTurnoverProgressFetchedAt.value = Date.now()
+        return { data: withdrawalTurnoverProgress.value, refreshed: true }
+      } finally {
+        if (!options.silent) loadingWithdrawalTurnoverProgress.value = false
+        withdrawalTurnoverProgressRequest = null
+      }
+    })()
+    return withdrawalTurnoverProgressRequest
+  }
+
   async function loadLedgerEntries(options: LoadOptions = {}): Promise<LoadResult<LedgerEntry[]>> {
     syncUserScope()
     const append = Boolean(options.append)
@@ -288,18 +325,21 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     rechargeOrders,
     withdrawalMethods,
     withdrawalOrders,
+    withdrawalTurnoverProgress,
     ledgerEntries,
     loadingProfile,
     loadingRechargeConfig,
     loadingRechargeOrders,
     loadingWithdrawalMethods,
     loadingWithdrawalOrders,
+    loadingWithdrawalTurnoverProgress,
     loadingLedgerEntries,
     profileFetchedAt,
     rechargeConfigFetchedAt,
     rechargeOrdersFetchedAt,
     withdrawalMethodsFetchedAt,
     withdrawalOrdersFetchedAt,
+    withdrawalTurnoverProgressFetchedAt,
     ledgerEntriesFetchedAt,
     rechargeOrdersPage,
     withdrawalOrdersPage,
@@ -312,6 +352,7 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     loadRechargeOrders,
     loadWithdrawalMethods,
     loadWithdrawalOrders,
+    loadWithdrawalTurnoverProgress,
     loadLedgerEntries,
     invalidateProfile,
     setProfile,

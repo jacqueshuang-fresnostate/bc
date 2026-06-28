@@ -1675,6 +1675,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::None,
     ),
     doc(
+        "get",
+        "/user/withdrawals/turnover",
+        "用户端账户",
+        "提现投注任务进度",
+        "返回当前用户提现前投注任务开关状态、所需有效投注、已完成有效投注和剩余有效投注。",
+        AuthMode::User,
+        RequestBodyKind::None,
+    ),
+    doc(
         "post",
         "/user/withdrawals",
         "用户端账户",
@@ -2135,6 +2144,7 @@ mod tests {
         assert!(document["paths"]["/user/chat-hall/group-buy-plans"]["post"].is_object());
         assert!(document["paths"]["/user/recharge/orders"]["post"].is_object());
         assert!(document["paths"]["/user/support/conversations/{id}/messages"]["post"].is_object());
+        assert!(document["paths"]["/user/withdrawals/turnover"]["get"].is_object());
         assert!(document["paths"]["/user/withdrawals"]["post"].is_object());
         assert!(document["paths"]["/user/register"]["post"].is_object());
     }

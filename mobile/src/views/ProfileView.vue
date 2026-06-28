@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
@@ -9,11 +9,15 @@ import { errorMessage, uploadUserAvatar } from '../api/user'
 import CachedAvatarImage from '../components/mobile/CachedAvatarImage.vue'
 import CachedRemoteImage from '../components/mobile/CachedRemoteImage.vue'
 import WalletBentoCard from '../components/mobile/WalletBentoCard.vue'
+import WithdrawalTurnoverProgressCard from '../components/mobile/WithdrawalTurnoverProgressCard.vue'
 import SettingsListGroup from '../components/mobile/SettingsListGroup.vue'
 import LucideIcon from '../components/mobile/LucideIcon.vue'
 import WalletHeaderAmount from '../components/mobile/WalletHeaderAmount.vue'
 import { useMobileUserDataStore } from '../stores/mobileUserData'
 import { useSupportUnreadStore } from '../stores/supportUnread'
+import type { MobileRealtimeEvent } from '../types/realtime'
+
+const props = defineProps<{ wsMessage?: MobileRealtimeEvent | null }>()
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -21,7 +25,11 @@ const brandingStore = useBrandingStore()
 const userDataStore = useMobileUserDataStore()
 const supportUnreadStore = useSupportUnreadStore()
 const { branding } = storeToRefs(brandingStore)
-const { profile } = storeToRefs(userDataStore)
+const {
+  profile,
+  withdrawalTurnoverProgress,
+  loadingWithdrawalTurnoverProgress,
+} = storeToRefs(userDataStore)
 const { hasUnread: hasSupportUnread, unreadTotal: supportUnreadTotal } = storeToRefs(supportUnreadStore)
 const uploadingAvatar = ref(false)
 const avatarInput = ref<HTMLInputElement | null>(null)
@@ -74,11 +82,25 @@ const statusTextMap: Record<string, string> = {
 
 onMounted(async () => {
   try {
-    await userDataStore.loadProfile()
+    await Promise.all([
+      userDataStore.loadProfile(),
+      userDataStore.loadWithdrawalTurnoverProgress(),
+    ])
   } catch {}
   try {
     await supportUnreadStore.loadConversations({ silent: true })
   } catch {}
+})
+
+watch(() => props.wsMessage, (message) => {
+  if (
+    message?.event === 'balance_changed'
+    || message?.event === 'recharge_changed'
+    || message?.event === 'order_changed'
+  ) {
+    void userDataStore.loadProfile({ force: true, silent: true }).catch(() => {})
+    void userDataStore.loadWithdrawalTurnoverProgress({ force: true, silent: true }).catch(() => {})
+  }
 })
 
 function statusText(status: string) {
@@ -207,6 +229,10 @@ async function logout() {
           :usdt-balance="profile?.usdt_balance ? `${profile.usdt_balance} USDT` : '0.00 USDT'"
           @deposit="router.push('/deposit')"
           @withdraw="router.push('/withdraw')"
+        />
+        <WithdrawalTurnoverProgressCard
+          :loading="loadingWithdrawalTurnoverProgress"
+          :progress="withdrawalTurnoverProgress"
         />
       </section>
 
