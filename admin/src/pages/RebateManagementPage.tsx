@@ -201,6 +201,11 @@ export function RebateManagementPage({
     setRecordsPage(1);
   };
 
+  const closeInviteeRecords = () => {
+    setSelectedInvitee(null);
+    setRecordsPage(1);
+  };
+
   const openApplicationReview = (application: AgentApplication) => {
     setSelectedApplication(application);
     setReviewNote(application.reviewNote ?? '');
@@ -1010,49 +1015,62 @@ export function RebateManagementPage({
               )}
             </Card>
 
+          </div>
+        ) : null}
+      </SideSheet>
+
+      <SideSheet
+        aria-label="下级返利记录"
+        title="下级返利记录"
+        visible={Boolean(selectedAgent && selectedInvitee)}
+        width="68%"
+        onCancel={closeInviteeRecords}
+      >
+        {currentSelectedAgent && currentSelectedInvitee ? (
+          <div className="space-y-4">
+            <section className="rounded-md bg-slate-50 p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-ink">
+                    {currentSelectedInvitee.inviteeUsername}
+                  </h2>
+                  <div className="mt-1 text-xs text-slate-600">
+                    {currentSelectedInvitee.inviteeUserId} · 上级代理{' '}
+                    {currentSelectedAgent.agentUsername}
+                  </div>
+                </div>
+                <Tag color="blue">{records.totalCount} 笔返利记录</Tag>
+              </div>
+            </section>
+
             <Card className="rounded-md border border-line">
               <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-semibold text-ink">
-                    {currentSelectedInvitee
-                      ? `${currentSelectedInvitee.inviteeUsername} 的返利记录`
-                      : '下级返利记录'}
-                  </h2>
-                  <Tag color="blue">{currentSelectedInvitee ? records.totalCount : 0} 笔</Tag>
-                </div>
-                {currentSelectedInvitee ? (
-                  <PageControls
-                    loading={recordsLoading}
-                    page={records.page}
-                    pageSize={recordsPageSize}
-                    totalCount={records.totalCount}
-                    totalPages={records.totalPages}
-                    onPageChange={setRecordsPage}
-                    onPageSizeChange={(nextPageSize) => {
-                      setRecordsPage(1);
-                      setRecordsPageSize(nextPageSize);
-                    }}
-                  />
-                ) : null}
+                <h2 className="text-base font-semibold text-ink">返利记录</h2>
+                <PageControls
+                  loading={recordsLoading}
+                  page={records.page}
+                  pageSize={recordsPageSize}
+                  totalCount={records.totalCount}
+                  totalPages={records.totalPages}
+                  onPageChange={setRecordsPage}
+                  onPageSizeChange={(nextPageSize) => {
+                    setRecordsPage(1);
+                    setRecordsPageSize(nextPageSize);
+                  }}
+                />
               </div>
 
-              {!currentSelectedInvitee ? (
-                <div className="rounded-md border border-line p-4 text-sm text-slate-500">
-                  请选择一个直属下级查看返利记录。
-                </div>
-              ) : recordsLoading ? (
+              {recordsLoading ? (
                 <div className="grid min-h-[220px] place-items-center">
                   <Spin tip="正在加载返利明细" />
                 </div>
               ) : records.items.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[940px] text-left text-sm">
+                  <table className="w-full min-w-[720px] text-left text-sm">
                     <thead className="border-b border-line text-xs text-slate-500">
                       <tr>
                         <th className="py-2 pr-4 font-medium">充值订单</th>
                         <th className="py-2 pr-4 font-medium">充值金额</th>
-                        <th className="py-2 pr-4 font-medium">用户总充值</th>
-                        <th className="py-2 pr-4 font-medium">下级总提现</th>
                         <th className="py-2 pr-4 font-medium">返利金额</th>
                         <th className="py-2 pr-4 font-medium">返利时间</th>
                       </tr>
@@ -1067,12 +1085,6 @@ export function RebateManagementPage({
                             {record.rechargeAmountMinor === null
                               ? '-'
                               : formatMoney(record.rechargeAmountMinor)}
-                          </td>
-                          <td className="py-3 pr-4 text-slate-600">
-                            {formatMoney(record.inviteeTotalRechargeMinor)}
-                          </td>
-                          <td className="py-3 pr-4 text-slate-600">
-                            {formatMoney(record.inviteeTotalWithdrawalMinor)}
                           </td>
                           <td className="py-3 pr-4 font-semibold text-emerald-700">
                             {formatMoney(record.rebateAmountMinor)}
