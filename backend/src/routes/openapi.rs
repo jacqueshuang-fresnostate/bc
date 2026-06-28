@@ -131,7 +131,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/users",
         "用户管理",
         "用户列表",
-        "分页返回后台用户列表，默认过滤机器人账号；支持 page、pageSize、includeRobotData、sortBy、sortDirection、status 和 username 查询。",
+        "分页返回后台用户列表，默认过滤机器人账号；支持 page、pageSize、includeRobotData、sortBy、sortDirection、status、username 和 agentId 查询。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -1824,6 +1824,7 @@ fn query_parameters(route: &RouteDoc) -> Vec<Value> {
             ),
             query_parameter("status", "用户状态筛选，可选 active、suspended、locked。", "string"),
             query_parameter("username", "用户名关键字搜索，大小写不敏感。", "string"),
+            query_parameter("agentId", "上级代理用户 ID，传入后只返回该代理的直属下级。", "string"),
         ];
     }
 
@@ -2212,5 +2213,8 @@ mod tests {
         assert!(parameters
             .iter()
             .any(|parameter| parameter["name"].as_str() == Some("username")));
+        assert!(parameters
+            .iter()
+            .any(|parameter| parameter["name"].as_str() == Some("agentId")));
     }
 }

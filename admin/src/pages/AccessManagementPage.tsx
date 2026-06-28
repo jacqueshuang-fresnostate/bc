@@ -338,9 +338,11 @@ export function AccessManagementPage({
     useState<UserStatusFilter>('all');
   const [userUsernameDraft, setUserUsernameDraft] = useState('');
   const [userUsernameSearch, setUserUsernameSearch] = useState('');
+  const [userAgentFilter, setUserAgentFilter] = useState('all');
   const [includeRobotData, setIncludeRobotData] = useState(false);
   const userQuery = useMemo(
     () => ({
+      agentId: userAgentFilter === 'all' ? undefined : userAgentFilter,
       includeRobotData,
       page: userPageNumber,
       pageSize: userPageSize,
@@ -357,10 +359,12 @@ export function AccessManagementPage({
       userSortDirection,
       userStatusFilter,
       userUsernameSearch,
+      userAgentFilter,
     ],
   );
   const {
     admins,
+    agentOptions,
     changeAdminStatus,
     changeUserStatus,
     clearChatHallHistory,
@@ -588,6 +592,8 @@ export function AccessManagementPage({
         <UserSection
           editingId={editingUserId}
           form={userForm}
+          agentOptions={agentOptions}
+          agentFilter={userAgentFilter}
           loading={loading}
           page={userPage.page}
           pageSize={userPageSize}
@@ -632,6 +638,10 @@ export function AccessManagementPage({
           }}
           onStatusFilterChange={(status) => {
             setUserStatusFilter(status);
+            setUserPageNumber(1);
+          }}
+          onAgentFilterChange={(agentId) => {
+            setUserAgentFilter(agentId);
             setUserPageNumber(1);
           }}
           onIncludeRobotDataChange={(checked) => {
@@ -733,6 +743,8 @@ export function AccessManagementPage({
 }
 
 function UserSection({
+  agentFilter,
+  agentOptions,
   editingId,
   form,
   includeRobotData,
@@ -745,6 +757,7 @@ function UserSection({
   onOpenOrders,
   onPageChange,
   onPageSizeChange,
+  onAgentFilterChange,
   onIncludeRobotDataChange,
   onSetForm,
   onSortByChange,
@@ -768,6 +781,8 @@ function UserSection({
   usernameSearch,
   users,
 }: {
+  agentFilter: string;
+  agentOptions: AdminUserSummary[];
   editingId: string | null;
   form: UserFormState;
   includeRobotData: boolean;
@@ -780,6 +795,7 @@ function UserSection({
   onOpenOrders: (user: AdminUserSummary) => void;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
+  onAgentFilterChange: (agentId: string) => void;
   onIncludeRobotDataChange: (checked: boolean) => void;
   onSetForm: Dispatch<SetStateAction<UserFormState>>;
   onSortByChange: (sortBy: UserListSortBy) => void;
@@ -864,6 +880,19 @@ function UserSection({
                 {USER_STATUS_FILTER_OPTIONS.map((option) => (
                   <Select.Option key={option.value} value={option.value}>
                     {option.label}
+                  </Select.Option>
+                ))}
+              </Select>
+              <span className="text-xs font-medium text-slate-500">上级代理</span>
+              <Select
+                className="form-input min-w-[190px]"
+                value={agentFilter}
+                onChange={(value) => onAgentFilterChange(String(value || 'all'))}
+              >
+                <Select.Option value="all">全部代理</Select.Option>
+                {agentOptions.map((agent) => (
+                  <Select.Option key={agent.id} value={agent.id}>
+                    {agent.username}（{agent.id}）
                   </Select.Option>
                 ))}
               </Select>

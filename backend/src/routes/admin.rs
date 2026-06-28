@@ -1585,6 +1585,7 @@ struct UserListQuery {
     sort_direction: Option<String>,
     status: Option<UserStatus>,
     username: Option<String>,
+    agent_id: Option<String>,
 }
 
 #[cfg(test)]
@@ -1774,6 +1775,14 @@ impl UserListQuery {
     /// 用户列表默认隐藏机器人账号，只有显式打开开关时才显示。
     fn include_robot_data(&self) -> bool {
         self.include_robot_data.unwrap_or(false)
+    }
+
+    /// 读取可选上级代理用户 ID，空字符串按未设置处理；筛选结果只包含直属下级。
+    fn agent_id_filter(&self) -> Option<&str> {
+        self.agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|agent_id| !agent_id.is_empty())
     }
 
     #[cfg(test)]
@@ -2917,6 +2926,7 @@ async fn list_users(
             query.include_robot_data(),
             query.status.clone(),
             optional_query_text(query.username.as_deref()),
+            query.agent_id_filter(),
             query.sort_by.as_deref().unwrap_or_default(),
             query.sort_direction.as_deref().unwrap_or_default(),
             PageRequest::new(query.page, query.page_size),
@@ -5328,6 +5338,7 @@ mod tests {
             sort_direction: Some("desc".to_string()),
             status: None,
             username: None,
+            agent_id: None,
         };
 
         sort_users(&mut users, &query).expect("users can be sorted");
@@ -5356,6 +5367,7 @@ mod tests {
             sort_direction: None,
             status: None,
             username: None,
+            agent_id: None,
         };
 
         sort_users(&mut users, &query).expect("users can be sorted with default direction");

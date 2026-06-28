@@ -390,6 +390,9 @@ function userQueryPath(path: string, query?: UserListQuery) {
   if (query?.includeRobotData) {
     params.set('includeRobotData', 'true');
   }
+  if (query?.agentId?.trim()) {
+    params.set('agentId', query.agentId.trim());
+  }
   if (query?.sortBy) {
     params.set('sortBy', query.sortBy);
   }

@@ -10,6 +10,7 @@ import {
   fetchRegistrationConfig,
   fetchRoles,
   fetchSystemSettings,
+  fetchUsers,
   fetchUserPage,
   reloadBackendMemoryCache,
   resetAdminPassword,
@@ -49,6 +50,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
   const [roles, setRoles] = useState<AdminRole[]>([]);
   const [settings, setSettings] = useState<SystemSetting[]>([]);
   const [userPage, setUserPage] = useState<UserPage>(emptyUserPage);
+  const [agentOptions, setAgentOptions] = useState<AdminUserSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +68,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
 
     Promise.all([
       fetchUserPage(controller.signal, userQuery),
+      fetchUsers(controller.signal),
       fetchAdmins(controller.signal),
       fetchRoles(controller.signal),
       fetchSystemSettings(controller.signal),
@@ -74,12 +77,14 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
       .then(
         ([
           nextUserPage,
+          nextUsers,
           nextAdmins,
           nextRoles,
           nextSettings,
           nextRegistration,
         ]) => {
           setUserPage(nextUserPage);
+          setAgentOptions(nextUsers.filter((user) => user.kind === 'agent'));
           setAdmins(nextAdmins);
           setRoles(nextRoles);
           setSettings(nextSettings);
@@ -109,6 +114,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     userQuery.sortDirection,
     userQuery.status,
     userQuery.username,
+    userQuery.agentId,
   ]);
 
   const saveUser = useCallback(async (payload: UserSummary, existingId?: string) => {
@@ -327,6 +333,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
 
   return {
     admins,
+    agentOptions,
     changeAdminStatus,
     changeUserStatus,
     clearChatHallHistory,

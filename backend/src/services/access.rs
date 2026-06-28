@@ -185,16 +185,19 @@ impl AccessRepository {
         include_robot_data: bool,
         status: Option<UserStatus>,
         username: Option<&str>,
+        agent_id: Option<&str>,
         sort_by: &str,
         sort_direction: &str,
         page: PageRequest,
     ) -> ApiResult<ListPage<UserSummary>> {
         let username = normalized_username_filter(username);
+        let agent_id = normalized_agent_id_filter(agent_id);
         if let Some(persistence) = &self.persistence {
             return query_user_page(
                 persistence,
                 status,
                 username.as_deref(),
+                agent_id.as_deref(),
                 sort_by,
                 sort_direction,
                 include_robot_data,
@@ -213,6 +216,9 @@ impl AccessRepository {
         if let Some(username) = username.as_ref() {
             let username = username.to_ascii_lowercase();
             users.retain(|user| user.username.to_ascii_lowercase().contains(&username));
+        }
+        if let Some(agent_id) = agent_id.as_ref() {
+            users.retain(|user| user.agent_id.as_deref() == Some(agent_id.as_str()));
         }
         sort_user_summaries(&mut users, sort_by, sort_direction)?;
         Ok(ListPage::from_all(users, page))
@@ -1214,6 +1220,7 @@ async fn query_user_page(
     database: &BusinessDatabase,
     status: Option<UserStatus>,
     username: Option<&str>,
+    agent_id: Option<&str>,
     sort_by: &str,
     sort_direction: &str,
     include_robot_data: bool,
@@ -1230,10 +1237,12 @@ async fn query_user_page(
          FROM users u
          WHERE ($1::text IS NULL OR u.status = $1)
            AND ($2::text IS NULL OR strpos(lower(u.username), lower($2::text)) > 0)
-           AND ($3::bool OR NOT (u.id = ANY($4::text[])))",
+           AND ($3::text IS NULL OR u.agent_id = $3)
+           AND ($4::bool OR NOT (u.id = ANY($5::text[])))",
     )
     .bind(status.as_deref())
     .bind(username)
+    .bind(agent_id)
     .bind(include_robot_data)
     .bind(&robot_user_ids)
     .fetch_one(database.pool())
@@ -1256,13 +1265,15 @@ async fn query_user_page(
          LEFT JOIN financial_accounts account ON account.user_id = u.id
          WHERE ($1::text IS NULL OR u.status = $1)
            AND ($2::text IS NULL OR strpos(lower(u.username), lower($2::text)) > 0)
-           AND ($3::bool OR NOT (u.id = ANY($4::text[])))
+           AND ($3::text IS NULL OR u.agent_id = $3)
+           AND ($4::bool OR NOT (u.id = ANY($5::text[])))
          ORDER BY {order_clause}
-         LIMIT $5 OFFSET $6"
+         LIMIT $6 OFFSET $7"
     );
     let rows = sqlx::query(&sql)
         .bind(status.as_deref())
         .bind(username)
+        .bind(agent_id)
         .bind(include_robot_data)
         .bind(&robot_user_ids)
         .bind(resolved.limit_i64()?)
@@ -1350,6 +1361,14 @@ fn normalized_username_filter(username: Option<&str>) -> Option<String> {
     username
         .map(str::trim)
         .filter(|username| !username.is_empty())
+        .map(ToString::to_string)
+}
+
+/// 归一化后台用户列表的上级代理筛选，空白输入不参与过滤。
+fn normalized_agent_id_filter(agent_id: Option<&str>) -> Option<String> {
+    agent_id
+        .map(str::trim)
+        .filter(|agent_id| !agent_id.is_empty())
         .map(ToString::to_string)
 }
 
@@ -3664,6 +3683,7 @@ mod tests {
                 false,
                 None,
                 Some("target"),
+                None,
                 "id",
                 "desc",
                 PageRequest::new(Some(1), Some(10)),
@@ -3673,6 +3693,109 @@ mod tests {
 
         assert_eq!(page.total_count, 1);
         assert_eq!(page.items[0].username, "Search_Target");
+    }
+
+    /// 验证后台用户分页可以按上级代理筛选直属下级，并且筛选发生在分页前。
+    #[tokio::test]
+    async fn access_repository_user_page_filters_by_agent_before_pagination() {
+        let access = AccessRepository::memory_seeded();
+        for user in [
+            UserSummary {
+                id: "U21001".to_string(),
+                username: "agent_filter_alpha".to_string(),
+                email: None,
+                avatar_url: String::new(),
+                contact_qq: String::new(),
+                kind: UserKind::Agent,
+                status: UserStatus::Active,
+                balance_minor: 0,
+                agent_id: None,
+                invite_code: "AF21001".to_string(),
+                registration_location: UserRegistrationLocation::default(),
+                created_at: "2026-06-28 10:00:00".to_string(),
+            },
+            UserSummary {
+                id: "U21002".to_string(),
+                username: "agent_filter_beta".to_string(),
+                email: None,
+                avatar_url: String::new(),
+                contact_qq: String::new(),
+                kind: UserKind::Agent,
+                status: UserStatus::Active,
+                balance_minor: 0,
+                agent_id: None,
+                invite_code: "AF21002".to_string(),
+                registration_location: UserRegistrationLocation::default(),
+                created_at: "2026-06-28 10:01:00".to_string(),
+            },
+            UserSummary {
+                id: "U21003".to_string(),
+                username: "alpha_direct_one".to_string(),
+                email: None,
+                avatar_url: String::new(),
+                contact_qq: String::new(),
+                kind: UserKind::Regular,
+                status: UserStatus::Active,
+                balance_minor: 0,
+                agent_id: Some("U21001".to_string()),
+                invite_code: String::new(),
+                registration_location: UserRegistrationLocation::default(),
+                created_at: "2026-06-28 10:02:00".to_string(),
+            },
+            UserSummary {
+                id: "U21004".to_string(),
+                username: "alpha_direct_two".to_string(),
+                email: None,
+                avatar_url: String::new(),
+                contact_qq: String::new(),
+                kind: UserKind::Regular,
+                status: UserStatus::Active,
+                balance_minor: 0,
+                agent_id: Some("U21001".to_string()),
+                invite_code: String::new(),
+                registration_location: UserRegistrationLocation::default(),
+                created_at: "2026-06-28 10:03:00".to_string(),
+            },
+            UserSummary {
+                id: "U21005".to_string(),
+                username: "beta_direct_one".to_string(),
+                email: None,
+                avatar_url: String::new(),
+                contact_qq: String::new(),
+                kind: UserKind::Regular,
+                status: UserStatus::Active,
+                balance_minor: 0,
+                agent_id: Some("U21002".to_string()),
+                invite_code: String::new(),
+                registration_location: UserRegistrationLocation::default(),
+                created_at: "2026-06-28 10:04:00".to_string(),
+            },
+        ] {
+            access
+                .create_user(user)
+                .await
+                .expect("agent filter fixture user can be created");
+        }
+
+        let page = access
+            .user_page(
+                false,
+                None,
+                None,
+                Some("U21001"),
+                "id",
+                "desc",
+                PageRequest::new(Some(1), Some(1)),
+            )
+            .await
+            .expect("user page can be filtered by agent");
+
+        assert_eq!(page.total_count, 2);
+        assert_eq!(page.items.len(), 1);
+        assert!(page
+            .items
+            .iter()
+            .all(|user| user.agent_id.as_deref() == Some("U21001")));
     }
 
     /// 验证后台用户分页默认隐藏机器人账号，显式打开开关后才返回。
@@ -3685,6 +3808,7 @@ mod tests {
                 false,
                 None,
                 Some("agent_alpha"),
+                None,
                 "id",
                 "desc",
                 PageRequest::new(Some(1), Some(10)),
@@ -3696,6 +3820,7 @@ mod tests {
                 true,
                 None,
                 Some("agent_alpha"),
+                None,
                 "id",
                 "desc",
                 PageRequest::new(Some(1), Some(10)),
