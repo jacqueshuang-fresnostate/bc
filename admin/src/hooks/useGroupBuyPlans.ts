@@ -99,21 +99,26 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
     setError(null);
     try {
       const detail = await fetchGroupBuyPlan(id);
-      setSelectedPlan(detail);
+      const fallback = planPage.items.find((plan) => plan.id === detail.id);
+      const detailWithSettlement = groupBuyPlanWithOrderSettlement(detail, fallback);
+      setSelectedPlan(detailWithSettlement);
       setPlanPage((current) =>
         upsertPageItem(
           current,
-          summaryFromPlan(detail, current.items.find((plan) => plan.id === detail.id)),
+          summaryFromPlan(
+            detailWithSettlement,
+            current.items.find((plan) => plan.id === detail.id),
+          ),
         ),
       );
-      return detail;
+      return detailWithSettlement;
     } catch (requestError) {
       setError(errorMessage(requestError));
       throw requestError;
     } finally {
       setSaving(false);
     }
-  }, []);
+  }, [planPage.items]);
 
   const create = useCallback(async (payload: CreateGroupBuyPlanRequest) => {
     setSaving(true);
@@ -286,6 +291,23 @@ function summaryFromPlan(
     ruleCode: plan.ruleCode,
     title: plan.title,
     createdAt: plan.createdAt,
+  };
+}
+
+function groupBuyPlanWithOrderSettlement(
+  plan: GroupBuyPlan,
+  fallback?: GroupBuyPlanSummary,
+): GroupBuyPlan {
+  if (!fallback) {
+    return plan;
+  }
+
+  return {
+    ...plan,
+    orderStatus: plan.orderStatus ?? fallback.orderStatus ?? null,
+    orderDrawNumber: plan.orderDrawNumber ?? fallback.orderDrawNumber ?? null,
+    orderPayoutMinor: plan.orderPayoutMinor ?? fallback.orderPayoutMinor ?? null,
+    orderSettledAt: plan.orderSettledAt ?? fallback.orderSettledAt ?? null,
   };
 }
 

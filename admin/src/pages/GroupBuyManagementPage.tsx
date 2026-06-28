@@ -29,7 +29,7 @@ import type {
   GroupBuyPlanSummary,
 } from '../types/groupBuy';
 import type { PlayRuleCode } from '../types/playRules';
-import { formatMoney } from '../utils/format';
+import { formatDateTime, formatMoney } from '../utils/format';
 import { yuanInputToMinor } from '../utils/moneyInput';
 
 interface GroupBuyManagementPageProps {
@@ -750,6 +750,10 @@ export function GroupBuyManagementPage({
                       />
                     </div>
 
+                    {shouldShowSettlementResult(detailPlan) ? (
+                      <SettlementResultView plan={detailPlan} />
+                    ) : null}
+
                     <div className="mt-4">
                       <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
                         <span>合买进度</span>
@@ -888,6 +892,47 @@ function InfoLine({ label, value }: InfoLineProps) {
   );
 }
 
+function SettlementResultView({ plan }: { plan: GroupBuyPlanSummary }) {
+  return (
+    <div className="mt-4 rounded-md border border-line bg-white px-3 py-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-ink">结算结果</div>
+        <Tag color={groupBuyOrderStatusColor(plan)}>
+          {groupBuyOrderStatusText(plan)}
+        </Tag>
+      </div>
+      <div className="grid gap-3 text-sm sm:grid-cols-3">
+        <div>
+          <div className="text-xs text-slate-500">输赢</div>
+          <div className="mt-1 font-medium text-ink">
+            {groupBuyOrderStatusText(plan)}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">开奖号码</div>
+          <div className="mt-1 break-all font-medium text-ink">
+            {plan.orderDrawNumber ?? '-'}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">派奖金额</div>
+          <div className="mt-1 font-medium text-ink">
+            {plan.orderPayoutMinor == null
+              ? '-'
+              : formatMoney(plan.orderPayoutMinor)}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">结算时间</div>
+          <div className="mt-1 font-medium text-ink">
+            {formatDateTime(plan.orderSettledAt, plan.orderSettledAt ?? '-')}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function emptyCreateForm(
   lotteryId = '',
   initiatorUserId = '',
@@ -987,6 +1032,15 @@ function groupBuyOrderStatusColor(plan: GroupBuyPlanSummary) {
   } as const;
 
   return mapping[plan.orderStatus];
+}
+
+function shouldShowSettlementResult(plan: GroupBuyPlanSummary) {
+  return (
+    plan.status === 'settled' ||
+    plan.orderStatus === 'won' ||
+    plan.orderStatus === 'lost' ||
+    Boolean(plan.orderDrawNumber)
+  );
 }
 
 function isRobotGroupBuyPlan(plan: GroupBuyPlanSummary) {
