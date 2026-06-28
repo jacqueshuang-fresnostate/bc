@@ -19,7 +19,7 @@ use crate::{
 };
 
 const MAX_RISK_POOL_CANDIDATES: u64 = 200_000;
-const RISK_POOL_TTL_SECONDS: usize = 12 * 60 * 60;
+const RISK_POOL_TTL_SECONDS: usize = 20 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Redis 风险池返回的最低赔付候选号码。
@@ -186,6 +186,12 @@ mod tests {
         },
         services::draw_risk::{enumerable_draw_numbers, order_risk_increments},
     };
+
+    #[test]
+    /// 验证避奖 Redis 风险池只保留 20 分钟，避免历史期号候选长期占用 Redis。
+    fn risk_pool_ttl_is_twenty_minutes() {
+        assert_eq!(super::RISK_POOL_TTL_SECONDS, 20 * 60);
+    }
 
     #[test]
     /// 验证三位号码空间会完整初始化为 1000 个候选。
