@@ -5,6 +5,8 @@ export type GroupBuyPlanStatus =
   | 'cancelled'
   | 'settled';
 
+export type GroupBuyOrderStatus = 'pendingDraw' | 'won' | 'lost' | 'cancelled';
+
 export type GroupBuyFormationStatus = 'formed' | 'unformed';
 
 export interface GroupBuyPlanListQuery {
@@ -30,6 +32,10 @@ export interface GroupBuyPlanSummary {
   lotteryId: string;
   lotteryName: string;
   orderId?: string | null;
+  orderStatus?: GroupBuyOrderStatus | null;
+  orderDrawNumber?: string | null;
+  orderPayoutMinor?: number | null;
+  orderSettledAt?: string | null;
   issue: string;
   ruleCode: string;
   title: string;

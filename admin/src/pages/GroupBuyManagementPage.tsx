@@ -474,12 +474,13 @@ export function GroupBuyManagementPage({
               </div>
               {plans.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1080px] text-left text-sm">
+                  <table className="w-full min-w-[1180px] text-left text-sm">
                     <thead className="border-b border-line text-xs text-slate-500">
                       <tr>
                         <th className="py-2 pr-4 font-medium">计划</th>
                         <th className="py-2 pr-4 font-medium">彩种/期号</th>
                         <th className="py-2 pr-4 font-medium">成单</th>
+                        <th className="py-2 pr-4 font-medium">中奖状态</th>
                         <th className="py-2 pr-4 font-medium">创建时间</th>
                         <th className="py-2 pr-4 font-medium">进度</th>
                         <th className="py-2 pr-4 font-medium">状态</th>
@@ -515,6 +516,9 @@ export function GroupBuyManagementPage({
                             ) : (
                               <Tag color="grey">未成单</Tag>
                             )}
+                          </td>
+                          <td className="py-3 pr-4 text-slate-600">
+                            <GroupBuyOrderStatusView plan={plan} />
                           </td>
                           <td className="py-3 pr-4 text-xs text-slate-500">
                             {plan.createdAt || '-'}
@@ -778,6 +782,22 @@ export function GroupBuyManagementPage({
                         value={formatRuleCode(detailPlan.ruleCode as PlayRuleCode)}
                       />
                       <InfoLine label="订单号" value={detailPlan.orderId ?? '未成单'} />
+                      <InfoLine
+                        label="中奖状态"
+                        value={groupBuyOrderStatusText(detailPlan)}
+                      />
+                      <InfoLine
+                        label="开奖号码"
+                        value={detailPlan.orderDrawNumber ?? '-'}
+                      />
+                      <InfoLine
+                        label="派奖金额"
+                        value={
+                          detailPlan.orderPayoutMinor == null
+                            ? '-'
+                            : formatMoney(detailPlan.orderPayoutMinor)
+                        }
+                      />
                       <InfoLine label="发起人" value={detailPlan.initiatorUsername} />
                       <InfoLine
                         label="计划总额"
@@ -1130,6 +1150,59 @@ function progressPercent(plan: GroupBuyPlanSummary) {
     100,
     Math.round((plan.filledAmountMinor / plan.totalAmountMinor) * 100),
   );
+}
+
+function GroupBuyOrderStatusView({ plan }: { plan: GroupBuyPlanSummary }) {
+  const color = groupBuyOrderStatusColor(plan);
+  const payoutText =
+    plan.orderPayoutMinor != null && plan.orderPayoutMinor > 0
+      ? formatMoney(plan.orderPayoutMinor)
+      : '';
+
+  return (
+    <div className="space-y-1">
+      <Tag color={color}>{groupBuyOrderStatusText(plan)}</Tag>
+      {payoutText ? (
+        <div className="text-xs font-medium text-emerald-600">派奖 {payoutText}</div>
+      ) : null}
+      {plan.orderDrawNumber ? (
+        <div className="text-xs text-slate-400">开奖号码 {plan.orderDrawNumber}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function groupBuyOrderStatusText(plan: GroupBuyPlanSummary) {
+  if (!plan.orderId) {
+    return '未成单';
+  }
+  if (!plan.orderStatus) {
+    return '订单缺失';
+  }
+
+  const mapping = {
+    cancelled: '已取消',
+    lost: '未中奖',
+    pendingDraw: '待开奖',
+    won: '已中奖',
+  } as const;
+
+  return mapping[plan.orderStatus];
+}
+
+function groupBuyOrderStatusColor(plan: GroupBuyPlanSummary) {
+  if (!plan.orderId || !plan.orderStatus) {
+    return 'grey';
+  }
+
+  const mapping = {
+    cancelled: 'grey',
+    lost: 'red',
+    pendingDraw: 'blue',
+    won: 'green',
+  } as const;
+
+  return mapping[plan.orderStatus];
 }
 
 function isRobotGroupBuyPlan(plan: GroupBuyPlanSummary) {

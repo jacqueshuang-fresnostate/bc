@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::order::OrderStatus;
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 /// 合买计划状态，描述从草稿、开放认购到满单、取消和结算的生命周期。
@@ -88,6 +90,10 @@ impl GroupBuyPlan {
             lottery_id: self.lottery_id.clone(),
             lottery_name: self.lottery_name.clone(),
             order_id: self.order_id.clone(),
+            order_status: None,
+            order_draw_number: None,
+            order_payout_minor: None,
+            order_settled_at: None,
             issue: self.issue.clone(),
             rule_code: self.rule_code.clone(),
             title: self.title.clone(),
@@ -114,6 +120,14 @@ pub struct GroupBuyPlanSummary {
     pub lottery_name: String,
     /// 投注订单 ID。
     pub order_id: Option<String>,
+    /// 关联订单状态；未成单或历史订单缺失时为空。
+    pub order_status: Option<OrderStatus>,
+    /// 关联订单开奖号码；待开奖或未成单时为空。
+    pub order_draw_number: Option<String>,
+    /// 关联订单派奖金额，单位为分；未成单或历史订单缺失时为空。
+    pub order_payout_minor: Option<i64>,
+    /// 关联订单结算完成时间；待开奖或未成单时为空。
+    pub order_settled_at: Option<String>,
     /// 彩票期号。
     pub issue: String,
     /// 玩法规则编码。

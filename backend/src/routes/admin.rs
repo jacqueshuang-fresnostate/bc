@@ -2376,8 +2376,71 @@ async fn list_group_buy_plans(
             PageRequest::new(query.page, query.page_size),
         )
         .await?;
+    let page = group_buy_plan_page_with_order_settlement(&state, page).await?;
 
-    Ok(Json(ApiEnvelope::success(page.into_finance_page())))
+    Ok(Json(ApiEnvelope::success(page)))
+}
+
+/// 为合买计划当前页补充关联订单结算状态，方便后台列表直接判断中奖或未中奖。
+async fn group_buy_plan_page_with_order_settlement(
+    state: &AppState,
+    page: crate::services::pagination::ListPage<GroupBuyPlanSummary>,
+) -> ApiResult<FinancePage<GroupBuyPlanSummary>> {
+    let mut orders = BTreeMap::new();
+    for order_id in page
+        .items
+        .iter()
+        .filter_map(|plan| plan.order_id.as_deref())
+        .collect::<BTreeSet<_>>()
+    {
+        match state.orders.get(order_id).await {
+            Ok(order) => {
+                orders.insert(order.id.clone(), order);
+            }
+            Err(ApiError::NotFound(_)) => {
+                tracing::warn!(
+                    order_id = %order_id,
+                    "后台合买计划列表关联订单不存在，中奖状态按未知展示"
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let items = page
+        .items
+        .into_iter()
+        .map(|plan| {
+            let order = plan
+                .order_id
+                .as_deref()
+                .and_then(|order_id| orders.get(order_id));
+            match order {
+                Some(order) => group_buy_summary_with_order_settlement(plan, order),
+                None => plan,
+            }
+        })
+        .collect();
+
+    Ok(FinancePage {
+        items,
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
+    })
+}
+
+/// 把合买摘要与真实订单结算结果合并，避免前端再额外请求订单详情判断中奖状态。
+fn group_buy_summary_with_order_settlement(
+    mut plan: GroupBuyPlanSummary,
+    order: &OrderDetail,
+) -> GroupBuyPlanSummary {
+    plan.order_status = Some(order.status.clone());
+    plan.order_draw_number = order.draw_number.clone();
+    plan.order_payout_minor = Some(order.payout_minor);
+    plan.order_settled_at = order.settled_at.clone();
+    plan
 }
 
 /// 一键清除已结束合买计划历史；未结算计划由仓储自动保留。
@@ -4992,14 +5055,14 @@ mod tests {
         admin_withdrawal_order_with_user_display, agent_rebate_records_from_data,
         agent_rebate_summary_from_data, align_draw_issue_plan_after_sale_on,
         filter_users_by_status, filter_users_by_username, finance_overview_for_query,
-        first_admin_audit_ip, normalize_admin_draw_control_target, page_items,
-        required_permission_for_request, required_scope_for_path,
-        should_align_draw_issue_plan_after_sale_on, should_include_robot_initiated_group_buy_plan,
-        should_include_user_scoped_record, should_match_user_filter,
-        sort_agent_rebate_records_by_time_desc, sort_financial_accounts_by_latest_user_desc,
-        sort_ledger_entries_by_time_desc, sort_recharge_orders_by_time_desc, sort_users,
-        sort_withdrawal_orders_by_time_desc, username_map_from_users, AdminFinanceUserDisplay,
-        FinancePageQuery, UserListQuery,
+        first_admin_audit_ip, group_buy_summary_with_order_settlement,
+        normalize_admin_draw_control_target, page_items, required_permission_for_request,
+        required_scope_for_path, should_align_draw_issue_plan_after_sale_on,
+        should_include_robot_initiated_group_buy_plan, should_include_user_scoped_record,
+        should_match_user_filter, sort_agent_rebate_records_by_time_desc,
+        sort_financial_accounts_by_latest_user_desc, sort_ledger_entries_by_time_desc,
+        sort_recharge_orders_by_time_desc, sort_users, sort_withdrawal_orders_by_time_desc,
+        username_map_from_users, AdminFinanceUserDisplay, FinancePageQuery, UserListQuery,
     };
     use crate::services::group_buy_robot::ROBOT_GROUP_BUY_USER_ID;
     use crate::{
@@ -5012,9 +5075,10 @@ mod tests {
             finance::{
                 AdminFinancialAccountSummary, FinancialAccountSummary, LedgerEntry, LedgerEntryKind,
             },
+            group_buy::{GroupBuyPlanStatus, GroupBuyPlanSummary},
             invite::{InviteRecord, InviteStatus},
-            lottery::DrawMode,
-            order::CreateOrderRequest,
+            lottery::{DrawMode, LotteryNumberType},
+            order::{CreateOrderRequest, OrderDetail, OrderSource, OrderStatus},
             permission::PermissionScope,
             play::{PlayRuleCode, PlaySelection},
             recharge::{RechargeChannel, RechargeOrderStatus, RechargeOrderSummary},
@@ -5202,6 +5266,23 @@ mod tests {
         assert!(should_include_robot_initiated_group_buy_plan(
             false, "U10001"
         ));
+    }
+
+    #[test]
+    /// 合买列表摘要会合并关联订单结算结果，供后台直接展示中奖状态。
+    fn group_buy_summary_includes_order_settlement_status() {
+        let summary = group_buy_summary_with_order_settlement(
+            group_buy_summary("G-test", Some("O-test")),
+            &order_detail("O-test", OrderStatus::Won, 9_800),
+        );
+
+        assert_eq!(summary.order_status, Some(OrderStatus::Won));
+        assert_eq!(summary.order_draw_number.as_deref(), Some("1,2,3"));
+        assert_eq!(summary.order_payout_minor, Some(9_800));
+        assert_eq!(
+            summary.order_settled_at.as_deref(),
+            Some("2026-06-28 18:20:00")
+        );
     }
 
     #[test]
@@ -5932,6 +6013,54 @@ mod tests {
             user_id: "U10001".to_string(),
             user_unread_count: 0,
             username: "alice".to_string(),
+        }
+    }
+    /// 构造合买摘要测试数据。
+    fn group_buy_summary(id: &str, order_id: Option<&str>) -> GroupBuyPlanSummary {
+        GroupBuyPlanSummary {
+            id: id.to_string(),
+            lottery_id: "fc3d".to_string(),
+            lottery_name: "福彩 3D".to_string(),
+            order_id: order_id.map(ToString::to_string),
+            order_status: None,
+            order_draw_number: None,
+            order_payout_minor: None,
+            order_settled_at: None,
+            issue: "2026155".to_string(),
+            rule_code: "threeDirect".to_string(),
+            title: "测试合买".to_string(),
+            initiator_user_id: "U10001".to_string(),
+            initiator_username: "demo_user".to_string(),
+            total_amount_minor: 10_000,
+            filled_amount_minor: 10_000,
+            share_count: 100,
+            status: GroupBuyPlanStatus::Settled,
+            created_at: "2026-06-28 18:00:00".to_string(),
+        }
+    }
+    /// 构造订单详情测试数据。
+    fn order_detail(id: &str, status: OrderStatus, payout_minor: i64) -> OrderDetail {
+        OrderDetail {
+            id: id.to_string(),
+            order_source: OrderSource::GroupBuy,
+            user_id: "U10001".to_string(),
+            lottery_id: "fc3d".to_string(),
+            lottery_name: "福彩 3D".to_string(),
+            issue: "2026155".to_string(),
+            rule_code: PlayRuleCode::ThreeDirect,
+            number_type: LotteryNumberType::ThreeDigit,
+            selection: PlaySelection::default(),
+            stake_count: 1,
+            unit_amount_minor: 10_000,
+            amount_minor: 10_000,
+            odds_basis_points: 98_000,
+            expanded_bets: vec!["1|2|3".to_string()],
+            draw_number: Some("1,2,3".to_string()),
+            matched_bets: vec!["1|2|3".to_string()],
+            payout_minor,
+            status,
+            settled_at: Some("2026-06-28 18:20:00".to_string()),
+            created_at: "2026-06-28 18:00:00".to_string(),
         }
     }
     /// 构造测试用充值订单。

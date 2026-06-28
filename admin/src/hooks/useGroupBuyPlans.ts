@@ -100,7 +100,12 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
     try {
       const detail = await fetchGroupBuyPlan(id);
       setSelectedPlan(detail);
-      setPlanPage((current) => upsertPageItem(current, summaryFromPlan(detail)));
+      setPlanPage((current) =>
+        upsertPageItem(
+          current,
+          summaryFromPlan(detail, current.items.find((plan) => plan.id === detail.id)),
+        ),
+      );
       return detail;
     } catch (requestError) {
       setError(errorMessage(requestError));
@@ -134,7 +139,12 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
       try {
         const updated = await updateGroupBuyPlan(id, payload);
         setSelectedPlan(updated);
-        setPlanPage((current) => upsertPageItem(current, summaryFromPlan(updated)));
+        setPlanPage((current) =>
+          upsertPageItem(
+            current,
+            summaryFromPlan(updated, current.items.find((plan) => plan.id === updated.id)),
+          ),
+        );
         return updated;
       } catch (requestError) {
         setError(errorMessage(requestError));
@@ -153,7 +163,12 @@ export function useGroupBuyPlans({ planQuery }: UseGroupBuyPlansOptions) {
       try {
         const updated = await addGroupBuyParticipant(id, payload);
         setSelectedPlan(updated);
-        setPlanPage((current) => upsertPageItem(current, summaryFromPlan(updated)));
+        setPlanPage((current) =>
+          upsertPageItem(
+            current,
+            summaryFromPlan(updated, current.items.find((plan) => plan.id === updated.id)),
+          ),
+        );
         return updated;
       } catch (requestError) {
         setError(errorMessage(requestError));
@@ -248,7 +263,10 @@ const emptyPage: FinancePage<GroupBuyPlanSummary> = {
   totalPages: 0,
 };
 
-function summaryFromPlan(plan: GroupBuyPlan): GroupBuyPlanSummary {
+function summaryFromPlan(
+  plan: GroupBuyPlan,
+  fallback?: GroupBuyPlanSummary,
+): GroupBuyPlanSummary {
   return {
     filledAmountMinor: plan.filledAmountMinor,
     id: plan.id,
@@ -260,6 +278,10 @@ function summaryFromPlan(plan: GroupBuyPlan): GroupBuyPlanSummary {
     status: plan.status,
     totalAmountMinor: plan.totalAmountMinor,
     orderId: plan.orderId,
+    orderStatus: plan.orderStatus ?? fallback?.orderStatus ?? null,
+    orderDrawNumber: plan.orderDrawNumber ?? fallback?.orderDrawNumber ?? null,
+    orderPayoutMinor: plan.orderPayoutMinor ?? fallback?.orderPayoutMinor ?? null,
+    orderSettledAt: plan.orderSettledAt ?? fallback?.orderSettledAt ?? null,
     issue: plan.issue,
     ruleCode: plan.ruleCode,
     title: plan.title,
