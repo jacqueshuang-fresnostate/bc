@@ -145,6 +145,9 @@ export interface FinanceOverview {
   totalBalanceMinor: number;
   pendingWithdrawMinor: number;
   todayRechargeMinor: number;
+  todayWithdrawMinor: number;
+  totalRechargeMinor: number;
+  totalWithdrawMinor: number;
   todayPayoutMinor: number;
 }
 

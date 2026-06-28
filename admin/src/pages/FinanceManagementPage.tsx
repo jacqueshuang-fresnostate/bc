@@ -34,7 +34,6 @@ import { PageControls } from '../components/PageControls';
 import { useFinance } from '../hooks/useFinance';
 import type {
   AdminFinancialAccountSummary,
-  FinancePage,
   LedgerEntry,
   LedgerEntryKind,
   ManualBalanceAdjustmentRequest,
@@ -140,10 +139,6 @@ export function FinanceManagementPage({
   const [adjustmentSheetVisible, setAdjustmentSheetVisible] = useState(false);
   const [adjustmentAccount, setAdjustmentAccount] =
     useState<AdminFinancialAccountSummary | null>(null);
-
-  const availableBalanceMinor = overview
-    ? overview.totalBalanceMinor - overview.pendingWithdrawMinor
-    : 0;
 
   useEffect(() => {
     if (!ledgerUserFilter?.userId) {
@@ -334,31 +329,26 @@ export function FinanceManagementPage({
 
       {error ? <Banner type="danger" title="财务接口错误" description={error} /> : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <MetricCard
-          label="可用余额"
-          trend={`${accounts.totalCount} 个账户`}
-          value={formatMoney(availableBalanceMinor)}
-        />
-        <MetricCard
-          label="冻结余额"
-          trend="提现申请冻结"
-          value={formatMoney(overview?.pendingWithdrawMinor ?? 0)}
-        />
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="今日充值"
           trend="充值入账流水"
           value={formatMoney(overview?.todayRechargeMinor ?? 0)}
         />
         <MetricCard
-          label="今日派奖"
-          trend="派奖入账流水"
-          value={formatMoney(overview?.todayPayoutMinor ?? 0)}
+          label="今日提现"
+          trend="提现打款流水"
+          value={formatMoney(overview?.todayWithdrawMinor ?? 0)}
         />
         <MetricCard
-          label="提现申请"
-          trend={`当前页 ${pendingWithdrawalCount(withdrawalOrders)} 笔待审核`}
-          value={`${withdrawalOrders.totalCount}`}
+          label="总充值"
+          trend="累计充值入账"
+          value={formatMoney(overview?.totalRechargeMinor ?? 0)}
+        />
+        <MetricCard
+          label="总提现"
+          trend="累计提现打款"
+          value={formatMoney(overview?.totalWithdrawMinor ?? 0)}
         />
       </section>
 
@@ -1215,8 +1205,4 @@ function withdrawalMethodText(methodType: WithdrawalMethodType) {
     wechat: '微信',
   };
   return labels[methodType];
-}
-
-function pendingWithdrawalCount(page: FinancePage<{ status: WithdrawalOrderStatus }>) {
-  return page.items.filter((order) => order.status === 'pending').length;
 }

@@ -12,6 +12,12 @@ pub struct FinanceOverview {
     pub pending_withdraw_minor: i64,
     /// 今日充值金额合计，单位为分。
     pub today_recharge_minor: i64,
+    /// 今日提现打款金额合计，单位为分。
+    pub today_withdraw_minor: i64,
+    /// 累计充值金额合计，单位为分。
+    pub total_recharge_minor: i64,
+    /// 累计提现打款金额合计，单位为分。
+    pub total_withdraw_minor: i64,
     /// 今日派奖金额合计，单位为分。
     pub today_payout_minor: i64,
 }

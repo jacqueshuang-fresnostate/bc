@@ -258,6 +258,9 @@ fn redacted_finance_overview() -> FinanceOverview {
         total_balance_minor: 0,
         pending_withdraw_minor: 0,
         today_recharge_minor: 0,
+        today_withdraw_minor: 0,
+        total_recharge_minor: 0,
+        total_withdraw_minor: 0,
         today_payout_minor: 0,
     }
 }
@@ -650,6 +653,9 @@ mod tests {
                 total_balance_minor: 684_000,
                 pending_withdraw_minor: 0,
                 today_recharge_minor: 0,
+                today_withdraw_minor: 0,
+                total_recharge_minor: 0,
+                total_withdraw_minor: 0,
                 today_payout_minor: 0,
             },
             vec![FinancialAccountSummary {

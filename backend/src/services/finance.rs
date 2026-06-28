@@ -6,6 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use chrono::{Local, TimeZone};
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgRow, PgConnection, Row};
 use tokio::sync::Mutex;
@@ -27,6 +28,8 @@ use super::{
     business_database::{enum_from_string, enum_to_string, BusinessDatabase},
     pagination::{ListPage, PageRequest},
 };
+
+const LEDGER_DATE_FORMAT: &str = "%Y-%m-%d";
 
 #[derive(Clone)]
 /// 资金账户和资金流水仓储，负责该模块数据读取、业务变更和持久化协调。
@@ -2190,18 +2193,7 @@ impl FinanceStore {
                 })?;
         }
 
-        let today_payout_minor = self
-            .ledger_entries
-            .iter()
-            .filter(|entry| entry.kind == LedgerEntryKind::PayoutCredit)
-            .try_fold(0_i64, |total, entry| total.checked_add(entry.amount_minor))
-            .ok_or_else(|| ApiError::Internal("finance payout amount overflow".to_string()))?;
-        let today_recharge_minor = self
-            .ledger_entries
-            .iter()
-            .filter(|entry| entry.kind == LedgerEntryKind::RechargeCredit)
-            .try_fold(0_i64, |total, entry| total.checked_add(entry.amount_minor))
-            .ok_or_else(|| ApiError::Internal("finance recharge amount overflow".to_string()))?;
+        let ledger_totals = finance_ledger_totals(&self.ledger_entries)?;
 
         let pending_withdraw_minor = self
             .accounts
@@ -2214,8 +2206,11 @@ impl FinanceStore {
         Ok(FinanceOverview {
             total_balance_minor,
             pending_withdraw_minor,
-            today_recharge_minor,
-            today_payout_minor,
+            today_payout_minor: ledger_totals.today_payout_minor,
+            today_recharge_minor: ledger_totals.today_recharge_minor,
+            today_withdraw_minor: ledger_totals.today_withdraw_minor,
+            total_recharge_minor: ledger_totals.total_recharge_minor,
+            total_withdraw_minor: ledger_totals.total_withdraw_minor,
         })
     }
 
@@ -3191,6 +3186,110 @@ fn current_timestamp_label() -> String {
     format!("unix:{seconds}")
 }
 
+#[derive(Default)]
+/// 财务流水汇总结果，区分今日和累计的充值、提现与派奖。
+struct FinanceLedgerTotals {
+    today_payout_minor: i64,
+    today_recharge_minor: i64,
+    today_withdraw_minor: i64,
+    total_recharge_minor: i64,
+    total_withdraw_minor: i64,
+}
+
+/// 按资金流水汇总充值、提现和派奖指标，金额只统计符合业务方向的正数。
+fn finance_ledger_totals(ledger_entries: &[LedgerEntry]) -> ApiResult<FinanceLedgerTotals> {
+    let today = Local::now().format(LEDGER_DATE_FORMAT).to_string();
+    let mut totals = FinanceLedgerTotals::default();
+
+    for entry in ledger_entries {
+        match entry.kind {
+            LedgerEntryKind::RechargeCredit => {
+                let amount = positive_ledger_amount(entry.amount_minor);
+                totals.total_recharge_minor = totals
+                    .total_recharge_minor
+                    .checked_add(amount)
+                    .ok_or_else(|| {
+                        ApiError::Internal("finance recharge amount overflow".to_string())
+                    })?;
+                if ledger_entry_is_on_date(&entry.created_at, &today) {
+                    totals.today_recharge_minor = totals
+                        .today_recharge_minor
+                        .checked_add(amount)
+                        .ok_or_else(|| {
+                        ApiError::Internal("finance today recharge amount overflow".to_string())
+                    })?;
+                }
+            }
+            LedgerEntryKind::WithdrawalPayout => {
+                let amount = negative_ledger_outflow(entry.amount_minor)?;
+                totals.total_withdraw_minor = totals
+                    .total_withdraw_minor
+                    .checked_add(amount)
+                    .ok_or_else(|| {
+                        ApiError::Internal("finance withdrawal amount overflow".to_string())
+                    })?;
+                if ledger_entry_is_on_date(&entry.created_at, &today) {
+                    totals.today_withdraw_minor = totals
+                        .today_withdraw_minor
+                        .checked_add(amount)
+                        .ok_or_else(|| {
+                        ApiError::Internal("finance today withdrawal amount overflow".to_string())
+                    })?;
+                }
+            }
+            LedgerEntryKind::PayoutCredit => {
+                if ledger_entry_is_on_date(&entry.created_at, &today) {
+                    let amount = positive_ledger_amount(entry.amount_minor);
+                    totals.today_payout_minor = totals
+                        .today_payout_minor
+                        .checked_add(amount)
+                        .ok_or_else(|| {
+                            ApiError::Internal("finance payout amount overflow".to_string())
+                        })?;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(totals)
+}
+
+/// 正向资金入账金额，异常负数按 0 忽略，避免污染充值或派奖汇总。
+fn positive_ledger_amount(amount_minor: i64) -> i64 {
+    amount_minor.max(0)
+}
+
+/// 负向资金支出金额转为正数展示，异常正数按 0 忽略。
+fn negative_ledger_outflow(amount_minor: i64) -> ApiResult<i64> {
+    if amount_minor >= 0 {
+        return Ok(0);
+    }
+    amount_minor
+        .checked_neg()
+        .ok_or_else(|| ApiError::Internal("finance withdrawal amount overflow".to_string()))
+}
+
+/// 判断资金流水是否发生在指定本地日期，兼容 `unix:` 秒级标签和标准本地时间字符串。
+fn ledger_entry_is_on_date(created_at: &str, date_label: &str) -> bool {
+    let created_at = created_at.trim();
+    if created_at.starts_with(date_label) {
+        return true;
+    }
+    let Some(seconds) = created_at
+        .strip_prefix("unix:")
+        .and_then(|value| value.parse::<i64>().ok())
+    else {
+        return false;
+    };
+
+    Local
+        .timestamp_opt(seconds, 0)
+        .single()
+        .map(|datetime| datetime.format(LEDGER_DATE_FORMAT).to_string() == date_label)
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -3628,11 +3727,14 @@ mod tests {
             .credit_recharge("U10001", 1_500, "R000000000001")
             .expect("recharge credit is idempotent");
         let account = store.account("U10001").expect("account exists");
+        let overview = store.overview().expect("overview can be calculated");
 
         assert_eq!(entry.id, repeated.id);
         assert_eq!(entry.kind, LedgerEntryKind::RechargeCredit);
         assert_eq!(entry.amount_minor, 1_500);
         assert_eq!(account.available_balance_minor, 13_500);
+        assert_eq!(overview.today_recharge_minor, 1_500);
+        assert_eq!(overview.total_recharge_minor, 1_500);
     }
 
     #[test]
@@ -3869,12 +3971,15 @@ mod tests {
             .approve_withdrawal("U10001", 1_500, "W000000000001")
             .expect("withdrawal approval is idempotent");
         let account = store.account("U10001").expect("account exists");
+        let overview = store.overview().expect("overview can be calculated");
 
         assert_eq!(entry.id, repeated.id);
         assert_eq!(entry.kind, LedgerEntryKind::WithdrawalPayout);
         assert_eq!(entry.amount_minor, -1_500);
         assert_eq!(account.available_balance_minor, 10_500);
         assert_eq!(account.frozen_balance_minor, 2_000);
+        assert_eq!(overview.today_withdraw_minor, 1_500);
+        assert_eq!(overview.total_withdraw_minor, 1_500);
     }
 
     #[test]

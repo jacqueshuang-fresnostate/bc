@@ -3798,23 +3798,111 @@ fn finance_overview_from_items(
             .ok_or_else(|| ApiError::Internal("财务冻结金额汇总溢出".to_string()))?;
     }
 
-    let today_recharge_minor = ledger_entries
-        .iter()
-        .filter(|entry| entry.kind == LedgerEntryKind::RechargeCredit)
-        .try_fold(0_i64, |total, entry| total.checked_add(entry.amount_minor))
-        .ok_or_else(|| ApiError::Internal("财务充值金额汇总溢出".to_string()))?;
-    let today_payout_minor = ledger_entries
-        .iter()
-        .filter(|entry| entry.kind == LedgerEntryKind::PayoutCredit)
-        .try_fold(0_i64, |total, entry| total.checked_add(entry.amount_minor))
-        .ok_or_else(|| ApiError::Internal("财务派奖金额汇总溢出".to_string()))?;
+    let ledger_totals = admin_finance_ledger_totals(ledger_entries)?;
 
     Ok(FinanceOverview {
         total_balance_minor,
         pending_withdraw_minor,
-        today_recharge_minor,
-        today_payout_minor,
+        today_payout_minor: ledger_totals.today_payout_minor,
+        today_recharge_minor: ledger_totals.today_recharge_minor,
+        today_withdraw_minor: ledger_totals.today_withdraw_minor,
+        total_recharge_minor: ledger_totals.total_recharge_minor,
+        total_withdraw_minor: ledger_totals.total_withdraw_minor,
     })
+}
+
+#[derive(Default)]
+/// 后台财务流水汇总结果，区分今日和累计的充值、提现与派奖。
+struct AdminFinanceLedgerTotals {
+    today_payout_minor: i64,
+    today_recharge_minor: i64,
+    today_withdraw_minor: i64,
+    total_recharge_minor: i64,
+    total_withdraw_minor: i64,
+}
+
+/// 按已过滤的资金流水汇总财务总览指标，确保机器人开关影响所有统计卡口径。
+fn admin_finance_ledger_totals(
+    ledger_entries: &[LedgerEntry],
+) -> ApiResult<AdminFinanceLedgerTotals> {
+    let today = Local::now().format("%Y-%m-%d").to_string();
+    let mut totals = AdminFinanceLedgerTotals::default();
+
+    for entry in ledger_entries {
+        match entry.kind {
+            LedgerEntryKind::RechargeCredit => {
+                let amount = entry.amount_minor.max(0);
+                totals.total_recharge_minor = totals
+                    .total_recharge_minor
+                    .checked_add(amount)
+                    .ok_or_else(|| ApiError::Internal("财务充值金额汇总溢出".to_string()))?;
+                if admin_ledger_entry_is_on_date(&entry.created_at, &today) {
+                    totals.today_recharge_minor = totals
+                        .today_recharge_minor
+                        .checked_add(amount)
+                        .ok_or_else(|| {
+                        ApiError::Internal("财务今日充值金额汇总溢出".to_string())
+                    })?;
+                }
+            }
+            LedgerEntryKind::WithdrawalPayout => {
+                let amount = admin_negative_ledger_outflow(entry.amount_minor)?;
+                totals.total_withdraw_minor = totals
+                    .total_withdraw_minor
+                    .checked_add(amount)
+                    .ok_or_else(|| ApiError::Internal("财务提现金额汇总溢出".to_string()))?;
+                if admin_ledger_entry_is_on_date(&entry.created_at, &today) {
+                    totals.today_withdraw_minor = totals
+                        .today_withdraw_minor
+                        .checked_add(amount)
+                        .ok_or_else(|| {
+                        ApiError::Internal("财务今日提现金额汇总溢出".to_string())
+                    })?;
+                }
+            }
+            LedgerEntryKind::PayoutCredit => {
+                if admin_ledger_entry_is_on_date(&entry.created_at, &today) {
+                    totals.today_payout_minor = totals
+                        .today_payout_minor
+                        .checked_add(entry.amount_minor.max(0))
+                        .ok_or_else(|| ApiError::Internal("财务派奖金额汇总溢出".to_string()))?;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(totals)
+}
+
+/// 判断后台资金流水是否发生在指定本地日期，兼容标准时间和 `unix:` 秒级标签。
+fn admin_ledger_entry_is_on_date(created_at: &str, date_label: &str) -> bool {
+    let created_at = created_at.trim();
+    if created_at.starts_with(date_label) {
+        return true;
+    }
+    let Some(seconds) = created_at
+        .strip_prefix("unix:")
+        .and_then(|value| value.parse::<i64>().ok())
+    else {
+        return false;
+    };
+
+    Local
+        .timestamp_opt(seconds, 0)
+        .single()
+        .map(|datetime| datetime.format("%Y-%m-%d").to_string() == date_label)
+        .unwrap_or(false)
+}
+
+/// 提现打款流水为负数，展示统计时转为正数；异常正数按 0 忽略。
+fn admin_negative_ledger_outflow(amount_minor: i64) -> ApiResult<i64> {
+    if amount_minor >= 0 {
+        return Ok(0);
+    }
+    amount_minor
+        .checked_neg()
+        .ok_or_else(|| ApiError::Internal("财务提现金额汇总溢出".to_string()))
 }
 
 /// 判断后台用户维度记录是否应返回给页面；机器人数据只有在开关打开时展示。

@@ -392,7 +392,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/finance-overview",
         "财务管理",
         "财务总览",
-        "返回平台总余额、冻结提现金额、今日充值和今日派奖指标；默认过滤机器人账户，可通过 includeRobotData=true 纳入机器人数据。",
+        "返回平台总余额、冻结提现金额、今日充值、今日提现、总充值和总提现指标；默认过滤机器人账户，可通过 includeRobotData=true 纳入机器人数据。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
