@@ -35,6 +35,7 @@ import { MetricCard } from '../components/MetricCard';
 import { OrderBetInfo } from '../components/OrderBetInfo';
 import { PageControls } from '../components/PageControls';
 import { useFinance } from '../hooks/useFinance';
+import { usePlayRules } from '../hooks/usePlayRules';
 import type { GroupBuyPlan, GroupBuyPlanStatus } from '../types/groupBuy';
 import type {
   AdminFinancialAccountSummary,
@@ -48,8 +49,10 @@ import type {
   WithdrawalOrderStatus,
 } from '../types/finance';
 import type { OrderDetail, OrderStatus } from '../types/orders';
+import type { PlayRuleCode, PlayRuleSummary } from '../types/playRules';
 import { formatDateTime, formatMoney, formatSignedMoney } from '../utils/format';
 import { yuanInputToMinor } from '../utils/moneyInput';
+import { formatPlayRuleLabel } from '../utils/playRules';
 
 interface FinanceManagementPageProps {
   onDashboardRefresh: () => void;
@@ -93,6 +96,7 @@ export function FinanceManagementPage({
     useState<LedgerKindFilter>('all');
   const [includeRobotData, setIncludeRobotData] = useState(false);
   const [accountUsernameSearch, setAccountUsernameSearch] = useState('');
+  const { rules: playRules } = usePlayRules();
   const {
     accounts,
     adjustBalance,
@@ -1085,6 +1089,7 @@ export function FinanceManagementPage({
                 <LedgerBusinessDetail
                   entry={ledgerDetailEntry}
                   order={ledgerDetailOrder}
+                  playRules={playRules}
                   plan={ledgerDetailPlan}
                 />
               )}
@@ -1203,10 +1208,16 @@ function InfoLine({ label, value }: InfoLineProps) {
 interface LedgerBusinessDetailProps {
   entry: LedgerEntry;
   order: OrderDetail | null;
+  playRules: Array<Pick<PlayRuleSummary, 'code' | 'label'>>;
   plan: GroupBuyPlan | null;
 }
 
-function LedgerBusinessDetail({ entry, order, plan }: LedgerBusinessDetailProps) {
+function LedgerBusinessDetail({
+  entry,
+  order,
+  playRules,
+  plan,
+}: LedgerBusinessDetailProps) {
   const participant = plan ? groupBuyParticipantFromLedgerEntry(plan, entry) : null;
 
   if (!order && !plan) {
@@ -1233,7 +1244,10 @@ function LedgerBusinessDetail({ entry, order, plan }: LedgerBusinessDetailProps)
             <InfoLine label="用户" value={`${order.username ?? '未知用户'}（${order.userId}）`} />
             <InfoLine label="彩种" value={`${order.lotteryName}（${order.lotteryId}）`} />
             <InfoLine label="期号" value={order.issue} />
-            <InfoLine label="玩法" value={order.ruleCode} />
+            <InfoLine
+              label="玩法"
+              value={formatPlayRuleLabel(order.ruleCode, playRules)}
+            />
             <InfoLine label="投注金额" value={formatMoney(order.amountMinor)} />
             <InfoLine label="注数" value={`${order.stakeCount} 注`} />
             <InfoLine label="开奖号码" value={order.drawNumber ?? '未开奖'} />
@@ -1274,7 +1288,7 @@ function LedgerBusinessDetail({ entry, order, plan }: LedgerBusinessDetailProps)
           <div className="grid gap-3 md:grid-cols-3">
             <InfoLine label="彩种" value={`${plan.lotteryName}（${plan.lotteryId}）`} />
             <InfoLine label="期号" value={plan.issue || '-'} />
-            <InfoLine label="玩法" value={plan.ruleCode} />
+            <InfoLine label="玩法" value={financePlayRuleLabel(plan.ruleCode, playRules)} />
             <InfoLine label="关联订单" value={plan.orderId ?? '未成单'} />
             <InfoLine
               label="中奖状态"
@@ -1435,6 +1449,13 @@ function downloadBlob(blob: Blob, fileName: string) {
 
 function dateFileLabel() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function financePlayRuleLabel(
+  ruleCode: string,
+  rules: Array<Pick<PlayRuleSummary, 'code' | 'label'>>,
+) {
+  return formatPlayRuleLabel(ruleCode as PlayRuleCode, rules);
 }
 
 function orderIdFromLedgerEntry(entry: LedgerEntry) {
