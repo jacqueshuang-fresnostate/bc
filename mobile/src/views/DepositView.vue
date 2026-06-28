@@ -8,6 +8,7 @@ import {
   errorMessage,
   type RechargeChannel,
   type RechargeChannelConfig,
+  type RechargeBonusRule,
   type RechargeConfig,
   type RechargeOrder,
   type RechargeOrderStatus,
@@ -58,20 +59,22 @@ const amountLimitText = computed(() => {
 const activeBonusRules = computed(() => {
   if (!config.value?.bonusEnabled) return []
   return [...(config.value.bonusRules || [])]
-    .filter(rule => rule.thresholdAmountMinor > 0 && rule.bonusAmountMinor > 0)
+    .filter(rule => rule.thresholdAmountMinor > 0 && hasBonusReward(rule))
     .sort((left, right) => left.thresholdAmountMinor - right.thresholdAmountMinor)
 })
 const bonusActivityText = computed(() => {
   if (activeBonusRules.value.length === 0) return ''
   return activeBonusRules.value
-    .map(rule => `满${formatInputAmount(rule.thresholdAmountMinor)}送${formatInputAmount(rule.bonusAmountMinor)}`)
+    .map(rule => `满${formatInputAmount(rule.thresholdAmountMinor)}送${bonusRuleText(rule)}`)
     .join('，')
 })
 const matchedBonusMinor = computed(() => {
   const amountMinor = currentAmountMinor.value || 0
   const matchedRules = activeBonusRules.value
     .filter(rule => amountMinor >= rule.thresholdAmountMinor)
-  return matchedRules.length > 0 ? matchedRules[matchedRules.length - 1].bonusAmountMinor : 0
+  return matchedRules.length > 0
+    ? bonusAmountForRule(matchedRules[matchedRules.length - 1], amountMinor)
+    : 0
 })
 const selectedBonusText = computed(() => formatMinorAmount(matchedBonusMinor.value))
 const submitText = computed(() => (isCustomerService.value ? '发起客服直充' : '立即支付'))
@@ -80,6 +83,34 @@ const submitHint = computed(() => {
   return '提交后会打开支付页面，支付完成后订单会自动入账。'
 })
 const selectedChannelTitle = computed(() => selectedChannelConfig.value?.name || '选择充值方式')
+
+function hasBonusReward(rule: RechargeBonusRule) {
+  return Number(rule.bonusAmountMinor || 0) > 0 || Number(rule.bonusPercentBasisPoints || 0) > 0
+}
+
+function bonusRuleText(rule: RechargeBonusRule) {
+  const basisPoints = Number(rule.bonusPercentBasisPoints || 0)
+  if (basisPoints > 0) {
+    return `${formatPercentBasisPoints(basisPoints)}%`
+  }
+  return formatInputAmount(rule.bonusAmountMinor || 0)
+}
+
+function bonusAmountForRule(rule: RechargeBonusRule, amountMinor: number) {
+  const basisPoints = Number(rule.bonusPercentBasisPoints || 0)
+  if (basisPoints > 0) {
+    return Math.floor((amountMinor * basisPoints) / 10000)
+  }
+  return Number(rule.bonusAmountMinor || 0)
+}
+
+function formatPercentBasisPoints(value: number) {
+  const percent = value / 100
+  return percent
+    .toFixed(2)
+    .replace(/\.00$/, '')
+    .replace(/(\.\d)0$/, '$1')
+}
 const selectedChannelDescription = computed(() => selectedChannelConfig.value?.description || '请先选择可用充值方式')
 const selectedChannelTagText = computed(() => (selectedChannel.value ? channelTagText(selectedChannel.value) : '待选择'))
 const canSubmit = computed(() => Boolean(

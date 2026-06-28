@@ -256,7 +256,8 @@ export type RechargeChannelConfig = {
 
 export type RechargeBonusRule = {
   thresholdAmountMinor: number
-  bonusAmountMinor: number
+  bonusAmountMinor?: number
+  bonusPercentBasisPoints?: number
 }
 
 export type RechargeConfig = {

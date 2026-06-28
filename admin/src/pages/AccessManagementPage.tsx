@@ -100,8 +100,12 @@ interface SettingSelectOption {
   value: string;
 }
 
+type RechargeBonusMode = 'fixed' | 'percent';
+
 interface RechargeBonusRuleDraft {
   bonusAmountYuan: string;
+  bonusMode: RechargeBonusMode;
+  bonusPercent: string;
   thresholdAmountYuan: string;
 }
 
@@ -2247,7 +2251,7 @@ function RechargePaymentPanel({
           <div>
             <p className="text-sm font-semibold text-ink">充值赠送活动</p>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              按单笔充值金额匹配最高门槛档位，例如充值 100 元赠送 5 元，充值 500 元赠送 40 元。
+              按单笔充值金额匹配最高门槛档位，支持固定金额赠送或按充值金额百分比赠送。
             </p>
           </div>
           <Tag color={bonusEnabledValue === 'true' && bonusRuleDrafts.length > 0 ? 'green' : 'grey'}>
@@ -2292,7 +2296,7 @@ function RechargePaymentPanel({
               <div>
                 <p className="text-sm font-semibold text-ink">赠送档位</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  金额按“元”填写，保存后后端按分持久化。
+                  固定金额按“元”填写，百分比按“%”填写，保存后后端按分和 basis points 持久化。
                 </p>
               </div>
               <Button
@@ -2301,7 +2305,12 @@ function RechargePaymentPanel({
                 onClick={() =>
                   updateBonusRules([
                     ...bonusRuleDrafts,
-                    { bonusAmountYuan: '', thresholdAmountYuan: '' },
+                    {
+                      bonusAmountYuan: '',
+                      bonusMode: 'fixed',
+                      bonusPercent: '',
+                      thresholdAmountYuan: '',
+                    },
                   ])
                 }
               >
@@ -2311,14 +2320,14 @@ function RechargePaymentPanel({
 
             {bonusRuleDrafts.length === 0 ? (
               <div className="rounded border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
-                暂无赠送档位，新增后可配置类似“充值 100 送 5”的活动。
+                暂无赠送档位，新增后可配置类似“充值 100 送 5”或“充值 100 送 25%”的活动。
               </div>
             ) : (
               <div className="space-y-2">
                 {bonusRuleDrafts.map((rule, index) => (
                   <div
                     key={`bonus-rule-${index}`}
-                    className="grid gap-2 rounded border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                    className="grid gap-2 rounded border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_auto]"
                   >
                     <Field label="充值满（元）">
                       <Input
@@ -2336,22 +2345,58 @@ function RechargePaymentPanel({
                         }}
                       />
                     </Field>
-                    <Field label="赠送（元）">
-                      <Input
+                    <Field label="赠送方式">
+                      <Select
                         className="form-input"
-                        inputMode="decimal"
-                        placeholder="例如 5"
-                        value={rule.bonusAmountYuan}
+                        value={rule.bonusMode}
                         onChange={(value) => {
                           const nextRules = [...bonusRuleDrafts];
                           nextRules[index] = {
                             ...rule,
-                            bonusAmountYuan: value,
+                            bonusMode: value === 'percent' ? 'percent' : 'fixed',
                           };
                           updateBonusRules(nextRules);
                         }}
-                      />
+                      >
+                        <Select.Option value="fixed">固定金额</Select.Option>
+                        <Select.Option value="percent">按百分比</Select.Option>
+                      </Select>
                     </Field>
+                    {rule.bonusMode === 'percent' ? (
+                      <Field label="赠送比例（%）">
+                        <Input
+                          className="form-input"
+                          inputMode="decimal"
+                          placeholder="例如 25"
+                          value={rule.bonusPercent}
+                          onChange={(value) => {
+                            const nextRules = [...bonusRuleDrafts];
+                            nextRules[index] = {
+                              ...rule,
+                              bonusPercent: value,
+                            };
+                            updateBonusRules(nextRules);
+                          }}
+                        />
+                      </Field>
+                    ) : (
+                      <Field label="赠送金额（元）">
+                        <Input
+                          className="form-input"
+                          inputMode="decimal"
+                          placeholder="例如 5"
+                          value={rule.bonusAmountYuan}
+                          onChange={(value) => {
+                            const nextRules = [...bonusRuleDrafts];
+                            nextRules[index] = {
+                              ...rule,
+                              bonusAmountYuan: value,
+                            };
+                            updateBonusRules(nextRules);
+                          }}
+                        />
+                      </Field>
+                    )}
                     <div className="flex items-end justify-end">
                       <Button
                         disabled={saving}
@@ -3074,7 +3119,7 @@ function settingSubmitValue(key: string, value: string) {
 
 function settingDescription(setting: SystemSettingItem) {
   if (setting.key === RECHARGE_BONUS_RULES_SETTING_KEY) {
-    return '用户充值赠送活动档位，请在下方“赠送档位”区域按元维护，不需要手写 JSON';
+    return '用户充值赠送活动档位，请在下方“赠送档位”区域按元或百分比维护，不需要手写 JSON';
   }
   if (setting.key === CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY) {
     return '聊天大厅发言最低累计充值金额（元），0 表示不限制';
@@ -3267,7 +3312,16 @@ function rechargeBonusRuleDraftsFromSetting(value: string): RechargeBonusRuleDra
           typeof record.bonusAmountYuan === 'string'
             ? record.bonusAmountYuan
             : minorToYuanInput(record.bonusAmountMinor as number | string | undefined);
-        return { bonusAmountYuan, thresholdAmountYuan };
+        const bonusPercent =
+          typeof record.bonusPercent === 'string'
+            ? record.bonusPercent
+            : basisPointsToPercentInput(record.bonusPercentBasisPoints);
+        const bonusMode =
+          record.bonusMode === 'percent' ||
+          (!bonusAmountYuan && Boolean(bonusPercent))
+            ? 'percent'
+            : 'fixed';
+        return { bonusAmountYuan, bonusMode, bonusPercent, thresholdAmountYuan };
       });
   } catch {
     return [];
@@ -3278,40 +3332,67 @@ function rechargeBonusRuleSubmitValue(rules: RechargeBonusRuleDraft[]) {
   const parsed = rules
     .map((rule) => {
       const thresholdAmountMinor = yuanInputToMinor(rule.thresholdAmountYuan);
+      if (rule.bonusMode === 'percent') {
+        const bonusPercentBasisPoints = percentInputToBasisPoints(rule.bonusPercent);
+        return {
+          bonusMode: rule.bonusMode,
+          bonusPercentBasisPoints,
+          thresholdAmountMinor,
+        };
+      }
       const bonusAmountMinor = yuanInputToMinor(rule.bonusAmountYuan);
-      return { bonusAmountMinor, thresholdAmountMinor };
+      return { bonusAmountMinor, bonusMode: rule.bonusMode, thresholdAmountMinor };
     })
     .filter(
       (rule) =>
         rule.thresholdAmountMinor !== null ||
-        rule.bonusAmountMinor !== null,
+        ('bonusPercentBasisPoints' in rule
+          ? rule.bonusPercentBasisPoints !== null
+          : rule.bonusAmountMinor !== null),
     );
 
   if (
     parsed.some(
-      (rule) => rule.thresholdAmountMinor === null || rule.bonusAmountMinor === null,
+      (rule) =>
+        rule.thresholdAmountMinor === null ||
+        ('bonusPercentBasisPoints' in rule
+          ? rule.bonusPercentBasisPoints === null
+          : rule.bonusAmountMinor === null),
     )
   ) {
-    Toast.warning('充值赠送档位金额格式无效，请填写大于 0 且最多两位小数的元金额');
+    Toast.warning('充值赠送档位格式无效，请检查充值门槛、赠送金额或赠送比例');
     return null;
   }
-  const normalized = parsed as Array<{
-    bonusAmountMinor: number;
-    thresholdAmountMinor: number;
-  }>;
+  const normalized = parsed as Array<
+    | {
+        bonusAmountMinor: number;
+        bonusMode: 'fixed';
+        thresholdAmountMinor: number;
+      }
+    | {
+        bonusMode: 'percent';
+        bonusPercentBasisPoints: number;
+        thresholdAmountMinor: number;
+      }
+  >;
   if (
     normalized.some(
-      (rule) => rule.thresholdAmountMinor <= 0 || rule.bonusAmountMinor <= 0,
+      (rule) =>
+        rule.thresholdAmountMinor <= 0 ||
+        (rule.bonusMode === 'percent'
+          ? rule.bonusPercentBasisPoints <= 0 ||
+            rule.bonusPercentBasisPoints > 10_000
+          : rule.bonusAmountMinor <= 0),
     )
   ) {
-    Toast.warning('充值赠送档位的充值门槛和赠送金额都必须大于 0 元');
+    Toast.warning('充值门槛和赠送内容必须大于 0，百分比不能超过 100%');
     return null;
   }
 
   const sorted = [...normalized].sort(
     (left, right) =>
       left.thresholdAmountMinor - right.thresholdAmountMinor ||
-      left.bonusAmountMinor - right.bonusAmountMinor,
+      rechargeBonusRuleSortValue(left) - rechargeBonusRuleSortValue(right),
   );
   const duplicatedThreshold = sorted.some(
     (rule, index) =>
@@ -3323,11 +3404,62 @@ function rechargeBonusRuleSubmitValue(rules: RechargeBonusRuleDraft[]) {
   }
 
   return JSON.stringify(
-    sorted.map((rule) => ({
-      thresholdAmountMinor: rule.thresholdAmountMinor,
-      bonusAmountMinor: rule.bonusAmountMinor,
-    })),
+    sorted.map((rule) =>
+      rule.bonusMode === 'percent'
+        ? {
+            thresholdAmountMinor: rule.thresholdAmountMinor,
+            bonusPercentBasisPoints: rule.bonusPercentBasisPoints,
+          }
+        : {
+            thresholdAmountMinor: rule.thresholdAmountMinor,
+            bonusAmountMinor: rule.bonusAmountMinor,
+          },
+    ),
   );
+}
+
+function basisPointsToPercentInput(value: unknown) {
+  const basisPoints = Number(value);
+  if (!Number.isFinite(basisPoints) || basisPoints <= 0) {
+    return '';
+  }
+  const percent = basisPoints / 100;
+  return percent
+    .toFixed(2)
+    .replace(/\.00$/, '')
+    .replace(/(\.\d)0$/, '$1');
+}
+
+function percentInputToBasisPoints(value: string) {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/^(\d+)(?:\.(\d{1,2}))?$/);
+  if (!match) {
+    return null;
+  }
+  const whole = Number.parseInt(match[1], 10);
+  const fraction = (match[2] ?? '').padEnd(2, '0');
+  const cents = fraction ? Number.parseInt(fraction, 10) : 0;
+  const basisPoints = whole * 100 + cents;
+  return Number.isFinite(basisPoints) ? basisPoints : null;
+}
+
+function rechargeBonusRuleSortValue(
+  rule:
+    | {
+        bonusAmountMinor: number;
+        bonusMode: 'fixed';
+      }
+    | {
+        bonusMode: 'percent';
+        bonusPercentBasisPoints: number;
+      },
+) {
+  return rule.bonusMode === 'percent'
+    ? rule.bonusPercentBasisPoints
+    : rule.bonusAmountMinor;
 }
 
 function ToggleRow({

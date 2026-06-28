@@ -669,12 +669,41 @@ fn recharge_bonus_amount_minor(
         .iter()
         .filter(|rule| {
             rule.threshold_amount_minor > 0
-                && rule.bonus_amount_minor > 0
+                && recharge_bonus_rule_has_reward(rule)
                 && recharge_amount_minor >= rule.threshold_amount_minor
         })
         .max_by_key(|rule| rule.threshold_amount_minor)
-        .map(|rule| rule.bonus_amount_minor)
+        .map(|rule| recharge_bonus_rule_amount_minor(recharge_amount_minor, rule))
+        .transpose()?
         .unwrap_or(0))
+}
+
+/// 判断充值赠送档位是否配置了有效赠送，兼容旧固定金额档位和新百分比档位。
+fn recharge_bonus_rule_has_reward(rule: &RechargeBonusRule) -> bool {
+    rule.bonus_amount_minor > 0
+        || rule
+            .bonus_percent_basis_points
+            .is_some_and(|basis_points| basis_points > 0)
+}
+
+/// 按档位类型计算赠送金额；百分比档位使用 basis points 并向下取整到分。
+fn recharge_bonus_rule_amount_minor(
+    recharge_amount_minor: i64,
+    rule: &RechargeBonusRule,
+) -> ApiResult<i64> {
+    if let Some(basis_points) = rule
+        .bonus_percent_basis_points
+        .filter(|basis_points| *basis_points > 0)
+    {
+        let amount = i128::from(recharge_amount_minor)
+            .checked_mul(i128::from(basis_points))
+            .ok_or_else(|| ApiError::BadRequest("充值赠送百分比金额计算溢出".to_string()))?
+            / 10_000;
+        return i64::try_from(amount)
+            .map_err(|_| ApiError::BadRequest("充值赠送百分比金额过大".to_string()));
+    }
+
+    Ok(rule.bonus_amount_minor.max(0))
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1445,7 +1474,7 @@ fn csv_setting(map: &HashMap<&str, &str>, key: &str) -> Vec<String> {
         .unwrap_or_else(|| vec!["alipay".to_string(), "wxpay".to_string()])
 }
 
-/// 从系统设置读取充值赠送档位，并过滤掉无效或重复的金额配置。
+/// 从系统设置读取充值赠送档位，并过滤掉无效或重复的金额和百分比配置。
 fn recharge_bonus_rules_setting(map: &HashMap<&str, &str>, key: &str) -> Vec<RechargeBonusRule> {
     let value = map
         .get(key)
@@ -1455,11 +1484,23 @@ fn recharge_bonus_rules_setting(map: &HashMap<&str, &str>, key: &str) -> Vec<Rec
     let mut rules = serde_json::from_str::<Vec<RechargeBonusRule>>(value)
         .unwrap_or_default()
         .into_iter()
-        .filter(|rule| rule.threshold_amount_minor > 0 && rule.bonus_amount_minor > 0)
+        .filter(|rule| {
+            rule.threshold_amount_minor > 0
+                && (rule.bonus_amount_minor > 0
+                    || rule
+                        .bonus_percent_basis_points
+                        .is_some_and(|basis_points| (1..=10_000).contains(&basis_points)))
+        })
         .collect::<Vec<_>>();
     rules.sort_by(|left, right| {
         left.threshold_amount_minor
             .cmp(&right.threshold_amount_minor)
+            .then_with(|| {
+                right
+                    .bonus_percent_basis_points
+                    .unwrap_or_default()
+                    .cmp(&left.bonus_percent_basis_points.unwrap_or_default())
+            })
             .then_with(|| right.bonus_amount_minor.cmp(&left.bonus_amount_minor))
     });
     rules.dedup_by_key(|rule| rule.threshold_amount_minor);
@@ -1947,10 +1988,12 @@ mod tests {
                 RechargeBonusRule {
                     threshold_amount_minor: 10_000,
                     bonus_amount_minor: 500,
+                    bonus_percent_basis_points: None,
                 },
                 RechargeBonusRule {
                     threshold_amount_minor: 50_000,
                     bonus_amount_minor: 4_000,
+                    bonus_percent_basis_points: None,
                 },
             ],
         };
@@ -2011,6 +2054,43 @@ mod tests {
             .any(|entry| entry.kind == LedgerEntryKind::RechargeBonusCredit
                 && entry.amount_minor == 500));
         assert_eq!(account.available_balance_minor, 10_500);
+    }
+
+    /// 验证充值赠送活动支持按充值金额百分比计算赠送。
+    #[test]
+    fn recharge_bonus_amount_supports_percent_rule() {
+        let settings = RechargeSettings {
+            rainbow_enabled: false,
+            rainbow_gateway_url: String::new(),
+            rainbow_pid: String::new(),
+            rainbow_key: String::new(),
+            rainbow_notify_url: String::new(),
+            rainbow_return_url: String::new(),
+            rainbow_pay_types: vec!["alipay".to_string()],
+            customer_service_enabled: true,
+            customer_service_message: "联系客服充值".to_string(),
+            min_amount_minor: 100,
+            max_amount_minor: 100_000,
+            bonus_enabled: true,
+            bonus_rules: vec![RechargeBonusRule {
+                threshold_amount_minor: 10_000,
+                bonus_amount_minor: 0,
+                bonus_percent_basis_points: Some(2_500),
+            }],
+        };
+
+        assert_eq!(
+            recharge_bonus_amount_minor(9_999, &settings).expect("bonus can calculate"),
+            0
+        );
+        assert_eq!(
+            recharge_bonus_amount_minor(10_000, &settings).expect("bonus can calculate"),
+            2_500
+        );
+        assert_eq!(
+            recharge_bonus_amount_minor(12_345, &settings).expect("bonus can calculate"),
+            3_086
+        );
     }
 
     /// 构造充值测试用户。

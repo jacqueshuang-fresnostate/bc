@@ -38,12 +38,16 @@ pub struct RechargeChannelConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// 充值赠送活动档位，按单笔充值金额匹配固定赠送彩金。
+/// 充值赠送活动档位，按单笔充值金额匹配固定金额或百分比赠送彩金。
 pub struct RechargeBonusRule {
     /// 触发赠送的单笔充值门槛，单位为分。
     pub threshold_amount_minor: i64,
-    /// 达到门槛后赠送的金额，单位为分。
+    /// 达到门槛后固定赠送的金额，单位为分；百分比档位可为 0。
+    #[serde(default)]
     pub bonus_amount_minor: i64,
+    /// 达到门槛后按充值金额计算的赠送比例，单位为 basis points，例如 2500 表示 25%。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bonus_percent_basis_points: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

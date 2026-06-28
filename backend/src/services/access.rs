@@ -3544,7 +3544,7 @@ fn seed_settings() -> Vec<SystemSetting> {
         SystemSetting {
             key: "recharge_bonus_rules".to_string(),
             value: "[]".to_string(),
-            description: "用户充值赠送活动档位，后台按元维护，系统保存为分".to_string(),
+            description: "用户充值赠送活动档位，支持固定金额或百分比赠送".to_string(),
         },
         SystemSetting {
             key: "chat_hall_speaking_min_recharge_minor".to_string(),
