@@ -18,10 +18,15 @@ export async function checkAppUpdateOnce() {
 
   try {
     const systemInfo = await readNativeSystemInfo()
-    const platform = detectAppPlatform(systemInfo?.os)
+    if (!systemInfo) {
+      return
+    }
+
+    const platform = detectAppPlatform(systemInfo.os)
+    const currentVersion = await readCurrentAppVersion(systemInfo)
     const updateConfig = await fetchMobileAppUpdate({
       platform,
-      currentVersion: systemInfo?.version || '0.1.0',
+      currentVersion,
       currentBuild: 1,
     })
 
@@ -35,7 +40,11 @@ export async function checkAppUpdateOnce() {
 
     await showConfirmDialog({
       title: updateConfig.forceUpdate ? '发现必要更新' : '发现新版本',
-      message: buildUpdateMessage(updateConfig.latestVersion, updateConfig.releaseNotes),
+      message: buildUpdateMessage(
+        currentVersion,
+        updateConfig.latestVersion,
+        updateConfig.releaseNotes,
+      ),
       confirmButtonText: '立即更新',
       cancelButtonText: '稍后再说',
       closeOnClickOverlay: !updateConfig.forceUpdate,
@@ -45,6 +54,15 @@ export async function checkAppUpdateOnce() {
     openDownloadUrl(updateConfig.downloadUrl)
   } catch (error) {
     console.warn('APP 更新检查未完成', error)
+  }
+}
+
+async function readCurrentAppVersion(systemInfo: NativeSystemInfo | null) {
+  try {
+    const { getVersion } = await import('@tauri-apps/api/app')
+    return (await getVersion()) || systemInfo?.version || '0.1.0'
+  } catch {
+    return systemInfo?.version || '0.1.0'
   }
 }
 
@@ -70,9 +88,9 @@ function detectAppPlatform(os?: string): AppPlatform {
   return 'android'
 }
 
-function buildUpdateMessage(latestVersion: string, releaseNotes: string) {
+function buildUpdateMessage(currentVersion: string, latestVersion: string, releaseNotes: string) {
   const notes = releaseNotes.trim() || '本次更新包含体验优化和问题修复。'
-  return `最新版本：${latestVersion}\n\n更新说明：\n${notes}`
+  return `当前版本：${currentVersion}\n最新版本：${latestVersion}\n\n更新说明：\n${notes}`
 }
 
 function openDownloadUrl(downloadUrl: string) {
