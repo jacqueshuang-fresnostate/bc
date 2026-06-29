@@ -54,7 +54,7 @@ button:disabled,
 }
 
 :root {
-  --mobile-status-safe-top: 1.75rem;
+  --mobile-status-safe-top: 0px;
   --mobile-brand-header-height: calc(4rem + var(--mobile-status-safe-top));
   --mobile-compact-header-height: calc(3.5rem + var(--mobile-status-safe-top));
   --mobile-brand-page-top: calc(var(--mobile-brand-header-height) + 1rem);
@@ -62,11 +62,11 @@ button:disabled,
   --mobile-brand-page-top-loose: calc(var(--mobile-brand-header-height) + 3rem);
   --mobile-viewport-bottom-inset: 0px;
   --mobile-keyboard-bottom-inset: 0px;
-  --mobile-bottom-nav-extra-lift: 0.38rem;
-  --mobile-safe-bottom: 1rem;
-  --mobile-bottom-nav-bottom-offset: var(--mobile-bottom-nav-extra-lift);
+  --mobile-bottom-nav-extra-lift: 0px;
+  --mobile-safe-bottom: 0.5rem;
+  --mobile-bottom-nav-bottom-offset: 0px;
   --mobile-bottom-nav-safe-bottom: var(--mobile-safe-bottom);
-  --mobile-bottom-nav-space: calc(6.25rem + var(--mobile-bottom-nav-extra-lift));
+  --mobile-bottom-nav-space: calc(5.25rem + var(--mobile-bottom-nav-safe-bottom));
   --mobile-app-header-background:
     radial-gradient(circle at 92% 5%, rgba(255, 255, 255, 0.78), transparent 30%),
     linear-gradient(135deg, #c8f5ff 0%, #d7c8ff 48%, #ffc4d7 100%);
@@ -197,8 +197,17 @@ button:disabled,
   --mobile-bottom-nav-inactive-color: #84645b;
 }
 
+:root[data-mobile-shell='app'] {
+  --mobile-status-safe-top: 1.75rem;
+  --mobile-bottom-nav-extra-lift: 0.38rem;
+  --mobile-safe-bottom: 1rem;
+  --mobile-bottom-nav-bottom-offset: var(--mobile-bottom-nav-extra-lift);
+  --mobile-bottom-nav-safe-bottom: var(--mobile-safe-bottom);
+  --mobile-bottom-nav-space: calc(6.25rem + var(--mobile-bottom-nav-extra-lift));
+}
+
 @supports (padding-bottom: max(1px, 2px)) {
-  :root {
+  :root[data-mobile-shell='app'] {
     --mobile-status-safe-top: max(1.75rem, env(safe-area-inset-top, 0px));
     --mobile-safe-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
     --mobile-bottom-nav-bottom-offset: calc(var(--mobile-viewport-bottom-inset) + var(--mobile-bottom-nav-extra-lift));

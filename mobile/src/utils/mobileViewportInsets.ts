@@ -9,6 +9,16 @@ const FALLBACK_KEYBOARD_RATIO = 0.42
 let installed = false
 let stableViewportHeight = 0
 
+function isPackagedAppShell() {
+  const { hostname, protocol } = window.location
+  return hostname === 'tauri.localhost'
+    || hostname.endsWith('.tauri.localhost')
+    || protocol === 'tauri:'
+    || protocol === 'asset:'
+    || '__TAURI_INTERNALS__' in window
+    || '__TAURI__' in window
+}
+
 function normalizeInset(value: number) {
   if (!Number.isFinite(value) || value <= 0) {
     return 0
@@ -109,6 +119,8 @@ export function installMobileViewportInsets() {
     return
   }
   installed = true
+
+  document.documentElement.dataset.mobileShell = isPackagedAppShell() ? 'app' : 'h5'
 
   // 部分安卓三键导航不会写入 safe-area-inset-bottom，这里用可视视口差值给固定底栏补一个兜底。
   // 输入法弹起时差值会明显变大，额外写入键盘高度，供聊天输入栏避开键盘。
