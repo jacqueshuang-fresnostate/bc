@@ -2,7 +2,7 @@ import axios from 'axios'
 import router from '../router'
 import { useAuthStore } from '../stores/auth'
 
-const DEFAULT_PACKAGED_API_BASE = 'https://dh-admin.1666888.cc.cd'
+const DEFAULT_PACKAGED_API_BASE = 'https://xygj-admin.1666888.cc.cd'
 
 function normalizeApiBase(value: unknown) {
   return String(value ?? '').trim().replace(/\/+$/, '')

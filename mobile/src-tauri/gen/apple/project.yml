@@ -55,7 +55,7 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.1.0
         CFBundleVersion: "0.1.0"
-        CFBundleDisplayName: 鼎鸿
+        CFBundleDisplayName: 星盈国际
         NSLocationWhenInUseUsageDescription: 用于在注册时记录账号注册地区，方便账号安全审计。
     entitlements:
       path: hongfu-mobile_iOS/hongfu-mobile_iOS.entitlements

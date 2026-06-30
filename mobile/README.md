@@ -41,7 +41,7 @@ npm run build
 
 ```bash
 pnpm install
-pnpm tauri:build:ios-unsigned -- --api-base https://dh-admin.1666888.cc.cd
+pnpm tauri:build:ios-unsigned -- --api-base https://xygj-admin.1666888.cc.cd
 ```
 
 脚本会自动完成这些动作：
@@ -54,7 +54,7 @@ pnpm tauri:build:ios-unsigned -- --api-base https://dh-admin.1666888.cc.cd
 如果真机启动后提示正在访问 `http://局域网IP:5173/` 或要求开启“本地网络”权限，说明原生库被按开发模式构建了。请重新执行：
 
 ```bash
-pnpm tauri:build:ios-unsigned -- --api-base https://dh-admin.1666888.cc.cd --force-native-build
+pnpm tauri:build:ios-unsigned -- --api-base https://xygj-admin.1666888.cc.cd --force-native-build
 ```
 
 常用参数：
