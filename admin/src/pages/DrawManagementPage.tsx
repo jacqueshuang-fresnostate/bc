@@ -304,9 +304,11 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   }, [issues, selectedIssueId]);
 
   useEffect(() => {
-    const pageIssueIds = new Set(issues.map((issue) => issue.id));
+    const cancellablePageIssueIds = new Set(
+      issues.filter((issue) => canCancel(issue.status)).map((issue) => issue.id),
+    );
     setSelectedIssueIds((current) =>
-      current.filter((issueId) => pageIssueIds.has(issueId)),
+      current.filter((issueId) => cancellablePageIssueIds.has(issueId)),
     );
   }, [issues]);
 
@@ -1047,9 +1049,10 @@ function IssueManagementSection({
   const cancellableIssueIds = issues
     .filter((issue) => canCancel(issue.status))
     .map((issue) => issue.id);
-  const selectedCancellableCount = selectedIssueIds.filter((id) =>
+  const selectedCancellableIssueIds = selectedIssueIds.filter((id) =>
     cancellableIssueIds.includes(id),
-  ).length;
+  );
+  const selectedCancellableCount = selectedCancellableIssueIds.length;
   const allCancellableSelected =
     cancellableIssueIds.length > 0 &&
     cancellableIssueIds.every((id) => selectedIssueIds.includes(id));
@@ -1154,7 +1157,7 @@ function IssueManagementSection({
             icon={<XCircle size={16} />}
             theme="solid"
             type="warning"
-            onClick={() => onBatchCancelIssues(selectedIssueIds)}
+            onClick={() => onBatchCancelIssues(selectedCancellableIssueIds)}
           >
             批量取消
           </Button>
