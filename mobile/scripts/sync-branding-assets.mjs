@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const DEFAULT_API_BASE = 'https://bcbbc.hippoweb3.net'
+const DEFAULT_API_BASE = 'https://dh-admin.1666888.cc.cd'
 
 function usage() {
   console.log(`用途：从后台手机端站点配置同步打包用品牌资源。

@@ -41,7 +41,7 @@ npm run build
 
 ```bash
 pnpm install
-pnpm tauri:build:ios-unsigned -- --api-base https://bcbbc.hippoweb3.net
+pnpm tauri:build:ios-unsigned -- --api-base https://dh-admin.1666888.cc.cd
 ```
 
 脚本会自动完成这些动作：
