@@ -188,9 +188,11 @@ const DRAW_SOURCE_PRESETS: Array<{ label: string; form: DrawSourceFormState }> =
 
 export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPageProps) {
   const {
+    batchCancel,
     cancel,
     close,
     create,
+    clearCancelledIssues,
     clearDrawnIssues,
     clearSnapshots,
     createSource,
@@ -237,6 +239,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   } = useDrawScheduler();
   const [section, setSection] = useState<DrawManagementSection>('issues');
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
+  const [selectedIssueIds, setSelectedIssueIds] = useState<string[]>([]);
   const [automationNow, setAutomationNow] = useState(() => currentDateTimeLabel());
   const [automationResult, setAutomationResult] =
     useState<DrawAutomationRun | null>(null);
@@ -299,6 +302,13 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
       setSelectedIssueId(null);
     }
   }, [issues, selectedIssueId]);
+
+  useEffect(() => {
+    const pageIssueIds = new Set(issues.map((issue) => issue.id));
+    setSelectedIssueIds((current) =>
+      current.filter((issueId) => pageIssueIds.has(issueId)),
+    );
+  }, [issues]);
 
   useEffect(() => {
     if (issueLotteryFilter && !lotteries.some((lottery) => lottery.id === issueLotteryFilter)) {
@@ -515,12 +525,54 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
 
     try {
       const result = await clearDrawnIssues();
+      setSelectedIssueIds([]);
       setSelectedIssueId(null);
       setDrawIssueSheetVisible(false);
       setIssueCurrentPage(1);
       Toast.success(`已删除 ${result.deletedCount} 个已结算的已开奖期号`);
     } catch {
       Toast.error('已开奖期号删除失败，请查看接口错误提示');
+    }
+  };
+
+  const batchCancelIssues = async (issueIds: string[]) => {
+    if (issueIds.length === 0) {
+      return;
+    }
+    if (!window.confirm(`确定批量取消选中的 ${issueIds.length} 个未开奖期号吗？`)) {
+      return;
+    }
+
+    try {
+      const cancelledIssues = await batchCancel(issueIds);
+      setSelectedIssueIds([]);
+      setSelectedIssueId(cancelledIssues[0]?.id ?? null);
+      setDrawIssueSheetVisible(false);
+      Toast.success(`已取消 ${cancelledIssues.length} 个期号`);
+      onDashboardRefresh();
+    } catch {
+      Toast.error('批量取消期号失败，请查看接口错误提示');
+    }
+  };
+
+  const clearCancelledIssueRecords = async () => {
+    if (
+      !window.confirm(
+        '确定一键删除全部已取消期号吗？该操作只清理取消状态的期号，不会影响销售中、封盘或已开奖期号。',
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const result = await clearCancelledIssues();
+      setSelectedIssueIds([]);
+      setSelectedIssueId(null);
+      setDrawIssueSheetVisible(false);
+      setIssueCurrentPage(1);
+      Toast.success(`已删除 ${result.deletedCount} 个已取消期号`);
+    } catch {
+      Toast.error('已取消期号删除失败，请查看接口错误提示');
     }
   };
 
@@ -758,6 +810,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
           loading={loading}
           saving={saving}
           selectedIssue={selectedIssue}
+          selectedIssueIds={selectedIssueIds}
           onIssueLotteryFilterChange={handleIssueLotteryFilterChange}
           onIssueStatusFilterChange={handleIssueStatusFilterChange}
           onIssuePageChange={handleIssuePageChange}
@@ -767,10 +820,13 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
           totalCount={issueTotalCount}
           totalPages={issueTotalPages}
           onCancelIssue={(issue) => void cancelIssue(issue)}
+          onBatchCancelIssues={(ids) => void batchCancelIssues(ids)}
           onCloseIssue={(issue) => void closeIssue(issue)}
+          onClearCancelledIssues={() => void clearCancelledIssueRecords()}
           onClearDrawnIssues={() => void clearDrawnIssueRecords()}
           onCreateIssue={() => setCreateIssueSheetVisible(true)}
           onOpenDraw={openDrawIssueSheet}
+          onSelectionChange={setSelectedIssueIds}
           onSelectIssue={setSelectedIssueId}
         />
       ) : null}
@@ -946,7 +1002,9 @@ function IssueManagementSection({
   totalPages,
   statusFilter,
   onCancelIssue,
+  onBatchCancelIssues,
   onCloseIssue,
+  onClearCancelledIssues,
   onClearDrawnIssues,
   onCreateIssue,
   onIssuePageChange,
@@ -954,9 +1012,11 @@ function IssueManagementSection({
   onOpenDraw,
   onIssueLotteryFilterChange,
   onIssueStatusFilterChange,
+  onSelectionChange,
   onSelectIssue,
   saving,
   selectedIssue,
+  selectedIssueIds,
 }: {
   issues: DrawIssue[];
   loading: boolean;
@@ -968,7 +1028,9 @@ function IssueManagementSection({
   totalPages: number;
   statusFilter: DrawIssueStatus | 'all';
   onCancelIssue: (issue: DrawIssue) => void;
+  onBatchCancelIssues: (ids: string[]) => void;
   onCloseIssue: (issue: DrawIssue) => void;
+  onClearCancelledIssues: () => void;
   onClearDrawnIssues: () => void;
   onCreateIssue: () => void;
   onIssuePageChange: (page: number) => void;
@@ -976,10 +1038,39 @@ function IssueManagementSection({
   onOpenDraw: (issue: DrawIssue) => void;
   onIssueLotteryFilterChange: (lotteryId: string) => void;
   onIssueStatusFilterChange: (status: DrawIssueStatus | 'all') => void;
+  onSelectionChange: (ids: string[]) => void;
   onSelectIssue: (id: string) => void;
   saving: boolean;
   selectedIssue: DrawIssue | null;
+  selectedIssueIds: string[];
 }) {
+  const cancellableIssueIds = issues
+    .filter((issue) => canCancel(issue.status))
+    .map((issue) => issue.id);
+  const selectedCancellableCount = selectedIssueIds.filter((id) =>
+    cancellableIssueIds.includes(id),
+  ).length;
+  const allCancellableSelected =
+    cancellableIssueIds.length > 0 &&
+    cancellableIssueIds.every((id) => selectedIssueIds.includes(id));
+  const toggleIssueSelection = (issue: DrawIssue, checked: boolean) => {
+    if (!canCancel(issue.status)) {
+      return;
+    }
+    onSelectionChange(
+      checked
+        ? Array.from(new Set([...selectedIssueIds, issue.id]))
+        : selectedIssueIds.filter((id) => id !== issue.id),
+    );
+  };
+  const toggleAllCancellable = (checked: boolean) => {
+    onSelectionChange(
+      checked
+        ? Array.from(new Set([...selectedIssueIds, ...cancellableIssueIds]))
+        : selectedIssueIds.filter((id) => !cancellableIssueIds.includes(id)),
+    );
+  };
+
   return (
     <Card className="rounded-md border border-line">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -991,6 +1082,9 @@ function IssueManagementSection({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Tag color="cyan">{totalCount} 个期号</Tag>
+          <Tag color={selectedCancellableCount > 0 ? 'orange' : 'grey'}>
+            已选 {selectedCancellableCount}
+          </Tag>
           <Select
             className="form-input min-w-[220px]"
             value={lotteryFilter}
@@ -1056,6 +1150,15 @@ function IssueManagementSection({
             创建期号
           </Button>
           <Button
+            disabled={saving || loading || selectedCancellableCount === 0}
+            icon={<XCircle size={16} />}
+            theme="solid"
+            type="warning"
+            onClick={() => onBatchCancelIssues(selectedIssueIds)}
+          >
+            批量取消
+          </Button>
+          <Button
             disabled={saving || loading}
             icon={<Trash2 size={16} />}
             theme="solid"
@@ -1063,6 +1166,15 @@ function IssueManagementSection({
             onClick={onClearDrawnIssues}
           >
             删除已开奖
+          </Button>
+          <Button
+            disabled={saving || loading}
+            icon={<Trash2 size={16} />}
+            theme="solid"
+            type="danger"
+            onClick={onClearCancelledIssues}
+          >
+            删除已取消
           </Button>
         </div>
       </div>
@@ -1075,6 +1187,16 @@ function IssueManagementSection({
           <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="border-b border-line text-xs text-slate-500">
               <tr>
+                <th className="w-10 py-2 pr-4 font-medium">
+                  <input
+                    aria-label="选择本页可取消期号"
+                    checked={allCancellableSelected}
+                    className="h-4 w-4 rounded border-line text-accent"
+                    disabled={cancellableIssueIds.length === 0 || saving}
+                    type="checkbox"
+                    onChange={(event) => toggleAllCancellable(event.currentTarget.checked)}
+                  />
+                </th>
                 <th className="py-2 pr-4 font-medium">期号</th>
                 <th className="py-2 pr-4 font-medium">彩种</th>
                 <th className="py-2 pr-4 font-medium">号码类型</th>
@@ -1093,6 +1215,18 @@ function IssueManagementSection({
                     selectedIssue?.id === issue.id ? 'bg-teal-50/60' : ''
                   }`}
                 >
+                  <td className="py-3 pr-4 align-top">
+                    <input
+                      aria-label={`选择第 ${issue.issue} 期`}
+                      checked={selectedIssueIds.includes(issue.id)}
+                      className="h-4 w-4 rounded border-line text-accent"
+                      disabled={saving || !canCancel(issue.status)}
+                      type="checkbox"
+                      onChange={(event) =>
+                        toggleIssueSelection(issue, event.currentTarget.checked)
+                      }
+                    />
+                  </td>
                   <td className="py-3 pr-4">
                     <button
                       className="text-left font-semibold text-accent"

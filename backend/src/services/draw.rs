@@ -441,6 +441,30 @@ impl DrawRepository {
         Ok(result)
     }
 
+    /// 批量取消未开奖期号；先完整校验全部 ID，避免前几条已取消、后续失败造成半批次状态。
+    pub async fn cancel_many(&self, ids: &[String]) -> ApiResult<Vec<DrawIssue>> {
+        let ids = normalized_draw_issue_ids(ids)?;
+        let results = {
+            let mut store = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?;
+            let mut next_store = store.clone();
+            let mut results = Vec::with_capacity(ids.len());
+            for id in &ids {
+                results.push(next_store.cancel(id)?);
+            }
+            *store = next_store;
+            results
+        };
+
+        for issue in &results {
+            self.persist_draw_issue(issue).await?;
+        }
+
+        Ok(results)
+    }
+
     /// 读取所有可用开奖源配置。
     pub async fn draw_sources(&self) -> ApiResult<Vec<DrawSource>> {
         let mut sources = self.api_sources.list().await?;
@@ -487,6 +511,25 @@ impl DrawRepository {
             .write()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
             .map(|mut store| store.clear_settled_drawn_issues(settled_draw_issue_ids))
+    }
+
+    /// 一键删除已取消期号，供后台清理无效期号列表使用。
+    pub async fn clear_cancelled_issues(&self) -> ApiResult<usize> {
+        if let Some(persistence) = &self.persistence {
+            let deleted_count = delete_cancelled_draw_issues_in_database(persistence).await?;
+            if deleted_count > 0 {
+                self.inner
+                    .write()
+                    .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
+                    .clear_cancelled_issues();
+            }
+            return Ok(deleted_count);
+        }
+
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|mut store| store.clear_cancelled_issues())
     }
 
     /// 按彩种列表返回开奖控制配置。
@@ -1126,6 +1169,28 @@ fn normalized_lottery_ids(lottery_ids: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// 归一化期号记录 ID 集合，去空格和重复项，批量接口至少需要一个有效 ID。
+fn normalized_draw_issue_ids(ids: &[String]) -> ApiResult<Vec<String>> {
+    let mut seen = BTreeSet::new();
+    let ids = ids
+        .iter()
+        .filter_map(|id| {
+            let id = id.trim();
+            if id.is_empty() || !seen.insert(id.to_string()) {
+                None
+            } else {
+                Some(id.to_string())
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if ids.is_empty() {
+        return Err(ApiError::BadRequest("期号 ID 不能为空".to_string()));
+    }
+
+    Ok(ids)
+}
+
 /// 高频期号状态变更使用单行 upsert，避免调度时反复重写整张期号表。
 async fn upsert_draw_issue(database: &BusinessDatabase, issue: &DrawIssue) -> ApiResult<()> {
     sqlx::query(
@@ -1221,6 +1286,18 @@ async fn delete_settled_drawn_issues_in_database(
 
     usize::try_from(result.rows_affected())
         .map_err(|_| ApiError::Internal("已开奖期号清理数量超出范围".to_string()))
+}
+
+/// 删除数据库中已取消期号，供后台期号列表批量清理无效记录使用。
+async fn delete_cancelled_draw_issues_in_database(database: &BusinessDatabase) -> ApiResult<usize> {
+    let result = sqlx::query("DELETE FROM draw_issues WHERE status = $1")
+        .bind(enum_to_string(&DrawIssueStatus::Cancelled)?)
+        .execute(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("已取消期号清理失败".to_string()))?;
+
+    usize::try_from(result.rows_affected())
+        .map_err(|_| ApiError::Internal("已取消期号清理数量超出范围".to_string()))
 }
 
 /// 保存开奖控制配置快照，供彩种控制台和自动开奖共同读取。
@@ -1360,6 +1437,14 @@ impl DrawStore {
         self.issues.retain(|_, issue| {
             issue.status != DrawIssueStatus::Drawn || !settled_draw_issue_ids.contains(&issue.id)
         });
+        before_count - self.issues.len()
+    }
+
+    /// 删除已取消期号，保留销售中、封盘和已开奖期号。
+    fn clear_cancelled_issues(&mut self) -> usize {
+        let before_count = self.issues.len();
+        self.issues
+            .retain(|_, issue| issue.status != DrawIssueStatus::Cancelled);
         before_count - self.issues.len()
     }
 
@@ -2215,6 +2300,112 @@ mod tests {
                 .status,
             DrawIssueStatus::Cancelled
         );
+    }
+
+    #[test]
+    /// 验证清理已取消期号只删除取消状态，不影响其他开奖流程状态。
+    fn store_clear_cancelled_issues_keeps_active_and_drawn_issues() {
+        let lottery = lottery(DrawMode::Manual, LotteryNumberType::ThreeDigit);
+        let mut store = DrawStore::default();
+        let open = store
+            .create(&lottery, create_request("20260603-open"))
+            .expect("open issue can be created");
+        let cancelled = store
+            .create(&lottery, create_request("20260603-cancelled"))
+            .expect("cancelled issue can be created");
+        store.cancel(&cancelled.id).expect("issue can be cancelled");
+        let drawn = store
+            .create(&lottery, create_request("20260603-drawn"))
+            .expect("drawn issue can be created");
+        store
+            .draw(
+                &drawn.id,
+                DrawIssueResultRequest {
+                    draw_number: Some("1,2,3".to_string()),
+                },
+                false,
+            )
+            .expect("issue can be drawn");
+
+        let deleted_count = store.clear_cancelled_issues();
+
+        assert_eq!(deleted_count, 1);
+        assert!(store.get(&cancelled.id).is_err());
+        assert_eq!(
+            store.get(&open.id).expect("open issue exists").status,
+            DrawIssueStatus::Open
+        );
+        assert_eq!(
+            store.get(&drawn.id).expect("drawn issue exists").status,
+            DrawIssueStatus::Drawn
+        );
+    }
+
+    #[tokio::test]
+    /// 验证批量取消会先校验完整批次，遇到已开奖期号时不会部分取消前面的期号。
+    async fn repository_batch_cancel_validates_before_writing() {
+        let repository = DrawRepository::memory();
+        let lottery = lottery(DrawMode::Manual, LotteryNumberType::ThreeDigit);
+        let open = repository
+            .create(&lottery, create_request("20260604-open"))
+            .await
+            .expect("open issue can be created");
+        let drawn = repository
+            .create(&lottery, create_request("20260604-drawn"))
+            .await
+            .expect("drawn issue can be created");
+        repository
+            .draw(
+                &drawn.id,
+                DrawIssueResultRequest {
+                    draw_number: Some("1,2,3".to_string()),
+                },
+            )
+            .await
+            .expect("issue can be drawn");
+
+        let result = repository
+            .cancel_many(&[open.id.clone(), drawn.id.clone()])
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            repository
+                .get(&open.id)
+                .await
+                .expect("open issue still exists")
+                .status,
+            DrawIssueStatus::Open
+        );
+    }
+
+    #[tokio::test]
+    /// 验证批量取消支持一次取消多个未开奖期号，并忽略重复 ID。
+    async fn repository_batch_cancel_updates_multiple_issues() {
+        let repository = DrawRepository::memory();
+        let lottery = lottery(DrawMode::Manual, LotteryNumberType::ThreeDigit);
+        let open = repository
+            .create(&lottery, create_request("20260605-open"))
+            .await
+            .expect("open issue can be created");
+        let closed = repository
+            .create(&lottery, create_request("20260605-closed"))
+            .await
+            .expect("closed issue can be created");
+        repository
+            .close(&closed.id)
+            .await
+            .expect("issue can be closed");
+
+        let cancelled = repository
+            .cancel_many(&[open.id.clone(), closed.id.clone(), open.id.clone()])
+            .await
+            .expect("issues can be cancelled");
+
+        assert_eq!(cancelled.len(), 2);
+        assert!(cancelled
+            .iter()
+            .all(|issue| issue.status == DrawIssueStatus::Cancelled));
     }
 
     #[tokio::test]

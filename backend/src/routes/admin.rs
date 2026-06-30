@@ -294,7 +294,12 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/draw-issues/generate-batch",
             post(generate_draw_issue_batch_request),
         )
+        .route("/draw-issues/batch-cancel", patch(batch_cancel_draw_issues))
         .route("/draw-issues/drawn/clear", delete(clear_drawn_issues))
+        .route(
+            "/draw-issues/cancelled/clear",
+            delete(clear_cancelled_issues),
+        )
         .route("/draw-issues/{id}", get(get_draw_issue))
         .route("/draw-issues/{id}/close", patch(close_draw_issue))
         .route("/draw-issues/{id}/draw", patch(draw_issue_result))
@@ -849,6 +854,18 @@ fn required_permission_for_request(method: &Method, path: &str) -> Option<&'stat
         };
     }
     if path == "draw-issues/drawn/clear" {
+        return match method.clone() {
+            Method::DELETE => Some("lottery.issue.write"),
+            _ => None,
+        };
+    }
+    if path == "draw-issues/batch-cancel" {
+        return match method.clone() {
+            Method::PATCH => Some("lottery.issue.write"),
+            _ => None,
+        };
+    }
+    if path == "draw-issues/cancelled/clear" {
         return match method.clone() {
             Method::DELETE => Some("lottery.issue.write"),
             _ => None,
@@ -1547,6 +1564,34 @@ async fn clear_drawn_issues(
     Ok(Json(ApiEnvelope::success(ClearRecordsResult {
         deleted_count,
     })))
+}
+
+/// 批量取消尚未开奖的期号。
+async fn batch_cancel_draw_issues(
+    State(state): State<AppState>,
+    Json(payload): Json<BatchDrawIssueIdsRequest>,
+) -> ApiResult<Json<ApiEnvelope<Vec<DrawIssue>>>> {
+    let issues = state.draws.cancel_many(&payload.ids).await?;
+
+    Ok(Json(ApiEnvelope::success(issues)))
+}
+
+/// 一键删除已取消期号，保留其他状态期号。
+async fn clear_cancelled_issues(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
+    let deleted_count = state.draws.clear_cancelled_issues().await?;
+
+    Ok(Json(ApiEnvelope::success(ClearRecordsResult {
+        deleted_count,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台批量期号 ID 请求。
+struct BatchDrawIssueIdsRequest {
+    ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -5560,6 +5605,14 @@ mod tests {
         );
         assert_eq!(
             required_permission_for_request(&Method::DELETE, "/draw-issues/drawn/clear"),
+            Some("lottery.issue.write")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::PATCH, "/draw-issues/batch-cancel"),
+            Some("lottery.issue.write")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::DELETE, "/draw-issues/cancelled/clear"),
             Some("lottery.issue.write")
         );
         assert_eq!(

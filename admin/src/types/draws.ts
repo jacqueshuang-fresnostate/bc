@@ -18,6 +18,10 @@ export interface DrawIssueQuery {
   pageSize?: number;
 }
 
+export interface BatchDrawIssueIdsRequest {
+  ids: string[];
+}
+
 export interface GenerateDrawIssueRequest {
   lotteryId: string;
   now: string;

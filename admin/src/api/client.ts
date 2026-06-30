@@ -30,6 +30,7 @@ import type {
   CurrentAdminProfile,
 } from '../types/auth';
 import type {
+  BatchDrawIssueIdsRequest,
   CreateDrawIssueRequest,
   ApiDrawSourceCrawlSnapshotPage,
   ApiDrawSourceCrawlSnapshotQuery,
@@ -1033,6 +1034,19 @@ export function fetchDrawIssues(signal?: AbortSignal, query?: DrawIssueQuery) {
 
 export function clearDrawnIssueRecords() {
   return requestJson<ClearRecordsResult>('/api/admin/draw-issues/drawn/clear', {
+    method: 'DELETE',
+  });
+}
+
+export function batchCancelDrawIssues(payload: BatchDrawIssueIdsRequest) {
+  return requestJson<DrawIssue[]>('/api/admin/draw-issues/batch-cancel', {
+    body: payload,
+    method: 'PATCH',
+  });
+}
+
+export function clearCancelledIssueRecords() {
+  return requestJson<ClearRecordsResult>('/api/admin/draw-issues/cancelled/clear', {
     method: 'DELETE',
   });
 }

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  batchCancelDrawIssues,
   cancelDrawIssue,
   clearApiDrawSourceSnapshotRecords,
+  clearCancelledIssueRecords,
   clearDrawnIssueRecords,
   createDrawSource,
   closeDrawIssue,
@@ -97,6 +99,22 @@ export function useDraws() {
     setError(null);
     try {
       const result = await clearDrawnIssueRecords();
+      setQuery((current) => ({ ...current, page: 1 }));
+      setRefreshToken((current) => current + 1);
+      return result;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const clearCancelledIssues = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await clearCancelledIssueRecords();
       setQuery((current) => ({ ...current, page: 1 }));
       setRefreshToken((current) => current + 1);
       return result;
@@ -334,6 +352,25 @@ export function useDraws() {
     }
   }, []);
 
+  const batchCancel = useCallback(async (ids: string[]) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const cancelledIssues = await batchCancelDrawIssues({ ids });
+      setIssues((current) =>
+        current.map((issue) =>
+          cancelledIssues.find((cancelled) => cancelled.id === issue.id) ?? issue,
+        ),
+      );
+      return cancelledIssues;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
   const runAutomation = useCallback(
     async (payload: DrawAutomationRunRequest, issueQuery?: DrawIssueQuery) => {
       setSaving(true);
@@ -358,7 +395,9 @@ export function useDraws() {
   );
 
   return {
+    batchCancel,
     cancel,
+    clearCancelledIssues,
     clearDrawnIssues,
     clearSnapshots,
     close,

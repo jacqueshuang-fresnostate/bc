@@ -1027,11 +1027,29 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Json,
     ),
     doc(
+        "patch",
+        "/admin/draw-issues/batch-cancel",
+        "开奖期号",
+        "批量取消期号",
+        "按期号记录 ID 批量取消尚未开奖的期号；已开奖和已取消期号不能再次取消。",
+        AuthMode::Admin,
+        RequestBodyKind::Json,
+    ),
+    doc(
         "delete",
         "/admin/draw-issues/drawn/clear",
         "开奖期号",
         "删除已开奖期号",
         "一键删除已结算的已开奖期号；未生成计奖派奖批次的已开奖期号会保留，用于后续给独立下单和合买订单派奖。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "delete",
+        "/admin/draw-issues/cancelled/clear",
+        "开奖期号",
+        "删除已取消期号",
+        "一键删除全部已取消期号，保留销售中、封盘和已开奖期号。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),
@@ -2158,7 +2176,9 @@ mod tests {
         assert!(document["paths"]["/admin/robots/{id}"]["get"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["put"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["delete"].is_object());
+        assert!(document["paths"]["/admin/draw-issues/batch-cancel"]["patch"].is_object());
         assert!(document["paths"]["/admin/draw-issues/drawn/clear"]["delete"].is_object());
+        assert!(document["paths"]["/admin/draw-issues/cancelled/clear"]["delete"].is_object());
         assert!(document["paths"]["/admin/app-packages/upload"]["post"].is_object());
         assert!(
             document["paths"]["/admin/system-settings/chat-hall/messages/clear"]["delete"]
