@@ -91,6 +91,7 @@ export function GroupBuyManagementPage({
     refresh,
     saving,
     selectedPlan,
+    update,
     users,
   } = useGroupBuyPlans({
     planQuery: {
@@ -243,6 +244,36 @@ export function GroupBuyManagementPage({
       onDashboardRefresh();
     } catch {
       Toast.error('机器人合买计划删除失败，请查看接口错误提示');
+    }
+  };
+
+  const cancelGroupBuyPlanRecord = async (plan: GroupBuyPlanSummary) => {
+    if (!canCancelGroupBuyPlan(plan)) {
+      Toast.warning('当前合买计划不能取消');
+      return;
+    }
+    if (
+      !window.confirm(
+        `确定取消合买计划【${plan.id}】吗？系统会把计划改为已取消；如果已成单且订单仍待开奖，会同步取消关联订单；认购金额会按参与记录退款。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const detail = await loadPlan(plan.id);
+      await update(plan.id, {
+        status: 'cancelled',
+        note: cancelledPlanNote(detail.note),
+      });
+      if (detailPlanId === plan.id) {
+        setDetailPlanId('');
+        setDetailSheetVisible(false);
+      }
+      Toast.success('合买计划已取消，认购金额已按参与记录退款');
+      refresh();
+      onDashboardRefresh();
+    } catch {
+      Toast.error('合买计划取消失败，请查看接口错误提示');
     }
   };
 
@@ -495,6 +526,18 @@ export function GroupBuyManagementPage({
                               >
                                 查看详情
                               </Button>
+                              {canCancelGroupBuyPlan(plan) ? (
+                                <Button
+                                  disabled={saving}
+                                  icon={<X size={14} />}
+                                  size="small"
+                                  theme="light"
+                                  type="danger"
+                                  onClick={() => void cancelGroupBuyPlanRecord(plan)}
+                                >
+                                  取消
+                                </Button>
+                              ) : null}
                               {includeRobotData && isRobotGroupBuyPlan(plan) ? (
                                 <Button
                                   disabled={saving}
@@ -1058,6 +1101,30 @@ function isRobotGroupBuyPlan(plan: GroupBuyPlanSummary) {
   return (ROBOT_GROUP_BUY_USER_IDS as readonly string[]).includes(
     plan.initiatorUserId,
   );
+}
+
+function canCancelGroupBuyPlan(plan: GroupBuyPlanSummary) {
+  if (plan.status === 'cancelled' || plan.status === 'settled') {
+    return false;
+  }
+  if (plan.orderStatus && plan.orderStatus !== 'pendingDraw') {
+    return false;
+  }
+  if (plan.orderId && !plan.orderStatus) {
+    return false;
+  }
+  return true;
+}
+
+function cancelledPlanNote(note: string) {
+  const trimmed = note.trim();
+  if (!trimmed) {
+    return '后台取消合买';
+  }
+  if (trimmed.includes('后台取消合买')) {
+    return trimmed;
+  }
+  return `${trimmed}\n后台取消合买`;
 }
 
 function positiveYuanToMinor(value: string, label: string) {
