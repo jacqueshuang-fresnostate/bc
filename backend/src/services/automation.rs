@@ -240,6 +240,15 @@ pub async fn draw_due_issues_with_progress_excluding_group_buy_issues(
     let now = normalize_automation_now(&payload)?;
     let mut run = empty_draw_automation_run(&now);
     let lottery_configs = lottery_automation_configs(lotteries).await?;
+    retry_unsettled_drawn_issue_settlements(
+        &mut run,
+        draws,
+        orders,
+        finance,
+        group_buys,
+        &progress_callback,
+    )
+    .await?;
     let mut local_draw_candidates = Vec::new();
     let mut api_draw_candidates = Vec::new();
     for issue in draws.list_scheduler_active().await? {
@@ -402,21 +411,105 @@ async fn settle_draw_outcomes(
                 continue;
             }
         };
-        let (settlement, entries) = orders
-            .settle_with_payouts(finance, group_buys, &drawn)
-            .await?;
-
-        if let Some(callback) = &progress_callback {
-            callback(DrawIssueSettlementProgress {
-                drawn_issue: drawn.clone(),
-                ledger_entries: entries.clone(),
-            });
-        }
-
-        run.drawn_issues.push(drawn);
-        run.settlement_runs.push(settlement);
-        run.ledger_entries.extend(entries);
+        settle_drawn_issue_with_retry_marker(
+            run,
+            orders,
+            finance,
+            group_buys,
+            drawn,
+            progress_callback,
+            true,
+        )
+        .await?;
     }
+
+    Ok(())
+}
+
+/// 重试已经写入开奖号码但尚未完成计奖派奖的期号，避免历史 drawn 期号脱离调度扫描。
+async fn retry_unsettled_drawn_issue_settlements(
+    run: &mut DrawAutomationRun,
+    draws: &DrawRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    progress_callback: &Option<DrawIssueSettlementProgressCallback>,
+) -> ApiResult<()> {
+    let settled_draw_issue_ids = orders.settled_draw_issue_ids().await?;
+    let unsettled_drawn_issues = draws
+        .list_unsettled_drawn_issues(&settled_draw_issue_ids)
+        .await?;
+
+    for issue in unsettled_drawn_issues {
+        settle_drawn_issue_with_retry_marker(
+            run,
+            orders,
+            finance,
+            group_buys,
+            issue,
+            progress_callback,
+            false,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// 串行提交单期计奖派奖；失败时记录可重试原因，不阻断同轮其它期号开奖。
+async fn settle_drawn_issue_with_retry_marker(
+    run: &mut DrawAutomationRun,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    drawn: DrawIssue,
+    progress_callback: &Option<DrawIssueSettlementProgressCallback>,
+    record_drawn_issue: bool,
+) -> ApiResult<()> {
+    let settlement_result = orders
+        .settle_with_payouts(finance, group_buys, &drawn)
+        .await;
+
+    let (settlement, entries) = match settlement_result {
+        Ok(result) => result,
+        Err(error) if matches!(&error, ApiError::Conflict(_)) => {
+            let reason = automation_error_reason(&error);
+            tracing::warn!(
+                draw_issue_id = %drawn.id,
+                lottery_id = %drawn.lottery_id,
+                issue = %drawn.issue,
+                error = %error.log_message(),
+                "自动开奖计奖派奖遇到已结算期号，跳过重复处理"
+            );
+            push_skipped_issue_once(run, &drawn, &reason);
+            return Ok(());
+        }
+        Err(error) => {
+            let reason = automation_error_reason(&error);
+            tracing::warn!(
+                draw_issue_id = %drawn.id,
+                lottery_id = %drawn.lottery_id,
+                issue = %drawn.issue,
+                error = %error.log_message(),
+                "自动开奖计奖派奖失败，保留期号等待后续调度重试"
+            );
+            push_skipped_issue_once(run, &drawn, &reason);
+            return Ok(());
+        }
+    };
+
+    if let Some(callback) = progress_callback {
+        callback(DrawIssueSettlementProgress {
+            drawn_issue: drawn.clone(),
+            ledger_entries: entries.clone(),
+        });
+    }
+
+    if record_drawn_issue {
+        run.drawn_issues.push(drawn);
+    }
+    run.settlement_runs.push(settlement);
+    run.ledger_entries.extend(entries);
 
     Ok(())
 }
@@ -829,7 +922,7 @@ mod tests {
         domain::{
             draw::{
                 CreateDrawIssueRequest, DrawAutomationRunRequest, DrawControlTargetScope,
-                DrawIssueStatus, SaveLotteryDrawControlRequest,
+                DrawIssueResultRequest, DrawIssueStatus, SaveLotteryDrawControlRequest,
             },
             finance::LedgerEntryKind,
             group_buy::{CreateGroupBuyPlanRequest, GroupBuyPlanStatus},
@@ -917,6 +1010,69 @@ mod tests {
             .as_deref()
             .is_some_and(|number| { number.split(',').count() == 3 }));
     }
+
+    /// 验证调度器会重试已开奖但未生成结算批次的期号，避免漏派奖后长期卡住。
+    #[tokio::test]
+    async fn automation_retries_unsettled_drawn_issue_payouts() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let lottery = lottery(DrawMode::Api);
+        let issue = draws
+            .create(&lottery, create_request("DRAWN_UNSETTLED"))
+            .await
+            .expect("issue can be created");
+        orders
+            .create(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10001".to_string(),
+                    lottery_id: lottery.id.clone(),
+                    issue: issue.issue.clone(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: full_direct_selection(),
+                    unit_amount_minor: 1,
+                },
+            )
+            .await
+            .expect("order can be created");
+        draws
+            .draw(
+                &issue.id,
+                DrawIssueResultRequest {
+                    draw_number: Some("1,2,3".to_string()),
+                },
+            )
+            .await
+            .expect("issue can be marked as drawn without settlement");
+
+        let run = run_draw_automation(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            DrawAutomationRunRequest {
+                now: "2026-06-02 22:00:00".to_string(),
+            },
+        )
+        .await
+        .expect("automation can retry unsettled drawn issue");
+        let accounts = finance.accounts().await.expect("accounts can be listed");
+        let account = accounts
+            .iter()
+            .find(|account| account.user_id == "U10001")
+            .expect("seeded account exists");
+
+        assert!(run.drawn_issues.is_empty());
+        assert_eq!(run.settlement_runs.len(), 1);
+        assert_eq!(run.ledger_entries.len(), 1);
+        assert_eq!(account.available_balance_minor, 12_100);
+    }
+
     /// 验证自动开奖skipsallstepswhen彩种stopped。
     #[tokio::test]
     async fn automation_skips_all_steps_when_lottery_stopped() {

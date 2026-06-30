@@ -249,6 +249,21 @@ impl DrawRepository {
             })
     }
 
+    /// 返回已开奖但还没有生成结算批次的期号，供自动调度重试计奖派奖。
+    pub async fn list_unsettled_drawn_issues(
+        &self,
+        settled_draw_issue_ids: &BTreeSet<String>,
+    ) -> ApiResult<Vec<DrawIssue>> {
+        if let Some(persistence) = &self.persistence {
+            return query_unsettled_drawn_issues(persistence, settled_draw_issue_ids).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|store| store.unsettled_drawn_issues(settled_draw_issue_ids))
+    }
+
     /// 返回封盘后和已开奖的期号，供合买流单退款扫描已过期但未处理的合买计划。
     pub async fn list_refundable_draw_issues(&self) -> ApiResult<Vec<DrawIssue>> {
         if let Some(persistence) = &self.persistence {
@@ -262,7 +277,12 @@ impl DrawRepository {
                 store
                     .list()
                     .into_iter()
-                    .filter(|issue| matches!(issue.status, DrawIssueStatus::Closed))
+                    .filter(|issue| {
+                        matches!(
+                            issue.status,
+                            DrawIssueStatus::Closed | DrawIssueStatus::Drawn
+                        )
+                    })
                     .collect()
             })
     }
@@ -923,13 +943,38 @@ async fn query_refundable_draw_issues(database: &BusinessDatabase) -> ApiResult<
         "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
                 sale_closed_at, status, draw_number, drawn_at, created_at
          FROM draw_issues
-         WHERE status = 'closed'
+         WHERE status IN ('closed', 'drawn')
          ORDER BY id DESC
          LIMIT 100",
     )
     .fetch_all(database.pool())
     .await
     .map_err(|_| ApiError::Internal("退款期号数据读取失败".to_string()))?;
+
+    rows.into_iter().map(draw_issue_from_row).collect()
+}
+
+/// 数据库模式下读取已开奖但尚未生成结算批次的期号，供调度器重试派奖。
+async fn query_unsettled_drawn_issues(
+    database: &BusinessDatabase,
+    settled_draw_issue_ids: &BTreeSet<String>,
+) -> ApiResult<Vec<DrawIssue>> {
+    let settled_draw_issue_ids = settled_draw_issue_ids.iter().cloned().collect::<Vec<_>>();
+    let rows = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         WHERE status = 'drawn'
+           AND draw_number IS NOT NULL
+           AND btrim(draw_number) <> ''
+           AND NOT (id = ANY($1::text[]))
+         ORDER BY scheduled_at ASC, id ASC
+         LIMIT 200",
+    )
+    .bind(&settled_draw_issue_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("未结算已开奖期号读取失败".to_string()))?;
 
     rows.into_iter().map(draw_issue_from_row).collect()
 }
@@ -1316,6 +1361,31 @@ impl DrawStore {
             issue.status != DrawIssueStatus::Drawn || !settled_draw_issue_ids.contains(&issue.id)
         });
         before_count - self.issues.len()
+    }
+
+    /// 返回已开奖但尚未结算的期号，按开奖时间正序重试，避免旧期长期漏派奖。
+    fn unsettled_drawn_issues(&self, settled_draw_issue_ids: &BTreeSet<String>) -> Vec<DrawIssue> {
+        let mut issues = self
+            .issues
+            .values()
+            .filter(|issue| {
+                issue.status == DrawIssueStatus::Drawn
+                    && !settled_draw_issue_ids.contains(&issue.id)
+                    && issue
+                        .draw_number
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .is_some()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        issues.sort_by(|left, right| {
+            left.scheduled_at
+                .cmp(&right.scheduled_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        issues
     }
 
     /// 返回指定彩种集合的已开奖历史，并按开奖时间倒序排列。
