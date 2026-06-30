@@ -50,7 +50,6 @@ enum ApiDrawNumberLookup {
 #[derive(Clone)]
 struct LotteryAutomationConfig {
     lottery: LotteryKind,
-    sale_enabled: bool,
     api_draw_delay_seconds: u32,
     draw_control_enabled: bool,
 }
@@ -115,7 +114,7 @@ pub async fn close_due_draw_issues(
 
     let lottery_configs = lottery_automation_configs(lotteries).await?;
     for issue in draws.list_scheduler_active().await? {
-        if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_configs) {
+        if let Some(reason) = skip_issue_if_lottery_config_missing(&issue, &lottery_configs) {
             run.skipped_issues.push(skipped_issue(&issue, &reason));
             continue;
         }
@@ -162,7 +161,7 @@ pub async fn refund_closed_unfilled_group_buys_with_protected_plans(
     let lottery_configs = lottery_automation_configs(lotteries).await?;
 
     for issue in draws.list_refundable_draw_issues().await? {
-        if skip_issue_if_lottery_disabled(&issue, &lottery_configs).is_some() {
+        if skip_issue_if_lottery_config_missing(&issue, &lottery_configs).is_some() {
             continue;
         }
 
@@ -306,7 +305,7 @@ async fn draw_due_issues_with_progress_excluding_group_buy_issues_internal(
     let mut local_draw_candidates = Vec::new();
     let mut api_draw_candidates = Vec::new();
     for issue in draws.list_scheduler_active().await? {
-        if let Some(reason) = skip_issue_if_lottery_disabled(&issue, &lottery_configs) {
+        if let Some(reason) = skip_issue_if_lottery_config_missing(&issue, &lottery_configs) {
             push_skipped_issue_once(&mut run, &issue, &reason);
             continue;
         }
@@ -361,6 +360,19 @@ async fn draw_due_issues_with_progress_excluding_group_buy_issues_internal(
     let mut api_draw_prefetch_issues = Vec::new();
     for issue in api_draw_candidates {
         if let Some(reason) = stale_api_issue_retry_reason(&api_latest_issue_cache, &issue) {
+            if cancel_api_issue_without_pending_business(
+                &mut run,
+                draws,
+                orders,
+                group_buys,
+                &issue,
+                &reason,
+                "API旧期号无待处理业务，已自动取消",
+            )
+            .await?
+            {
+                continue;
+            }
             run.skipped_issues.push(skipped_issue(&issue, &reason));
             continue;
         }
@@ -378,6 +390,20 @@ async fn draw_due_issues_with_progress_excluding_group_buy_issues_internal(
         let api_draw_number = match api_draw_number_cache.get(&issue.id) {
             Some(ApiDrawNumberLookup::Ready(draw_number)) => draw_number.clone(),
             Some(ApiDrawNumberLookup::Failed(reason)) => {
+                if api_draw_number_failure_is_missing_old_issue(&issue, reason)
+                    && cancel_api_issue_without_pending_business(
+                        &mut run,
+                        draws,
+                        orders,
+                        group_buys,
+                        &issue,
+                        reason,
+                        "API开奖源找不到旧期号且无待处理业务，已自动取消",
+                    )
+                    .await?
+                {
+                    continue;
+                }
                 run.skipped_issues.push(skipped_issue(&issue, reason));
                 continue;
             }
@@ -412,6 +438,95 @@ async fn draw_due_issues_with_progress_excluding_group_buy_issues_internal(
     .await?;
 
     Ok(run)
+}
+
+/// 没有业务单据的 API 旧期号自动取消，避免无订单历史期每秒拖慢调度。
+async fn cancel_api_issue_without_pending_business(
+    run: &mut DrawAutomationRun,
+    draws: &DrawRepository,
+    orders: &OrderRepository,
+    group_buys: &GroupBuyRepository,
+    issue: &DrawIssue,
+    source_reason: &str,
+    log_message: &'static str,
+) -> ApiResult<bool> {
+    if issue_has_pending_business(orders, group_buys, issue).await? {
+        return Ok(false);
+    }
+
+    let cancelled = draws.cancel(&issue.id).await?;
+    let reason = format!("{source_reason}；本期没有待开奖订单或活跃合买，已自动取消");
+    tracing::warn!(
+        draw_issue_id = %cancelled.id,
+        lottery_id = %cancelled.lottery_id,
+        issue = %cancelled.issue,
+        "{log_message}"
+    );
+    run.skipped_issues.push(skipped_issue(&cancelled, &reason));
+
+    Ok(true)
+}
+
+/// 判断 API 开奖失败是否属于开奖源已经只返回更新期号的确定性旧期缺失。
+fn api_draw_number_failure_is_missing_old_issue(issue: &DrawIssue, reason: &str) -> bool {
+    if !reason.contains("API 开奖源未找到期号") {
+        return false;
+    }
+    let Some(returned_issue) = returned_issue_from_missing_reason(reason) else {
+        return false;
+    };
+    api_returned_issue_is_beyond_retry_window(&issue.issue, returned_issue)
+}
+
+/// 从开奖源缺失错误文案中提取当前返回期号，辅助判断缺失期是否超出重试窗口。
+fn returned_issue_from_missing_reason(reason: &str) -> Option<&str> {
+    reason
+        .split("当前返回期号 `")
+        .nth(1)?
+        .split('`')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+/// 判断开奖源当前返回期号是否已经明显晚于本地期号且超过重试窗口。
+fn api_returned_issue_is_beyond_retry_window(expected_issue: &str, returned_issue: &str) -> bool {
+    let expected_issue = expected_issue.trim();
+    let returned_issue = returned_issue.trim();
+    let numeric_expected = parse_api_sequence_issue(expected_issue);
+    let numeric_returned = parse_api_sequence_issue(returned_issue);
+    if let (Some(expected_sequence), Some(returned_sequence)) = (numeric_expected, numeric_returned)
+    {
+        if returned_sequence > expected_sequence {
+            return returned_sequence - expected_sequence
+                > API_DRAW_RETRY_MAX_LATEST_ISSUE_DISTANCE;
+        }
+    }
+
+    expected_issue.bytes().all(|byte| byte.is_ascii_digit())
+        && returned_issue.bytes().all(|byte| byte.is_ascii_digit())
+        && expected_issue.len() != returned_issue.len()
+        && returned_issue > expected_issue
+}
+
+/// 判断期号是否仍有关联待开奖订单或活跃合买，避免自动取消影响资金审计。
+async fn issue_has_pending_business(
+    orders: &OrderRepository,
+    group_buys: &GroupBuyRepository,
+    issue: &DrawIssue,
+) -> ApiResult<bool> {
+    if !orders
+        .list_pending_for_issue(&issue.lottery_id, &issue.issue)
+        .await?
+        .is_empty()
+    {
+        return Ok(true);
+    }
+
+    Ok(!group_buys
+        .list_control_details_for_issue(&issue.lottery_id, &issue.issue)
+        .await?
+        .is_empty())
 }
 
 /// 把不依赖 API 预取的本地开奖候选转换为开奖执行任务，确保平台开奖可以优先落库。
@@ -969,7 +1084,6 @@ async fn lottery_automation_configs(
         configs.insert(
             lottery_id,
             LotteryAutomationConfig {
-                sale_enabled: lottery.sale_enabled,
                 api_draw_delay_seconds: lottery.api_draw_delay_seconds,
                 draw_control_enabled: lottery.draw_control_enabled,
                 lottery,
@@ -991,22 +1105,18 @@ fn lottery_draw_control_enabled(
         .unwrap_or_default()
 }
 
-/// 判断彩种停售或配置缺失时是否需要跳过自动封盘开奖。
-fn skip_issue_if_lottery_disabled(
+/// 判断彩种配置缺失时是否需要跳过自动封盘开奖。
+///
+/// 彩种停售只阻止后续生成新期号；已经创建的 open/closed 期号仍要继续封盘、
+/// 流单退款、开奖和结算，避免运营停售后历史期号永久卡在封盘状态。
+fn skip_issue_if_lottery_config_missing(
     issue: &DrawIssue,
     lottery_configs: &HashMap<String, LotteryAutomationConfig>,
 ) -> Option<&'static str> {
-    let sale_enabled = match lottery_configs.get(&issue.lottery_id) {
-        Some(config) => config.sale_enabled,
-        None => {
-            return Some("未找到彩种配置，跳过自动任务");
-        }
-    };
-
-    if sale_enabled {
+    if lottery_configs.contains_key(&issue.lottery_id) {
         None
     } else {
-        Some("彩种已停售，跳过自动任务")
+        Some("未找到彩种配置，跳过自动任务")
     }
 }
 
@@ -1028,7 +1138,7 @@ mod tests {
         domain::{
             draw::{
                 CreateDrawIssueRequest, DrawAutomationRunRequest, DrawControlTargetScope,
-                DrawIssueResultRequest, DrawIssueStatus, SaveLotteryDrawControlRequest,
+                DrawIssue, DrawIssueResultRequest, DrawIssueStatus, SaveLotteryDrawControlRequest,
             },
             finance::LedgerEntryKind,
             group_buy::{CreateGroupBuyPlanRequest, GroupBuyPlanStatus},
@@ -1040,9 +1150,14 @@ mod tests {
             play::{PlayRuleCode, PlaySelection},
         },
         services::{
-            access::AccessRepository, automation::run_draw_automation, draw::DrawRepository,
-            draw_api::ApiDrawSourceRepository, finance::FinanceRepository,
-            group_buy::GroupBuyRepository, lottery::LotteryRepository, order::OrderRepository,
+            access::AccessRepository,
+            automation::{api_draw_number_failure_is_missing_old_issue, run_draw_automation},
+            draw::DrawRepository,
+            draw_api::ApiDrawSourceRepository,
+            finance::FinanceRepository,
+            group_buy::GroupBuyRepository,
+            lottery::LotteryRepository,
+            order::OrderRepository,
         },
     };
 
@@ -1057,6 +1172,27 @@ mod tests {
             ]
         }
     }"#;
+    /// 验证 API 缺失期号判断只把超过重试窗口的旧期识别为可自动取消。
+    #[test]
+    fn api_missing_old_issue_detection_respects_retry_window() {
+        let old_issue = api_detection_issue("202606131441");
+        let near_issue = api_detection_issue("2026138");
+        let future_issue = api_detection_issue("2099999");
+
+        assert!(api_draw_number_failure_is_missing_old_issue(
+            &old_issue,
+            "资源不存在：API 开奖源未找到期号 `202606131441` 的开奖号码，当前返回期号 `20260701191`",
+        ));
+        assert!(!api_draw_number_failure_is_missing_old_issue(
+            &near_issue,
+            "资源不存在：API 开奖源未找到期号 `2026138` 的开奖号码，当前返回期号 `2026143`",
+        ));
+        assert!(!api_draw_number_failure_is_missing_old_issue(
+            &future_issue,
+            "资源不存在：API 开奖源未找到期号 `2099999` 的开奖号码，当前返回期号 `2026143`",
+        ));
+    }
+
     /// 验证自动开奖封盘draws结算和入账due期号。
     #[tokio::test]
     async fn automation_closes_draws_settles_and_credits_due_issue() {
@@ -1179,19 +1315,20 @@ mod tests {
         assert_eq!(account.available_balance_minor, 12_100);
     }
 
-    /// 验证自动开奖skipsallstepswhen彩种stopped。
+    /// 验证彩种停售后，已经创建的期号仍会继续封盘和开奖。
     #[tokio::test]
-    async fn automation_skips_all_steps_when_lottery_stopped() {
+    async fn automation_continues_existing_issue_when_lottery_stopped() {
         let draws = DrawRepository::memory();
         let lotteries = LotteryRepository::memory_seeded();
+        let mut lottery = lottery(DrawMode::Platform);
+        lottery.sale_enabled = false;
         lotteries
-            .set_sale_enabled("fc3d", false)
+            .update(&lottery.id, lottery.clone())
             .await
-            .expect("lottery sale can be disabled");
+            .expect("lottery config can be saved");
         let orders = OrderRepository::memory();
         let finance = FinanceRepository::memory_seeded();
         let group_buys = GroupBuyRepository::memory_seeded();
-        let lottery = lottery(DrawMode::Api);
         let issue = draws
             .create(&lottery, create_request("AUTO_STOPPED"))
             .await
@@ -1211,12 +1348,11 @@ mod tests {
         .expect("automation can run when lottery stopped");
         let stored = draws.get(&issue.id).await.expect("issue still exists");
 
-        assert_eq!(run.closed_issues.len(), 0);
-        assert!(run.drawn_issues.is_empty());
-        assert_eq!(run.skipped_issues.len(), 1);
-        assert_eq!(run.skipped_issues[0].lottery_id, "fc3d");
-        assert!(run.skipped_issues[0].reason.contains("已停售"));
-        assert_eq!(stored.status, DrawIssueStatus::Open);
+        assert_eq!(run.closed_issues.len(), 1);
+        assert_eq!(run.drawn_issues.len(), 1);
+        assert!(run.skipped_issues.is_empty());
+        assert_eq!(stored.status, DrawIssueStatus::Drawn);
+        assert!(stored.draw_number.is_some());
     }
     /// 验证自动开奖skipsdue人工期号without开奖号码。
     #[tokio::test]
@@ -1339,9 +1475,9 @@ mod tests {
         assert!(stored.draw_number.is_none());
         assert!(run.skipped_issues[0].reason.contains("未找到"));
     }
-    /// 验证自动开奖stopsretryingAPI期号whenitismorethanfive期号behind最新。
+    /// 验证超过重试窗口且无业务单据的 API 旧期号会自动取消，避免反复拖慢调度。
     #[tokio::test]
-    async fn automation_stops_retrying_api_issue_when_it_is_more_than_five_issues_behind_latest() {
+    async fn automation_cancels_stale_api_issue_without_pending_business() {
         let draws = DrawRepository::memory_with_api_sources(
             ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
         );
@@ -1373,9 +1509,63 @@ mod tests {
         assert_eq!(run.closed_issues.len(), 1);
         assert!(run.drawn_issues.is_empty());
         assert_eq!(run.skipped_issues.len(), 1);
+        assert_eq!(stored.status, DrawIssueStatus::Cancelled);
+        assert!(stored.draw_number.is_none());
+        assert!(run.skipped_issues[0].reason.contains("停止重试旧期号"));
+        assert!(run.skipped_issues[0].reason.contains("已自动取消"));
+    }
+    /// 验证超过重试窗口但存在待开奖订单的 API 旧期号不会自动取消。
+    #[tokio::test]
+    async fn automation_keeps_stale_api_issue_with_pending_order() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(API68_SAMPLE),
+        );
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let lottery = lottery(DrawMode::Api);
+        let issue = draws
+            .create(&lottery, create_request("2026137"))
+            .await
+            .expect("stale api issue can be created");
+        orders
+            .create(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10001".to_string(),
+                    lottery_id: lottery.id.clone(),
+                    issue: issue.issue.clone(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: full_direct_selection(),
+                    unit_amount_minor: 1,
+                },
+            )
+            .await
+            .expect("pending order can be created");
+
+        let run = run_draw_automation(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            DrawAutomationRunRequest {
+                now: "2026-06-02 22:00:00".to_string(),
+            },
+        )
+        .await
+        .expect("automation can keep stale api issue with pending order");
+        let stored = draws.get(&issue.id).await.expect("issue still exists");
+
+        assert_eq!(run.closed_issues.len(), 1);
+        assert!(run.drawn_issues.is_empty());
+        assert_eq!(run.skipped_issues.len(), 1);
         assert_eq!(stored.status, DrawIssueStatus::Closed);
         assert!(stored.draw_number.is_none());
         assert!(run.skipped_issues[0].reason.contains("停止重试旧期号"));
+        assert!(!run.skipped_issues[0].reason.contains("已自动取消"));
     }
     /// 验证自动开奖keepsretryingAPI期号withinfive期号distance。
     #[tokio::test]
@@ -1584,6 +1774,24 @@ mod tests {
                 odds_basis_points: 10_000,
                 position_select_limits: Vec::new(),
             }],
+        }
+    }
+
+    /// 构造用于 API 旧期判断的最小期号对象。
+    fn api_detection_issue(issue: &str) -> DrawIssue {
+        DrawIssue {
+            id: "D-API-DETECTION".to_string(),
+            lottery_id: "txffc".to_string(),
+            lottery_name: "腾讯分分彩".to_string(),
+            issue: issue.to_string(),
+            number_type: LotteryNumberType::FiveDigit,
+            draw_mode: DrawMode::Api,
+            scheduled_at: "2026-06-02 21:00:15".to_string(),
+            sale_closed_at: "2026-06-02 20:59:45".to_string(),
+            status: DrawIssueStatus::Closed,
+            draw_number: None,
+            drawn_at: None,
+            created_at: "2026-06-02 20:00:00".to_string(),
         }
     }
 
