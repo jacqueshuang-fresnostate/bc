@@ -309,6 +309,12 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     profileFetchedAt.value = 0
   }
 
+  function invalidateLedgerEntries() {
+    ledgerEntriesFetchedAt.value = 0
+    ledgerEntriesPage.value = 0
+    ledgerEntriesHasMore.value = true
+  }
+
   function setProfile(nextProfile: MobileUserProfile | null) {
     if (!nextProfile) {
       clearUserScopedState()
@@ -355,6 +361,7 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     loadWithdrawalTurnoverProgress,
     loadLedgerEntries,
     invalidateProfile,
+    invalidateLedgerEntries,
     setProfile,
     clearUserScopedState,
   }

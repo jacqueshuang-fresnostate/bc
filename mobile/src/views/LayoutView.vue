@@ -6,11 +6,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useAuthStore } from '../stores/auth'
+import { useMobileUserDataStore } from '../stores/mobileUserData'
 import { useSupportUnreadStore } from '../stores/supportUnread'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const userDataStore = useMobileUserDataStore()
 const supportUnreadStore = useSupportUnreadStore()
 const { unreadTotal: supportUnreadTotal } = storeToRefs(supportUnreadStore)
 const { lastMessage } = useWebSocket()
@@ -45,6 +47,14 @@ function refreshSupportUnreadSilently(force = false) {
   void supportUnreadStore.loadConversations({ force, silent: true }).catch(() => {})
 }
 
+function refreshUserFinanceSilently() {
+  userDataStore.invalidateProfile()
+  userDataStore.invalidateLedgerEntries()
+  void userDataStore.loadProfile({ force: true, silent: true }).catch(() => {})
+  void userDataStore.loadLedgerEntries({ force: true, silent: true }).catch(() => {})
+  void userDataStore.loadWithdrawalTurnoverProgress({ force: true, silent: true }).catch(() => {})
+}
+
 function badgeContent(count: unknown) {
   const value = Math.max(0, Number(count || 0))
   if (!value) return ''
@@ -76,6 +86,14 @@ watch(lastMessage, (message) => {
     || message?.event === 'support_conversation_deleted'
   ) {
     refreshSupportUnreadSilently(true)
+  }
+  if (
+    message?.event === 'balance_changed'
+    || message?.event === 'order_changed'
+    || message?.event === 'recharge_changed'
+    || message?.event === 'withdrawal_changed'
+  ) {
+    refreshUserFinanceSilently()
   }
 })
 
