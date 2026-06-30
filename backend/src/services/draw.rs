@@ -441,6 +441,25 @@ impl DrawRepository {
         self.api_sources.clear_crawl_snapshots().await
     }
 
+    /// 一键删除已开奖期号，不修改未开奖期号、开奖源配置或开奖控制配置。
+    pub async fn clear_drawn_issues(&self) -> ApiResult<usize> {
+        if let Some(persistence) = &self.persistence {
+            let deleted_count = delete_drawn_issues_in_database(persistence).await?;
+            if deleted_count > 0 {
+                self.inner
+                    .write()
+                    .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
+                    .clear_drawn_issues();
+            }
+            return Ok(deleted_count);
+        }
+
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|mut store| store.clear_drawn_issues())
+    }
+
     /// 按彩种列表返回开奖控制配置。
     pub async fn list_draw_controls(
         &self,
@@ -1133,6 +1152,18 @@ async fn save_draw_issues(database: &BusinessDatabase, store: &DrawStore) -> Api
         .map_err(|_| ApiError::Internal("开奖期号事务提交失败".to_string()))
 }
 
+/// 删除数据库中已开奖期号，供后台期号列表一键清理历史记录使用。
+async fn delete_drawn_issues_in_database(database: &BusinessDatabase) -> ApiResult<usize> {
+    let result = sqlx::query("DELETE FROM draw_issues WHERE status = $1")
+        .bind(enum_to_string(&DrawIssueStatus::Drawn)?)
+        .execute(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("已开奖期号清理失败".to_string()))?;
+
+    usize::try_from(result.rows_affected())
+        .map_err(|_| ApiError::Internal("已开奖期号清理数量超出范围".to_string()))
+}
+
 /// 保存开奖控制配置快照，供彩种控制台和自动开奖共同读取。
 async fn save_draw_controls(
     database: &BusinessDatabase,
@@ -1262,6 +1293,14 @@ impl DrawStore {
             }
         }
         latest_by_lottery.into_values().collect()
+    }
+
+    /// 删除所有已开奖期号，保留销售中、已封盘和已取消期号。
+    fn clear_drawn_issues(&mut self) -> usize {
+        let before_count = self.issues.len();
+        self.issues
+            .retain(|_, issue| issue.status != DrawIssueStatus::Drawn);
+        before_count - self.issues.len()
     }
 
     /// 返回指定彩种集合的已开奖历史，并按开奖时间倒序排列。
@@ -2029,6 +2068,56 @@ mod tests {
         assert_eq!(issue.status, DrawIssueStatus::Open);
         assert_eq!(found.id, issue.id);
         assert_eq!(closed.status, DrawIssueStatus::Closed);
+    }
+
+    #[test]
+    /// 验证一键清理只删除已开奖期号，不影响销售中、已封盘和已取消期号。
+    fn store_clear_drawn_issues_keeps_other_statuses() {
+        let lottery = lottery(DrawMode::Manual, LotteryNumberType::ThreeDigit);
+        let mut store = DrawStore::default();
+        let open = store
+            .create(&lottery, create_request("20260602-open"))
+            .expect("open issue can be created");
+        let closed = store
+            .create(&lottery, create_request("20260602-closed"))
+            .expect("closed issue can be created");
+        store.close(&closed.id).expect("issue can be closed");
+        let cancelled = store
+            .create(&lottery, create_request("20260602-cancelled"))
+            .expect("cancelled issue can be created");
+        store.cancel(&cancelled.id).expect("issue can be cancelled");
+        let drawn = store
+            .create(&lottery, create_request("20260602-drawn"))
+            .expect("drawn issue can be created");
+        store
+            .draw(
+                &drawn.id,
+                DrawIssueResultRequest {
+                    draw_number: Some("1,2,3".to_string()),
+                },
+                false,
+            )
+            .expect("issue can be drawn");
+
+        let deleted_count = store.clear_drawn_issues();
+
+        assert_eq!(deleted_count, 1);
+        assert!(store.get(&drawn.id).is_err());
+        assert_eq!(
+            store.get(&open.id).expect("open issue exists").status,
+            DrawIssueStatus::Open
+        );
+        assert_eq!(
+            store.get(&closed.id).expect("closed issue exists").status,
+            DrawIssueStatus::Closed
+        );
+        assert_eq!(
+            store
+                .get(&cancelled.id)
+                .expect("cancelled issue exists")
+                .status,
+            DrawIssueStatus::Cancelled
+        );
     }
 
     #[tokio::test]

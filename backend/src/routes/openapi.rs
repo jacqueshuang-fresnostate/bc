@@ -1027,6 +1027,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Json,
     ),
     doc(
+        "delete",
+        "/admin/draw-issues/drawn/clear",
+        "开奖期号",
+        "删除已开奖期号",
+        "一键删除全部已开奖期号；保留销售中、已封盘、已取消期号、开奖源配置、开奖控制和投注派奖记录。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
         "get",
         "/admin/draw-issues/{id}",
         "开奖期号",
@@ -2149,6 +2158,7 @@ mod tests {
         assert!(document["paths"]["/admin/robots/{id}"]["get"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["put"].is_object());
         assert!(document["paths"]["/admin/robots/{id}"]["delete"].is_object());
+        assert!(document["paths"]["/admin/draw-issues/drawn/clear"]["delete"].is_object());
         assert!(document["paths"]["/admin/app-packages/upload"]["post"].is_object());
         assert!(
             document["paths"]["/admin/system-settings/chat-hall/messages/clear"]["delete"]

@@ -102,6 +102,7 @@ native_source_newer_than_lib() {
     "$MOBILE_DIR/src-tauri/Cargo.toml" \
     "$MOBILE_DIR/src-tauri/Cargo.lock" \
     "$MOBILE_DIR/src-tauri/tauri.conf.json" \
+    "$MOBILE_DIR/scripts/build-unsigned-ipa.sh" \
     -newer "$LIBAPP" -print -quit 2>/dev/null || true
 }
 
@@ -120,10 +121,14 @@ build_native_lib() {
   esac
 
   log "开始生成 iOS 真机原生库 libapp.a：$reason"
-  if ! (cd "$MOBILE_DIR/src-tauri" && RUSTFLAGS="$rustflags" cargo build --target aarch64-apple-ios --release) >"$native_log" 2>&1; then
+  if ! (cd "$MOBILE_DIR/src-tauri" && RUSTFLAGS="$rustflags" cargo build --target aarch64-apple-ios --release --features custom-protocol) >"$native_log" 2>&1; then
     warn "iOS 原生库构建失败，最近日志如下："
     tail -n 160 "$native_log" >&2 || true
     fail "完整日志：$native_log"
+  fi
+  if grep -q "cargo:dev=true" "$native_log"; then
+    tail -n 160 "$native_log" >&2 || true
+    fail "iOS 原生库仍按开发模式构建，包会访问 tauri.conf.json 的 devUrl。请确认 custom-protocol feature 已启用。完整日志：$native_log"
   fi
 
   [ -f "$built_lib" ] || fail "iOS 原生库构建结束但未找到 $built_lib，请查看日志：$native_log"

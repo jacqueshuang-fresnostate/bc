@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   cancelDrawIssue,
   clearApiDrawSourceSnapshotRecords,
+  clearDrawnIssueRecords,
   createDrawSource,
   closeDrawIssue,
   createDrawIssue,
@@ -85,6 +86,22 @@ export function useDraws() {
       return result;
     } catch (requestError) {
       setSnapshotError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const clearDrawnIssues = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await clearDrawnIssueRecords();
+      setQuery((current) => ({ ...current, page: 1 }));
+      setRefreshToken((current) => current + 1);
+      return result;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
       throw requestError;
     } finally {
       setSaving(false);
@@ -342,6 +359,7 @@ export function useDraws() {
 
   return {
     cancel,
+    clearDrawnIssues,
     clearSnapshots,
     close,
     create,

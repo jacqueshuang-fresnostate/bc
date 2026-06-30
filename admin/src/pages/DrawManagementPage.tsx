@@ -191,6 +191,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     cancel,
     close,
     create,
+    clearDrawnIssues,
     clearSnapshots,
     createSource,
     deleteSource,
@@ -503,6 +504,26 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
     }
   };
 
+  const clearDrawnIssueRecords = async () => {
+    if (
+      !window.confirm(
+        '确定一键删除全部已开奖期号吗？该操作只删除状态为“已开奖”的期号，不会删除销售中、已封盘、已取消期号，也不会删除开奖源配置、投注记录或派奖记录。',
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const result = await clearDrawnIssues();
+      setSelectedIssueId(null);
+      setDrawIssueSheetVisible(false);
+      setIssueCurrentPage(1);
+      Toast.success(`已删除 ${result.deletedCount} 个已开奖期号`);
+    } catch {
+      Toast.error('已开奖期号删除失败，请查看接口错误提示');
+    }
+  };
+
   const refreshAll = () => {
     refreshDraws();
     refreshSnapshots();
@@ -747,6 +768,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
           totalPages={issueTotalPages}
           onCancelIssue={(issue) => void cancelIssue(issue)}
           onCloseIssue={(issue) => void closeIssue(issue)}
+          onClearDrawnIssues={() => void clearDrawnIssueRecords()}
           onCreateIssue={() => setCreateIssueSheetVisible(true)}
           onOpenDraw={openDrawIssueSheet}
           onSelectIssue={setSelectedIssueId}
@@ -925,6 +947,7 @@ function IssueManagementSection({
   statusFilter,
   onCancelIssue,
   onCloseIssue,
+  onClearDrawnIssues,
   onCreateIssue,
   onIssuePageChange,
   onIssuePageSizeChange,
@@ -946,6 +969,7 @@ function IssueManagementSection({
   statusFilter: DrawIssueStatus | 'all';
   onCancelIssue: (issue: DrawIssue) => void;
   onCloseIssue: (issue: DrawIssue) => void;
+  onClearDrawnIssues: () => void;
   onCreateIssue: () => void;
   onIssuePageChange: (page: number) => void;
   onIssuePageSizeChange: (pageSize: number) => void;
@@ -1030,6 +1054,15 @@ function IssueManagementSection({
           </div>
           <Button icon={<Plus size={16} />} theme="solid" onClick={onCreateIssue}>
             创建期号
+          </Button>
+          <Button
+            disabled={saving || loading}
+            icon={<Trash2 size={16} />}
+            theme="solid"
+            type="danger"
+            onClick={onClearDrawnIssues}
+          >
+            删除已开奖
           </Button>
         </div>
       </div>

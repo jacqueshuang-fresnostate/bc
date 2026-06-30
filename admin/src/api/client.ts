@@ -1031,6 +1031,12 @@ export function fetchDrawIssues(signal?: AbortSignal, query?: DrawIssueQuery) {
   return requestJson<DrawIssuePage>(path, { signal });
 }
 
+export function clearDrawnIssueRecords() {
+  return requestJson<ClearRecordsResult>('/api/admin/draw-issues/drawn/clear', {
+    method: 'DELETE',
+  });
+}
+
 export function fetchLotteryDrawControls(signal?: AbortSignal) {
   return requestJson<LotteryDrawControl[]>('/api/admin/draw-controls', {
     signal,

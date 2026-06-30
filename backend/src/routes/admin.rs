@@ -294,6 +294,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/draw-issues/generate-batch",
             post(generate_draw_issue_batch_request),
         )
+        .route("/draw-issues/drawn/clear", delete(clear_drawn_issues))
         .route("/draw-issues/{id}", get(get_draw_issue))
         .route("/draw-issues/{id}/close", patch(close_draw_issue))
         .route("/draw-issues/{id}/draw", patch(draw_issue_result))
@@ -844,6 +845,12 @@ fn required_permission_for_request(method: &Method, path: &str) -> Option<&'stat
     {
         return match method.clone() {
             Method::POST => Some("lottery.issue.write"),
+            _ => None,
+        };
+    }
+    if path == "draw-issues/drawn/clear" {
+        return match method.clone() {
+            Method::DELETE => Some("lottery.issue.write"),
             _ => None,
         };
     }
@@ -1524,6 +1531,17 @@ async fn list_draw_issues(
         page_size: page.page_size,
         total_count: page.total_count,
         total_pages: page.total_pages,
+    })))
+}
+
+/// 一键删除全部已开奖期号，保留未开奖期号、开奖源和开奖控制配置。
+async fn clear_drawn_issues(
+    State(state): State<AppState>,
+) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
+    let deleted_count = state.draws.clear_drawn_issues().await?;
+
+    Ok(Json(ApiEnvelope::success(ClearRecordsResult {
+        deleted_count,
     })))
 }
 
@@ -5535,6 +5553,10 @@ mod tests {
         assert_eq!(
             required_permission_for_request(&Method::PUT, "/draw-controls/au5"),
             Some("lottery.draw.control")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::DELETE, "/draw-issues/drawn/clear"),
+            Some("lottery.issue.write")
         );
         assert_eq!(
             required_permission_for_request(&Method::PATCH, "/lotteries/au5/avoid-winning"),

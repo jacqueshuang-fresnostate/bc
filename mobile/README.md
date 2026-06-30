@@ -48,8 +48,14 @@ pnpm tauri:build:ios-unsigned -- --api-base https://bcbbc.hippoweb3.net
 
 - 缺少 iOS 工程时执行 `pnpm tauri ios init --ci`。
 - 缺少 `aarch64-apple-ios` Rust target 时自动安装。
-- 缺少或需要更新 `src-tauri/gen/apple/Externals/arm64/release/libapp.a` 时，通过 `cargo build --target aarch64-apple-ios --release` 生成真机静态库并复制为 `libapp.a`。
+- 缺少或需要更新 `src-tauri/gen/apple/Externals/arm64/release/libapp.a` 时，通过 `cargo build --target aarch64-apple-ios --release --features custom-protocol` 生成真机静态库并复制为 `libapp.a`。
 - 构建前端资源，同步后台品牌 Logo，并封装 `Payload/HongFu.app` 为无签名 IPA。
+
+如果真机启动后提示正在访问 `http://局域网IP:5173/` 或要求开启“本地网络”权限，说明原生库被按开发模式构建了。请重新执行：
+
+```bash
+pnpm tauri:build:ios-unsigned -- --api-base https://dh-admin.1666888.cc.cd --force-native-build
+```
 
 常用参数：
 
