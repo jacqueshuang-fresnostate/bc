@@ -89,7 +89,7 @@ use crate::{
         group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
         group_buy_robot::{
             force_fill_user_group_buy_plans_before_refund, is_group_buy_robot_user_id,
-            run_group_buy_robots, ROBOT_GROUP_BUY_USER_ID, ROBOT_GROUP_BUY_USER_IDS,
+            run_group_buy_robots, ROBOT_GROUP_BUY_USER_IDS,
         },
         image_bed::{upload_configured_image_bed_file, ImageBedUploadOptions},
         order::validate_draw_issue_accepts_order,
@@ -2578,7 +2578,7 @@ async fn clear_robot_group_buy_plans(
 ) -> ApiResult<Json<ApiEnvelope<ClearRobotGroupBuyRecordsResult>>> {
     let cleanup = state
         .orders
-        .remove_robot_group_buy_records(&state.group_buys, ROBOT_GROUP_BUY_USER_ID)
+        .remove_robot_group_buy_records(&state.group_buys, &ROBOT_GROUP_BUY_USER_IDS)
         .await?;
     tracing::info!(
         deleted_plan_count = cleanup.deleted_plan_count,

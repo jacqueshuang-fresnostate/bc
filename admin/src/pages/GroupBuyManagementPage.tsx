@@ -49,7 +49,18 @@ interface CreateFormState {
   totalAmountYuan: string;
 }
 
-const ROBOT_GROUP_BUY_USER_ID = 'U90001';
+const ROBOT_GROUP_BUY_USER_IDS = [
+  'U90001',
+  'X90002',
+  'X90003',
+  'X90004',
+  'X90005',
+  'X90006',
+  'X90007',
+  'X90008',
+  'X90009',
+  'X90010',
+] as const;
 type GroupBuyFormationFilter = 'all' | GroupBuyFormationStatus;
 
 export function GroupBuyManagementPage({
@@ -1044,7 +1055,9 @@ function shouldShowSettlementResult(plan: GroupBuyPlanSummary) {
 }
 
 function isRobotGroupBuyPlan(plan: GroupBuyPlanSummary) {
-  return plan.initiatorUserId === ROBOT_GROUP_BUY_USER_ID;
+  return (ROBOT_GROUP_BUY_USER_IDS as readonly string[]).includes(
+    plan.initiatorUserId,
+  );
 }
 
 function positiveYuanToMinor(value: string, label: string) {

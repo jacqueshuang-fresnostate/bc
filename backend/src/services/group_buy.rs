@@ -1551,17 +1551,19 @@ impl GroupBuyStore {
         Ok(deleted_count)
     }
 
-    /// 返回可被机器人批量清理入口删除的合买计划，真实用户参与过的计划必须保留。
-    pub(crate) fn robot_cleanup_candidates(&self, robot_user_id: &str) -> Vec<GroupBuyPlan> {
-        let robot_user_id = robot_user_id.trim();
+    /// 返回可被机器人批量清理入口删除的合买计划，发起人和所有参与人都必须属于机器人账号集合。
+    pub(crate) fn robot_cleanup_candidates(
+        &self,
+        robot_user_ids: &BTreeSet<String>,
+    ) -> Vec<GroupBuyPlan> {
         sorted_group_buy_plans(self.plans.values())
             .into_iter()
             .filter(|plan| {
-                plan.initiator_user_id == robot_user_id
+                robot_user_ids.contains(plan.initiator_user_id.as_str())
                     && plan
                         .participants
                         .iter()
-                        .all(|participant| participant.user_id == robot_user_id)
+                        .all(|participant| robot_user_ids.contains(participant.user_id.as_str()))
             })
             .cloned()
             .collect()
@@ -2591,10 +2593,78 @@ mod tests {
             .plans
             .insert(robot_only_plan.id.clone(), robot_only_plan);
 
-        let candidates = store.robot_cleanup_candidates("U90001");
+        let robot_user_ids = ["U90001", "X90002"]
+            .into_iter()
+            .map(String::from)
+            .collect::<BTreeSet<_>>();
+        let candidates = store.robot_cleanup_candidates(&robot_user_ids);
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].id, "G-ROBOT-ONLY");
+    }
+
+    /// 验证机器人批量清理允许一个计划中混合多个系统机器人参与人。
+    #[test]
+    fn group_buy_store_robot_cleanup_candidates_include_mixed_robot_participants() {
+        let mut store = GroupBuyStore::seeded();
+        let base_plan = store
+            .plans
+            .values()
+            .next()
+            .cloned()
+            .expect("seeded plan exists");
+        let mut mixed_robot_plan = base_plan.clone();
+        mixed_robot_plan.id = "G-MIXED-ROBOT-ONLY".to_string();
+        mixed_robot_plan.initiator_user_id = "U90001".to_string();
+        mixed_robot_plan.participants = vec![
+            GroupBuyParticipant {
+                id: "G-MIXED-ROBOT-ONLY-P001".to_string(),
+                user_id: "U90001".to_string(),
+                username: "发单机器人".to_string(),
+                amount_minor: 10_000,
+                share_count: 100,
+                note: "机器人发起".to_string(),
+                created_at: "2026-07-01 06:50:00".to_string(),
+            },
+            GroupBuyParticipant {
+                id: "G-MIXED-ROBOT-ONLY-P002".to_string(),
+                user_id: "X90002".to_string(),
+                username: "补单机器人02".to_string(),
+                amount_minor: 20_000,
+                share_count: 200,
+                note: "机器人补单".to_string(),
+                created_at: "2026-07-01 06:51:00".to_string(),
+            },
+            GroupBuyParticipant {
+                id: "G-MIXED-ROBOT-ONLY-P003".to_string(),
+                user_id: "X90003".to_string(),
+                username: "补单机器人03".to_string(),
+                amount_minor: 20_000,
+                share_count: 200,
+                note: "机器人补单".to_string(),
+                created_at: "2026-07-01 06:52:00".to_string(),
+            },
+        ];
+        store
+            .plans
+            .insert(mixed_robot_plan.id.clone(), mixed_robot_plan);
+
+        let robot_user_ids = ["U90001", "X90002", "X90003"]
+            .into_iter()
+            .map(String::from)
+            .collect::<BTreeSet<_>>();
+        let candidates = store.robot_cleanup_candidates(&robot_user_ids);
+
+        assert!(candidates
+            .iter()
+            .any(|plan| plan.id == "G-MIXED-ROBOT-ONLY"));
+        assert!(candidates.iter().all(|plan| {
+            robot_user_ids.contains(plan.initiator_user_id.as_str())
+                && plan
+                    .participants
+                    .iter()
+                    .all(|participant| robot_user_ids.contains(participant.user_id.as_str()))
+        }));
     }
 
     /// 验证机器人批量清理候选覆盖全部合买生命周期状态。
@@ -2633,7 +2703,11 @@ mod tests {
             store.plans.insert(plan.id.clone(), plan);
         }
 
-        let candidates = store.robot_cleanup_candidates("U90001");
+        let robot_user_ids = ["U90001"]
+            .into_iter()
+            .map(String::from)
+            .collect::<BTreeSet<_>>();
+        let candidates = store.robot_cleanup_candidates(&robot_user_ids);
         let plan_ids = candidates
             .iter()
             .map(|plan| plan.id.clone())

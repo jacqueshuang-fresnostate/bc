@@ -641,11 +641,17 @@ impl OrderRepository {
     pub async fn remove_robot_group_buy_records(
         &self,
         group_buys: &GroupBuyRepository,
-        robot_user_id: &str,
+        robot_user_ids: &[&str],
     ) -> ApiResult<RobotGroupBuyRecordCleanup> {
-        let robot_user_id = robot_user_id.trim();
-        if robot_user_id.is_empty() {
-            return Err(ApiError::BadRequest("机器人用户 ID 不能为空".to_string()));
+        let robot_user_ids = robot_user_ids
+            .iter()
+            .map(|user_id| user_id.trim().to_string())
+            .filter(|user_id| !user_id.is_empty())
+            .collect::<BTreeSet<_>>();
+        if robot_user_ids.is_empty() {
+            return Err(ApiError::BadRequest(
+                "机器人用户 ID 集合不能为空".to_string(),
+            ));
         }
 
         let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
@@ -662,7 +668,7 @@ impl OrderRepository {
             .clone();
         let mut group_buy_store = previous_group_buy_store.clone();
 
-        let candidates = group_buy_store.robot_cleanup_candidates(robot_user_id);
+        let candidates = group_buy_store.robot_cleanup_candidates(&robot_user_ids);
         if candidates.is_empty() {
             return Ok(RobotGroupBuyRecordCleanup::default());
         }
@@ -676,7 +682,7 @@ impl OrderRepository {
             .filter_map(|plan| plan.order_id.clone())
             .collect::<BTreeSet<_>>();
         let deleted_order_count =
-            order_store.remove_robot_group_buy_orders(&order_ids, robot_user_id)?;
+            order_store.remove_robot_group_buy_orders(&order_ids, &robot_user_ids)?;
         let deleted_plan_count = group_buy_store.delete_plans_by_ids(&plan_ids).len();
 
         persist_order_group_buy_stores(
@@ -2341,7 +2347,7 @@ impl OrderStore {
     fn remove_robot_group_buy_orders(
         &mut self,
         order_ids: &BTreeSet<String>,
-        robot_user_id: &str,
+        robot_user_ids: &BTreeSet<String>,
     ) -> ApiResult<usize> {
         if order_ids.is_empty() {
             return Ok(0);
@@ -2349,7 +2355,9 @@ impl OrderStore {
 
         for order_id in order_ids {
             if let Some(order) = self.orders.get(order_id) {
-                if order.user_id != robot_user_id || order.order_source != OrderSource::GroupBuy {
+                if !robot_user_ids.contains(order.user_id.as_str())
+                    || order.order_source != OrderSource::GroupBuy
+                {
                     return Err(ApiError::BadRequest(format!(
                         "订单 `{order_id}` 不是机器人合买订单，不能通过机器人清理入口删除"
                     )));
@@ -2358,7 +2366,9 @@ impl OrderStore {
         }
         for run in self.settlement_runs.values() {
             for settlement in &run.orders {
-                if order_ids.contains(&settlement.order_id) && settlement.user_id != robot_user_id {
+                if order_ids.contains(&settlement.order_id)
+                    && !robot_user_ids.contains(settlement.user_id.as_str())
+                {
                     return Err(ApiError::BadRequest(format!(
                         "结算明细 `{}` 不属于机器人账户，不能通过机器人清理入口删除",
                         settlement.order_id
@@ -3112,7 +3122,7 @@ mod tests {
             .expect("robot plan can be created");
 
         let cleanup = orders
-            .remove_robot_group_buy_records(&group_buys, "U90001")
+            .remove_robot_group_buy_records(&group_buys, &["U90001", "X90002"])
             .await
             .expect("robot records can be cleared");
 
@@ -3606,7 +3616,7 @@ mod tests {
             .create_with_source(
                 &lottery,
                 CreateOrderRequest {
-                    user_id: "U90001".to_string(),
+                    user_id: "X90002".to_string(),
                     lottery_id: "fc3d".to_string(),
                     issue: "2026156".to_string(),
                     rule_code: PlayRuleCode::ThreeDirect,
@@ -3642,8 +3652,12 @@ mod tests {
         let order_ids = [robot_order.id.clone()]
             .into_iter()
             .collect::<BTreeSet<_>>();
+        let robot_user_ids = ["U90001", "X90002"]
+            .into_iter()
+            .map(String::from)
+            .collect::<BTreeSet<_>>();
         let deleted_count = store
-            .remove_robot_group_buy_orders(&order_ids, "U90001")
+            .remove_robot_group_buy_orders(&order_ids, &robot_user_ids)
             .expect("robot group buy order can be removed");
 
         assert_eq!(deleted_count, 1);
