@@ -1031,7 +1031,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/draw-issues/drawn/clear",
         "开奖期号",
         "删除已开奖期号",
-        "一键删除全部已开奖期号；保留销售中、已封盘、已取消期号、开奖源配置、开奖控制和投注派奖记录。",
+        "一键删除已结算的已开奖期号；未生成计奖派奖批次的已开奖期号会保留，用于后续给独立下单和合买订单派奖。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),

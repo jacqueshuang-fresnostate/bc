@@ -441,15 +441,24 @@ impl DrawRepository {
         self.api_sources.clear_crawl_snapshots().await
     }
 
-    /// 一键删除已开奖期号，不修改未开奖期号、开奖源配置或开奖控制配置。
-    pub async fn clear_drawn_issues(&self) -> ApiResult<usize> {
+    /// 一键删除已结算的已开奖期号，不修改未结算期号、开奖源配置或开奖控制配置。
+    pub async fn clear_settled_drawn_issues(
+        &self,
+        settled_draw_issue_ids: &BTreeSet<String>,
+    ) -> ApiResult<usize> {
+        if settled_draw_issue_ids.is_empty() {
+            return Ok(0);
+        }
+
         if let Some(persistence) = &self.persistence {
-            let deleted_count = delete_drawn_issues_in_database(persistence).await?;
+            let deleted_count =
+                delete_settled_drawn_issues_in_database(persistence, settled_draw_issue_ids)
+                    .await?;
             if deleted_count > 0 {
                 self.inner
                     .write()
                     .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
-                    .clear_drawn_issues();
+                    .clear_settled_drawn_issues(settled_draw_issue_ids);
             }
             return Ok(deleted_count);
         }
@@ -457,7 +466,7 @@ impl DrawRepository {
         self.inner
             .write()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
-            .map(|mut store| store.clear_drawn_issues())
+            .map(|mut store| store.clear_settled_drawn_issues(settled_draw_issue_ids))
     }
 
     /// 按彩种列表返回开奖控制配置。
@@ -1152,10 +1161,15 @@ async fn save_draw_issues(database: &BusinessDatabase, store: &DrawStore) -> Api
         .map_err(|_| ApiError::Internal("开奖期号事务提交失败".to_string()))
 }
 
-/// 删除数据库中已开奖期号，供后台期号列表一键清理历史记录使用。
-async fn delete_drawn_issues_in_database(database: &BusinessDatabase) -> ApiResult<usize> {
-    let result = sqlx::query("DELETE FROM draw_issues WHERE status = $1")
+/// 删除数据库中已结算的已开奖期号，供后台期号列表一键清理历史记录使用。
+async fn delete_settled_drawn_issues_in_database(
+    database: &BusinessDatabase,
+    settled_draw_issue_ids: &BTreeSet<String>,
+) -> ApiResult<usize> {
+    let settled_draw_issue_ids = settled_draw_issue_ids.iter().cloned().collect::<Vec<_>>();
+    let result = sqlx::query("DELETE FROM draw_issues WHERE status = $1 AND id = ANY($2::text[])")
         .bind(enum_to_string(&DrawIssueStatus::Drawn)?)
+        .bind(&settled_draw_issue_ids)
         .execute(database.pool())
         .await
         .map_err(|_| ApiError::Internal("已开奖期号清理失败".to_string()))?;
@@ -1295,11 +1309,12 @@ impl DrawStore {
         latest_by_lottery.into_values().collect()
     }
 
-    /// 删除所有已开奖期号，保留销售中、已封盘和已取消期号。
-    fn clear_drawn_issues(&mut self) -> usize {
+    /// 删除已结算的已开奖期号，保留未结算的已开奖期号作为计奖派奖入口。
+    fn clear_settled_drawn_issues(&mut self, settled_draw_issue_ids: &BTreeSet<String>) -> usize {
         let before_count = self.issues.len();
-        self.issues
-            .retain(|_, issue| issue.status != DrawIssueStatus::Drawn);
+        self.issues.retain(|_, issue| {
+            issue.status != DrawIssueStatus::Drawn || !settled_draw_issue_ids.contains(&issue.id)
+        });
         before_count - self.issues.len()
     }
 
@@ -2071,8 +2086,8 @@ mod tests {
     }
 
     #[test]
-    /// 验证一键清理只删除已开奖期号，不影响销售中、已封盘和已取消期号。
-    fn store_clear_drawn_issues_keeps_other_statuses() {
+    /// 验证一键清理只删除已结算的已开奖期号，未结算期号仍保留用于计奖派奖。
+    fn store_clear_settled_drawn_issues_keeps_unsettled_drawn_issue() {
         let lottery = lottery(DrawMode::Manual, LotteryNumberType::ThreeDigit);
         let mut store = DrawStore::default();
         let open = store
@@ -2099,7 +2114,19 @@ mod tests {
             )
             .expect("issue can be drawn");
 
-        let deleted_count = store.clear_drawn_issues();
+        let deleted_count = store.clear_settled_drawn_issues(&BTreeSet::new());
+
+        assert_eq!(deleted_count, 0);
+        assert_eq!(
+            store
+                .get(&drawn.id)
+                .expect("unsettled drawn issue exists")
+                .status,
+            DrawIssueStatus::Drawn
+        );
+
+        let settled_ids = BTreeSet::from([drawn.id.clone()]);
+        let deleted_count = store.clear_settled_drawn_issues(&settled_ids);
 
         assert_eq!(deleted_count, 1);
         assert!(store.get(&drawn.id).is_err());

@@ -507,7 +507,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
   const clearDrawnIssueRecords = async () => {
     if (
       !window.confirm(
-        '确定一键删除全部已开奖期号吗？该操作只删除状态为“已开奖”的期号，不会删除销售中、已封盘、已取消期号，也不会删除开奖源配置、投注记录或派奖记录。',
+        '确定一键删除已结算的已开奖期号吗？未生成计奖派奖批次的已开奖期号会保留，用于后续给独立下单和合买订单派奖；该操作不会删除开奖源配置、投注记录或派奖记录。',
       )
     ) {
       return;
@@ -518,7 +518,7 @@ export function DrawManagementPage({ onDashboardRefresh }: DrawManagementPagePro
       setSelectedIssueId(null);
       setDrawIssueSheetVisible(false);
       setIssueCurrentPage(1);
-      Toast.success(`已删除 ${result.deletedCount} 个已开奖期号`);
+      Toast.success(`已删除 ${result.deletedCount} 个已结算的已开奖期号`);
     } catch {
       Toast.error('已开奖期号删除失败，请查看接口错误提示');
     }

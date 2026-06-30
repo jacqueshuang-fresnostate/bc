@@ -1534,11 +1534,15 @@ async fn list_draw_issues(
     })))
 }
 
-/// 一键删除全部已开奖期号，保留未开奖期号、开奖源和开奖控制配置。
+/// 一键删除已结算的已开奖期号，保留未派奖期号、开奖源和开奖控制配置。
 async fn clear_drawn_issues(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<ClearRecordsResult>>> {
-    let deleted_count = state.draws.clear_drawn_issues().await?;
+    let settled_draw_issue_ids = state.orders.settled_draw_issue_ids().await?;
+    let deleted_count = state
+        .draws
+        .clear_settled_drawn_issues(&settled_draw_issue_ids)
+        .await?;
 
     Ok(Json(ApiEnvelope::success(ClearRecordsResult {
         deleted_count,

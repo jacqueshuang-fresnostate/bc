@@ -733,6 +733,24 @@ impl OrderRepository {
         Ok(ListPage::from_all(runs, page))
     }
 
+    /// 返回已有计奖派奖批次覆盖的开奖期号 ID 集合，供期号清理保护未派奖期号。
+    pub async fn settled_draw_issue_ids(&self) -> ApiResult<BTreeSet<String>> {
+        if let Some(persistence) = &self.persistence {
+            return query_settled_draw_issue_ids(persistence).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .settlement_runs
+                    .values()
+                    .map(|run| run.draw_issue_id.clone())
+                    .collect()
+            })
+    }
+
     /// 根据 ID 查询结算明细。
     pub async fn get_settlement(&self, id: &str) -> ApiResult<SettlementRun> {
         self.inner
@@ -1484,6 +1502,21 @@ async fn query_settlement_run_page(
         .collect::<ApiResult<Vec<_>>>()?;
 
     Ok(ListPage::new(items, resolved))
+}
+
+/// 数据库模式下读取已生成结算批次的开奖期号 ID。
+async fn query_settled_draw_issue_ids(database: &BusinessDatabase) -> ApiResult<BTreeSet<String>> {
+    let rows = sqlx::query("SELECT DISTINCT draw_issue_id FROM order_settlement_runs")
+        .fetch_all(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("已结算开奖期号读取失败".to_string()))?;
+
+    rows.into_iter()
+        .map(|row| {
+            row.try_get("draw_issue_id")
+                .map_err(|_| ApiError::Internal("已结算开奖期号解析失败".to_string()))
+        })
+        .collect()
 }
 
 /// 保存顺序仓储到持久化存储。
