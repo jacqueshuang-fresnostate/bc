@@ -2572,7 +2572,7 @@ async fn clear_group_buy_plans(
     })))
 }
 
-/// 一键清理纯机器人合买计划和关联机器人合买订单，包含未成单、待开奖和已结算记录。
+/// 强制清除纯机器人合买计划和关联机器人合买订单，不限制计划当前生命周期状态。
 async fn clear_robot_group_buy_plans(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<ClearRobotGroupBuyRecordsResult>>> {

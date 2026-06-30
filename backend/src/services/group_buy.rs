@@ -2597,6 +2597,53 @@ mod tests {
         assert_eq!(candidates[0].id, "G-ROBOT-ONLY");
     }
 
+    /// 验证机器人批量清理候选覆盖全部合买生命周期状态。
+    #[test]
+    fn group_buy_store_robot_cleanup_candidates_include_all_statuses() {
+        let base_plan = GroupBuyStore::seeded()
+            .plans
+            .values()
+            .next()
+            .cloned()
+            .expect("seeded plan exists");
+        let robot_participants = base_plan
+            .participants
+            .iter()
+            .filter(|participant| participant.user_id == "U90001")
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut store = GroupBuyStore {
+            plans: BTreeMap::new(),
+        };
+
+        for (index, status) in [
+            GroupBuyPlanStatus::Draft,
+            GroupBuyPlanStatus::Open,
+            GroupBuyPlanStatus::Filled,
+            GroupBuyPlanStatus::Cancelled,
+            GroupBuyPlanStatus::Settled,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut plan = base_plan.clone();
+            plan.id = format!("G-ROBOT-STATUS-{index}");
+            plan.status = status;
+            plan.participants = robot_participants.clone();
+            store.plans.insert(plan.id.clone(), plan);
+        }
+
+        let candidates = store.robot_cleanup_candidates("U90001");
+        let plan_ids = candidates
+            .iter()
+            .map(|plan| plan.id.clone())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(candidates.len(), 5);
+        assert_eq!(store.delete_plans_by_ids(&plan_ids).len(), 5);
+        assert!(store.plans.is_empty());
+    }
+
     /// 验证后台删除机器人合买计划时可以拿到被删除的记录，便于页面即时移除和审计。
     #[test]
     fn group_buy_store_deletes_plan_and_returns_record() {

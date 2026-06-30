@@ -262,7 +262,7 @@ export function GroupBuyManagementPage({
   const clearRobotGroupBuyPlanRecords = async () => {
     if (
       !window.confirm(
-        '确定一键清理所有机器人合买订单吗？系统会删除纯机器人合买计划，以及这些计划关联的机器人投注订单；未成单、待开奖和已结算机器人记录都会清理，包含真实用户认购的计划会保留。',
+        '确定强制清除所有纯机器人合买计划吗？不管机器人合买计划处于草稿、进行中、已满单、已取消或已结算状态，系统都会删除计划和关联机器人投注订单；包含真实用户认购的计划会保留。',
       )
     ) {
       return;
@@ -276,10 +276,10 @@ export function GroupBuyManagementPage({
       Toast.success(
         result.deletedCount > 0 || result.deletedOrderCount > 0
           ? `已清理 ${result.deletedCount} 条机器人合买计划，关联机器人订单 ${result.deletedOrderCount} 笔`
-          : '没有可清理的纯机器人合买订单',
+          : '没有可清理的纯机器人合买计划',
       );
     } catch {
-      Toast.error('机器人合买订单清理失败，请查看接口错误提示');
+      Toast.error('机器人合买计划清理失败，请查看接口错误提示');
     }
   };
 
@@ -329,7 +329,7 @@ export function GroupBuyManagementPage({
             type="danger"
             onClick={() => void clearRobotGroupBuyPlanRecords()}
           >
-            清理机器人订单
+            强制清除机器人合买
           </Button>
         </div>
       </section>
