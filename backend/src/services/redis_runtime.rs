@@ -109,6 +109,81 @@ impl RedisRuntime {
         Ok(())
     }
 
+    /// 使用独立去重键把任务写入 Redis List；Redis 未启用时返回 false。
+    pub async fn enqueue_unique_list_item(
+        &self,
+        list_key: &str,
+        dedupe_key: &str,
+        item: &str,
+        dedupe_ttl_seconds: usize,
+    ) -> ApiResult<bool> {
+        let Some(manager) = &self.manager else {
+            return Ok(false);
+        };
+        let ttl_seconds = i64::try_from(dedupe_ttl_seconds)
+            .map_err(|_| ApiError::Internal("Redis 队列去重过期时间过大".to_string()))?;
+        let mut connection = manager.clone();
+        let queued: Option<String> = redis::cmd("SET")
+            .arg(dedupe_key)
+            .arg("1")
+            .arg("NX")
+            .arg("EX")
+            .arg(ttl_seconds)
+            .query_async(&mut connection)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, redis_key = dedupe_key, "Redis 队列去重键写入失败");
+                ApiError::Internal("Redis 队列去重键写入失败".to_string())
+            })?;
+        if queued.as_deref() != Some("OK") {
+            return Ok(false);
+        }
+
+        let push_result: Result<i64, redis::RedisError> = redis::cmd("RPUSH")
+            .arg(list_key)
+            .arg(item)
+            .query_async(&mut connection)
+            .await;
+        match push_result {
+            Ok(_) => Ok(true),
+            Err(error) => {
+                let _: Result<i64, redis::RedisError> = redis::cmd("DEL")
+                    .arg(dedupe_key)
+                    .query_async(&mut connection)
+                    .await;
+                tracing::error!(%error, redis_key = list_key, "Redis 队列任务写入失败");
+                Err(ApiError::Internal("Redis 队列任务写入失败".to_string()))
+            }
+        }
+    }
+
+    /// 从 Redis List 左侧弹出一批任务；Redis 未启用时返回空列表。
+    pub async fn lpop_list_items(&self, list_key: &str, limit: usize) -> ApiResult<Vec<String>> {
+        let Some(manager) = &self.manager else {
+            return Ok(Vec::new());
+        };
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut connection = manager.clone();
+        let mut items = Vec::new();
+        for _ in 0..limit {
+            let item: Option<String> = redis::cmd("LPOP")
+                .arg(list_key)
+                .query_async(&mut connection)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, redis_key = list_key, "Redis 队列任务读取失败");
+                    ApiError::Internal("Redis 队列任务读取失败".to_string())
+                })?;
+            let Some(item) = item else {
+                break;
+            };
+            items.push(item);
+        }
+        Ok(items)
+    }
+
     /// 判断指定 Redis 键是否存在；Redis 未启用时返回 false。
     pub async fn key_exists(&self, key: &str) -> ApiResult<bool> {
         let Some(manager) = &self.manager else {

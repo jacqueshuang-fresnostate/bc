@@ -309,6 +309,7 @@ pub async fn router_from_env() -> Result<Router, Box<dyn Error + Send + Sync>> {
         state.group_buys.clone(),
         state.robots.clone(),
         state.realtime.clone(),
+        state.redis.clone(),
         scheduler_config,
         state.scheduler.clone(),
     );

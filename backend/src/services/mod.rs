@@ -12,6 +12,7 @@ pub mod draw_api;
 pub mod draw_avoidance;
 pub mod draw_generation;
 pub mod draw_risk;
+pub mod draw_settlement_queue;
 pub mod finance;
 pub mod group_buy;
 pub mod group_buy_flow;

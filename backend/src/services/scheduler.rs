@@ -29,6 +29,7 @@ use crate::{
         access::AccessRepository,
         automation::{
             close_due_draw_issues, draw_due_issues_with_progress_excluding_group_buy_issues,
+            draw_due_issues_with_progress_excluding_group_buy_issues_and_settlement_queue,
             merge_draw_automation_runs, refund_closed_unfilled_group_buys_with_protected_plans,
             DrawIssueSettlementProgress, DrawIssueSettlementProgressCallback,
         },
@@ -37,6 +38,7 @@ use crate::{
         },
         draw::DrawRepository,
         draw_generation::{generate_draw_issue_batch, preview_draw_issue_generation},
+        draw_settlement_queue,
         finance::FinanceRepository,
         group_buy::GroupBuyRepository,
         group_buy_robot::force_fill_user_group_buy_plans_before_refund,
@@ -46,6 +48,7 @@ use crate::{
             balance_changed_event, draw_result_event, issue_closed_event, issue_opened_event,
             RealtimeHub,
         },
+        redis_runtime::RedisRuntime,
         robot::RobotRepository,
         robot_scheduler::publish_robot_realtime_events,
     },
@@ -59,6 +62,8 @@ const DISABLED_SCHEDULER_POLL_SECONDS: u64 = 1;
 const MAX_SCHEDULER_HISTORY: usize = 20;
 const MAX_FUTURE_ISSUE_COUNT: u32 = 50;
 const MAX_ISSUE_GENERATION_CONCURRENCY: u32 = 32;
+const DRAW_SETTLEMENT_QUEUE_BATCH_SIZE: usize = 8;
+const DRAW_SETTLEMENT_QUEUE_POLL_SECONDS: u64 = 1;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 struct PendingLocalIssueGeneration {
@@ -753,6 +758,7 @@ pub fn spawn_draw_scheduler(
     group_buys: GroupBuyRepository,
     robots: RobotRepository,
     realtime: RealtimeHub,
+    redis: RedisRuntime,
     config: DrawSchedulerConfig,
     scheduler: DrawSchedulerRepository,
 ) -> JoinHandle<()> {
@@ -767,6 +773,16 @@ pub fn spawn_draw_scheduler(
     // );
 
     let due_phase_lock = Arc::new(AsyncMutex::new(()));
+    if redis.is_enabled() {
+        spawn_draw_settlement_queue_worker(
+            draws.clone(),
+            orders.clone(),
+            finance.clone(),
+            group_buys.clone(),
+            realtime.clone(),
+            redis.clone(),
+        );
+    }
     tokio::spawn(async move {
         let mut next_run_at = tokio::time::Instant::now();
         loop {
@@ -839,6 +855,7 @@ pub fn spawn_draw_scheduler(
                     let robots = robots.clone();
                     let access = access.clone();
                     let realtime = realtime.clone();
+                    let redis = redis.clone();
                     let current_config = current_config.clone();
                     let due_now = now.clone();
                     tokio::spawn(async move {
@@ -849,7 +866,7 @@ pub fn spawn_draw_scheduler(
                         // 设置 120 秒超时，防止兜底补满或开奖结算卡死导致锁永久泄漏
                         let due_result = tokio::time::timeout(
                             Duration::from_secs(120),
-                            run_draw_scheduler_due_once_with_realtime(
+                            run_draw_scheduler_due_once_with_realtime_and_settlement_queue(
                                 &draws,
                                 &lotteries,
                                 &orders,
@@ -860,6 +877,7 @@ pub fn spawn_draw_scheduler(
                                 &current_config,
                                 due_now.clone(),
                                 Some(&realtime),
+                                Some(&redis),
                             ),
                         )
                         .await;
@@ -917,6 +935,152 @@ pub fn spawn_draw_scheduler(
             }
         }
     })
+}
+
+/// 启动 Redis 开奖结算队列消费者，避免主调度线程等待派奖慢链路。
+fn spawn_draw_settlement_queue_worker(
+    draws: DrawRepository,
+    orders: OrderRepository,
+    finance: FinanceRepository,
+    group_buys: GroupBuyRepository,
+    realtime: RealtimeHub,
+    redis: RedisRuntime,
+) {
+    let _handle = tokio::spawn(async move {
+        tracing::info!("开奖结算 Redis 队列消费者已启动");
+        loop {
+            match draw_settlement_queue::pop_batch(&redis, DRAW_SETTLEMENT_QUEUE_BATCH_SIZE).await {
+                Ok(issue_ids) if issue_ids.is_empty() => {
+                    tokio::time::sleep(Duration::from_secs(DRAW_SETTLEMENT_QUEUE_POLL_SECONDS))
+                        .await;
+                }
+                Ok(issue_ids) => {
+                    for issue_id in issue_ids {
+                        process_draw_settlement_queue_item(
+                            &draws,
+                            &orders,
+                            &finance,
+                            &group_buys,
+                            &realtime,
+                            &redis,
+                            &issue_id,
+                        )
+                        .await;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error.log_message(),
+                        "开奖结算 Redis 队列读取失败，稍后重试"
+                    );
+                    tokio::time::sleep(Duration::from_secs(DRAW_SETTLEMENT_QUEUE_POLL_SECONDS))
+                        .await;
+                }
+            }
+        }
+    });
+}
+
+async fn process_draw_settlement_queue_item(
+    draws: &DrawRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    realtime: &RealtimeHub,
+    redis: &RedisRuntime,
+    issue_id: &str,
+) {
+    let lock_key = format!("lock:draw:settlement:{issue_id}");
+    let lock = match redis.acquire_lock(lock_key).await {
+        Ok(lock) => lock,
+        Err(ApiError::Conflict(_)) => {
+            tracing::warn!(
+                draw_issue_id = issue_id,
+                "开奖结算队列任务已有其它消费者处理，本次跳过"
+            );
+            return;
+        }
+        Err(error) => {
+            tracing::warn!(
+                draw_issue_id = issue_id,
+                error = %error.log_message(),
+                "开奖结算队列任务获取 Redis 锁失败，继续依赖数据库幂等保护"
+            );
+            None
+        }
+    };
+
+    let issue = match draws.get(issue_id).await {
+        Ok(issue) => issue,
+        Err(error) => {
+            tracing::warn!(
+                draw_issue_id = issue_id,
+                error = %error.log_message(),
+                "开奖结算队列读取期号失败，跳过本次任务"
+            );
+            release_optional_redis_lock(lock).await;
+            return;
+        }
+    };
+    if issue.status != DrawIssueStatus::Drawn {
+        tracing::warn!(
+            draw_issue_id = %issue.id,
+            lottery_id = %issue.lottery_id,
+            issue = %issue.issue,
+            status = ?issue.status,
+            "开奖结算队列任务不是已开奖状态，跳过"
+        );
+        release_optional_redis_lock(lock).await;
+        return;
+    }
+
+    match orders
+        .settle_with_payouts(finance, group_buys, &issue)
+        .await
+    {
+        Ok((settlement, ledger_entries)) => {
+            publish_ledger_balance_events(realtime, finance, &ledger_entries, "settlement").await;
+            tracing::info!(
+                draw_issue_id = %issue.id,
+                lottery_id = %issue.lottery_id,
+                issue = %issue.issue,
+                settlement_id = %settlement.id,
+                ledger_entry_count = ledger_entries.len(),
+                "开奖结算队列任务派奖完成"
+            );
+        }
+        Err(error) if matches!(&error, ApiError::Conflict(_)) => {
+            tracing::warn!(
+                draw_issue_id = %issue.id,
+                lottery_id = %issue.lottery_id,
+                issue = %issue.issue,
+                error = %error.log_message(),
+                "开奖结算队列任务发现期号已结算，跳过重复派奖"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(
+                draw_issue_id = %issue.id,
+                lottery_id = %issue.lottery_id,
+                issue = %issue.issue,
+                error = %error.log_message(),
+                "开奖结算队列任务派奖失败，保留已开奖期号等待调度重新入队"
+            );
+        }
+    }
+
+    release_optional_redis_lock(lock).await;
+}
+
+async fn release_optional_redis_lock(lock: Option<crate::services::redis_runtime::RedisLockGuard>) {
+    if let Some(lock) = lock {
+        if let Err(error) = lock.release().await {
+            tracing::warn!(
+                error = %error.log_message(),
+                "开奖结算队列任务释放 Redis 锁失败"
+            );
+        }
+    }
 }
 
 /// 将封盘和开盘事件优先广播，避免开奖源或结算耗时拖短下一期倒计时。
@@ -1145,6 +1309,25 @@ async fn run_draw_scheduler_due_once_with_realtime(
     now: String,
     realtime: Option<&RealtimeHub>,
 ) -> ApiResult<DrawSchedulerRun> {
+    run_draw_scheduler_due_once_with_realtime_and_settlement_queue(
+        draws, lotteries, orders, finance, group_buys, robots, access, config, now, realtime, None,
+    )
+    .await
+}
+
+async fn run_draw_scheduler_due_once_with_realtime_and_settlement_queue(
+    draws: &DrawRepository,
+    lotteries: &LotteryRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    robots: &RobotRepository,
+    access: &AccessRepository,
+    config: &DrawSchedulerConfig,
+    now: String,
+    realtime: Option<&RealtimeHub>,
+    settlement_queue: Option<&RedisRuntime>,
+) -> ApiResult<DrawSchedulerRun> {
     config.validate()?;
     let now = now.trim().to_string();
     if now.is_empty() {
@@ -1196,17 +1379,32 @@ async fn run_draw_scheduler_due_once_with_realtime(
     let draw_phase_started = Instant::now();
     let draw_progress_callback =
         realtime.map(|realtime| draw_settlement_progress_callback(realtime, finance));
-    let draw_run = draw_due_issues_with_progress_excluding_group_buy_issues(
-        draws,
-        lotteries,
-        orders,
-        finance,
-        group_buys,
-        DrawAutomationRunRequest { now: now.clone() },
-        draw_progress_callback,
-        &protected_issue_keys,
-    )
-    .await?;
+    let draw_run = if let Some(settlement_queue) = settlement_queue {
+        draw_due_issues_with_progress_excluding_group_buy_issues_and_settlement_queue(
+            draws,
+            lotteries,
+            orders,
+            finance,
+            group_buys,
+            DrawAutomationRunRequest { now: now.clone() },
+            draw_progress_callback,
+            &protected_issue_keys,
+            settlement_queue,
+        )
+        .await?
+    } else {
+        draw_due_issues_with_progress_excluding_group_buy_issues(
+            draws,
+            lotteries,
+            orders,
+            finance,
+            group_buys,
+            DrawAutomationRunRequest { now: now.clone() },
+            draw_progress_callback,
+            &protected_issue_keys,
+        )
+        .await?
+    };
     let draw_phase_ms = draw_phase_started.elapsed().as_millis();
 
     let automation_run = merge_draw_automation_runs(refund_run, draw_run);
@@ -1536,6 +1734,7 @@ mod tests {
             lottery::LotteryRepository,
             order::OrderRepository,
             realtime::RealtimeHub,
+            redis_runtime::RedisRuntime,
             robot::RobotRepository,
             scheduler::{
                 run_draw_scheduler_once, spawn_draw_scheduler, DrawSchedulerConfig,
@@ -2532,6 +2731,7 @@ mod tests {
             GroupBuyRepository::memory_seeded(),
             RobotRepository::memory_seeded(),
             RealtimeHub::new(),
+            RedisRuntime::disabled(),
             DrawSchedulerConfig::default(),
             DrawSchedulerRepository::new(DrawSchedulerConfig::default()),
         );
@@ -2559,6 +2759,7 @@ mod tests {
             group_buys,
             robots,
             RealtimeHub::new(),
+            RedisRuntime::disabled(),
             DrawSchedulerConfig::default(),
             scheduler.clone(),
         );

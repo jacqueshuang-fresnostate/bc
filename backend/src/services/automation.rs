@@ -23,9 +23,11 @@ use crate::{
             draw_prefetched_api_with_avoid_winning_policy, draw_with_avoid_winning_policy,
         },
         draw_generation::parse_api_sequence_issue,
+        draw_settlement_queue,
         finance::FinanceRepository,
         group_buy::GroupBuyRepository,
         order::OrderRepository,
+        redis_runtime::RedisRuntime,
     },
 };
 use tokio::sync::Semaphore;
@@ -237,6 +239,57 @@ pub async fn draw_due_issues_with_progress_excluding_group_buy_issues(
     progress_callback: Option<DrawIssueSettlementProgressCallback>,
     protected_issue_keys: &HashSet<String>,
 ) -> ApiResult<DrawAutomationRun> {
+    draw_due_issues_with_progress_excluding_group_buy_issues_internal(
+        draws,
+        lotteries,
+        orders,
+        finance,
+        group_buys,
+        payload,
+        progress_callback,
+        protected_issue_keys,
+        None,
+    )
+    .await
+}
+
+/// 处理到期开奖，把结算派奖投递到 Redis 队列，避免调度器等待慢派奖链路。
+pub async fn draw_due_issues_with_progress_excluding_group_buy_issues_and_settlement_queue(
+    draws: &DrawRepository,
+    lotteries: &crate::services::lottery::LotteryRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    payload: DrawAutomationRunRequest,
+    progress_callback: Option<DrawIssueSettlementProgressCallback>,
+    protected_issue_keys: &HashSet<String>,
+    settlement_queue: &RedisRuntime,
+) -> ApiResult<DrawAutomationRun> {
+    draw_due_issues_with_progress_excluding_group_buy_issues_internal(
+        draws,
+        lotteries,
+        orders,
+        finance,
+        group_buys,
+        payload,
+        progress_callback,
+        protected_issue_keys,
+        Some(settlement_queue),
+    )
+    .await
+}
+
+async fn draw_due_issues_with_progress_excluding_group_buy_issues_internal(
+    draws: &DrawRepository,
+    lotteries: &crate::services::lottery::LotteryRepository,
+    orders: &OrderRepository,
+    finance: &FinanceRepository,
+    group_buys: &GroupBuyRepository,
+    payload: DrawAutomationRunRequest,
+    progress_callback: Option<DrawIssueSettlementProgressCallback>,
+    protected_issue_keys: &HashSet<String>,
+    settlement_queue: Option<&RedisRuntime>,
+) -> ApiResult<DrawAutomationRun> {
     let now = normalize_automation_now(&payload)?;
     let mut run = empty_draw_automation_run(&now);
     let lottery_configs = lottery_automation_configs(lotteries).await?;
@@ -247,6 +300,7 @@ pub async fn draw_due_issues_with_progress_excluding_group_buy_issues(
         finance,
         group_buys,
         &progress_callback,
+        settlement_queue,
     )
     .await?;
     let mut local_draw_candidates = Vec::new();
@@ -297,6 +351,7 @@ pub async fn draw_due_issues_with_progress_excluding_group_buy_issues(
         group_buys,
         local_outcomes,
         &progress_callback,
+        settlement_queue,
     )
     .await?;
 
@@ -352,6 +407,7 @@ pub async fn draw_due_issues_with_progress_excluding_group_buy_issues(
         group_buys,
         api_outcomes,
         &progress_callback,
+        settlement_queue,
     )
     .await?;
 
@@ -392,6 +448,7 @@ async fn settle_draw_outcomes(
     group_buys: &GroupBuyRepository,
     draw_outcomes: Vec<DrawExecutionOutcome>,
     progress_callback: &Option<DrawIssueSettlementProgressCallback>,
+    settlement_queue: Option<&RedisRuntime>,
 ) -> ApiResult<()> {
     for outcome in draw_outcomes {
         let issue = outcome.source_issue;
@@ -411,6 +468,16 @@ async fn settle_draw_outcomes(
                 continue;
             }
         };
+        if enqueue_drawn_issue_for_async_settlement(&drawn, settlement_queue).await? {
+            if let Some(callback) = progress_callback {
+                callback(DrawIssueSettlementProgress {
+                    drawn_issue: drawn.clone(),
+                    ledger_entries: Vec::new(),
+                });
+            }
+            run.drawn_issues.push(drawn);
+            continue;
+        }
         settle_drawn_issue_with_retry_marker(
             run,
             orders,
@@ -434,6 +501,7 @@ async fn retry_unsettled_drawn_issue_settlements(
     finance: &FinanceRepository,
     group_buys: &GroupBuyRepository,
     progress_callback: &Option<DrawIssueSettlementProgressCallback>,
+    settlement_queue: Option<&RedisRuntime>,
 ) -> ApiResult<()> {
     let settled_draw_issue_ids = orders.settled_draw_issue_ids().await?;
     let unsettled_drawn_issues = draws
@@ -441,6 +509,9 @@ async fn retry_unsettled_drawn_issue_settlements(
         .await?;
 
     for issue in unsettled_drawn_issues {
+        if enqueue_drawn_issue_for_async_settlement(&issue, settlement_queue).await? {
+            continue;
+        }
         settle_drawn_issue_with_retry_marker(
             run,
             orders,
@@ -454,6 +525,41 @@ async fn retry_unsettled_drawn_issue_settlements(
     }
 
     Ok(())
+}
+
+async fn enqueue_drawn_issue_for_async_settlement(
+    drawn: &DrawIssue,
+    settlement_queue: Option<&RedisRuntime>,
+) -> ApiResult<bool> {
+    let Some(settlement_queue) = settlement_queue else {
+        return Ok(false);
+    };
+    if !settlement_queue.is_enabled() {
+        return Ok(false);
+    }
+    match draw_settlement_queue::enqueue(settlement_queue, drawn).await {
+        Ok(enqueued) => {
+            if enqueued {
+                tracing::info!(
+                    draw_issue_id = %drawn.id,
+                    lottery_id = %drawn.lottery_id,
+                    issue = %drawn.issue,
+                    "已开奖期号已加入异步结算队列"
+                );
+            }
+            Ok(enqueued)
+        }
+        Err(error) => {
+            tracing::warn!(
+                draw_issue_id = %drawn.id,
+                lottery_id = %drawn.lottery_id,
+                issue = %drawn.issue,
+                error = %error.log_message(),
+                "已开奖期号加入异步结算队列失败，回退同步结算"
+            );
+            Ok(false)
+        }
+    }
 }
 
 /// 串行提交单期计奖派奖；失败时记录可重试原因，不阻断同轮其它期号开奖。
