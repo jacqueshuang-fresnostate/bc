@@ -73,11 +73,20 @@ interface OrderFormState {
   userId: string;
 }
 
+type OrderStatusFilter = OrderStatus | 'all';
+
 const digitAttributeOptions: Array<{ label: string; value: DigitAttribute }> = [
   { label: '大', value: 'big' },
   { label: '小', value: 'small' },
   { label: '单', value: 'odd' },
   { label: '双', value: 'even' },
+];
+
+const orderStatusFilterOptions: OrderStatus[] = [
+  'pendingDraw',
+  'won',
+  'lost',
+  'cancelled',
 ];
 
 export function OrderManagementPage({
@@ -90,6 +99,8 @@ export function OrderManagementPage({
   const [orderIdFilter, setOrderIdFilter] = useState('');
   const [orderPageNumber, setOrderPageNumber] = useState(1);
   const [orderPageSize, setOrderPageSize] = useState(20);
+  const [orderStatusFilter, setOrderStatusFilter] =
+    useState<OrderStatusFilter>('all');
   const {
     cancel,
     clearRecords,
@@ -105,6 +116,7 @@ export function OrderManagementPage({
     orderId: orderIdFilter || undefined,
     page: orderPageNumber,
     pageSize: orderPageSize,
+    status: orderStatusFilter === 'all' ? undefined : orderStatusFilter,
     userId: userFilter?.userId,
   });
   const {
@@ -273,6 +285,11 @@ export function OrderManagementPage({
     setOrderPageNumber(1);
   };
 
+  const changeOrderStatusFilter = (value: unknown) => {
+    setOrderStatusFilter(value === 'all' ? 'all' : (value as OrderStatus));
+    setOrderPageNumber(1);
+  };
+
   const loading = ordersLoading || lotteriesLoading || rulesLoading || drawsLoading;
   const error = orderError ?? lotteryError ?? drawsError ?? rulesError;
 
@@ -342,6 +359,21 @@ export function OrderManagementPage({
                   onChange={setOrderIdInput}
                   onEnterPress={applyOrderIdFilter}
                 />
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <span className="shrink-0">状态</span>
+                <Select
+                  className="w-36"
+                  value={orderStatusFilter}
+                  onChange={changeOrderStatusFilter}
+                >
+                  <Select.Option value="all">全部状态</Select.Option>
+                  {orderStatusFilterOptions.map((status) => (
+                    <Select.Option key={status} value={status}>
+                      {statusText(status)}
+                    </Select.Option>
+                  ))}
+                </Select>
               </label>
               <div className="flex items-center gap-2">
                 <Button

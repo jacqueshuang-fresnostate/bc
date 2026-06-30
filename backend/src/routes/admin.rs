@@ -1610,10 +1610,21 @@ struct FinancePageQuery {
     page_size: Option<usize>,
     include_robot_data: Option<bool>,
     invitee_user_id: Option<String>,
-    order_id: Option<String>,
     user_id: Option<String>,
     username: Option<String>,
     kind: Option<LedgerEntryKind>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 后台订单列表筛选和分页查询参数。
+struct OrderPageQuery {
+    page: Option<usize>,
+    page_size: Option<usize>,
+    include_robot_data: Option<bool>,
+    order_id: Option<String>,
+    status: Option<OrderStatus>,
+    user_id: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1822,6 +1833,22 @@ impl FinancePageQuery {
     fn ledger_kind_filter(&self) -> Option<&LedgerEntryKind> {
         self.kind.as_ref()
     }
+}
+
+/// 后台订单列表分页和筛选参数。
+impl OrderPageQuery {
+    /// 后台订单列表默认隐藏机器人订单，只有显式打开开关时才返回。
+    fn include_robot_data(&self) -> bool {
+        self.include_robot_data.unwrap_or(false)
+    }
+
+    /// 读取可选用户 ID 过滤条件，空字符串按未设置处理。
+    fn user_id_filter(&self) -> Option<&str> {
+        self.user_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|user_id| !user_id.is_empty())
+    }
 
     /// 读取可选订单号过滤条件，空字符串按未设置处理。
     fn order_id_filter(&self) -> Option<&str> {
@@ -1829,6 +1856,11 @@ impl FinancePageQuery {
             .as_deref()
             .map(str::trim)
             .filter(|order_id| !order_id.is_empty())
+    }
+
+    /// 读取可选投注订单状态过滤条件，仅订单管理列表使用。
+    fn order_status_filter(&self) -> Option<&OrderStatus> {
+        self.status.as_ref()
     }
 }
 
@@ -1870,7 +1902,6 @@ impl UserListQuery {
             include_robot_data: self.include_robot_data,
             invitee_user_id: None,
             kind: None,
-            order_id: None,
             page: self.page,
             page_size: self.page_size,
             user_id: None,
@@ -1887,7 +1918,6 @@ impl AgentApplicationListQuery {
             include_robot_data: None,
             invitee_user_id: None,
             kind: None,
-            order_id: None,
             page: self.page,
             page_size: self.page_size,
             user_id: None,
@@ -4409,7 +4439,7 @@ async fn manual_balance_adjustment(
 /// 返回后台投注订单分页列表。
 async fn list_orders(
     State(state): State<AppState>,
-    Query(query): Query<FinancePageQuery>,
+    Query(query): Query<OrderPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<FinancePage<AdminOrderDetail>>>> {
     let excluded_user_ids = excluded_robot_user_ids(query.include_robot_data());
     let page = state
@@ -4418,6 +4448,7 @@ async fn list_orders(
             query.user_id_filter(),
             excluded_user_ids,
             query.order_id_filter(),
+            query.order_status_filter(),
             PageRequest::new(query.page, query.page_size),
         )
         .await?;
@@ -5702,7 +5733,6 @@ mod tests {
                 include_robot_data: None,
                 invitee_user_id: None,
                 kind: None,
-                order_id: None,
                 page: Some(2),
                 page_size: Some(2),
                 user_id: None,
@@ -5809,7 +5839,6 @@ mod tests {
                 include_robot_data: None,
                 invitee_user_id: None,
                 kind: None,
-                order_id: None,
                 page: Some(1),
                 page_size: Some(1),
                 user_id: None,
@@ -5897,7 +5926,6 @@ mod tests {
                 include_robot_data: None,
                 invitee_user_id: None,
                 kind: None,
-                order_id: None,
                 page: Some(1),
                 page_size: Some(2),
                 user_id: None,
@@ -5929,7 +5957,6 @@ mod tests {
                 include_robot_data: None,
                 invitee_user_id: None,
                 kind: None,
-                order_id: None,
                 page: Some(1),
                 page_size: Some(2),
                 user_id: None,
@@ -5949,7 +5976,6 @@ mod tests {
             include_robot_data: None,
             invitee_user_id: None,
             kind: None,
-            order_id: None,
             page: Some(1),
             page_size: Some(20),
             user_id: Some("U10001".to_string()),

@@ -45,6 +45,7 @@ export function useOrders(query: OrderListQuery = {}) {
     query.orderId,
     query.page,
     query.pageSize,
+    query.status,
     query.userId,
     refreshToken,
   ]);

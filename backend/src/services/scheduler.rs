@@ -76,6 +76,14 @@ struct PendingApiIssueGeneration {
     count: u32,
 }
 
+/// 开奖调度快阶段结果，额外携带延后到后台执行的 API 补期任务。
+struct FastOpeningRun {
+    /// 已完成的封盘和非 API 补期结果。
+    run: DrawSchedulerRun,
+    /// 需要后台异步处理的 API 彩种补期任务。
+    pending_api_generations: Vec<PendingApiIssueGeneration>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 /// 开奖调度器配置，控制启停、执行间隔和未来期号缓冲。
@@ -773,6 +781,7 @@ pub fn spawn_draw_scheduler(
     // );
 
     let due_phase_lock = Arc::new(AsyncMutex::new(()));
+    let api_generation_lock = Arc::new(AsyncMutex::new(()));
     if redis.is_enabled() {
         spawn_draw_settlement_queue_worker(
             draws.clone(),
@@ -812,7 +821,7 @@ pub fn spawn_draw_scheduler(
             next_run_at += interval;
             let run_started = Instant::now();
 
-            match run_draw_scheduler_opening_once_with_realtime(
+            match run_draw_scheduler_fast_opening_once_with_realtime(
                 &draws,
                 &lotteries,
                 &current_config,
@@ -821,7 +830,10 @@ pub fn spawn_draw_scheduler(
             )
             .await
             {
-                Ok(run) => {
+                Ok(opening) => {
+                    let run = opening.run;
+                    let pending_api_generations = opening.pending_api_generations;
+                    let pending_api_generation_count = pending_api_generations.len();
                     publish_scheduler_completion_events(&realtime, &finance, &run).await;
                     let run_elapsed_ms = run_started.elapsed().as_millis();
                     let finished_at = current_scheduler_timestamp();
@@ -836,13 +848,67 @@ pub fn spawn_draw_scheduler(
                     {
                         tracing::error!(error = %error.log_message(), "开奖调度器历史记录写入失败");
                     }
-                    // tracing::info!(
-                    //     "当前时间" = %run.now,
-                    //     "本轮耗时毫秒" = run_elapsed_ms,
-                    //     "封盘期数" = run.automation_run.closed_issues.len(),
-                    //     "新增期号" = run.generated_issues.len(),
-                    //     "开奖调度器开盘阶段执行完成"
-                    // );
+
+                    if pending_api_generation_count > 0 {
+                        let api_lock = api_generation_lock.clone();
+                        let draws = draws.clone();
+                        let realtime = realtime.clone();
+                        let current_config = current_config.clone();
+                        let api_now = now.clone();
+                        tokio::spawn(async move {
+                            let Ok(_guard) = api_lock.try_lock() else {
+                                tracing::warn!(
+                                    now = %api_now,
+                                    pending_lottery_count = pending_api_generations.len(),
+                                    "上一轮 API 彩种补期仍在执行，本轮跳过 API 补期以避免阻塞开奖"
+                                );
+                                return;
+                            };
+                            let api_started = Instant::now();
+                            match tokio::time::timeout(
+                                Duration::from_secs(120),
+                                run_draw_scheduler_api_generation_once_with_realtime(
+                                    &draws,
+                                    &current_config,
+                                    api_now.clone(),
+                                    Some(&realtime),
+                                    pending_api_generations,
+                                ),
+                            )
+                            .await
+                            {
+                                Ok(Ok((generated_issues, skipped_lotteries))) => {
+                                    tracing::info!(
+                                        now = %api_now,
+                                        "API补期耗时毫秒" = api_started.elapsed().as_millis(),
+                                        "API新增期号" = generated_issues.len(),
+                                        "API跳过彩种" = skipped_lotteries.len(),
+                                        "API 彩种补期后台任务完成"
+                                    );
+                                }
+                                Ok(Err(error)) => tracing::error!(
+                                    now = %api_now,
+                                    "API补期耗时毫秒" = api_started.elapsed().as_millis(),
+                                    error = %error.log_message(),
+                                    "API 彩种补期后台任务失败"
+                                ),
+                                Err(_) => tracing::error!(
+                                    now = %api_now,
+                                    "API补期耗时毫秒" = api_started.elapsed().as_millis(),
+                                    "API 彩种补期后台任务超时（120秒）"
+                                ),
+                            }
+                        });
+                    }
+
+                    tracing::debug!(
+                        "当前时间" = %run.now,
+                        "本轮耗时毫秒" = run_elapsed_ms,
+                        "封盘期数" = run.automation_run.closed_issues.len(),
+                        "非API新增期号" = run.generated_issues.len(),
+                        "待后台API补期彩种" = pending_api_generation_count,
+                        "开奖调度器快阶段完成，已排队到期开奖"
+                    );
 
                     // 到期开奖阶段：在独立 spawn 中执行，用 lock().await 排队而非 try_lock 跳过，
                     // 确保每一轮到期开奖都能被执行，不会因上一轮未完成而跳过。
@@ -1226,14 +1292,14 @@ async fn run_draw_scheduler_once_with_realtime(
         skipped_lotteries: opening_run.skipped_lotteries,
     })
 }
-/// 执行调度快阶段，负责开盘、补未来期号和推送开盘事件。
-async fn run_draw_scheduler_opening_once_with_realtime(
+/// 执行调度核心快阶段，只处理封盘和非 API 补期，避免外部接口拖住到期开奖。
+async fn run_draw_scheduler_fast_opening_once_with_realtime(
     draws: &DrawRepository,
     lotteries: &LotteryRepository,
     config: &DrawSchedulerConfig,
     now: String,
     realtime: Option<&RealtimeHub>,
-) -> ApiResult<DrawSchedulerRun> {
+) -> ApiResult<FastOpeningRun> {
     config.validate()?;
     let now = now.trim().to_string();
     if now.is_empty() {
@@ -1252,7 +1318,7 @@ async fn run_draw_scheduler_opening_once_with_realtime(
     let close_phase_ms = close_phase_started.elapsed().as_millis();
 
     let generation_phase_started = Instant::now();
-    let (mut generated_issues, mut skipped_lotteries, pending_api_generations) =
+    let (generated_issues, skipped_lotteries, pending_api_generations) =
         ensure_non_api_future_draw_issues(draws, lotteries, config, &now).await?;
     let local_generation_phase_ms = generation_phase_started.elapsed().as_millis();
 
@@ -1260,41 +1326,71 @@ async fn run_draw_scheduler_opening_once_with_realtime(
         publish_scheduler_opening_events(realtime, &close_run.closed_issues, &generated_issues);
     }
 
-    // tracing::info!(
-    //     "当前时间" = %now,
-    //     "封盘耗时毫秒" = close_phase_ms,
-    //     "本地补期耗时毫秒" = local_generation_phase_ms,
-    //     "本地补期并发上限" = config.local_issue_generation_concurrency,
-    //     "封盘期数" = close_run.closed_issues.len(),
-    //     "新增期号" = generated_issues.len(),
-    //     "开奖调度器快阶段完成，已释放下一期开盘"
-    // );
+    tracing::debug!(
+        "当前时间" = %now,
+        "封盘耗时毫秒" = close_phase_ms,
+        "本地补期耗时毫秒" = local_generation_phase_ms,
+        "本地补期并发上限" = config.local_issue_generation_concurrency,
+        "封盘期数" = close_run.closed_issues.len(),
+        "非API新增期号" = generated_issues.len(),
+        "待后台API补期彩种" = pending_api_generations.len(),
+        "开奖调度器核心快阶段完成"
+    );
 
-    let api_generation_phase_started = Instant::now();
-    let (mut api_generated_issues, mut api_skipped_lotteries) =
+    Ok(FastOpeningRun {
+        run: DrawSchedulerRun {
+            now: now.clone(),
+            automation_run: close_run,
+            generated_issues,
+            robot_run: empty_group_buy_robot_run(now),
+            skipped_lotteries,
+        },
+        pending_api_generations,
+    })
+}
+
+/// 后台执行 API 彩种补期，并推送新开盘事件；不参与阻塞到期开奖。
+async fn run_draw_scheduler_api_generation_once_with_realtime(
+    draws: &DrawRepository,
+    config: &DrawSchedulerConfig,
+    now: String,
+    realtime: Option<&RealtimeHub>,
+    pending_api_generations: Vec<PendingApiIssueGeneration>,
+) -> ApiResult<(Vec<DrawIssue>, Vec<DrawSchedulerSkippedLottery>)> {
+    let (api_generated_issues, api_skipped_lotteries) =
         ensure_api_future_draw_issues(draws, config, &now, pending_api_generations).await?;
-    let api_generation_phase_ms = api_generation_phase_started.elapsed().as_millis();
     if let Some(realtime) = realtime {
         publish_scheduler_opening_events(realtime, &[], &api_generated_issues);
     }
-    // tracing::info!(
-    //     "当前时间" = %now,
-    //     "API补期耗时毫秒" = api_generation_phase_ms,
-    //     "API补期并发上限" = config.api_issue_generation_concurrency,
-    //     "API新增期号" = api_generated_issues.len(),
-    //     "API跳过彩种" = api_skipped_lotteries.len(),
-    //     "开奖调度器 API 补期阶段完成"
-    // );
-    generated_issues.append(&mut api_generated_issues);
-    skipped_lotteries.append(&mut api_skipped_lotteries);
 
-    Ok(DrawSchedulerRun {
-        now: now.clone(),
-        automation_run: close_run,
-        generated_issues,
-        robot_run: empty_group_buy_robot_run(now),
-        skipped_lotteries,
-    })
+    Ok((api_generated_issues, api_skipped_lotteries))
+}
+
+/// 执行完整开盘阶段，供手动调度和测试继续拿到 API 补期结果。
+async fn run_draw_scheduler_opening_once_with_realtime(
+    draws: &DrawRepository,
+    lotteries: &LotteryRepository,
+    config: &DrawSchedulerConfig,
+    now: String,
+    realtime: Option<&RealtimeHub>,
+) -> ApiResult<DrawSchedulerRun> {
+    let opening =
+        run_draw_scheduler_fast_opening_once_with_realtime(draws, lotteries, config, now, realtime)
+            .await?;
+    let mut run = opening.run;
+    let (mut api_generated_issues, mut api_skipped_lotteries) =
+        run_draw_scheduler_api_generation_once_with_realtime(
+            draws,
+            config,
+            run.now.clone(),
+            realtime,
+            opening.pending_api_generations,
+        )
+        .await?;
+    run.generated_issues.append(&mut api_generated_issues);
+    run.skipped_lotteries.append(&mut api_skipped_lotteries);
+
+    Ok(run)
 }
 /// 执行调度到期开奖阶段，优先处理封盘兜底、流单退款、开奖和派奖。
 async fn run_draw_scheduler_due_once_with_realtime(
@@ -1857,6 +1953,80 @@ mod tests {
             .any(|pending| pending.lottery.id == "txffc"));
         assert!(!skipped.iter().any(|lottery| lottery.lottery_id == "ssc60"));
     }
+
+    #[tokio::test]
+    /// 自动调度快阶段必须延后 API 补期，让已到期的非 API 彩种可以立即进入开奖。
+    async fn scheduler_fast_opening_defers_api_generation_and_allows_due_draw() {
+        let draws = DrawRepository::memory_with_api_sources(
+            ApiDrawSourceRepository::api68_seeded_with_static_response(
+                r#"{"errorCode":0,"result":{"businessCode":0,"data":[]}}"#,
+            ),
+        );
+        let lotteries = LotteryRepository::memory_seeded();
+        enable_lottery_sale(&lotteries, "fc3d").await;
+        enable_lottery_sale(&lotteries, "ssc60").await;
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let robots = RobotRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded();
+        let config = enabled_config(1);
+        let lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        let issue = draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "DUE20260602200000".to_string(),
+                    scheduled_at: "2026-06-02 20:00:00".to_string(),
+                    sale_closed_at: "2026-06-02 19:59:30".to_string(),
+                },
+            )
+            .await
+            .expect("draw issue can be created");
+
+        let opening = super::run_draw_scheduler_fast_opening_once_with_realtime(
+            &draws,
+            &lotteries,
+            &config,
+            "2026-06-02 20:00:00".to_string(),
+            None,
+        )
+        .await
+        .expect("fast opening can run");
+
+        assert!(opening
+            .pending_api_generations
+            .iter()
+            .any(|pending| pending.lottery.id == "fc3d"));
+        assert!(!opening
+            .run
+            .generated_issues
+            .iter()
+            .any(|generated| generated.lottery_id == "fc3d"));
+
+        let due_run = super::run_draw_scheduler_due_once_with_realtime(
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &robots,
+            &access,
+            &config,
+            "2026-06-02 20:00:00".to_string(),
+            None,
+        )
+        .await
+        .expect("due draw can run without waiting api generation");
+
+        assert!(due_run
+            .automation_run
+            .drawn_issues
+            .iter()
+            .any(|drawn| drawn.id == issue.id));
+    }
+
     /// 验证未来期号数量足够时调度器不会重复生成。
     #[tokio::test]
     async fn scheduler_does_not_duplicate_when_future_buffer_is_satisfied() {

@@ -19,6 +19,7 @@ export interface OrderListQuery {
   orderId?: string;
   page?: number;
   pageSize?: number;
+  status?: OrderStatus;
   userId?: string;
 }
 

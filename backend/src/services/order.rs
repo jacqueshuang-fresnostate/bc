@@ -201,6 +201,7 @@ impl OrderRepository {
         user_id: Option<&str>,
         excluded_user_ids: &[&str],
         order_id: Option<&str>,
+        status: Option<&OrderStatus>,
         page: PageRequest,
     ) -> ApiResult<ListPage<OrderDetail>> {
         let user_id = normalized_optional_filter(user_id);
@@ -213,6 +214,7 @@ impl OrderRepository {
                 user_id.as_deref(),
                 &excluded_user_ids,
                 order_id.as_deref(),
+                status,
                 page,
             )
             .await;
@@ -232,6 +234,7 @@ impl OrderRepository {
                     && order_id
                         .as_deref()
                         .map_or(true, |target| order.id == target)
+                    && status.map_or(true, |target| &order.status == target)
             })
             .collect::<Vec<_>>();
         Ok(ListPage::from_all(orders, page))
@@ -1310,18 +1313,22 @@ async fn query_order_page(
     user_id: Option<&str>,
     excluded_user_ids: &[String],
     order_id: Option<&str>,
+    status: Option<&OrderStatus>,
     page: PageRequest,
 ) -> ApiResult<ListPage<OrderDetail>> {
+    let status = status.map(enum_to_string).transpose()?;
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
          FROM orders
          WHERE ($1::text IS NULL OR user_id = $1)
            AND (cardinality($2::text[]) = 0 OR NOT (user_id = ANY($2)))
-           AND ($3::text IS NULL OR id = $3)",
+           AND ($3::text IS NULL OR id = $3)
+           AND ($4::text IS NULL OR status = $4)",
     )
     .bind(user_id)
     .bind(excluded_user_ids)
     .bind(order_id)
+    .bind(status.as_deref())
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("订单分页总数读取失败".to_string()))?;
@@ -1336,12 +1343,14 @@ async fn query_order_page(
          WHERE ($1::text IS NULL OR user_id = $1)
            AND (cardinality($2::text[]) = 0 OR NOT (user_id = ANY($2)))
            AND ($3::text IS NULL OR id = $3)
+           AND ($4::text IS NULL OR status = $4)
          ORDER BY created_at DESC, id DESC
-         LIMIT $4 OFFSET $5",
+         LIMIT $5 OFFSET $6",
     )
     .bind(user_id)
     .bind(excluded_user_ids)
     .bind(order_id)
+    .bind(status.as_deref())
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
     .fetch_all(database.pool())
@@ -2968,6 +2977,7 @@ mod tests {
                 None,
                 &[],
                 Some(&first.id),
+                None,
                 PageRequest::new(Some(1), Some(1)),
             )
             .await
@@ -2976,6 +2986,40 @@ mod tests {
         assert_eq!(page.total_count, 1);
         assert_eq!(page.items[0].id, first.id);
         assert_ne!(page.items[0].id, second.id);
+    }
+
+    #[tokio::test]
+    /// 后台订单分页按状态查询时，必须先过滤再分页。
+    async fn repository_order_page_filters_by_status_before_pagination() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let orders = OrderRepository::memory();
+        let pending = orders
+            .create(&lottery, direct_order_request("U10001", "2026155", 200))
+            .await
+            .expect("pending order can be created");
+        let cancellable = orders
+            .create(&lottery, direct_order_request("U10002", "2026155", 200))
+            .await
+            .expect("cancellable order can be created");
+        let cancelled = orders
+            .cancel(&cancellable.id)
+            .await
+            .expect("order can be cancelled");
+
+        let page = orders
+            .list_page(
+                None,
+                &[],
+                None,
+                Some(&OrderStatus::Cancelled),
+                PageRequest::new(Some(1), Some(1)),
+            )
+            .await
+            .expect("order page can filter by status");
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.items[0].id, cancelled.id);
+        assert_ne!(page.items[0].id, pending.id);
     }
 
     #[tokio::test]
@@ -3000,6 +3044,7 @@ mod tests {
             .list_page(
                 None,
                 &["U90001", "X90002"],
+                None,
                 None,
                 PageRequest::new(Some(1), Some(20)),
             )

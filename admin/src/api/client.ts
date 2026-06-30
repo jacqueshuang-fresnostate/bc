@@ -335,6 +335,9 @@ function adminQueryPath(path: string, query?: FinancePageQuery | OrderListQuery)
   if (orderQuery?.orderId?.trim()) {
     params.set('orderId', orderQuery.orderId.trim());
   }
+  if (orderQuery?.status) {
+    params.set('status', orderQuery.status);
+  }
   if (pageQuery?.username?.trim()) {
     params.set('username', pageQuery.username.trim());
   }
