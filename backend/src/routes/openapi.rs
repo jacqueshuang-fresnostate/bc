@@ -1184,7 +1184,7 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         "/admin/orders/{id}/cancel",
         "订单与结算",
         "取消订单",
-        "取消未结算的投注订单并退款。",
+        "取消未结算的投注订单并退款；独立下单写入 orderRefund，合买订单同步取消合买计划并按参与记录写入 groupBuyRefund。",
         AuthMode::Admin,
         RequestBodyKind::None,
     ),

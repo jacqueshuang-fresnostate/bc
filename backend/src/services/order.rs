@@ -532,7 +532,8 @@ impl OrderRepository {
         })
     }
 
-    /// 取消开奖期并回退相关状态。
+    #[cfg(test)]
+    /// 测试辅助：只改订单状态不触发退款，运行时取消必须走资金事务入口。
     pub async fn cancel(&self, id: &str) -> ApiResult<OrderDetail> {
         let (result, snapshot) = {
             let mut store = self
@@ -581,6 +582,77 @@ impl OrderRepository {
         finance.replace_store(finance_store)?;
 
         Ok(order)
+    }
+
+    /// 取消合买真实订单，并按合买参与记录退还认购金额。
+    pub async fn cancel_group_buy_with_refund(
+        &self,
+        finance: &FinanceRepository,
+        group_buys: &GroupBuyRepository,
+        id: &str,
+        note: &str,
+        refund_reason: &str,
+    ) -> ApiResult<(OrderDetail, GroupBuyPlan, Vec<LedgerEntry>)> {
+        let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
+        let previous_order_store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .clone();
+        let mut order_store = previous_order_store.clone();
+        let previous_group_buy_store = group_buys
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
+            .clone();
+        let mut group_buy_store = previous_group_buy_store.clone();
+        let previous_finance_store = finance
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .clone();
+        let mut finance_store = previous_finance_store.clone();
+
+        let existing_order = order_store.get(id)?;
+        if existing_order.order_source != OrderSource::GroupBuy {
+            return Err(ApiError::BadRequest("该订单不是合买下单".to_string()));
+        }
+        if existing_order.status != OrderStatus::PendingDraw {
+            return Err(ApiError::BadRequest(
+                "已开奖或已取消的合买订单不能取消".to_string(),
+            ));
+        }
+
+        let order_ids = [existing_order.id.clone()];
+        let matched_plans = group_buy_store.plans_for_order_ids(&order_ids);
+        let plan = match matched_plans.as_slice() {
+            [plan] => plan.clone(),
+            [] => return Err(ApiError::NotFound("合买订单认购记录不存在".to_string())),
+            _ => return Err(ApiError::Internal("合买订单关联了多条合买计划".to_string())),
+        };
+        let cancelled_plan = group_buy_store
+            .cancel_plan(&plan.id, &append_group_buy_cancel_note(&plan.note, note))?;
+        let order = order_store.cancel(id)?;
+        let mut entries = finance_store.refund_group_buy_plan(&cancelled_plan, refund_reason)?;
+
+        let id_remap = persist_order_finance_group_buy_stores(
+            self,
+            finance,
+            group_buys,
+            &previous_order_store,
+            &order_store,
+            &previous_finance_store,
+            &mut finance_store,
+            &previous_group_buy_store,
+            &group_buy_store,
+        )
+        .await?;
+        id_remap.apply_to_entries(&mut entries);
+        self.replace_store(order_store)?;
+        finance.replace_store(finance_store)?;
+        group_buys.replace_store(group_buy_store)?;
+
+        Ok((order, cancelled_plan, entries))
     }
 
     /// 清理未支付订单。
@@ -2023,6 +2095,24 @@ async fn persist_order_finance_group_buy_stores(
     }
 }
 
+fn append_group_buy_cancel_note(current_note: &str, cancel_note: &str) -> String {
+    let current_note = current_note.trim();
+    let cancel_note = cancel_note.trim();
+    if cancel_note.is_empty() {
+        return current_note.to_string();
+    }
+    if current_note.is_empty() {
+        return cancel_note.to_string();
+    }
+    if current_note.contains(cancel_note) {
+        return current_note.to_string();
+    }
+    if cancel_note.contains(current_note) {
+        return cancel_note.to_string();
+    }
+    format!("{current_note}\n{cancel_note}")
+}
+
 /// 使用 PostgreSQL 序列生成普通下注订单号，避免锁定运行时计数器行。
 async fn next_order_sequence_in_transaction(connection: &mut PgConnection) -> ApiResult<u64> {
     let sequence = sqlx::query_scalar::<_, i64>("SELECT nextval('order_id_sequence')")
@@ -2843,7 +2933,7 @@ mod tests {
         domain::{
             draw::{DrawIssue, DrawIssueStatus},
             finance::LedgerEntryKind,
-            group_buy::{AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest},
+            group_buy::{CreateGroupBuyPlanRequest, GroupBuyPlanStatus},
             lottery::{
                 DrawMode, DrawSchedule, GroupBuyConfig, LotteryKind, LotteryNumberType,
                 LotteryPlayConfig, LotteryPlayPositionSelectLimit, PlayCategory,
@@ -3170,6 +3260,100 @@ mod tests {
         assert_eq!(cancelled.status, OrderStatus::Cancelled);
         assert_eq!(account.available_balance_minor, 12_000);
         assert_eq!(refund_count, 1);
+    }
+
+    #[tokio::test]
+    /// 订单管理取消合买订单时按参与记录退款，不要求真实合买订单存在普通投注扣款流水。
+    async fn repository_cancel_group_buy_order_refunds_participants_without_order_debit() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let access = AccessRepository::memory_seeded()
+            .snapshot()
+            .await
+            .expect("access snapshot can load");
+        let plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-CANCEL-ORDER".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026156".to_string(),
+                    rule_code: "threeDirect".to_string(),
+                    title: "取消合买订单测试".to_string(),
+                    numbers: "2|4|7".to_string(),
+                    initiator_user_id: "U10001".to_string(),
+                    total_amount_minor: 1_000,
+                    initiator_amount_minor: 1_000,
+                    note: "原始备注".to_string(),
+                },
+                std::slice::from_ref(&lottery),
+                &access.users,
+            )
+            .await
+            .expect("group buy plan can create");
+        let participant_id = plan.participants[0].id.clone();
+        finance
+            .debit_group_buy("U10001", 1_000, &participant_id, &plan.id)
+            .await
+            .expect("group buy participant can be debited");
+        let (order, _) = orders
+            .create_group_buy_order_and_attach(
+                &group_buys,
+                &lottery,
+                direct_order_request("U10001", "2026156", 1_000),
+                &plan.id,
+            )
+            .await
+            .expect("group buy order can attach");
+
+        let (cancelled_order, cancelled_plan, entries) = orders
+            .cancel_group_buy_with_refund(
+                &finance,
+                &group_buys,
+                &order.id,
+                "后台取消合买订单",
+                "后台取消合买订单",
+            )
+            .await
+            .expect("group buy order can be cancelled with participant refund");
+        let account = finance
+            .accounts()
+            .await
+            .expect("accounts can list")
+            .into_iter()
+            .find(|account| account.user_id == "U10001")
+            .expect("seed account exists");
+        let ledger_entries = finance.ledger_entries().await.expect("ledger can list");
+        let order_refund_count = ledger_entries
+            .iter()
+            .filter(|entry| entry.kind == LedgerEntryKind::OrderRefund)
+            .count();
+        let group_buy_refund_count = ledger_entries
+            .iter()
+            .filter(|entry| entry.kind == LedgerEntryKind::GroupBuyRefund)
+            .count();
+
+        assert_eq!(cancelled_order.status, OrderStatus::Cancelled);
+        assert_eq!(cancelled_plan.status, GroupBuyPlanStatus::Cancelled);
+        assert!(cancelled_plan.note.contains("后台取消合买订单"));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, LedgerEntryKind::GroupBuyRefund);
+        assert_eq!(
+            entries[0].reference_id.as_deref(),
+            Some(participant_id.as_str())
+        );
+        assert_eq!(account.available_balance_minor, 12_000);
+        assert_eq!(order_refund_count, 0);
+        assert_eq!(group_buy_refund_count, 1);
+    }
+
+    #[test]
+    /// 合买取消备注已经包含原备注时直接使用提交备注，避免重复拼接原备注。
+    fn append_group_buy_cancel_note_keeps_payload_note_without_duplicate_original_note() {
+        let note = super::append_group_buy_cancel_note("原始备注", "原始备注\n后台取消合买");
+
+        assert_eq!(note, "原始备注\n后台取消合买");
     }
 
     #[tokio::test]

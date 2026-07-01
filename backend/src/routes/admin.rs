@@ -2771,25 +2771,28 @@ async fn update_group_buy_plan(
     Json(payload): Json<UpdateGroupBuyPlanRequest>,
 ) -> ApiResult<Json<ApiEnvelope<GroupBuyPlan>>> {
     let existing = state.group_buys.get(&id).await?;
-    if payload.status == crate::domain::group_buy::GroupBuyPlanStatus::Cancelled {
+    let is_new_cancel = payload.status == crate::domain::group_buy::GroupBuyPlanStatus::Cancelled
+        && existing.status != crate::domain::group_buy::GroupBuyPlanStatus::Cancelled;
+    if is_new_cancel {
         if let Some(order_id) = existing.order_id.as_deref() {
-            let order = state.orders.get(order_id).await?;
-            if order.status != OrderStatus::PendingDraw {
-                return Err(ApiError::BadRequest(
-                    "已开奖或已取消的合买订单不能取消".to_string(),
-                ));
-            }
+            let (order, plan, entries) = state
+                .orders
+                .cancel_group_buy_with_refund(
+                    &state.finance,
+                    &state.group_buys,
+                    order_id,
+                    &payload.note,
+                    "后台取消合买",
+                )
+                .await?;
+            state.draws.remove_avoidance_order_risk(&order).await;
+            publish_user_order_changed(&state, &order, "cancelled");
+            publish_settlement_balance_events(&state, &entries).await;
+            return Ok(Json(ApiEnvelope::success(plan)));
         }
     }
     let plan = state.group_buys.update(&id, payload).await?;
-    if plan.status == crate::domain::group_buy::GroupBuyPlanStatus::Cancelled
-        && existing.status != crate::domain::group_buy::GroupBuyPlanStatus::Cancelled
-    {
-        if let Some(order_id) = existing.order_id.or_else(|| plan.order_id.clone()) {
-            let order = state.orders.cancel(&order_id).await?;
-            state.draws.remove_avoidance_order_risk(&order).await;
-            publish_user_order_changed(&state, &order, "cancelled");
-        }
+    if is_new_cancel {
         let entries = state
             .finance
             .refund_group_buy_plan(&plan, "后台取消合买")
@@ -4545,10 +4548,29 @@ async fn cancel_order(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<AdminOrderDetail>>> {
-    let order = state.orders.cancel_with_refund(&state.finance, &id).await?;
-    state.draws.remove_avoidance_order_risk(&order).await;
-    publish_user_order_changed(&state, &order, "cancelled");
-    publish_user_balance_changed(&state, &order.user_id, "order_refund", Some(&order.id)).await;
+    let existing = state.orders.get(&id).await?;
+    let order = if existing.order_source == OrderSource::GroupBuy {
+        let (order, _plan, entries) = state
+            .orders
+            .cancel_group_buy_with_refund(
+                &state.finance,
+                &state.group_buys,
+                &id,
+                "后台取消合买订单",
+                "后台取消合买订单",
+            )
+            .await?;
+        state.draws.remove_avoidance_order_risk(&order).await;
+        publish_user_order_changed(&state, &order, "cancelled");
+        publish_settlement_balance_events(&state, &entries).await;
+        order
+    } else {
+        let order = state.orders.cancel_with_refund(&state.finance, &id).await?;
+        state.draws.remove_avoidance_order_risk(&order).await;
+        publish_user_order_changed(&state, &order, "cancelled");
+        publish_user_balance_changed(&state, &order.user_id, "order_refund", Some(&order.id)).await;
+        order
+    };
     let order = admin_order_detail(&state, order).await?;
 
     Ok(Json(ApiEnvelope::success(order)))

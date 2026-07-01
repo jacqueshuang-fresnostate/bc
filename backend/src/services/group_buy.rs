@@ -1742,6 +1742,17 @@ impl GroupBuyStore {
         Ok(plan.clone())
     }
 
+    /// 将合买计划标记为已取消，供订单和资金事务一起保存时复用。
+    pub(crate) fn cancel_plan(&mut self, id: &str, note: &str) -> ApiResult<GroupBuyPlan> {
+        self.update(
+            id,
+            UpdateGroupBuyPlanRequest {
+                status: GroupBuyPlanStatus::Cancelled,
+                note: note.to_string(),
+            },
+        )
+    }
+
     /// 关联真实投注订单号，避免同一合买重复成单。
     pub(crate) fn attach_order(&mut self, id: &str, order_id: &str) -> ApiResult<GroupBuyPlan> {
         let plan = self
