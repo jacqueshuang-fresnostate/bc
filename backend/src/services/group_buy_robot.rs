@@ -106,6 +106,14 @@ enum RobotFillStage {
     Final,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RobotFillStageWindow {
+    stage: RobotFillStage,
+    label: String,
+    starts_at: NaiveDateTime,
+    ends_at: NaiveDateTime,
+}
+
 /// 判断用户 ID 是否为系统合买或补单机器人账户。
 pub fn is_group_buy_robot_user_id(user_id: &str) -> bool {
     let user_id = user_id.trim();
@@ -2184,7 +2192,7 @@ fn robot_fill_decision(
     else {
         return Err(ApiError::Internal("补单机器人策略无效".to_string()));
     };
-    let Some((stage, stage_label)) = robot_fill_stage(
+    let Some(stage_window) = robot_fill_stage_window(
         plan,
         &issue.created_at,
         scheduled_at,
@@ -2197,10 +2205,22 @@ fn robot_fill_decision(
             "未到阶段性补单起始时间，等待下一阶段".to_string(),
         ));
     };
+    let stage = stage_window.stage;
+    let stage_label = stage_window.label.clone();
     if stage != RobotFillStage::Final && robot_plan_has_rhythm_stage_fill(plan, &stage_label) {
         return Ok(RobotFillDecision::Skip(format!(
             "补单机器人{stage_label}节奏补单已执行，等待下一阶段"
         )));
+    }
+    if stage != RobotFillStage::Final {
+        let trigger_at =
+            rhythm_stage_trigger_at(plan, stage, stage_window.starts_at, stage_window.ends_at);
+        if now_at < trigger_at {
+            return Ok(RobotFillDecision::Skip(format!(
+                "补单机器人{stage_label}分散下单时间未到，预计 {} 执行",
+                trigger_at.format(TIMESTAMP_FORMAT)
+            )));
+        }
     }
 
     let amount_minor = if stage == RobotFillStage::Final {
@@ -2284,6 +2304,7 @@ fn is_issue_sale_closed(issue: &DrawIssue, now_at: NaiveDateTime) -> ApiResult<b
 }
 
 /// 根据合买创建时间和开奖前最终补满点动态返回当前阶段。
+#[cfg(test)]
 fn robot_fill_stage(
     plan: &GroupBuyPlan,
     issue_created_at: &str,
@@ -2292,6 +2313,26 @@ fn robot_fill_stage(
     fill_before_draw_seconds: i64,
     stage_count: u32,
 ) -> ApiResult<Option<(RobotFillStage, String)>> {
+    Ok(robot_fill_stage_window(
+        plan,
+        issue_created_at,
+        scheduled_at,
+        now_at,
+        fill_before_draw_seconds,
+        stage_count,
+    )?
+    .map(|window| (window.stage, window.label)))
+}
+
+/// 根据合买创建时间和开奖前最终补满点返回当前阶段窗口。
+fn robot_fill_stage_window(
+    plan: &GroupBuyPlan,
+    issue_created_at: &str,
+    scheduled_at: NaiveDateTime,
+    now_at: NaiveDateTime,
+    fill_before_draw_seconds: i64,
+    stage_count: u32,
+) -> ApiResult<Option<RobotFillStageWindow>> {
     let plan_created_at = parse_robot_timestamp(&plan.created_at, "合买创建时间")?;
     let issue_created_at =
         NaiveDateTime::parse_from_str(issue_created_at.trim(), TIMESTAMP_FORMAT).ok();
@@ -2305,12 +2346,22 @@ fn robot_fill_stage(
 
     let final_fill_at = scheduled_at - chrono::Duration::seconds(fill_before_draw_seconds);
     if now_at >= final_fill_at {
-        return Ok(Some((RobotFillStage::Final, "开奖前最终".to_string())));
+        return Ok(Some(RobotFillStageWindow {
+            stage: RobotFillStage::Final,
+            label: "开奖前最终".to_string(),
+            starts_at: final_fill_at,
+            ends_at: scheduled_at,
+        }));
     }
 
     let stage_seconds = (final_fill_at - created_at).num_seconds();
     if stage_seconds <= 0 {
-        return Ok(Some((RobotFillStage::Final, "开奖前最终".to_string())));
+        return Ok(Some(RobotFillStageWindow {
+            stage: RobotFillStage::Final,
+            label: "开奖前最终".to_string(),
+            starts_at: final_fill_at,
+            ends_at: scheduled_at,
+        }));
     }
 
     let elapsed_seconds = (now_at - created_at)
@@ -2320,11 +2371,33 @@ fn robot_fill_stage(
     let stage_count_i64 = i64::from(stage_count.max(1));
     let index =
         ((elapsed_seconds * stage_count_i64) / stage_seconds + 1).min(stage_count_i64) as u32;
+    let stage_start_offset = (i64::from(index.saturating_sub(1)) * stage_seconds) / stage_count_i64;
+    let stage_end_offset = (i64::from(index) * stage_seconds) / stage_count_i64;
 
-    Ok(Some((
-        RobotFillStage::Stage { index },
-        format!("第{index}阶段"),
-    )))
+    Ok(Some(RobotFillStageWindow {
+        stage: RobotFillStage::Stage { index },
+        label: format!("第{index}阶段"),
+        starts_at: created_at + chrono::Duration::seconds(stage_start_offset),
+        ends_at: created_at
+            + chrono::Duration::seconds(stage_end_offset.max(stage_start_offset + 1)),
+    }))
+}
+
+/// 为同一阶段内的不同合买计划生成稳定随机触发点，避免阶段开始时集中下单。
+fn rhythm_stage_trigger_at(
+    plan: &GroupBuyPlan,
+    stage: RobotFillStage,
+    starts_at: NaiveDateTime,
+    ends_at: NaiveDateTime,
+) -> NaiveDateTime {
+    let stage_seconds = (ends_at - starts_at).num_seconds().max(1);
+    // 触发点限制在阶段前半段，既能打散同阶段计划，也给固定周期调度留下补扫机会。
+    let spread_seconds = (stage_seconds / 2).max(1);
+    let seed = format!("{}:{}", plan.id, plan.issue);
+    let salt = format!("{}-trigger", robot_fill_stage_salt(stage));
+    let offset = stable_robot_fill_hash(&seed, &salt, plan.total_amount_minor.max(0) as u64)
+        % spread_seconds as u64;
+    starts_at + chrono::Duration::seconds(offset as i64)
 }
 
 /// 使用 FNV-1a 派生稳定散列，避免机器人节奏在调度重试时抖动。
@@ -2801,6 +2874,94 @@ mod tests {
                 .expect("stage can calculate"),
             Some((RobotFillStage::Final, "开奖前最终".to_string()))
         );
+    }
+
+    /// 验证同一阶段内不同合买计划的补单触发时间会稳定分散。
+    #[test]
+    fn robot_rhythm_stage_trigger_spreads_plans_inside_same_stage() {
+        let scheduled_at =
+            parse_robot_timestamp("2026-06-05 20:05:00", "开奖时间").expect("time can parse");
+        let now_at =
+            parse_robot_timestamp("2026-06-05 20:00:30", "当前时间").expect("time can parse");
+        let mut triggers = std::collections::BTreeSet::new();
+
+        for index in 1..=6 {
+            let mut plan =
+                robot_test_group_buy_plan(&format!("G-RHYTHM-SPREAD-{index}"), 30_000, 3_000);
+            plan.created_at = "2026-06-05 20:00:00".to_string();
+            let window =
+                robot_fill_stage_window(&plan, "2026-06-05 20:00:00", scheduled_at, now_at, 40, 3)
+                    .expect("stage window can calculate")
+                    .expect("stage window exists");
+            assert_eq!(window.stage, RobotFillStage::Stage { index: 1 });
+            let trigger_at =
+                rhythm_stage_trigger_at(&plan, window.stage, window.starts_at, window.ends_at);
+            assert!(trigger_at >= window.starts_at);
+            assert!(trigger_at < window.ends_at);
+            triggers.insert(trigger_at);
+        }
+
+        assert!(
+            triggers.len() > 1,
+            "同一阶段不同计划的补单触发时间应该分散：{triggers:?}"
+        );
+    }
+
+    /// 验证阶段性补单会等到该计划在当前阶段内的分散触发时间。
+    #[test]
+    fn robot_rhythm_stage_waits_until_plan_trigger_time() {
+        let scheduled_at =
+            parse_robot_timestamp("2026-06-05 20:05:00", "开奖时间").expect("time can parse");
+        let stage_start =
+            parse_robot_timestamp("2026-06-05 20:00:00", "阶段开始").expect("time can parse");
+        let mut issue = robot_test_issue("20260605200500");
+        issue.scheduled_at = "2026-06-05 20:05:00".to_string();
+        issue.sale_closed_at = "2026-06-05 20:04:30".to_string();
+        issue.created_at = "2026-06-05 20:00:00".to_string();
+        let policy = RobotFillPolicy::Rhythm {
+            max_percent: 20,
+            stage_count: 3,
+            fill_before_draw_seconds: 40,
+        };
+
+        let (plan, trigger_at) = (1..=60)
+            .filter_map(|index| {
+                let mut plan =
+                    robot_test_group_buy_plan(&format!("G-RHYTHM-WAIT-{index}"), 30_000, 3_000);
+                plan.created_at = "2026-06-05 20:00:00".to_string();
+                let window = robot_fill_stage_window(
+                    &plan,
+                    &issue.created_at,
+                    scheduled_at,
+                    stage_start,
+                    40,
+                    3,
+                )
+                .ok()
+                .flatten()?;
+                let trigger_at =
+                    rhythm_stage_trigger_at(&plan, window.stage, window.starts_at, window.ends_at);
+                (trigger_at > window.starts_at).then_some((plan, trigger_at))
+            })
+            .next()
+            .expect("can find plan with delayed stage trigger");
+        let before_trigger = trigger_at - chrono::Duration::seconds(1);
+
+        match robot_fill_decision(&plan, &issue, before_trigger, policy)
+            .expect("decision can calculate")
+        {
+            RobotFillDecision::Skip(reason) => assert!(reason.contains("分散下单时间未到")),
+            RobotFillDecision::Add(_) => panic!("未到分散触发时间前不能补单"),
+        }
+        match robot_fill_decision(&plan, &issue, trigger_at, policy)
+            .expect("decision can calculate")
+        {
+            RobotFillDecision::Add(amount) => {
+                assert!(amount.amount_minor > 0);
+                assert!(amount.note.contains("第1阶段"));
+            }
+            RobotFillDecision::Skip(reason) => panic!("到达分散触发时间后应该补单：{reason}"),
+        }
     }
 
     /// 验证阶段性补单的多用户拆分在金额充足时不会完全均分。
