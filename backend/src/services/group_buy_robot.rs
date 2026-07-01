@@ -2018,9 +2018,9 @@ async fn debit_group_buy_locked(
 fn robot_plan_id(robot: &RobotConfigSummary, lottery: &LotteryKind, issue: &DrawIssue) -> String {
     format!(
         "G-ROBOT-{}-{}-{}",
-        slug_fragment(&robot.id),
-        slug_fragment(&lottery.id),
-        slug_fragment(&issue.issue)
+        robot_plan_slug_fragment(&robot.id),
+        robot_plan_slug_fragment(&lottery.id),
+        robot_plan_slug_fragment(&issue.issue)
     )
 }
 
@@ -2188,8 +2188,8 @@ fn next_robot_fill_participant_id(plan: &GroupBuyPlan) -> String {
     }
 }
 
-/// 将外部标识收敛为适合作为计划 ID 的片段。
-fn slug_fragment(value: &str) -> String {
+/// 将外部标识收敛为适合作为机器人计划 ID 的片段。
+pub(crate) fn robot_plan_slug_fragment(value: &str) -> String {
     let mut output = String::new();
     let mut last_was_dash = false;
     for character in value.chars() {

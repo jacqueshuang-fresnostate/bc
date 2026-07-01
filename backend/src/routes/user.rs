@@ -53,6 +53,7 @@ use crate::{
         CreateRechargeOrderRequest, CreateRechargeOrderResponse, RechargeConfigResponse,
         RechargeOrderSummary,
     },
+    domain::robot::RobotConfigSummary,
     domain::support::{SupportConversation, UserSupportReplyRequest},
     domain::user::WithdrawalMethod,
     domain::user::{
@@ -79,7 +80,7 @@ use crate::{
             build_group_buy_order_request, create_order_for_filled_group_buy,
             parse_group_buy_rule_code, parse_group_buy_selection,
         },
-        group_buy_robot::is_group_buy_robot_user_id,
+        group_buy_robot::{is_group_buy_robot_user_id, robot_plan_slug_fragment},
         image_bed::{
             image_bed_value_as_url, upload_configured_image_bed_file, ImageBedUploadOptions,
         },
@@ -1555,6 +1556,7 @@ async fn direct_user_bet_profiles(
         return Ok(BTreeMap::new());
     }
     let play_labels = play_rule_label_map()?;
+    let robots = state.robots.list().await?;
     let mut profiles: BTreeMap<String, DirectUserBetProfile> = BTreeMap::new();
     let direct_user_id_set = direct_user_ids.iter().cloned().collect::<BTreeSet<_>>();
 
@@ -1600,7 +1602,8 @@ async fn direct_user_bet_profiles(
         let play_name = play_rule_label(&play_labels, &rule_code);
         let number_summary = group_buy_number_summary(&rule_code, &plan.numbers);
         let group_buy_plan_id = plan.id.clone();
-        let group_buy_initiator_display = user_group_buy_initiator_display(&plan);
+        let group_buy_initiator_display =
+            user_group_buy_initiator_display_with_robots(&plan, &robots);
         for participant in plan.participants.into_iter().filter(|participant| {
             direct_user_id_set.contains(&participant.user_id) && participant.amount_minor > 0
         }) {
@@ -2560,12 +2563,14 @@ async fn get_user_group_buy_plan(
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlan>>> {
     let lotteries = state.lotteries.list().await?;
     let access = state.access.snapshot().await?;
+    let robots = state.robots.list().await?;
     let plan = state.group_buys.get(&id).await?;
-    let plan = user_group_buy_plan(
+    let plan = user_group_buy_plan_with_robots(
         &plan,
         &lotteries,
         Some(&session.user.id),
         &access.users,
+        &robots,
         true,
     )?;
 
@@ -2580,17 +2585,19 @@ async fn list_my_group_buy_plans(
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlanPage>>> {
     let lotteries = state.lotteries.list().await?;
     let access = state.access.snapshot().await?;
+    let robots = state.robots.list().await?;
     let mut items = state
         .group_buys
         .list_details_for_user(&session.user.id)
         .await?
         .into_iter()
         .map(|plan| {
-            user_group_buy_plan(
+            user_group_buy_plan_with_robots(
                 &plan,
                 &lotteries,
                 Some(&session.user.id),
                 &access.users,
+                &robots,
                 false,
             )
         })
@@ -2921,6 +2928,7 @@ async fn user_group_buy_plans(
     query: &UserGroupBuyListQuery,
 ) -> ApiResult<Vec<UserGroupBuyPlan>> {
     let access = state.access.snapshot().await?;
+    let robots = state.robots.list().await?;
     let lottery_id = query
         .lottery_id
         .as_deref()
@@ -2953,7 +2961,16 @@ async fn user_group_buy_plans(
         .await?
         .items
         .into_iter()
-        .map(|plan| user_group_buy_plan(&plan, lotteries, Some(user_id), &access.users, false))
+        .map(|plan| {
+            user_group_buy_plan_with_robots(
+                &plan,
+                lotteries,
+                Some(user_id),
+                &access.users,
+                &robots,
+                false,
+            )
+        })
         .collect::<ApiResult<Vec<_>>>()?;
     Ok(items)
 }
@@ -2964,6 +2981,18 @@ fn user_group_buy_plan(
     lotteries: &[LotteryKind],
     user_id: Option<&str>,
     users: &[UserSummary],
+    include_participants: bool,
+) -> ApiResult<UserGroupBuyPlan> {
+    user_group_buy_plan_with_robots(plan, lotteries, user_id, users, &[], include_participants)
+}
+
+/// 把单个合买计划转换为手机端展示详情，机器人计划优先使用后台机器人配置名。
+fn user_group_buy_plan_with_robots(
+    plan: &GroupBuyPlan,
+    lotteries: &[LotteryKind],
+    user_id: Option<&str>,
+    users: &[UserSummary],
+    robots: &[RobotConfigSummary],
     include_participants: bool,
 ) -> ApiResult<UserGroupBuyPlan> {
     let lottery = lotteries
@@ -3010,7 +3039,7 @@ fn user_group_buy_plan(
         } else {
             Vec::new()
         },
-        initiator_display: user_group_buy_initiator_display(plan),
+        initiator_display: user_group_buy_initiator_display_with_robots(plan, robots),
         initiator_avatar_url: user_group_buy_initiator_avatar_url(plan, users),
         my_participation,
         created_at: plan.created_at.clone(),
@@ -3071,10 +3100,22 @@ fn user_group_buy_title(plan: &GroupBuyPlan) -> String {
     }
 }
 
-/// 生成合买发起人展示名，用户端统一只展示脱敏名称。
-fn user_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
+/// 生成合买发起人展示名；机器人计划有后台配置时直接使用后台机器人名。
+fn user_group_buy_initiator_display_with_robots(
+    plan: &GroupBuyPlan,
+    robots: &[RobotConfigSummary],
+) -> String {
+    if is_robot_group_buy_plan(plan) {
+        if let Some(robot) = group_buy_robot_config_for_plan(plan, robots) {
+            let name = robot.name.trim();
+            if !name.is_empty() {
+                return name.to_string();
+            }
+        }
+    }
+
     let display_name = if is_robot_group_buy_plan(plan) {
-        robot_group_buy_initiator_display(plan)
+        fallback_robot_group_buy_initiator_display(plan)
     } else {
         plan.initiator_username.clone()
     };
@@ -3118,7 +3159,7 @@ fn is_robot_group_buy_plan(plan: &GroupBuyPlan) -> bool {
 }
 
 /// 为机器人合买计划生成稳定但不暴露机器人的展示名。
-fn robot_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
+fn fallback_robot_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
     let base_hash = stable_group_buy_display_hash(&plan.id);
     let base = ROBOT_GROUP_BUY_NICKNAME_BASES
         .get(base_hash as usize % ROBOT_GROUP_BUY_NICKNAME_BASES.len())
@@ -3128,6 +3169,25 @@ fn robot_group_buy_initiator_display(plan: &GroupBuyPlan) -> String {
     let suffix = suffix_hash % 9_000 + 1_000;
 
     format!("{base}{suffix}")
+}
+
+/// 根据机器人计划 ID 匹配后台机器人配置。
+fn group_buy_robot_config_for_plan<'a>(
+    plan: &GroupBuyPlan,
+    robots: &'a [RobotConfigSummary],
+) -> Option<&'a RobotConfigSummary> {
+    if !is_robot_group_buy_plan(plan) {
+        return None;
+    }
+
+    robots.iter().find(|robot| {
+        let prefix = format!(
+            "{}{}-",
+            ROBOT_GROUP_BUY_PLAN_PREFIX,
+            robot_plan_slug_fragment(&robot.id)
+        );
+        plan.id.starts_with(&prefix)
+    })
 }
 
 /// 根据计划编号生成稳定哈希，保证匿名展示名可重复。
@@ -3552,11 +3612,13 @@ async fn share_chat_hall_group_buy_plan(
     }
     let lotteries = state.lotteries.list().await?;
     let access = state.access.snapshot().await?;
-    let plan_summary = user_group_buy_plan(
+    let robots = state.robots.list().await?;
+    let plan_summary = user_group_buy_plan_with_robots(
         &plan,
         &lotteries,
         Some(&session.user.id),
         &access.users,
+        &robots,
         false,
     )?;
     let message = state
@@ -4690,6 +4752,29 @@ mod tests {
     }
 
     #[test]
+    /// 验证用户端展示机器人合买时优先使用后台机器人配置名。
+    fn user_group_buy_plan_uses_backend_robot_name_for_robot_initiator() {
+        let lotteries = vec![test_group_buy_lottery()];
+        let plan = test_group_buy_plan(
+            "G-ROBOT-R-GROUP-001-SSC60-20260605200000",
+            "20260605200000",
+            "random_robot_name",
+            "合买机器人 20260605200000",
+        );
+        let robots = vec![test_group_buy_robot_config(
+            "R-GROUP-001",
+            "后台配置发单机器人",
+        )];
+
+        let view = user_group_buy_plan_with_robots(&plan, &lotteries, None, &[], &robots, false)
+            .expect("robot plan can map with backend robot name");
+
+        assert_eq!(view.initiator_display, "后台配置发单机器人");
+        assert!(!view.initiator_display.contains('*'));
+        assert_eq!(view.title, "测试彩 第20260605200000期合买");
+    }
+
+    #[test]
     /// 验证普通用户合买也只展示脱敏发起人和自定义标题。
     fn user_group_buy_plan_masks_normal_initiator_display() {
         let lotteries = vec![test_group_buy_lottery()];
@@ -5257,6 +5342,25 @@ mod tests {
             },
             play_categories: vec![PlayCategory::Direct],
             play_configs: Vec::new(),
+        }
+    }
+    /// 构造合买机器人配置测试数据。
+    fn test_group_buy_robot_config(id: &str, name: &str) -> RobotConfigSummary {
+        RobotConfigSummary {
+            id: id.to_string(),
+            name: name.to_string(),
+            kind: crate::domain::robot::RobotKind::GroupBuy,
+            lottery_ids: vec!["ssc60".to_string()],
+            status: crate::domain::robot::RobotStatus::Enabled,
+            description: "测试机器人".to_string(),
+            group_buy_fill_strategy: crate::domain::robot::GroupBuyRobotFillStrategy::Rhythm,
+            group_buy_fill_before_draw_seconds:
+                crate::domain::robot::default_group_buy_fill_before_draw_seconds(),
+            group_buy_rhythm_fill_max_percent:
+                crate::domain::robot::default_group_buy_rhythm_fill_max_percent(),
+            group_buy_rhythm_stage_count:
+                crate::domain::robot::default_group_buy_rhythm_stage_count(),
+            deletable: false,
         }
     }
     /// 构造合买接口测试使用的计划。
