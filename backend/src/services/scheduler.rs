@@ -2889,6 +2889,52 @@ mod tests {
                 && issue.issue == "20260610001000"
                 && issue.scheduled_at == "2026-06-10 00:10:00"));
     }
+
+    /// 验证调度器补本地时间节点期号时，不会因为当前时间落后多个周期而丢掉中间节点。
+    #[tokio::test]
+    async fn scheduler_backfills_missed_time_node_issue_generation() {
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        let mut lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.sale_enabled = true;
+        lottery.schedule = DrawSchedule::TimeNode {
+            interval_seconds: 300,
+            start_time: "00:00:00".to_string(),
+        };
+        lottery.issue_format = "{date}{seq4}".to_string();
+        lotteries
+            .update("ssc60", lottery.clone())
+            .await
+            .expect("lottery schedule can be updated");
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "202606100241".to_string(),
+                    scheduled_at: "2026-06-10 20:05:00".to_string(),
+                    sale_closed_at: "2026-06-10 20:04:59".to_string(),
+                },
+            )
+            .await
+            .expect("existing time node issue can be created");
+        let config = enabled_config(1);
+
+        let (generated, skipped, pending_api) = super::ensure_non_api_future_draw_issues(
+            &draws,
+            &lotteries,
+            &config,
+            "2026-06-10 20:20:30",
+        )
+        .await
+        .expect("scheduler can backfill missed local time node");
+
+        assert!(!skipped.iter().any(|lottery| lottery.lottery_id == "ssc60"));
+        assert!(pending_api.is_empty());
+        assert!(generated.iter().any(|issue| issue.lottery_id == "ssc60"
+            && issue.issue == "202606100242"
+            && issue.scheduled_at == "2026-06-10 20:10:00"));
+    }
     /// 验证调度器线程可启动但会按后台配置决定是否执行。
     #[tokio::test]
     async fn scheduler_spawn_starts_worker_even_when_disabled() {

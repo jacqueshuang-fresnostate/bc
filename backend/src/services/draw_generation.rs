@@ -177,7 +177,9 @@ async fn plan_draw_issue_generation(
         let sale_closed_at =
             sale_closed_at_from_draw_time(issue_opened_at, scheduled_at, sale_close_lead_seconds)?;
 
-        if scheduled_at > now && !known_issues.contains(&issue) {
+        if should_include_generation_candidate(lottery, api_anchor.as_ref(), scheduled_at, now)
+            && !known_issues.contains(&issue)
+        {
             known_issues.insert(issue.clone());
             plans.push(DrawIssueGenerationPreview {
                 lottery_id: lottery.id.clone(),
@@ -201,6 +203,28 @@ async fn plan_draw_issue_generation(
     Err(ApiError::Conflict(
         "unable to generate requested unique draw issues".to_string(),
     ))
+}
+
+/// 判断当前候选期开奖时间是否允许生成；本地周期彩种需要追补已错过的自然节点，避免调度晚跑后丢期。
+fn should_include_generation_candidate(
+    lottery: &LotteryKind,
+    api_anchor: Option<&ApiIssueAnchor>,
+    scheduled_at: NaiveDateTime,
+    now: NaiveDateTime,
+) -> bool {
+    scheduled_at > now || local_cycle_schedule_allows_catch_up(lottery, api_anchor)
+}
+
+/// 本地周期类排期允许补回 `now` 之前但尚未生成的节点；API 彩种有外部锚点时继续只生成可销售未来期。
+fn local_cycle_schedule_allows_catch_up(
+    lottery: &LotteryKind,
+    api_anchor: Option<&ApiIssueAnchor>,
+) -> bool {
+    api_anchor.is_none()
+        && matches!(
+            lottery.schedule,
+            DrawSchedule::Periodic { .. } | DrawSchedule::TimeNode { .. }
+        )
 }
 
 /// 校验请求参数并返回错误信息。
@@ -428,9 +452,7 @@ fn generation_baseline(
         if lottery.draw_mode == DrawMode::Platform
             && periodic_interval_divides_day(*interval_seconds)
         {
-            let anchor = latest_scheduled_at(existing_issues, &lottery.id)?
-                .map(|latest| latest.max(now))
-                .unwrap_or(now);
+            let anchor = latest_scheduled_at(existing_issues, &lottery.id)?.unwrap_or(now);
             return clock_aligned_periodic_baseline(anchor, *interval_seconds);
         }
 
@@ -440,19 +462,13 @@ fn generation_baseline(
                     "periodic interval must be greater than zero".to_string(),
                 ));
             }
-            if latest_scheduled_at > now {
-                return Ok(latest_scheduled_at);
-            }
+            return Ok(latest_scheduled_at);
+        }
+    }
 
-            let interval_seconds = i64::from(*interval_seconds);
-            let elapsed_seconds = now
-                .signed_duration_since(latest_scheduled_at)
-                .num_seconds()
-                .max(0);
-            let completed_intervals = elapsed_seconds / interval_seconds;
-            return latest_scheduled_at
-                .checked_add_signed(Duration::seconds(completed_intervals * interval_seconds))
-                .ok_or_else(|| ApiError::BadRequest("scheduled time is out of range".to_string()));
+    if matches!(lottery.schedule, DrawSchedule::TimeNode { .. }) {
+        if let Some(latest_scheduled_at) = latest_scheduled_at(existing_issues, &lottery.id)? {
+            return Ok(latest_scheduled_at);
         }
     }
 
@@ -1432,6 +1448,35 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-10 20:20:00");
         assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:59");
     }
+    /// 验证时间节点调度落后多个周期时，会先补回遗漏的自然节点而不是直接跳到未来节点。
+    #[tokio::test]
+    async fn time_node_generation_backfills_missed_clock_node() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::TimeNode {
+            interval_seconds: 300,
+            start_time: "00:00:00".to_string(),
+        });
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "202606100241".to_string(),
+                    scheduled_at: "2026-06-10 20:05:00".to_string(),
+                    sale_closed_at: "2026-06-10 20:04:59".to_string(),
+                },
+            )
+            .await
+            .expect("existing time node issue can be created");
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-10 20:20:30"))
+            .await
+            .expect("missed time node can be backfilled");
+
+        assert_eq!(issue.issue, "202606100242");
+        assert_eq!(issue.scheduled_at, "2026-06-10 20:10:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 20:09:59");
+    }
     /// 验证平台开奖支持自定义期号格式。
     #[tokio::test]
     async fn platform_schedule_uses_custom_issue_format() {
@@ -1851,6 +1896,34 @@ mod tests {
         assert_eq!(issue.scheduled_at, "2026-06-10 20:19:27");
         assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:26");
     }
+    /// 验证普通周期调度落后多个周期时，不会把中间期号丢掉。
+    #[tokio::test]
+    async fn periodic_generation_backfills_missed_relative_cadence() {
+        let draws = DrawRepository::memory();
+        let lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 60,
+        });
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "202606100001".to_string(),
+                    scheduled_at: "2026-06-10 20:18:27".to_string(),
+                    sale_closed_at: "2026-06-10 20:18:26".to_string(),
+                },
+            )
+            .await
+            .expect("existing cadence issue can be created");
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-10 20:22:00"))
+            .await
+            .expect("missed cadence issue can be backfilled");
+
+        assert_eq!(issue.issue, "202606100002");
+        assert_eq!(issue.scheduled_at, "2026-06-10 20:19:27");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:26");
+    }
     /// 验证平台普通周期在调度晚跑时也按自然时钟节点对齐，避免开奖时间逐轮后移。
     #[tokio::test]
     async fn platform_periodic_generation_aligns_clock_nodes_when_scheduler_runs_late() {
@@ -1864,6 +1937,36 @@ mod tests {
         let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-10 00:05:30"))
             .await
             .expect("late platform scheduler can generate aligned issue");
+
+        assert_eq!(issue.issue, "20260610001000");
+        assert_eq!(issue.scheduled_at, "2026-06-10 00:10:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 00:09:59");
+    }
+    /// 验证平台 5 分钟周期落后多个节点时，先补 00:10 这类整点节点，不跳到 00:25。
+    #[tokio::test]
+    async fn platform_periodic_generation_backfills_missed_clock_node() {
+        let draws = DrawRepository::memory();
+        let mut lottery = lottery(DrawSchedule::Periodic {
+            interval_seconds: 300,
+        });
+        lottery.draw_mode = DrawMode::Platform;
+        lottery.issue_format = "{timestamp}".to_string();
+        draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "20260610000500".to_string(),
+                    scheduled_at: "2026-06-10 00:05:00".to_string(),
+                    sale_closed_at: "2026-06-10 00:04:59".to_string(),
+                },
+            )
+            .await
+            .expect("existing clock issue can be created");
+
+        let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-10 00:20:30"))
+            .await
+            .expect("missed clock issue can be backfilled");
 
         assert_eq!(issue.issue, "20260610001000");
         assert_eq!(issue.scheduled_at, "2026-06-10 00:10:00");
