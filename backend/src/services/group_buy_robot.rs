@@ -1003,29 +1003,42 @@ async fn fill_robot_plan(
     if decision.amount_minor <= 0 {
         return Ok(());
     }
-    let fill_amount_minor = decision.amount_minor;
-    let fill_note = decision.note.clone();
-
     let min_share = plan.min_share_amount_minor.max(1);
     let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
-    let split_seed = format!("{}:{}:{}", plan.id, issue.issue, fill_note);
+    let split_total_amount = match &decision.mode {
+        RobotFillExecutionMode::Immediate => decision.amount_minor,
+        RobotFillExecutionMode::RhythmStage {
+            target_amount_minor,
+            ..
+        } => *target_amount_minor,
+    };
+    let split_seed = format!("{}:{}:{}", plan.id, issue.issue, decision.note);
     let split_amounts = robot_fill_amount_splits(
-        fill_amount_minor,
+        split_total_amount,
         participant_min,
         min_share,
         policy,
         &split_seed,
     );
+    let split_decision =
+        robot_fill_split_decision(plan, now_at, &decision, split_amounts, participant_min)?;
+    let split_executions = match split_decision {
+        RobotFillSplitDecision::Skip(reason) => {
+            push_skipped(run, robot, &lottery.id, Some(issue.issue.clone()), reason);
+            return Ok(());
+        }
+        RobotFillSplitDecision::Add(splits) => splits,
+    };
 
-    let mut participant_ids = Vec::with_capacity(split_amounts.len());
+    let mut participant_ids = Vec::with_capacity(split_executions.len());
     let mut rollback_participant_ids = Vec::new();
-    for (index, &split_amount) in split_amounts.iter().enumerate() {
-        let robot_user_id = ROBOT_GROUP_BUY_USER_IDS[index % ROBOT_GROUP_BUY_USER_IDS.len()];
+    for split in &split_executions {
+        let robot_user_id = ROBOT_GROUP_BUY_USER_IDS[split.index % ROBOT_GROUP_BUY_USER_IDS.len()];
         if let Some(entry) = ensure_robot_balance_locked(
             finance,
             finance_lock,
             robot_user_id,
-            split_amount,
+            split.amount_minor,
             "补单机器人认购合买",
         )
         .await?
@@ -1033,19 +1046,18 @@ async fn fill_robot_plan(
             run.ledger_entries.push(entry);
         }
         finance
-            .ensure_available(robot_user_id, split_amount)
+            .ensure_available(robot_user_id, split.amount_minor)
             .await?;
         let participant_id = next_robot_fill_participant_id(plan);
         participant_ids.push(participant_id.clone());
-        let stage_note = format!("{} ({}/{})", fill_note, index + 1, split_amounts.len());
         match group_buys
             .add_participant(
                 &plan.id,
                 AddGroupBuyParticipantRequest {
                     id: participant_id.clone(),
                     user_id: robot_user_id.to_string(),
-                    amount_minor: split_amount,
-                    note: stage_note,
+                    amount_minor: split.amount_minor,
+                    note: split.note.clone(),
                 },
                 &users_with_random_robot_display_name(users),
             )
@@ -1079,17 +1091,18 @@ async fn fill_robot_plan(
     }
 
     if !matches!(plan.status, GroupBuyPlanStatus::Filled) {
-        for (index, &split_amount) in split_amounts.iter().enumerate() {
+        for (index, split) in split_executions.iter().enumerate() {
             if index >= participant_ids.len() {
                 break;
             }
             let participant_id = &participant_ids[index];
-            let robot_user_id = ROBOT_GROUP_BUY_USER_IDS[index % ROBOT_GROUP_BUY_USER_IDS.len()];
+            let robot_user_id =
+                ROBOT_GROUP_BUY_USER_IDS[split.index % ROBOT_GROUP_BUY_USER_IDS.len()];
             match debit_group_buy_locked(
                 finance,
                 finance_lock,
                 robot_user_id,
-                split_amount,
+                split.amount_minor,
                 participant_id,
                 &plan.id,
             )
@@ -1148,17 +1161,17 @@ async fn fill_robot_plan(
         *plan = attached_plan.clone();
     }
 
-    for (index, &split_amount) in split_amounts.iter().enumerate() {
+    for (index, split) in split_executions.iter().enumerate() {
         if index >= participant_ids.len() {
             break;
         }
         let participant_id = &participant_ids[index];
-        let robot_user_id = ROBOT_GROUP_BUY_USER_IDS[index % ROBOT_GROUP_BUY_USER_IDS.len()];
+        let robot_user_id = ROBOT_GROUP_BUY_USER_IDS[split.index % ROBOT_GROUP_BUY_USER_IDS.len()];
         match debit_group_buy_locked(
             finance,
             finance_lock,
             robot_user_id,
-            split_amount,
+            split.amount_minor,
             participant_id,
             &plan.id,
         )
@@ -1226,6 +1239,105 @@ fn robot_fill_amount_splits(
         min_share,
         split_seed,
     )
+}
+
+/// 按补单决策生成本轮实际要落库的参与记录；阶段性补单每轮只执行一笔。
+fn robot_fill_split_decision(
+    plan: &GroupBuyPlan,
+    now_at: NaiveDateTime,
+    decision: &RobotFillAmount,
+    split_amounts: Vec<i64>,
+    participant_min: i64,
+) -> ApiResult<RobotFillSplitDecision> {
+    if split_amounts.is_empty() {
+        return Ok(RobotFillSplitDecision::Skip(
+            "机器人补单拆分结果为空，等待下一轮".to_string(),
+        ));
+    }
+
+    match &decision.mode {
+        RobotFillExecutionMode::Immediate => {
+            let split_count = split_amounts.len();
+            Ok(RobotFillSplitDecision::Add(
+                split_amounts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, amount_minor)| RobotFillSplitExecution {
+                        index,
+                        amount_minor,
+                        note: format!("{} ({}/{})", decision.note, index + 1, split_count),
+                    })
+                    .collect(),
+            ))
+        }
+        RobotFillExecutionMode::RhythmStage {
+            stage,
+            trigger_at,
+            ends_at,
+            ..
+        } => {
+            let split_count = split_amounts.len();
+            let executed_indices = robot_rhythm_stage_executed_split_indices(plan, &decision.note);
+            if let Some(last_created_at) =
+                robot_rhythm_stage_last_split_created_at(plan, &decision.note)
+            {
+                if now_at <= last_created_at {
+                    return Ok(RobotFillSplitDecision::Skip(format!(
+                        "{}上一笔刚执行，等待下一轮调度",
+                        decision.note
+                    )));
+                }
+            }
+            for (index, amount_minor) in split_amounts.into_iter().enumerate() {
+                if executed_indices.contains(&index) {
+                    continue;
+                }
+                let split_trigger_at = rhythm_stage_split_trigger_at(
+                    plan,
+                    *stage,
+                    *trigger_at,
+                    *ends_at,
+                    index,
+                    split_count,
+                );
+                if now_at < split_trigger_at {
+                    return Ok(RobotFillSplitDecision::Skip(format!(
+                        "{} 第{}笔分散下单时间未到，预计 {} 执行",
+                        decision.note,
+                        index + 1,
+                        split_trigger_at.format(TIMESTAMP_FORMAT)
+                    )));
+                }
+                let amount_minor = amount_minor.min(decision.amount_minor);
+                if amount_minor <= 0 {
+                    return Ok(RobotFillSplitDecision::Skip(
+                        "本阶段机器人拆单金额已执行完成，等待下一阶段".to_string(),
+                    ));
+                }
+                let remaining_amount_minor = plan
+                    .total_amount_minor
+                    .checked_sub(plan.filled_amount_minor)
+                    .ok_or_else(|| ApiError::BadRequest("合买剩余金额无效".to_string()))?;
+                if amount_minor < participant_min && amount_minor != remaining_amount_minor {
+                    return Ok(RobotFillSplitDecision::Skip(format!(
+                        "本阶段第{}笔机器人补单金额低于参与最低金额 {}，等待下一轮",
+                        index + 1,
+                        participant_min
+                    )));
+                }
+                return Ok(RobotFillSplitDecision::Add(vec![RobotFillSplitExecution {
+                    index,
+                    amount_minor,
+                    note: format!("{} ({}/{})", decision.note, index + 1, split_count),
+                }]));
+            }
+
+            Ok(RobotFillSplitDecision::Skip(format!(
+                "{}已完成所有分散补单，等待下一阶段",
+                decision.note
+            )))
+        }
+    }
 }
 
 /// 为历史遗留的已满单但未成单计划补建真实投注订单。
@@ -2116,6 +2228,31 @@ enum RobotFillDecision {
 struct RobotFillAmount {
     amount_minor: i64,
     note: String,
+    mode: RobotFillExecutionMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RobotFillExecutionMode {
+    Immediate,
+    RhythmStage {
+        stage: RobotFillStage,
+        trigger_at: NaiveDateTime,
+        ends_at: NaiveDateTime,
+        target_amount_minor: i64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RobotFillSplitExecution {
+    index: usize,
+    amount_minor: i64,
+    note: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RobotFillSplitDecision {
+    Skip(String),
+    Add(Vec<RobotFillSplitExecution>),
 }
 
 /// 按动态阶段目标计算本轮机器人应补金额。
@@ -2153,6 +2290,7 @@ fn robot_fill_decision(
         return Ok(RobotFillDecision::Add(RobotFillAmount {
             amount_minor: remaining_amount_minor,
             note: format!("补单机器人开奖前 {fill_before_draw_seconds} 秒补满"),
+            mode: RobotFillExecutionMode::Immediate,
         }));
     }
 
@@ -2165,6 +2303,7 @@ fn robot_fill_decision(
             return Ok(RobotFillDecision::Add(RobotFillAmount {
                 amount_minor: remaining_amount_minor,
                 note: format!("补单机器人开奖前 {fill_before_draw_seconds} 秒最终补满"),
+                mode: RobotFillExecutionMode::Immediate,
             }));
         }
     }
@@ -2176,6 +2315,7 @@ fn robot_fill_decision(
             RobotFillPolicy::GuaranteedUserPlan => Ok(RobotFillDecision::Add(RobotFillAmount {
                 amount_minor: remaining_amount_minor,
                 note: "补单机器人封盘兜底补满合买".to_string(),
+                mode: RobotFillExecutionMode::Immediate,
             })),
             RobotFillPolicy::Rhythm { .. } => Ok(RobotFillDecision::Skip(
                 "已到封盘时间且未到开奖前最终补满窗口，阶段性补单暂不追加认购".to_string(),
@@ -2207,13 +2347,9 @@ fn robot_fill_decision(
     };
     let stage = stage_window.stage;
     let stage_label = stage_window.label.clone();
-    if stage != RobotFillStage::Final && robot_plan_has_rhythm_stage_fill(plan, &stage_label) {
-        return Ok(RobotFillDecision::Skip(format!(
-            "补单机器人{stage_label}节奏补单已执行，等待下一阶段"
-        )));
-    }
+    let mut trigger_at = stage_window.starts_at;
     if stage != RobotFillStage::Final {
-        let trigger_at =
+        trigger_at =
             rhythm_stage_trigger_at(plan, stage, stage_window.starts_at, stage_window.ends_at);
         if now_at < trigger_at {
             return Ok(RobotFillDecision::Skip(format!(
@@ -2223,10 +2359,27 @@ fn robot_fill_decision(
         }
     }
 
-    let amount_minor = if stage == RobotFillStage::Final {
-        remaining_amount_minor
+    let (amount_minor, target_amount_minor) = if stage == RobotFillStage::Final {
+        (remaining_amount_minor, remaining_amount_minor)
     } else {
-        rhythm_stage_fill_amount(plan, stage, max_percent, remaining_amount_minor)?
+        let note = format!("补单机器人{stage_label}节奏补单");
+        let target_amount = rhythm_stage_fill_target_amount(plan, stage, max_percent)?;
+        let executed_amount = robot_rhythm_stage_filled_amount(plan, &note);
+        let available_for_stage = remaining_amount_minor
+            .checked_add(executed_amount)
+            .ok_or_else(|| ApiError::BadRequest("机器人阶段补单金额过大".to_string()))?;
+        let capped_target = target_amount.min(available_for_stage);
+        if executed_amount >= capped_target {
+            return Ok(RobotFillDecision::Skip(format!(
+                "补单机器人{stage_label}节奏补单已执行，等待下一阶段"
+            )));
+        }
+        (
+            capped_target
+                .checked_sub(executed_amount)
+                .ok_or_else(|| ApiError::BadRequest("机器人阶段补单进度无效".to_string()))?,
+            capped_target,
+        )
     };
     if stage != RobotFillStage::Final && amount_minor >= remaining_amount_minor {
         return Ok(RobotFillDecision::Skip(
@@ -2261,6 +2414,16 @@ fn robot_fill_decision(
     Ok(RobotFillDecision::Add(RobotFillAmount {
         amount_minor,
         note: format!("补单机器人{stage_label}节奏补单"),
+        mode: if stage == RobotFillStage::Final {
+            RobotFillExecutionMode::Immediate
+        } else {
+            RobotFillExecutionMode::RhythmStage {
+                stage,
+                trigger_at,
+                ends_at: stage_window.ends_at,
+                target_amount_minor,
+            }
+        },
     }))
 }
 
@@ -2400,6 +2563,31 @@ fn rhythm_stage_trigger_at(
     starts_at + chrono::Duration::seconds(offset as i64)
 }
 
+/// 为同一计划同一阶段内的拆单生成逐笔触发时间，避免拆单参与记录同一秒写入。
+fn rhythm_stage_split_trigger_at(
+    plan: &GroupBuyPlan,
+    stage: RobotFillStage,
+    starts_at: NaiveDateTime,
+    ends_at: NaiveDateTime,
+    split_index: usize,
+    split_count: usize,
+) -> NaiveDateTime {
+    let split_count = split_count.max(1);
+    if split_count == 1 {
+        return starts_at;
+    }
+
+    let available_seconds = (ends_at - starts_at).num_seconds().max(1);
+    let slot_start = available_seconds * split_index as i64 / split_count as i64;
+    let slot_end = available_seconds * (split_index + 1) as i64 / split_count as i64;
+    let slot_seconds = (slot_end - slot_start).max(1);
+    let seed = format!("{}:{}", plan.id, plan.issue);
+    let salt = format!("{}-split-trigger", robot_fill_stage_salt(stage));
+    let offset = slot_start
+        + (stable_robot_fill_hash(&seed, &salt, split_index as u64) % slot_seconds as u64) as i64;
+    starts_at + chrono::Duration::seconds(offset.min(available_seconds - 1))
+}
+
 /// 使用 FNV-1a 派生稳定散列，避免机器人节奏在调度重试时抖动。
 fn stable_robot_fill_hash(seed: &str, salt: &str, number: u64) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
@@ -2415,12 +2603,11 @@ fn stable_robot_fill_hash(seed: &str, salt: &str, number: u64) -> u64 {
     hash
 }
 
-/// 计算阶段性补单单阶段金额：按后台上限随机百分比，不直接补满。
-fn rhythm_stage_fill_amount(
+/// 计算阶段性补单单阶段原始目标金额，不受当前已补笔数影响。
+fn rhythm_stage_fill_target_amount(
     plan: &GroupBuyPlan,
     stage: RobotFillStage,
     max_percent: u32,
-    remaining_amount_minor: i64,
 ) -> ApiResult<i64> {
     let min_share = plan.min_share_amount_minor.max(1);
     let participant_min = plan.participant_min_amount_minor.max(min_share).max(1);
@@ -2430,11 +2617,22 @@ fn rhythm_stage_fill_amount(
         .checked_mul(i64::from(percent))
         .ok_or_else(|| ApiError::BadRequest("机器人阶段补单金额过大".to_string()))?
         / 100;
-    let max_amount = round_down_to_multiple(raw, min_share).min(remaining_amount_minor);
-    if max_amount < participant_min {
+    let target_amount = round_down_to_multiple(raw, min_share);
+    if target_amount < participant_min {
         return Ok(0);
     }
-    Ok(max_amount)
+    Ok(target_amount)
+}
+
+/// 计算阶段性补单单阶段金额：按后台上限随机百分比，不直接补满。
+#[cfg(test)]
+fn rhythm_stage_fill_amount(
+    plan: &GroupBuyPlan,
+    stage: RobotFillStage,
+    max_percent: u32,
+    remaining_amount_minor: i64,
+) -> ApiResult<i64> {
+    Ok(rhythm_stage_fill_target_amount(plan, stage, max_percent)?.min(remaining_amount_minor))
 }
 
 /// 计算阶段性补单单阶段上限金额，按合买总金额和最小份额向下取整。
@@ -2487,12 +2685,47 @@ fn robot_fill_stage_salt(stage: RobotFillStage) -> String {
     }
 }
 
-/// 判断某个阶段是否已写入过机器人补单参与记录，避免调度重复执行同一阶段。
-fn robot_plan_has_rhythm_stage_fill(plan: &GroupBuyPlan, stage_label: &str) -> bool {
-    let expected_note = format!("补单机器人{stage_label}节奏补单");
+/// 统计某个阶段已经由机器人补过的金额，供阶段目标重算和用户中途认购让位使用。
+fn robot_rhythm_stage_filled_amount(plan: &GroupBuyPlan, stage_note: &str) -> i64 {
     plan.participants
         .iter()
-        .any(|participant| participant.note.starts_with(&expected_note))
+        .filter(|participant| participant.note.starts_with(stage_note))
+        .map(|participant| participant.amount_minor.max(0))
+        .sum()
+}
+
+/// 返回某个阶段已经执行过的拆单笔序，避免同一笔在调度重试时重复落库。
+fn robot_rhythm_stage_executed_split_indices(
+    plan: &GroupBuyPlan,
+    stage_note: &str,
+) -> BTreeSet<usize> {
+    plan.participants
+        .iter()
+        .filter_map(|participant| parse_robot_rhythm_split_index(&participant.note, stage_note))
+        .collect()
+}
+
+/// 返回某个阶段最近一笔机器人拆单创建时间，避免同一秒连续写入多笔。
+fn robot_rhythm_stage_last_split_created_at(
+    plan: &GroupBuyPlan,
+    stage_note: &str,
+) -> Option<NaiveDateTime> {
+    plan.participants
+        .iter()
+        .filter(|participant| participant.note.starts_with(stage_note))
+        .filter_map(|participant| {
+            NaiveDateTime::parse_from_str(participant.created_at.trim(), TIMESTAMP_FORMAT).ok()
+        })
+        .max()
+}
+
+/// 从“补单机器人第1阶段节奏补单 (2/6)”这类备注里解析 0 基笔序。
+fn parse_robot_rhythm_split_index(note: &str, stage_note: &str) -> Option<usize> {
+    let suffix = note.strip_prefix(stage_note)?.trim();
+    let suffix = suffix.strip_prefix('(')?.strip_suffix(')')?;
+    let (index, _total) = suffix.split_once('/')?;
+    let index = index.trim().parse::<usize>().ok()?;
+    index.checked_sub(1)
 }
 
 /// 解析机器人使用的时间字符串。
@@ -2961,6 +3194,194 @@ mod tests {
                 assert!(amount.note.contains("第1阶段"));
             }
             RobotFillDecision::Skip(reason) => panic!("到达分散触发时间后应该补单：{reason}"),
+        }
+    }
+
+    /// 验证同一阶段内拆出来的每一笔补单也会生成不同触发秒。
+    #[test]
+    fn robot_rhythm_stage_split_triggers_spread_entries_inside_stage() {
+        let scheduled_at =
+            parse_robot_timestamp("2026-06-05 20:05:00", "开奖时间").expect("time can parse");
+        let now_at =
+            parse_robot_timestamp("2026-06-05 20:00:30", "当前时间").expect("time can parse");
+        let mut plan = robot_test_group_buy_plan("G-RHYTHM-SPLIT-SPREAD", 30_000, 3_000);
+        plan.created_at = "2026-06-05 20:00:00".to_string();
+        let window =
+            robot_fill_stage_window(&plan, "2026-06-05 20:00:00", scheduled_at, now_at, 40, 3)
+                .expect("stage window can calculate")
+                .expect("stage window exists");
+        let stage_trigger_at =
+            rhythm_stage_trigger_at(&plan, window.stage, window.starts_at, window.ends_at);
+        let triggers = (0..6)
+            .map(|index| {
+                rhythm_stage_split_trigger_at(
+                    &plan,
+                    window.stage,
+                    stage_trigger_at,
+                    window.ends_at,
+                    index,
+                    6,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        for trigger_at in &triggers {
+            assert!(*trigger_at >= stage_trigger_at);
+            assert!(*trigger_at < window.ends_at);
+        }
+        assert!(
+            triggers.windows(2).all(|pair| pair[0] < pair[1]),
+            "同阶段拆单触发时间应按笔序递增：{triggers:?}"
+        );
+    }
+
+    /// 验证阶段性补单每轮只执行当前到点的一笔，下一笔要等自己的触发秒。
+    #[test]
+    fn robot_rhythm_stage_executes_one_due_split_per_run() {
+        let mut plan = robot_test_group_buy_plan("G-RHYTHM-SPLIT-ONE", 100_000, 10_000);
+        plan.created_at = "2026-06-05 20:00:00".to_string();
+        let mut issue = robot_test_issue("20260605200500");
+        issue.scheduled_at = "2026-06-05 20:05:00".to_string();
+        issue.sale_closed_at = "2026-06-05 20:04:30".to_string();
+        issue.created_at = "2026-06-05 20:00:00".to_string();
+        let scheduled_at =
+            parse_robot_timestamp("2026-06-05 20:05:00", "开奖时间").expect("time can parse");
+        let stage_start =
+            parse_robot_timestamp("2026-06-05 20:00:00", "阶段开始").expect("time can parse");
+        let window =
+            robot_fill_stage_window(&plan, &issue.created_at, scheduled_at, stage_start, 40, 3)
+                .expect("stage window can calculate")
+                .expect("stage window exists");
+        let stage_trigger_at =
+            rhythm_stage_trigger_at(&plan, window.stage, window.starts_at, window.ends_at);
+        let stage_note = "补单机器人第1阶段节奏补单".to_string();
+        let target_amount =
+            rhythm_stage_fill_target_amount(&plan, window.stage, 20).expect("target can calculate");
+        let participant_min = plan
+            .participant_min_amount_minor
+            .max(plan.min_share_amount_minor)
+            .max(1);
+        let split_seed = format!("{}:{}:{}", plan.id, issue.issue, stage_note);
+        let split_amounts = robot_fill_amount_splits(
+            target_amount,
+            participant_min,
+            plan.min_share_amount_minor,
+            RobotFillPolicy::Rhythm {
+                max_percent: 20,
+                stage_count: 3,
+                fill_before_draw_seconds: 40,
+            },
+            &split_seed,
+        );
+        assert!(
+            split_amounts.len() > 1,
+            "测试需要至少两笔拆单：{split_amounts:?}"
+        );
+        let first_trigger_at = rhythm_stage_split_trigger_at(
+            &plan,
+            window.stage,
+            stage_trigger_at,
+            window.ends_at,
+            0,
+            split_amounts.len(),
+        );
+        let second_trigger_at = rhythm_stage_split_trigger_at(
+            &plan,
+            window.stage,
+            stage_trigger_at,
+            window.ends_at,
+            1,
+            split_amounts.len(),
+        );
+        assert!(first_trigger_at < second_trigger_at);
+        let first_decision = RobotFillAmount {
+            amount_minor: target_amount,
+            note: stage_note.clone(),
+            mode: RobotFillExecutionMode::RhythmStage {
+                stage: window.stage,
+                trigger_at: stage_trigger_at,
+                ends_at: window.ends_at,
+                target_amount_minor: target_amount,
+            },
+        };
+        let first_split = match robot_fill_split_decision(
+            &plan,
+            first_trigger_at,
+            &first_decision,
+            split_amounts.clone(),
+            participant_min,
+        )
+        .expect("first split can calculate")
+        {
+            RobotFillSplitDecision::Add(splits) => {
+                assert_eq!(splits.len(), 1);
+                assert_eq!(splits[0].index, 0);
+                splits[0].clone()
+            }
+            RobotFillSplitDecision::Skip(reason) => {
+                panic!("第一笔到点后应该执行：{reason}")
+            }
+        };
+
+        plan.filled_amount_minor += first_split.amount_minor;
+        plan.participants
+            .push(crate::domain::group_buy::GroupBuyParticipant {
+                id: "G-RHYTHM-SPLIT-ONE-P-ROBOT-FILL-00001".to_string(),
+                user_id: "X90002".to_string(),
+                username: "林清远".to_string(),
+                amount_minor: first_split.amount_minor,
+                share_count: (first_split.amount_minor / plan.min_share_amount_minor) as u32,
+                note: first_split.note.clone(),
+                created_at: first_trigger_at.format(TIMESTAMP_FORMAT).to_string(),
+            });
+
+        let next_decision = robot_fill_decision(
+            &plan,
+            &issue,
+            second_trigger_at,
+            RobotFillPolicy::Rhythm {
+                max_percent: 20,
+                stage_count: 3,
+                fill_before_draw_seconds: 40,
+            },
+        )
+        .expect("second decision can calculate");
+        let next_amount = match next_decision {
+            RobotFillDecision::Add(amount) => amount,
+            RobotFillDecision::Skip(reason) => {
+                panic!("第一笔执行后不应把整个阶段判定为完成：{reason}")
+            }
+        };
+        let before_second = second_trigger_at - chrono::Duration::seconds(1);
+        match robot_fill_split_decision(
+            &plan,
+            before_second,
+            &next_amount,
+            split_amounts.clone(),
+            participant_min,
+        )
+        .expect("second wait can calculate")
+        {
+            RobotFillSplitDecision::Skip(reason) => assert!(reason.contains("第2笔")),
+            RobotFillSplitDecision::Add(_) => panic!("第二笔触发秒之前不能继续补单"),
+        }
+        match robot_fill_split_decision(
+            &plan,
+            second_trigger_at,
+            &next_amount,
+            split_amounts,
+            participant_min,
+        )
+        .expect("second split can calculate")
+        {
+            RobotFillSplitDecision::Add(splits) => {
+                assert_eq!(splits.len(), 1);
+                assert_eq!(splits[0].index, 1);
+                assert!(splits[0].note.contains("(2/"));
+            }
+            RobotFillSplitDecision::Skip(reason) => {
+                panic!("第二笔到点后应该执行：{reason}")
+            }
         }
     }
 
