@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::Local;
+use chrono::{Local, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::{
@@ -21,7 +21,7 @@ use crate::{
             DrawAutomationSkippedIssue, DrawIssue, DrawIssueGenerationPreview, DrawIssueStatus,
             GenerateDrawIssuesRequest,
         },
-        lottery::{DrawMode, LotteryKind, DEFAULT_SALE_CLOSE_LEAD_SECONDS},
+        lottery::{DrawMode, DrawSchedule, LotteryKind, DEFAULT_SALE_CLOSE_LEAD_SECONDS},
         robot::GroupBuyRobotRun,
     },
     error::{ApiError, ApiResult},
@@ -64,11 +64,12 @@ const MAX_FUTURE_ISSUE_COUNT: u32 = 50;
 const MAX_ISSUE_GENERATION_CONCURRENCY: u32 = 32;
 const DRAW_SETTLEMENT_QUEUE_BATCH_SIZE: usize = 8;
 const DRAW_SETTLEMENT_QUEUE_POLL_SECONDS: u64 = 1;
+const MAX_LOCAL_ISSUE_GENERATION_BATCH_COUNT: u32 = 50;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 struct PendingLocalIssueGeneration {
     lottery: LotteryKind,
-    count: u32,
+    target_future_count: u32,
 }
 
 struct PendingApiIssueGeneration {
@@ -910,8 +911,8 @@ pub fn spawn_draw_scheduler(
                         "开奖调度器快阶段完成，已排队到期开奖"
                     );
 
-                    // 到期开奖阶段：在独立 spawn 中执行，用 lock().await 排队而非 try_lock 跳过，
-                    // 确保每一轮到期开奖都能被执行，不会因上一轮未完成而跳过。
+                    // 到期开奖阶段：在独立 spawn 中执行，但忙时不堆积旧时间任务。
+                    // 下一次成功获取锁时会用最新时间重扫全部到期期号，避免开奖越排越慢。
                     let due_lock = due_phase_lock.clone();
                     let draws = draws.clone();
                     let lotteries = lotteries.clone();
@@ -925,9 +926,14 @@ pub fn spawn_draw_scheduler(
                     let current_config = current_config.clone();
                     let due_now = now.clone();
                     tokio::spawn(async move {
-                        // 阻塞等待锁：如果上一轮还在执行，排队等它完成后立即开始本轮，
-                        // 而不是跳过本轮。这样到期开奖不会被持续推迟。
-                        let _guard = due_lock.lock().await;
+                        let Ok(_guard) = due_lock.try_lock() else {
+                            tracing::warn!(
+                                now = %due_now,
+                                "上一轮到期开奖仍在执行，本轮不再排队旧时间任务"
+                            );
+                            return;
+                        };
+                        let due_now = current_scheduler_timestamp();
                         let due_started = Instant::now();
                         // 设置 120 秒超时，防止兜底补满或开奖结算卡死导致锁永久泄漏
                         let due_result = tokio::time::timeout(
@@ -1581,7 +1587,10 @@ async fn ensure_non_api_future_draw_issues(
             continue;
         }
 
-        pending_local_generations.push(PendingLocalIssueGeneration { lottery, count });
+        pending_local_generations.push(PendingLocalIssueGeneration {
+            lottery,
+            target_future_count: config.future_issue_count,
+        });
     }
 
     let (mut local_generated_issues, mut local_skipped_lotteries) =
@@ -1624,15 +1633,11 @@ async fn execute_local_issue_generation_jobs(
                     }
                 };
                 let _permit = permit;
-                let result = generate_draw_issue_batch(
+                let result = generate_local_issues_until_future_buffer(
                     &draws,
                     &lottery,
-                    GenerateDrawIssuesRequest {
-                        lottery_id: lottery.id.clone(),
-                        now,
-                        count: pending.count,
-                        sale_close_lead_seconds: Some(lottery.sale_close_lead_seconds),
-                    },
+                    &now,
+                    pending.target_future_count,
                 )
                 .await;
                 (lottery, result)
@@ -1670,6 +1675,117 @@ async fn execute_local_issue_generation_jobs(
     }
 
     Ok((generated_issues, skipped_lotteries))
+}
+
+/// 本地周期彩种补期时追到未来缓冲，避免重启或延迟后每轮只补一个历史节点。
+async fn generate_local_issues_until_future_buffer(
+    draws: &DrawRepository,
+    lottery: &LotteryKind,
+    now: &str,
+    target_future_count: u32,
+) -> ApiResult<Vec<DrawIssue>> {
+    let mut generated_issues = Vec::new();
+    let mut generated_count = 0_u32;
+
+    loop {
+        let active_issues = draws.list_scheduler_active().await?;
+        if future_issue_count(&active_issues, lottery, now) >= target_future_count {
+            return Ok(generated_issues);
+        }
+        if generated_count >= MAX_LOCAL_ISSUE_GENERATION_BATCH_COUNT {
+            tracing::warn!(
+                lottery_id = %lottery.id,
+                lottery_name = %lottery.name,
+                generated_count,
+                generation_limit = MAX_LOCAL_ISSUE_GENERATION_BATCH_COUNT,
+                "本地周期期号本轮追补达到上限，下一轮继续补齐未来期"
+            );
+            return Ok(generated_issues);
+        }
+
+        let remaining = MAX_LOCAL_ISSUE_GENERATION_BATCH_COUNT - generated_count;
+        let count = local_generation_batch_count(&active_issues, lottery, now, target_future_count)
+            .clamp(1, remaining);
+        let mut created = generate_draw_issue_batch(
+            draws,
+            lottery,
+            GenerateDrawIssuesRequest {
+                lottery_id: lottery.id.clone(),
+                now: now.to_string(),
+                count,
+                sale_close_lead_seconds: Some(lottery.sale_close_lead_seconds),
+            },
+        )
+        .await?;
+        if created.is_empty() {
+            return Err(ApiError::Conflict("本地期号补齐没有生成新期号".to_string()));
+        }
+        generated_count = generated_count.saturating_add(created.len() as u32);
+        generated_issues.append(&mut created);
+    }
+}
+
+/// 估算本轮应生成多少期，周期彩种落后时把已错过节点和未来缓冲一起补出。
+fn local_generation_batch_count(
+    active_issues: &[DrawIssue],
+    lottery: &LotteryKind,
+    now: &str,
+    target_future_count: u32,
+) -> u32 {
+    let current_future_count = future_issue_count(active_issues, lottery, now);
+    let missing_future_count = target_future_count.saturating_sub(current_future_count);
+    if missing_future_count == 0 {
+        return 0;
+    }
+
+    let Some(interval_seconds) = local_cycle_interval_seconds(lottery) else {
+        return missing_future_count;
+    };
+    let (Some(now), Some(latest_scheduled_at)) = (
+        parse_scheduler_timestamp(now),
+        latest_active_scheduled_at(active_issues, lottery),
+    ) else {
+        return missing_future_count;
+    };
+    if latest_scheduled_at > now {
+        return missing_future_count;
+    }
+
+    let missed_node_count = now
+        .signed_duration_since(latest_scheduled_at)
+        .num_seconds()
+        .max(0)
+        / i64::from(interval_seconds);
+    let missed_node_count = u32::try_from(missed_node_count).unwrap_or(u32::MAX);
+    missing_future_count.saturating_add(missed_node_count)
+}
+
+/// 返回本地周期类彩种的开奖间隔秒数。
+fn local_cycle_interval_seconds(lottery: &LotteryKind) -> Option<u32> {
+    match &lottery.schedule {
+        DrawSchedule::Periodic { interval_seconds }
+        | DrawSchedule::TimeNode {
+            interval_seconds, ..
+        } if *interval_seconds > 0 => Some(*interval_seconds),
+        _ => None,
+    }
+}
+
+/// 读取指定彩种当前活跃期号中的最新计划开奖时间。
+fn latest_active_scheduled_at(
+    active_issues: &[DrawIssue],
+    lottery: &LotteryKind,
+) -> Option<NaiveDateTime> {
+    active_issues
+        .iter()
+        .filter(|issue| issue.lottery_id == lottery.id)
+        .filter_map(|issue| parse_scheduler_timestamp(&issue.scheduled_at))
+        .max()
+}
+
+/// 解析调度器内部使用的业务时间戳。
+fn parse_scheduler_timestamp(value: &str) -> Option<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(value.trim(), TIMESTAMP_FORMAT).ok()
 }
 /// 按第三方开奖源锚点确保 API 彩种未来期号。
 async fn ensure_api_future_draw_issues(
@@ -2931,9 +3047,20 @@ mod tests {
 
         assert!(!skipped.iter().any(|lottery| lottery.lottery_id == "ssc60"));
         assert!(pending_api.is_empty());
-        assert!(generated.iter().any(|issue| issue.lottery_id == "ssc60"
-            && issue.issue == "202606100242"
-            && issue.scheduled_at == "2026-06-10 20:10:00"));
+        let generated_nodes = generated
+            .iter()
+            .filter(|issue| issue.lottery_id == "ssc60")
+            .map(|issue| (issue.issue.as_str(), issue.scheduled_at.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            generated_nodes,
+            vec![
+                ("202606100242", "2026-06-10 20:10:00"),
+                ("202606100243", "2026-06-10 20:15:00"),
+                ("202606100244", "2026-06-10 20:20:00"),
+                ("202606100245", "2026-06-10 20:25:00"),
+            ]
+        );
     }
     /// 验证调度器线程可启动但会按后台配置决定是否执行。
     #[tokio::test]

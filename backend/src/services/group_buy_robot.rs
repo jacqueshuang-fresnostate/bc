@@ -2270,6 +2270,16 @@ fn robot_fill_decision(
         return Ok(RobotFillDecision::Skip("合买计划已满单".to_string()));
     }
 
+    let sale_closed_at = parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?;
+    let seconds_until_sale_close = (sale_closed_at - now_at).num_seconds();
+    if seconds_until_sale_close <= 0 && policy == RobotFillPolicy::GuaranteedUserPlan {
+        return Ok(RobotFillDecision::Add(RobotFillAmount {
+            amount_minor: remaining_amount_minor,
+            note: "补单机器人封盘兜底补满合买".to_string(),
+            mode: RobotFillExecutionMode::Immediate,
+        }));
+    }
+
     let scheduled_at = parse_robot_timestamp(&issue.scheduled_at, "开奖时间")?;
     let seconds_until_draw = (scheduled_at - now_at).num_seconds();
     if seconds_until_draw < 0 {
@@ -2308,15 +2318,9 @@ fn robot_fill_decision(
         }
     }
 
-    let sale_closed_at = parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?;
-    let seconds_until_sale_close = (sale_closed_at - now_at).num_seconds();
     if seconds_until_sale_close <= 0 {
         return match policy {
-            RobotFillPolicy::GuaranteedUserPlan => Ok(RobotFillDecision::Add(RobotFillAmount {
-                amount_minor: remaining_amount_minor,
-                note: "补单机器人封盘兜底补满合买".to_string(),
-                mode: RobotFillExecutionMode::Immediate,
-            })),
+            RobotFillPolicy::GuaranteedUserPlan => unreachable!("封盘兜底策略已提前处理"),
             RobotFillPolicy::Rhythm { .. } => Ok(RobotFillDecision::Skip(
                 "已到封盘时间且未到开奖前最终补满窗口，阶段性补单暂不追加认购".to_string(),
             )),
