@@ -449,9 +449,7 @@ fn generation_baseline(
     }
 
     if let DrawSchedule::Periodic { interval_seconds } = &lottery.schedule {
-        if lottery.draw_mode == DrawMode::Platform
-            && periodic_interval_divides_day(*interval_seconds)
-        {
+        if periodic_interval_divides_day(*interval_seconds) {
             let anchor = latest_scheduled_at(existing_issues, &lottery.id)?.unwrap_or(now);
             return clock_aligned_periodic_baseline(anchor, *interval_seconds);
         }
@@ -481,7 +479,7 @@ fn periodic_interval_divides_day(interval_seconds: u32) -> bool {
     interval_seconds > 0 && 86_400 % interval_seconds == 0
 }
 
-/// 平台普通周期的兜底对齐：按当天 00:00 起算最近节点作为基线，避免调度晚跑造成开奖时间漂移。
+/// 本地普通周期的兜底对齐：按当天 00:00 起算最近节点作为基线，避免调度晚跑造成开奖时间漂移。
 fn clock_aligned_periodic_baseline(
     anchor: NaiveDateTime,
     interval_seconds: u32,
@@ -1868,9 +1866,9 @@ mod tests {
             3
         );
     }
-    /// 验证周期生成keepscadencewhen调度器runslate。
+    /// 验证本地普通周期在调度器晚跑后会回到自然时钟节点。
     #[tokio::test]
-    async fn periodic_generation_keeps_cadence_when_scheduler_runs_late() {
+    async fn periodic_generation_realigns_clock_nodes_when_scheduler_runs_late() {
         let draws = DrawRepository::memory();
         let lottery = lottery(DrawSchedule::Periodic {
             interval_seconds: 60,
@@ -1890,15 +1888,15 @@ mod tests {
 
         let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-10 20:18:52"))
             .await
-            .expect("late scheduler can generate next cadence issue");
+            .expect("late scheduler can generate next aligned issue");
 
         assert_eq!(issue.issue, "202606100001");
-        assert_eq!(issue.scheduled_at, "2026-06-10 20:19:27");
-        assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:26");
+        assert_eq!(issue.scheduled_at, "2026-06-10 20:19:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 20:18:59");
     }
-    /// 验证普通周期调度落后多个周期时，不会把中间期号丢掉。
+    /// 验证本地普通周期调度落后多个周期时，会按自然节点追补中间期号。
     #[tokio::test]
-    async fn periodic_generation_backfills_missed_relative_cadence() {
+    async fn periodic_generation_backfills_missed_clock_node() {
         let draws = DrawRepository::memory();
         let lottery = lottery(DrawSchedule::Periodic {
             interval_seconds: 60,
@@ -1918,11 +1916,11 @@ mod tests {
 
         let issue = generate_next_draw_issue(&draws, &lottery, request("2026-06-10 20:22:00"))
             .await
-            .expect("missed cadence issue can be backfilled");
+            .expect("missed clock issue can be backfilled");
 
         assert_eq!(issue.issue, "202606100002");
-        assert_eq!(issue.scheduled_at, "2026-06-10 20:19:27");
-        assert_eq!(issue.sale_closed_at, "2026-06-10 20:19:26");
+        assert_eq!(issue.scheduled_at, "2026-06-10 20:19:00");
+        assert_eq!(issue.sale_closed_at, "2026-06-10 20:18:59");
     }
     /// 验证平台普通周期在调度晚跑时也按自然时钟节点对齐，避免开奖时间逐轮后移。
     #[tokio::test]
