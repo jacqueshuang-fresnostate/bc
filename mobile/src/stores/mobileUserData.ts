@@ -78,6 +78,7 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
   let withdrawalMethodsRequest: Promise<LoadResult<WithdrawalMethod[]>> | null = null
   let withdrawalOrdersRequest: Promise<LoadResult<WithdrawalOrder[]>> | null = null
   let withdrawalTurnoverProgressRequest: Promise<LoadResult<WithdrawalTurnoverProgress | null>> | null = null
+  let withdrawalTurnoverProgressRequestSeq = 0
   let ledgerEntriesRequest: Promise<LoadResult<LedgerEntry[]>> | null = null
 
   function currentUserId() {
@@ -258,19 +259,27 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     ) {
       return { data: withdrawalTurnoverProgress.value, refreshed: false }
     }
-    if (withdrawalTurnoverProgressRequest) return withdrawalTurnoverProgressRequest
+    if (withdrawalTurnoverProgressRequest && !options.force) return withdrawalTurnoverProgressRequest
 
     if (!options.silent && !withdrawalTurnoverProgress.value) {
       loadingWithdrawalTurnoverProgress.value = true
     }
+    const requestSeq = ++withdrawalTurnoverProgressRequestSeq
     withdrawalTurnoverProgressRequest = (async () => {
       try {
-        withdrawalTurnoverProgress.value = await fetchWithdrawalTurnoverProgress()
-        withdrawalTurnoverProgressFetchedAt.value = Date.now()
+        const progress = await fetchWithdrawalTurnoverProgress()
+        if (requestSeq === withdrawalTurnoverProgressRequestSeq) {
+          withdrawalTurnoverProgress.value = progress
+          withdrawalTurnoverProgressFetchedAt.value = Date.now()
+        }
         return { data: withdrawalTurnoverProgress.value, refreshed: true }
       } finally {
-        if (!options.silent) loadingWithdrawalTurnoverProgress.value = false
-        withdrawalTurnoverProgressRequest = null
+        if (!options.silent && requestSeq === withdrawalTurnoverProgressRequestSeq) {
+          loadingWithdrawalTurnoverProgress.value = false
+        }
+        if (requestSeq === withdrawalTurnoverProgressRequestSeq) {
+          withdrawalTurnoverProgressRequest = null
+        }
       }
     })()
     return withdrawalTurnoverProgressRequest
@@ -313,6 +322,10 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     ledgerEntriesFetchedAt.value = 0
     ledgerEntriesPage.value = 0
     ledgerEntriesHasMore.value = true
+  }
+
+  function invalidateWithdrawalTurnoverProgress() {
+    withdrawalTurnoverProgressFetchedAt.value = 0
   }
 
   function setProfile(nextProfile: MobileUserProfile | null) {
@@ -362,6 +375,7 @@ export const useMobileUserDataStore = defineStore('mobileUserData', () => {
     loadLedgerEntries,
     invalidateProfile,
     invalidateLedgerEntries,
+    invalidateWithdrawalTurnoverProgress,
     setProfile,
     clearUserScopedState,
   }

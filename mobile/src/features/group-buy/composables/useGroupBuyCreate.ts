@@ -39,9 +39,12 @@ export function useGroupBuyCreate(lotteryCode: { value: string }, options: { loa
 
   /** 加载当前用户余额。 */
   async function loadBalance(options: { force?: boolean; silent?: boolean } = {}) {
-    try {
-      await userDataStore.loadProfile(options)
-    } catch {}
+    await Promise.all([
+      userDataStore.loadProfile(options).catch(() => {}),
+      userDataStore
+        .loadWithdrawalTurnoverProgress({ force: options.force, silent: true })
+        .catch(() => {}),
+    ])
   }
 
   /** 选择发起合买彩种并重新加载期号和玩法。 */

@@ -142,11 +142,14 @@ const submitButtonDisplayText = computed(() => {
 const submitLoadingText = computed(() => submittingGroupBuy.value ? '正在发布合买...' : '正在提交投注...')
 
 async function loadBalance(options: { force?: boolean; silent?: boolean } = {}) {
-  try {
-    await userDataStore.loadProfile(options)
-  } catch {
-    // 余额失败不阻断投注页配置渲染，页面以缓存或 0.00 作为兜底展示。
-  }
+  await Promise.all([
+    userDataStore.loadProfile(options).catch(() => {
+      // 余额失败不阻断投注页配置渲染，页面以缓存或 0.00 作为兜底展示。
+    }),
+    userDataStore
+      .loadWithdrawalTurnoverProgress({ force: options.force, silent: true })
+      .catch(() => {}),
+  ])
 }
 
 async function loadPage(options: { force?: boolean; silent?: boolean } = {}) {

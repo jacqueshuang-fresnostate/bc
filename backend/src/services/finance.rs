@@ -1995,7 +1995,7 @@ pub(crate) async fn save_finance_store_in_transaction(
 ///
 /// 正常情况下数据库触发器会先处理新增流水；这里再次按事件表幂等写入，
 /// 可以兼容旧库触发器缺失、迁移前数据异常或 `ON CONFLICT DO UPDATE` 没有触发新增事件的场景。
-async fn ensure_withdrawal_turnover_event_in_transaction(
+pub(crate) async fn ensure_withdrawal_turnover_event_in_transaction(
     connection: &mut PgConnection,
     entry: &LedgerEntry,
 ) -> ApiResult<()> {

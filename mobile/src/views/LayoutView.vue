@@ -50,6 +50,7 @@ function refreshSupportUnreadSilently(force = false) {
 function refreshUserFinanceSilently() {
   userDataStore.invalidateProfile()
   userDataStore.invalidateLedgerEntries()
+  userDataStore.invalidateWithdrawalTurnoverProgress()
   void userDataStore.loadProfile({ force: true, silent: true }).catch(() => {})
   void userDataStore.loadLedgerEntries({ force: true, silent: true }).catch(() => {})
   void userDataStore.loadWithdrawalTurnoverProgress({ force: true, silent: true }).catch(() => {})

@@ -24,6 +24,7 @@ use crate::{
     error::{ApiError, ApiResult},
     services::{
         finance::{
+            ensure_withdrawal_turnover_event_in_transaction,
             save_finance_store_incremental_in_transaction, FinanceRepository, LedgerEntryIdRemap,
         },
         group_buy::{save_group_buy_store_incremental_in_transaction, GroupBuyRepository},
@@ -2244,6 +2245,7 @@ pub(super) async fn insert_ledger_entry_in_transaction(
         );
         ApiError::Internal("投注扣款流水保存失败".to_string())
     })?;
+    ensure_withdrawal_turnover_event_in_transaction(connection, entry).await?;
     Ok(())
 }
 
