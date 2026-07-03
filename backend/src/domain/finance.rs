@@ -70,6 +70,18 @@ pub struct WithdrawalTurnoverSummary {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// 后台人工修正用户提现投注任务的请求，字段为空时保留当前值。
+pub struct UpdateWithdrawalTurnoverRequest {
+    /// 用户累计真实充值本金，单位为分。
+    pub cumulative_recharge_minor: Option<i64>,
+    /// 当前需要完成的有效投注金额，单位为分。
+    pub required_effective_bet_minor: Option<i64>,
+    /// 已完成有效投注金额，单位为分。
+    pub completed_effective_bet_minor: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 /// 后台财务列表通用分页结构。
 pub struct FinancePage<T> {
     /// 分页数据列表。

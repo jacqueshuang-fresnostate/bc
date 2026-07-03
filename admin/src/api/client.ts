@@ -60,7 +60,9 @@ import type {
   FinancePageQuery,
   ManualBalanceAdjustmentRequest,
   RechargeOrderSummary,
+  UpdateWithdrawalTurnoverRequest,
   WithdrawalOrderSummary,
+  WithdrawalTurnoverSummary,
 } from '../types/finance';
 import type {
   AddGroupBuyParticipantRequest,
@@ -578,6 +580,26 @@ export function resetUserPassword(id: string, payload: UserPasswordResetRequest)
     body: payload,
     method: 'PATCH',
   });
+}
+
+export function fetchUserWithdrawalTurnover(id: string, signal?: AbortSignal) {
+  return requestJson<WithdrawalTurnoverSummary>(
+    `/api/admin/users/${encodeURIComponent(id)}/withdrawal-turnover`,
+    { signal },
+  );
+}
+
+export function updateUserWithdrawalTurnover(
+  id: string,
+  payload: UpdateWithdrawalTurnoverRequest,
+) {
+  return requestJson<WithdrawalTurnoverSummary>(
+    `/api/admin/users/${encodeURIComponent(id)}/withdrawal-turnover`,
+    {
+      body: payload,
+      method: 'PATCH',
+    },
+  );
 }
 
 export function fetchAdmins(signal?: AbortSignal) {

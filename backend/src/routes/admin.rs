@@ -39,6 +39,7 @@ use crate::{
         finance::{
             AdminFinancialAccountSummary, FinanceOverview, FinancePage, FinancialAccountSummary,
             LedgerEntry, LedgerEntryKind, ManualBalanceAdjustmentRequest,
+            UpdateWithdrawalTurnoverRequest, WithdrawalTurnoverSummary,
         },
         group_buy::{
             AddGroupBuyParticipantRequest, CreateGroupBuyPlanRequest, GroupBuyPlan,
@@ -188,6 +189,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/users/{id}",
             get(get_user).put(update_user).delete(delete_user),
+        )
+        .route(
+            "/users/{id}/withdrawal-turnover",
+            get(get_user_withdrawal_turnover).patch(update_user_withdrawal_turnover),
         )
         .route("/users/{id}/password", patch(reset_user_password))
         .route("/users/{id}/status", patch(set_user_status))
@@ -616,6 +621,13 @@ fn required_permission_for_request(method: &Method, path: &str) -> Option<&'stat
         return match method.clone() {
             Method::GET => Some("user.read"),
             Method::POST => Some("user.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("users/") && path.ends_with("/withdrawal-turnover") {
+        return match method.clone() {
+            Method::GET => Some("user.read"),
+            Method::PATCH => Some("user.write"),
             _ => None,
         };
     }
@@ -3071,6 +3083,17 @@ async fn get_user(
     Ok(Json(ApiEnvelope::success(user)))
 }
 
+/// 后台读取指定用户提现前有效投注任务，供用户管理抽屉展示。
+async fn get_user_withdrawal_turnover(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ApiEnvelope<WithdrawalTurnoverSummary>>> {
+    state.access.get_user(&id).await?;
+    let turnover = state.finance.withdrawal_turnover_for_user(&id).await?;
+
+    Ok(Json(ApiEnvelope::success(turnover)))
+}
+
 /// 后台创建用户并初始化资金账户。
 async fn create_user(
     State(state): State<AppState>,
@@ -3082,6 +3105,32 @@ async fn create_user(
     let user = admin_user_summary(&state, user).await?;
 
     Ok(Json(ApiEnvelope::success(user)))
+}
+
+/// 后台人工修正指定用户提现前有效投注任务，修正后立即影响提现校验。
+async fn update_user_withdrawal_turnover(
+    State(state): State<AppState>,
+    Extension(session): Extension<AdminAuthSession>,
+    Path(id): Path<String>,
+    Json(payload): Json<UpdateWithdrawalTurnoverRequest>,
+) -> ApiResult<Json<ApiEnvelope<WithdrawalTurnoverSummary>>> {
+    let user = state.access.get_user(&id).await?;
+    let turnover = state
+        .finance
+        .update_withdrawal_turnover_for_user(&id, payload)
+        .await?;
+    tracing::info!(
+        admin_id = %session.admin.id,
+        admin_username = %session.admin.username,
+        user_id = %user.id,
+        username = %user.username,
+        cumulative_recharge_minor = turnover.cumulative_recharge_minor,
+        required_effective_bet_minor = turnover.required_effective_bet_minor,
+        completed_effective_bet_minor = turnover.completed_effective_bet_minor,
+        "后台已人工修正用户提现任务"
+    );
+
+    Ok(Json(ApiEnvelope::success(turnover)))
 }
 
 /// 后台更新用户基础资料，不直接修改余额和邀请码。
@@ -5649,6 +5698,14 @@ mod tests {
         assert_eq!(
             required_permission_for_request(&Method::PATCH, "/users/U10001/password"),
             Some("user.password.reset")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::GET, "/users/U10001/withdrawal-turnover"),
+            Some("user.read")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::PATCH, "/users/U10001/withdrawal-turnover"),
+            Some("user.write")
         );
         assert_eq!(
             required_permission_for_request(&Method::PUT, "/draw-controls/au5"),

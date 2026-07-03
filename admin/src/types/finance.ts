@@ -78,6 +78,20 @@ export interface ManualBalanceAdjustmentRequest {
   description: string;
 }
 
+export interface WithdrawalTurnoverSummary {
+  userId: string;
+  cumulativeRechargeMinor: number;
+  requiredEffectiveBetMinor: number;
+  completedEffectiveBetMinor: number;
+  remainingEffectiveBetMinor: number;
+}
+
+export interface UpdateWithdrawalTurnoverRequest {
+  cumulativeRechargeMinor?: number;
+  requiredEffectiveBetMinor?: number;
+  completedEffectiveBetMinor?: number;
+}
+
 export interface ConfirmRechargeOrderRequest {
   providerTradeNo?: string | null;
   remark?: string | null;

@@ -182,6 +182,24 @@ const ROUTE_DOCS: &[RouteDoc] = &[
     ),
     doc(
         "get",
+        "/admin/users/{id}/withdrawal-turnover",
+        "用户管理",
+        "查看提现任务",
+        "返回指定用户提现前投注任务的累计充值、任务要求、已完成和剩余金额。",
+        AuthMode::Admin,
+        RequestBodyKind::None,
+    ),
+    doc(
+        "patch",
+        "/admin/users/{id}/withdrawal-turnover",
+        "用户管理",
+        "编辑提现任务",
+        "后台人工修正指定用户提现前投注任务累计值，字段为空时保留当前值。",
+        AuthMode::Admin,
+        RequestBodyKind::Json,
+    ),
+    doc(
+        "get",
         "/admin/admins",
         "管理员管理",
         "管理员列表",
@@ -2192,6 +2210,8 @@ mod tests {
         assert!(document["paths"]["/user/mobile/site-config"]["get"].is_object());
         assert!(document["paths"]["/user/mobile/app-update"]["get"].is_object());
         assert!(document["paths"]["/user/register-options"]["get"].is_object());
+        assert!(document["paths"]["/admin/users/{id}/withdrawal-turnover"]["get"].is_object());
+        assert!(document["paths"]["/admin/users/{id}/withdrawal-turnover"]["patch"].is_object());
         assert!(document["paths"]["/user/invitations/summary"]["get"].is_object());
         assert!(document["paths"]["/user/agent/application"]["get"].is_object());
         assert!(document["paths"]["/user/agent/application"]["post"].is_object());

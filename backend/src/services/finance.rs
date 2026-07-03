@@ -15,7 +15,8 @@ use crate::{
     domain::{
         finance::{
             FinanceOverview, FinancialAccountSummary, LedgerEntry, LedgerEntryKind,
-            ManualBalanceAdjustmentRequest, WithdrawalTurnoverSummary,
+            ManualBalanceAdjustmentRequest, UpdateWithdrawalTurnoverRequest,
+            WithdrawalTurnoverSummary,
         },
         group_buy::{GroupBuyParticipant, GroupBuyPlan},
         order::OrderDetail,
@@ -147,6 +148,28 @@ impl FinanceRepository {
             .read()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .withdrawal_turnover_for_user(user_id)
+    }
+
+    /// 后台人工修正指定用户提现投注任务累计值，保存后立即按新任务口径生效。
+    pub async fn update_withdrawal_turnover_for_user(
+        &self,
+        user_id: &str,
+        payload: UpdateWithdrawalTurnoverRequest,
+    ) -> ApiResult<WithdrawalTurnoverSummary> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("用户 ID 不能为空".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return update_withdrawal_turnover_for_user_in_database(persistence, user_id, payload)
+                .await;
+        }
+
+        let mut store = self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+        store.update_withdrawal_turnover_for_user(user_id, payload)
     }
 
     /// 按用户 ID 集合批量汇总真实充值本金，避免邀请中心读取全量资金流水后再过滤。
@@ -1201,6 +1224,16 @@ pub(crate) struct FinanceStore {
     accounts: BTreeMap<String, FinancialAccountSummary>,
     ledger_entries: Vec<LedgerEntry>,
     next_sequence: u64,
+    withdrawal_turnover_overrides: BTreeMap<String, WithdrawalTurnoverOverride>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+/// 内存模式下后台人工修正提现任务后的基线，后续只从该流水位置继续追加增量。
+struct WithdrawalTurnoverOverride {
+    cumulative_recharge_minor: i64,
+    required_effective_bet_minor: i64,
+    completed_effective_bet_minor: i64,
+    last_ledger_entry_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1329,6 +1362,7 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
         accounts,
         ledger_entries,
         next_sequence,
+        withdrawal_turnover_overrides: BTreeMap::new(),
     };
 
     sync_ledger_entry_database_sequence(database, next_sequence).await?;
@@ -1655,6 +1689,98 @@ async fn query_withdrawal_turnover_for_user(
     )
 }
 
+/// 数据库模式下保存后台人工修正后的用户提现投注任务累计值。
+async fn update_withdrawal_turnover_for_user_in_database(
+    database: &BusinessDatabase,
+    user_id: &str,
+    payload: UpdateWithdrawalTurnoverRequest,
+) -> ApiResult<WithdrawalTurnoverSummary> {
+    let current = query_withdrawal_turnover_for_user(database, user_id).await?;
+    let resolved = resolve_withdrawal_turnover_update(&current, payload)?;
+    let row = sqlx::query(
+        "INSERT INTO user_withdrawal_turnovers (
+            user_id,
+            cumulative_recharge_minor,
+            required_effective_bet_minor,
+            completed_effective_bet_minor,
+            created_at,
+            updated_at
+         )
+         VALUES ($1, $2, $3, $4, now(), now())
+         ON CONFLICT (user_id) DO UPDATE SET
+            cumulative_recharge_minor = EXCLUDED.cumulative_recharge_minor,
+            required_effective_bet_minor = EXCLUDED.required_effective_bet_minor,
+            completed_effective_bet_minor = EXCLUDED.completed_effective_bet_minor,
+            updated_at = now()
+         RETURNING user_id, cumulative_recharge_minor, required_effective_bet_minor, completed_effective_bet_minor",
+    )
+    .bind(user_id)
+    .bind(resolved.cumulative_recharge_minor)
+    .bind(resolved.required_effective_bet_minor)
+    .bind(resolved.completed_effective_bet_minor)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, user_id, "后台提现任务人工修正保存失败");
+        ApiError::Internal("后台提现任务保存失败".to_string())
+    })?;
+
+    let saved_user_id: String = row
+        .try_get("user_id")
+        .map_err(|_| ApiError::Internal("后台提现任务保存结果读取失败".to_string()))?;
+    let cumulative_recharge_minor = row
+        .try_get("cumulative_recharge_minor")
+        .map_err(|_| ApiError::Internal("后台提现任务保存结果读取失败".to_string()))?;
+    let required_effective_bet_minor = row
+        .try_get("required_effective_bet_minor")
+        .map_err(|_| ApiError::Internal("后台提现任务保存结果读取失败".to_string()))?;
+    let completed_effective_bet_minor = row
+        .try_get("completed_effective_bet_minor")
+        .map_err(|_| ApiError::Internal("后台提现任务保存结果读取失败".to_string()))?;
+
+    withdrawal_turnover_summary(
+        &saved_user_id,
+        cumulative_recharge_minor,
+        required_effective_bet_minor,
+        completed_effective_bet_minor,
+    )
+}
+
+/// 合并后台提现任务修正请求并校验最终金额，避免写入负数或完成额超过要求额。
+fn resolve_withdrawal_turnover_update(
+    current: &WithdrawalTurnoverSummary,
+    payload: UpdateWithdrawalTurnoverRequest,
+) -> ApiResult<WithdrawalTurnoverSummary> {
+    let cumulative_recharge_minor = payload
+        .cumulative_recharge_minor
+        .unwrap_or(current.cumulative_recharge_minor);
+    let required_effective_bet_minor = payload
+        .required_effective_bet_minor
+        .unwrap_or(current.required_effective_bet_minor);
+    let completed_effective_bet_minor = payload
+        .completed_effective_bet_minor
+        .unwrap_or(current.completed_effective_bet_minor);
+
+    if cumulative_recharge_minor < 0
+        || required_effective_bet_minor < 0
+        || completed_effective_bet_minor < 0
+    {
+        return Err(ApiError::BadRequest("提现任务金额不能为负数".to_string()));
+    }
+    if completed_effective_bet_minor > required_effective_bet_minor {
+        return Err(ApiError::BadRequest(
+            "已完成有效投注不能大于任务要求金额".to_string(),
+        ));
+    }
+
+    withdrawal_turnover_summary(
+        &current.user_id,
+        cumulative_recharge_minor,
+        required_effective_bet_minor,
+        completed_effective_bet_minor,
+    )
+}
+
 /// 组装用户提现流水累计摘要，并计算仍需完成的有效投注金额。
 fn withdrawal_turnover_summary(
     user_id: &str,
@@ -1697,6 +1823,26 @@ fn withdrawal_turnover_deltas_for_ledger_entry(
         }
         _ => None,
     }
+}
+
+fn apply_withdrawal_turnover_completed_delta(
+    required_effective_bet_minor: i64,
+    completed_effective_bet_minor: i64,
+    effective_delta_minor: i64,
+) -> ApiResult<i64> {
+    let updated_completed_effective_bet_minor = if effective_delta_minor > 0 {
+        let remaining_required_minor =
+            required_effective_bet_minor.saturating_sub(completed_effective_bet_minor);
+        completed_effective_bet_minor
+            .checked_add(effective_delta_minor.min(remaining_required_minor))
+            .ok_or_else(|| ApiError::Internal("用户有效投注金额溢出".to_string()))?
+    } else {
+        completed_effective_bet_minor
+            .checked_add(effective_delta_minor)
+            .ok_or_else(|| ApiError::Internal("用户有效投注金额溢出".to_string()))?
+    };
+
+    Ok(updated_completed_effective_bet_minor.clamp(0, required_effective_bet_minor))
 }
 
 /// 数据库模式下按用户集合聚合充值本金，避免代理中心扫描无关用户资金流水。
@@ -1895,13 +2041,29 @@ async fn ensure_withdrawal_turnover_event_in_transaction(
             created_at,
             updated_at
          )
-         VALUES ($1, $2, $3, GREATEST(0::BIGINT, $4), now(), now())
+         VALUES ($1, $2, $3, GREATEST(0::BIGINT, LEAST($4, $3)), now(), now())
          ON CONFLICT (user_id) DO UPDATE SET
             cumulative_recharge_minor = user_withdrawal_turnovers.cumulative_recharge_minor + EXCLUDED.cumulative_recharge_minor,
             required_effective_bet_minor = user_withdrawal_turnovers.required_effective_bet_minor + EXCLUDED.required_effective_bet_minor,
-            completed_effective_bet_minor = GREATEST(
-                0,
-                user_withdrawal_turnovers.completed_effective_bet_minor + $4
+            completed_effective_bet_minor = LEAST(
+                user_withdrawal_turnovers.required_effective_bet_minor + EXCLUDED.required_effective_bet_minor,
+                GREATEST(
+                    0,
+                    user_withdrawal_turnovers.completed_effective_bet_minor +
+                        CASE
+                            WHEN EXCLUDED.completed_effective_bet_minor > 0 THEN
+                                LEAST(
+                                    EXCLUDED.completed_effective_bet_minor,
+                                    GREATEST(
+                                        0,
+                                        (user_withdrawal_turnovers.required_effective_bet_minor + EXCLUDED.required_effective_bet_minor)
+                                            - user_withdrawal_turnovers.completed_effective_bet_minor
+                                    )
+                                )
+                            ELSE
+                                EXCLUDED.completed_effective_bet_minor
+                        END
+                )
             ),
             updated_at = now()",
     )
@@ -2243,6 +2405,12 @@ impl FinanceStore {
 
     /// 统计指定用户正向充值本金流水，赠送彩金和代理返利都不计入充值门槛。
     fn recharge_credit_total_minor_for_user(&self, user_id: &str) -> ApiResult<i64> {
+        if self.withdrawal_turnover_overrides.contains_key(user_id) {
+            return self
+                .withdrawal_turnover_for_user(user_id)
+                .map(|turnover| turnover.cumulative_recharge_minor);
+        }
+
         self.ledger_entries
             .iter()
             .filter(|entry| {
@@ -2259,12 +2427,30 @@ impl FinanceStore {
 
     /// 内存模式下从当前资金流水临时计算提现流水要求摘要。
     fn withdrawal_turnover_for_user(&self, user_id: &str) -> ApiResult<WithdrawalTurnoverSummary> {
-        let mut cumulative_recharge_minor = 0_i64;
-        let mut required_effective_bet_minor = 0_i64;
-        let mut completed_effective_bet_minor = 0_i64;
+        let override_snapshot = self.withdrawal_turnover_overrides.get(user_id);
+        let mut cumulative_recharge_minor = override_snapshot
+            .map(|snapshot| snapshot.cumulative_recharge_minor)
+            .unwrap_or_default();
+        let mut required_effective_bet_minor = override_snapshot
+            .map(|snapshot| snapshot.required_effective_bet_minor)
+            .unwrap_or_default();
+        let mut completed_effective_bet_minor = override_snapshot
+            .map(|snapshot| snapshot.completed_effective_bet_minor)
+            .unwrap_or_default();
+        let ledger_entry_start_index = override_snapshot
+            .and_then(|snapshot| {
+                snapshot.last_ledger_entry_id.as_deref().and_then(|id| {
+                    self.ledger_entries
+                        .iter()
+                        .position(|entry| entry.id == id)
+                        .map(|index| index + 1)
+                })
+            })
+            .unwrap_or_default();
         for entry in self
             .ledger_entries
             .iter()
+            .skip(ledger_entry_start_index)
             .filter(|entry| entry.user_id == user_id)
         {
             match entry.kind {
@@ -2292,15 +2478,24 @@ impl FinanceStore {
                         .amount_minor
                         .checked_neg()
                         .ok_or_else(|| ApiError::Internal("用户有效投注金额溢出".to_string()))?;
-                    completed_effective_bet_minor = completed_effective_bet_minor
-                        .checked_add(amount_minor)
-                        .ok_or_else(|| ApiError::Internal("用户有效投注金额溢出".to_string()))?;
+                    completed_effective_bet_minor = apply_withdrawal_turnover_completed_delta(
+                        required_effective_bet_minor,
+                        completed_effective_bet_minor,
+                        amount_minor,
+                    )?;
                 }
                 LedgerEntryKind::OrderRefund | LedgerEntryKind::GroupBuyRefund
                     if entry.amount_minor > 0 =>
                 {
-                    completed_effective_bet_minor =
-                        completed_effective_bet_minor.saturating_sub(entry.amount_minor);
+                    let amount_minor = entry
+                        .amount_minor
+                        .checked_neg()
+                        .ok_or_else(|| ApiError::Internal("用户有效投注金额溢出".to_string()))?;
+                    completed_effective_bet_minor = apply_withdrawal_turnover_completed_delta(
+                        required_effective_bet_minor,
+                        completed_effective_bet_minor,
+                        amount_minor,
+                    )?;
                 }
                 _ => {}
             }
@@ -2314,14 +2509,48 @@ impl FinanceStore {
         )
     }
 
+    /// 内存模式下保存后台人工修正的提现任务基线，后续新流水从保存时的位置继续追加。
+    fn update_withdrawal_turnover_for_user(
+        &mut self,
+        user_id: &str,
+        payload: UpdateWithdrawalTurnoverRequest,
+    ) -> ApiResult<WithdrawalTurnoverSummary> {
+        let current = self.withdrawal_turnover_for_user(user_id)?;
+        let resolved = resolve_withdrawal_turnover_update(&current, payload)?;
+        self.withdrawal_turnover_overrides.insert(
+            user_id.to_string(),
+            WithdrawalTurnoverOverride {
+                cumulative_recharge_minor: resolved.cumulative_recharge_minor,
+                required_effective_bet_minor: resolved.required_effective_bet_minor,
+                completed_effective_bet_minor: resolved.completed_effective_bet_minor,
+                last_ledger_entry_id: self.ledger_entries.last().map(|entry| entry.id.clone()),
+            },
+        );
+        Ok(resolved)
+    }
+
     /// 按用户集合聚合充值本金，内存模式下只扫描一次资金流水。
     fn recharge_credit_totals_for_user_ids(
         &self,
         user_ids: &BTreeSet<String>,
     ) -> ApiResult<BTreeMap<String, i64>> {
         let mut totals = BTreeMap::new();
+        let overridden_user_ids = user_ids
+            .iter()
+            .filter(|user_id| self.withdrawal_turnover_overrides.contains_key(*user_id))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for user_id in &overridden_user_ids {
+            let total_minor = self
+                .withdrawal_turnover_for_user(user_id)?
+                .cumulative_recharge_minor;
+            if total_minor > 0 {
+                totals.insert(user_id.clone(), total_minor);
+            }
+        }
         for entry in self.ledger_entries.iter().filter(|entry| {
             user_ids.contains(&entry.user_id)
+                && !overridden_user_ids.contains(&entry.user_id)
                 && matches!(entry.kind, LedgerEntryKind::RechargeCredit)
                 && entry.amount_minor > 0
         }) {
@@ -3296,7 +3525,10 @@ mod tests {
 
     use crate::{
         domain::{
-            finance::{LedgerEntry, LedgerEntryKind, ManualBalanceAdjustmentRequest},
+            finance::{
+                LedgerEntry, LedgerEntryKind, ManualBalanceAdjustmentRequest,
+                UpdateWithdrawalTurnoverRequest,
+            },
             group_buy::{GroupBuyParticipant, GroupBuyPlan, GroupBuyPlanStatus},
             lottery::LotteryNumberType,
             order::OrderSource,
@@ -3848,6 +4080,166 @@ mod tests {
         assert_eq!(turnover.required_effective_bet_minor, 10_500);
         assert_eq!(turnover.completed_effective_bet_minor, 2_000);
         assert_eq!(turnover.remaining_effective_bet_minor, 8_500);
+    }
+
+    #[test]
+    /// 提现任务的已完成有效投注不会超过本期所需上限，退款可把已完成投注扣回但不低于 0。
+    fn store_withdrawal_turnover_completed_effective_is_capped_by_required() {
+        let mut store = FinanceStore::seeded();
+        store
+            .credit_recharge("U10001", 1_000, "R000000000001")
+            .expect("recharge can be credited");
+        store
+            .credit_recharge_bonus("U10001", 500, "R000000000001")
+            .expect("recharge bonus can be credited");
+        let order = order_detail("O000000000001", "U10001", 2_000, 0);
+        store.debit_order(&order).expect("order can be debited");
+        store
+            .debit_order(&order_detail("O000000000002", "U10001", 1_500, 0))
+            .expect("second order can be debited");
+
+        let turnover = store
+            .withdrawal_turnover_for_user("U10001")
+            .expect("withdrawal turnover can be calculated");
+        assert_eq!(turnover.required_effective_bet_minor, 1_500);
+        assert_eq!(turnover.completed_effective_bet_minor, 1_500);
+
+        store.refund_order(&order).expect("order can be refunded");
+        let refund_turnover = store
+            .withdrawal_turnover_for_user("U10001")
+            .expect("withdrawal turnover can be recalculated");
+        assert_eq!(refund_turnover.completed_effective_bet_minor, 0);
+        assert_eq!(refund_turnover.remaining_effective_bet_minor, 1_500);
+    }
+
+    #[test]
+    /// 直接校验完成投注增量的上限与下界逻辑，确保不会溢出任务上限且不会变负。
+    fn apply_withdrawal_turnover_completed_delta_clamps_to_required_range() {
+        assert_eq!(
+            super::apply_withdrawal_turnover_completed_delta(1_000, 800, 1_000)
+                .expect("delta applied"),
+            1_000
+        );
+        assert_eq!(
+            super::apply_withdrawal_turnover_completed_delta(1_000, 200, -150)
+                .expect("delta applied"),
+            50
+        );
+        assert_eq!(
+            super::apply_withdrawal_turnover_completed_delta(1_000, 10, -200)
+                .expect("delta applied"),
+            0
+        );
+        assert_eq!(
+            super::apply_withdrawal_turnover_completed_delta(500, 600, 1_000)
+                .expect("delta applied"),
+            500
+        );
+    }
+
+    #[test]
+    /// 后台人工修正提现任务后，内存模式会以修正值为基线继续累计后续新投注。
+    fn store_updates_withdrawal_turnover_and_continues_from_manual_baseline() {
+        let mut store = FinanceStore::seeded();
+        store
+            .credit_recharge("U10001", 1_000, "R000000000001")
+            .expect("recharge can be credited");
+        store
+            .debit_order(&order_detail("O000000000001", "U10001", 200, 0))
+            .expect("order can be debited");
+
+        let turnover = store
+            .update_withdrawal_turnover_for_user(
+                "U10001",
+                UpdateWithdrawalTurnoverRequest {
+                    cumulative_recharge_minor: Some(300),
+                    required_effective_bet_minor: Some(500),
+                    completed_effective_bet_minor: Some(100),
+                },
+            )
+            .expect("withdrawal turnover can be updated");
+        assert_eq!(turnover.cumulative_recharge_minor, 300);
+        assert_eq!(turnover.required_effective_bet_minor, 500);
+        assert_eq!(turnover.completed_effective_bet_minor, 100);
+        assert_eq!(turnover.remaining_effective_bet_minor, 400);
+
+        store
+            .debit_order(&order_detail("O000000000002", "U10001", 600, 0))
+            .expect("next order can be debited");
+        let updated = store
+            .withdrawal_turnover_for_user("U10001")
+            .expect("updated withdrawal turnover can be calculated");
+        assert_eq!(updated.cumulative_recharge_minor, 300);
+        assert_eq!(updated.required_effective_bet_minor, 500);
+        assert_eq!(updated.completed_effective_bet_minor, 500);
+        assert_eq!(updated.remaining_effective_bet_minor, 0);
+    }
+
+    #[test]
+    /// 后台人工修正提现任务后，即使内存演示流水被清空，后续新流水也会继续追加到修正基线。
+    fn store_withdrawal_turnover_manual_baseline_survives_ledger_clear() {
+        let mut store = FinanceStore::seeded();
+        store
+            .credit_recharge("U10001", 1_000, "R000000000001")
+            .expect("recharge can be credited");
+        store
+            .update_withdrawal_turnover_for_user(
+                "U10001",
+                UpdateWithdrawalTurnoverRequest {
+                    cumulative_recharge_minor: Some(300),
+                    required_effective_bet_minor: Some(500),
+                    completed_effective_bet_minor: Some(100),
+                },
+            )
+            .expect("withdrawal turnover can be updated");
+
+        store.clear_ledger_entries();
+        store
+            .debit_order(&order_detail("O000000000001", "U10001", 600, 0))
+            .expect("order can be debited after ledger clear");
+        let updated = store
+            .withdrawal_turnover_for_user("U10001")
+            .expect("updated withdrawal turnover can be calculated");
+        assert_eq!(updated.cumulative_recharge_minor, 300);
+        assert_eq!(updated.required_effective_bet_minor, 500);
+        assert_eq!(updated.completed_effective_bet_minor, 500);
+        assert_eq!(updated.remaining_effective_bet_minor, 0);
+    }
+
+    #[test]
+    /// 后台人工修正提现任务时，后端会拒绝负数和已完成超过任务要求的无效金额。
+    fn store_rejects_invalid_withdrawal_turnover_update() {
+        let mut store = FinanceStore::seeded();
+
+        let negative_error = store
+            .update_withdrawal_turnover_for_user(
+                "U10001",
+                UpdateWithdrawalTurnoverRequest {
+                    cumulative_recharge_minor: Some(-1),
+                    required_effective_bet_minor: Some(0),
+                    completed_effective_bet_minor: Some(0),
+                },
+            )
+            .expect_err("negative turnover update must be rejected");
+        assert!(matches!(
+            negative_error,
+            crate::error::ApiError::BadRequest(_)
+        ));
+
+        let exceeded_error = store
+            .update_withdrawal_turnover_for_user(
+                "U10001",
+                UpdateWithdrawalTurnoverRequest {
+                    cumulative_recharge_minor: Some(0),
+                    required_effective_bet_minor: Some(100),
+                    completed_effective_bet_minor: Some(101),
+                },
+            )
+            .expect_err("completed turnover cannot exceed required turnover");
+        assert!(matches!(
+            exceeded_error,
+            crate::error::ApiError::BadRequest(_)
+        ));
     }
 
     #[test]

@@ -12,6 +12,7 @@ import {
   fetchSystemSettings,
   fetchUsers,
   fetchUserPage,
+  fetchUserWithdrawalTurnover,
   reloadBackendMemoryCache,
   resetAdminPassword,
   resetUserPassword,
@@ -22,6 +23,7 @@ import {
   updateRole,
   updateSystemSetting,
   updateUser,
+  updateUserWithdrawalTurnover,
 } from '../api/client';
 import type {
   AdminUserSummary,
@@ -38,7 +40,11 @@ import type {
   UserStatus,
   UserSummary,
 } from '../types/access';
-import type { ClearRecordsResult } from '../types/finance';
+import type {
+  ClearRecordsResult,
+  UpdateWithdrawalTurnoverRequest,
+  WithdrawalTurnoverSummary,
+} from '../types/finance';
 
 interface UseAccessManagementOptions {
   userQuery: UserListQuery;
@@ -184,6 +190,37 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
       }
     },
     [refresh],
+  );
+
+  const loadUserWithdrawalTurnover = useCallback(
+    async (id: string, signal?: AbortSignal): Promise<WithdrawalTurnoverSummary> => {
+      setError(null);
+      try {
+        return await fetchUserWithdrawalTurnover(id, signal);
+      } catch (requestError) {
+        if (!signal?.aborted) {
+          setError(errorMessage(requestError));
+        }
+        throw requestError;
+      }
+    },
+    [],
+  );
+
+  const saveUserWithdrawalTurnover = useCallback(
+    async (id: string, payload: UpdateWithdrawalTurnoverRequest) => {
+      setSaving(true);
+      setError(null);
+      try {
+        return await updateUserWithdrawalTurnover(id, payload);
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [],
   );
 
   const saveAdmin = useCallback(
@@ -339,6 +376,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     clearChatHallHistory,
     error,
     loading,
+    loadUserWithdrawalTurnover,
     refresh,
     registration,
     removeUser,
@@ -352,6 +390,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     saveRole,
     saveSetting,
     saveUser,
+    saveUserWithdrawalTurnover,
     saving,
     settings,
     userPage,

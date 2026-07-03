@@ -61,7 +61,10 @@ import type {
   UserStatus,
   UserSummary,
 } from '../types/dashboard';
-import type { ClearRecordsResult } from '../types/finance';
+import type {
+  ClearRecordsResult,
+  WithdrawalTurnoverSummary,
+} from '../types/finance';
 import { formatMoney } from '../utils/format';
 import { minorToYuanInput, yuanInputToMinor } from '../utils/moneyInput';
 
@@ -87,6 +90,12 @@ interface UserFormState {
   registrationLocation: UserRegistrationLocation;
   status: UserStatus;
   username: string;
+}
+
+interface WithdrawalTurnoverFormState {
+  completedEffectiveBetYuan: string;
+  cumulativeRechargeYuan: string;
+  requiredEffectiveBetYuan: string;
 }
 
 interface SystemSettingItem {
@@ -373,6 +382,7 @@ export function AccessManagementPage({
     changeUserStatus,
     clearChatHallHistory,
     error,
+    loadUserWithdrawalTurnover,
     loading,
     refresh,
     registration,
@@ -387,6 +397,7 @@ export function AccessManagementPage({
     saveRole,
     saveSetting,
     saveUser,
+    saveUserWithdrawalTurnover,
     saving,
     settings,
     userPage,
@@ -401,6 +412,14 @@ export function AccessManagementPage({
   const [adminSheetVisible, setAdminSheetVisible] = useState(false);
   const [roleSheetVisible, setRoleSheetVisible] = useState(false);
   const [userSheetVisible, setUserSheetVisible] = useState(false);
+  const [withdrawalTurnoverSheetVisible, setWithdrawalTurnoverSheetVisible] =
+    useState(false);
+  const [withdrawalTurnoverLoading, setWithdrawalTurnoverLoading] =
+    useState(false);
+  const [withdrawalTurnoverUser, setWithdrawalTurnoverUser] =
+    useState<AdminUserSummary | null>(null);
+  const [withdrawalTurnoverForm, setWithdrawalTurnoverForm] =
+    useState<WithdrawalTurnoverFormState>(() => emptyWithdrawalTurnoverForm());
   const [adminForm, setAdminForm] = useState<AdminFormState>(() =>
     emptyAdminForm('role-ops'),
   );
@@ -419,6 +438,7 @@ export function AccessManagementPage({
     setAdminSheetVisible(false);
     setRoleSheetVisible(false);
     setUserSheetVisible(false);
+    setWithdrawalTurnoverSheetVisible(false);
   }, [section]);
 
   useEffect(() => {
@@ -542,6 +562,44 @@ export function AccessManagementPage({
     }
   };
 
+  const openWithdrawalTurnoverSheet = async (user: AdminUserSummary) => {
+    setWithdrawalTurnoverUser(user);
+    setWithdrawalTurnoverForm(emptyWithdrawalTurnoverForm());
+    setWithdrawalTurnoverSheetVisible(true);
+    setWithdrawalTurnoverLoading(true);
+    try {
+      const turnover = await loadUserWithdrawalTurnover(user.id);
+      setWithdrawalTurnoverForm(withdrawalTurnoverFormFromSummary(turnover));
+    } catch (error) {
+      Toast.error(error instanceof Error ? error.message : '提现任务读取失败');
+    } finally {
+      setWithdrawalTurnoverLoading(false);
+    }
+  };
+
+  const submitWithdrawalTurnover = async () => {
+    if (!withdrawalTurnoverUser) {
+      return;
+    }
+    const payload = withdrawalTurnoverPayload(withdrawalTurnoverForm);
+    if (!payload) {
+      return;
+    }
+    try {
+      const saved = await saveUserWithdrawalTurnover(
+        withdrawalTurnoverUser.id,
+        payload,
+      );
+      setWithdrawalTurnoverForm(withdrawalTurnoverFormFromSummary(saved));
+      setWithdrawalTurnoverSheetVisible(false);
+      Toast.success('提现任务已保存');
+      refresh();
+      onDashboardRefresh();
+    } catch (error) {
+      Toast.error(error instanceof Error ? error.message : '提现任务保存失败');
+    }
+  };
+
   const submitRegistration = async () => {
     if (!registrationForm) {
       return;
@@ -626,6 +684,7 @@ export function AccessManagementPage({
           }}
           onOpenLedger={onOpenUserLedger}
           onOpenOrders={onOpenUserOrders}
+          onOpenWithdrawalTurnover={(user) => void openWithdrawalTurnoverSheet(user)}
           onSetForm={setUserForm}
           onPageChange={setUserPageNumber}
           onPageSizeChange={(pageSize) => {
@@ -659,6 +718,15 @@ export function AccessManagementPage({
             void changeUserStatus(id, status).then(onDashboardRefresh);
           }}
           onSubmit={() => void submitUser()}
+          onWithdrawalTurnoverClose={() =>
+            setWithdrawalTurnoverSheetVisible(false)
+          }
+          onWithdrawalTurnoverFormChange={setWithdrawalTurnoverForm}
+          onWithdrawalTurnoverSubmit={() => void submitWithdrawalTurnover()}
+          withdrawalTurnoverForm={withdrawalTurnoverForm}
+          withdrawalTurnoverLoading={withdrawalTurnoverLoading}
+          withdrawalTurnoverSheetVisible={withdrawalTurnoverSheetVisible}
+          withdrawalTurnoverUser={withdrawalTurnoverUser}
         />
       ) : section === 'admins' ? (
         <AdminSection
@@ -759,6 +827,7 @@ function UserSection({
   onNew,
   onOpenLedger,
   onOpenOrders,
+  onOpenWithdrawalTurnover,
   onPageChange,
   onPageSizeChange,
   onAgentFilterChange,
@@ -772,6 +841,9 @@ function UserSection({
   onUsernameDraftChange,
   onUsernameSearchApply,
   onUsernameSearchClear,
+  onWithdrawalTurnoverClose,
+  onWithdrawalTurnoverFormChange,
+  onWithdrawalTurnoverSubmit,
   page,
   pageSize,
   saving,
@@ -784,6 +856,10 @@ function UserSection({
   usernameDraft,
   usernameSearch,
   users,
+  withdrawalTurnoverForm,
+  withdrawalTurnoverLoading,
+  withdrawalTurnoverSheetVisible,
+  withdrawalTurnoverUser,
 }: {
   agentFilter: string;
   agentOptions: AdminUserSummary[];
@@ -797,6 +873,7 @@ function UserSection({
   onNew: () => void;
   onOpenLedger: (user: AdminUserSummary) => void;
   onOpenOrders: (user: AdminUserSummary) => void;
+  onOpenWithdrawalTurnover: (user: AdminUserSummary) => void;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
   onAgentFilterChange: (agentId: string) => void;
@@ -810,6 +887,11 @@ function UserSection({
   onUsernameDraftChange: (value: string) => void;
   onUsernameSearchApply: () => void;
   onUsernameSearchClear: () => void;
+  onWithdrawalTurnoverClose: () => void;
+  onWithdrawalTurnoverFormChange: Dispatch<
+    SetStateAction<WithdrawalTurnoverFormState>
+  >;
+  onWithdrawalTurnoverSubmit: () => void;
   page: number;
   pageSize: number;
   saving: boolean;
@@ -822,7 +904,14 @@ function UserSection({
   usernameDraft: string;
   usernameSearch: string;
   users: AdminUserSummary[];
+  withdrawalTurnoverForm: WithdrawalTurnoverFormState;
+  withdrawalTurnoverLoading: boolean;
+  withdrawalTurnoverSheetVisible: boolean;
+  withdrawalTurnoverUser: AdminUserSummary | null;
 }) {
+  const withdrawalTurnoverPreviewValue =
+    withdrawalTurnoverPreview(withdrawalTurnoverForm);
+
   return (
     <section className="space-y-4">
       <Card className="rounded-md border border-line">
@@ -1040,6 +1129,12 @@ function UserSection({
                         流水
                       </Button>
                       <Button
+                        size="small"
+                        onClick={() => onOpenWithdrawalTurnover(user)}
+                      >
+                        提现任务
+                      </Button>
+                      <Button
                         disabled={user.status !== 'active'}
                         size="small"
                         onClick={() => onStatus(user.id, 'suspended')}
@@ -1213,6 +1308,128 @@ function UserSection({
             <Button onClick={onNew}>新建</Button>
           </div>
         </form>
+      </SideSheet>
+
+      <SideSheet
+        aria-label="提现任务维护"
+        title="提现任务维护"
+        visible={withdrawalTurnoverSheetVisible}
+        width={460}
+        onCancel={onWithdrawalTurnoverClose}
+      >
+        {withdrawalTurnoverLoading ? (
+          <div className="grid min-h-[240px] place-items-center">
+            <Spin tip="正在加载提现任务" />
+          </div>
+        ) : (
+          <form
+            className="space-y-4"
+            onSubmit={(event) => event.preventDefault()}
+          >
+            <div className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2">
+              <div className="text-sm font-semibold text-ink">
+                {withdrawalTurnoverUser?.username ?? '未知用户'}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                {withdrawalTurnoverUser?.id ?? '-'}
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded-md border border-slate-100 bg-white px-3 py-2">
+                <p className="text-xs text-slate-500">累计充值</p>
+                <p className="mt-1 text-sm font-semibold text-ink">
+                  {withdrawalTurnoverPreviewValue
+                    ? formatMoney(
+                        withdrawalTurnoverPreviewValue.cumulativeRechargeMinor,
+                      )
+                    : '-'}
+                </p>
+              </div>
+              <div className="rounded-md border border-slate-100 bg-white px-3 py-2">
+                <p className="text-xs text-slate-500">已完成</p>
+                <p className="mt-1 text-sm font-semibold text-ink">
+                  {withdrawalTurnoverPreviewValue
+                    ? formatMoney(
+                        withdrawalTurnoverPreviewValue.completedEffectiveBetMinor,
+                      )
+                    : '-'}
+                </p>
+              </div>
+              <div className="rounded-md border border-slate-100 bg-white px-3 py-2">
+                <p className="text-xs text-slate-500">剩余任务</p>
+                <p className="mt-1 text-sm font-semibold text-ink">
+                  {withdrawalTurnoverPreviewValue
+                    ? formatMoney(
+                        withdrawalTurnoverPreviewValue.remainingEffectiveBetMinor,
+                      )
+                    : '-'}
+                </p>
+              </div>
+            </div>
+            <Field
+              description="真实充值本金口径，用于提现任务展示和相关资格判断。"
+              label="累计真实充值（元）"
+            >
+              <Input
+                className="form-input"
+                placeholder="例如 1000.00"
+                value={withdrawalTurnoverForm.cumulativeRechargeYuan}
+                onChange={(value) =>
+                  setFormValue(
+                    onWithdrawalTurnoverFormChange,
+                    'cumulativeRechargeYuan',
+                    value,
+                  )
+                }
+              />
+            </Field>
+            <Field
+              description="提现前需要完成的有效投注任务总额。"
+              label="任务要求投注（元）"
+            >
+              <Input
+                className="form-input"
+                placeholder="例如 1500.00"
+                value={withdrawalTurnoverForm.requiredEffectiveBetYuan}
+                onChange={(value) =>
+                  setFormValue(
+                    onWithdrawalTurnoverFormChange,
+                    'requiredEffectiveBetYuan',
+                    value,
+                  )
+                }
+              />
+            </Field>
+            <Field
+              description="已完成金额不能大于任务要求，保存后立即影响提现校验。"
+              label="已完成有效投注（元）"
+            >
+              <Input
+                className="form-input"
+                placeholder="例如 500.00"
+                value={withdrawalTurnoverForm.completedEffectiveBetYuan}
+                onChange={(value) =>
+                  setFormValue(
+                    onWithdrawalTurnoverFormChange,
+                    'completedEffectiveBetYuan',
+                    value,
+                  )
+                }
+              />
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={saving || withdrawalTurnoverLoading}
+                icon={<Save size={16} />}
+                theme="solid"
+                onClick={onWithdrawalTurnoverSubmit}
+              >
+                保存任务
+              </Button>
+              <Button onClick={onWithdrawalTurnoverClose}>取消</Button>
+            </div>
+          </form>
+        )}
       </SideSheet>
     </section>
   );
@@ -3529,6 +3746,14 @@ function emptyUserForm(): UserFormState {
   };
 }
 
+function emptyWithdrawalTurnoverForm(): WithdrawalTurnoverFormState {
+  return {
+    completedEffectiveBetYuan: '',
+    cumulativeRechargeYuan: '',
+    requiredEffectiveBetYuan: '',
+  };
+}
+
 function userFormFromSummary(user: UserSummary): UserFormState {
   return {
     agentId: user.agentId ?? '',
@@ -3542,6 +3767,79 @@ function userFormFromSummary(user: UserSummary): UserFormState {
     registrationLocation: user.registrationLocation ?? emptyRegistrationLocation(),
     status: user.status,
     username: user.username,
+  };
+}
+
+function withdrawalTurnoverFormFromSummary(
+  turnover: WithdrawalTurnoverSummary,
+): WithdrawalTurnoverFormState {
+  return {
+    completedEffectiveBetYuan: minorToYuanInput(
+      turnover.completedEffectiveBetMinor,
+    ),
+    cumulativeRechargeYuan: minorToYuanInput(turnover.cumulativeRechargeMinor),
+    requiredEffectiveBetYuan: minorToYuanInput(
+      turnover.requiredEffectiveBetMinor,
+    ),
+  };
+}
+
+function withdrawalTurnoverPayload(form: WithdrawalTurnoverFormState) {
+  const cumulativeRechargeMinor = yuanInputToMinor(form.cumulativeRechargeYuan);
+  const requiredEffectiveBetMinor = yuanInputToMinor(form.requiredEffectiveBetYuan);
+  const completedEffectiveBetMinor = yuanInputToMinor(
+    form.completedEffectiveBetYuan,
+  );
+
+  if (
+    cumulativeRechargeMinor === null ||
+    requiredEffectiveBetMinor === null ||
+    completedEffectiveBetMinor === null
+  ) {
+    Toast.error('提现任务金额格式不正确，最多保留两位小数');
+    return null;
+  }
+  if (
+    cumulativeRechargeMinor < 0 ||
+    requiredEffectiveBetMinor < 0 ||
+    completedEffectiveBetMinor < 0
+  ) {
+    Toast.error('提现任务金额不能为负数');
+    return null;
+  }
+  if (completedEffectiveBetMinor > requiredEffectiveBetMinor) {
+    Toast.error('已完成有效投注不能大于任务要求');
+    return null;
+  }
+
+  return {
+    completedEffectiveBetMinor,
+    cumulativeRechargeMinor,
+    requiredEffectiveBetMinor,
+  };
+}
+
+function withdrawalTurnoverPreview(form: WithdrawalTurnoverFormState) {
+  const cumulativeRechargeMinor = yuanInputToMinor(form.cumulativeRechargeYuan);
+  const requiredEffectiveBetMinor = yuanInputToMinor(form.requiredEffectiveBetYuan);
+  const completedEffectiveBetMinor = yuanInputToMinor(
+    form.completedEffectiveBetYuan,
+  );
+  if (
+    cumulativeRechargeMinor === null ||
+    requiredEffectiveBetMinor === null ||
+    completedEffectiveBetMinor === null
+  ) {
+    return null;
+  }
+
+  return {
+    completedEffectiveBetMinor,
+    cumulativeRechargeMinor,
+    remainingEffectiveBetMinor: Math.max(
+      0,
+      requiredEffectiveBetMinor - completedEffectiveBetMinor,
+    ),
   };
 }
 
