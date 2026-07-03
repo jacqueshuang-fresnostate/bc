@@ -1991,10 +1991,10 @@ pub(crate) async fn save_finance_store_in_transaction(
     Ok(())
 }
 
-/// 在资金流水写入后补偿维护用户累计充值和有效投注表。
+/// 在资金流水写入后维护用户累计充值和有效投注表。
 ///
-/// 正常情况下数据库触发器会先处理新增流水；这里再次按事件表幂等写入，
-/// 可以兼容旧库触发器缺失、迁移前数据异常或 `ON CONFLICT DO UPDATE` 没有触发新增事件的场景。
+/// PostgreSQL 模式下提现任务累计由服务层事务显式维护；事件表作为幂等键，
+/// 避免同一笔流水被重复应用。历史旧库即使仍有触发器，事件冲突也会阻止重复累计。
 pub(crate) async fn ensure_withdrawal_turnover_event_in_transaction(
     connection: &mut PgConnection,
     entry: &LedgerEntry,
