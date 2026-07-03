@@ -2051,9 +2051,9 @@ pub(crate) async fn ensure_withdrawal_turnover_event_in_transaction(
                     0,
                     user_withdrawal_turnovers.completed_effective_bet_minor +
                         CASE
-                            WHEN EXCLUDED.completed_effective_bet_minor > 0 THEN
+                            WHEN $4 > 0 THEN
                                 LEAST(
-                                    EXCLUDED.completed_effective_bet_minor,
+                                    $4,
                                     GREATEST(
                                         0,
                                         (user_withdrawal_turnovers.required_effective_bet_minor + EXCLUDED.required_effective_bet_minor)
@@ -2061,7 +2061,7 @@ pub(crate) async fn ensure_withdrawal_turnover_event_in_transaction(
                                     )
                                 )
                             ELSE
-                                EXCLUDED.completed_effective_bet_minor
+                                $4
                         END
                 )
             ),
@@ -4110,6 +4110,49 @@ mod tests {
             .expect("withdrawal turnover can be recalculated");
         assert_eq!(refund_turnover.completed_effective_bet_minor, 0);
         assert_eq!(refund_turnover.remaining_effective_bet_minor, 1_500);
+    }
+
+    #[test]
+    /// 用户先完成提现任务后再次充值，后续新投注必须继续累计到新的任务上限。
+    fn store_withdrawal_turnover_continues_after_required_increases() {
+        let mut store = FinanceStore::seeded();
+        store
+            .credit_recharge("U10001", 1_000, "R000000000001")
+            .expect("recharge can be credited");
+        store
+            .debit_order(&order_detail("O000000000001", "U10001", 2_000, 0))
+            .expect("first order can be debited");
+
+        let completed = store
+            .withdrawal_turnover_for_user("U10001")
+            .expect("withdrawal turnover can be calculated");
+        assert_eq!(completed.required_effective_bet_minor, 1_000);
+        assert_eq!(completed.completed_effective_bet_minor, 1_000);
+        assert_eq!(completed.remaining_effective_bet_minor, 0);
+
+        store
+            .credit_recharge("U10001", 500, "R000000000002")
+            .expect("second recharge can be credited");
+        store
+            .debit_order(&order_detail("O000000000002", "U10001", 400, 0))
+            .expect("second order can be debited");
+
+        let updated = store
+            .withdrawal_turnover_for_user("U10001")
+            .expect("withdrawal turnover can continue");
+        assert_eq!(updated.required_effective_bet_minor, 1_500);
+        assert_eq!(updated.completed_effective_bet_minor, 1_400);
+        assert_eq!(updated.remaining_effective_bet_minor, 100);
+
+        store
+            .debit_order(&order_detail("O000000000003", "U10001", 200, 0))
+            .expect("third order can be debited");
+        let capped = store
+            .withdrawal_turnover_for_user("U10001")
+            .expect("withdrawal turnover can be capped again");
+        assert_eq!(capped.required_effective_bet_minor, 1_500);
+        assert_eq!(capped.completed_effective_bet_minor, 1_500);
+        assert_eq!(capped.remaining_effective_bet_minor, 0);
     }
 
     #[test]
