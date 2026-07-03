@@ -3155,12 +3155,8 @@ fn fallback_robot_group_buy_snapshot_name(value: &str) -> String {
     ROBOT_GROUP_BUY_SAFE_NAME_FALLBACKS[index].to_string()
 }
 
-/// 查询普通合买发起人的头像地址，机器人计划不返回真实机器人头像。
+/// 查询合买发起人的头像地址，机器人计划允许使用已配置的机器人用户头像。
 fn user_group_buy_initiator_avatar_url(plan: &GroupBuyPlan, users: &[UserSummary]) -> String {
-    if is_robot_group_buy_plan(plan) {
-        return String::new();
-    }
-
     users
         .iter()
         .find(|user| user.id == plan.initiator_user_id)
@@ -4817,8 +4813,8 @@ mod tests {
     }
 
     #[test]
-    /// 验证普通用户合买会透出发起人头像，机器人计划不会透出真实头像。
-    fn user_group_buy_plan_returns_normal_initiator_avatar_only() {
+    /// 验证普通用户和机器人合买都会透出已配置的发起人头像。
+    fn user_group_buy_plan_returns_configured_initiator_avatar() {
         let lotteries = vec![test_group_buy_lottery()];
         let mut user = test_invitation_user("U90001", "regular_user", UserKind::Regular, None);
         user.avatar_url = " https://cdn.example.com/avatar.png ".to_string();
@@ -4844,7 +4840,10 @@ mod tests {
             view.initiator_avatar_url,
             "https://cdn.example.com/avatar.png"
         );
-        assert_eq!(robot_view.initiator_avatar_url, "");
+        assert_eq!(
+            robot_view.initiator_avatar_url,
+            "https://cdn.example.com/avatar.png"
+        );
     }
 
     #[test]
