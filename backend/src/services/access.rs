@@ -3397,6 +3397,11 @@ fn seed_settings() -> Vec<SystemSetting> {
             description: "手机端站点 Logo 图片链接".to_string(),
         },
         SystemSetting {
+            key: "mobile_default_avatar_url".to_string(),
+            value: "未配置".to_string(),
+            description: "用户和机器人未配置头像时使用的默认头像图片链接".to_string(),
+        },
+        SystemSetting {
             key: "mobile_site_intro".to_string(),
             value: "欢迎使用彩票管理系统，祝您理性购彩、好运常伴。".to_string(),
             description: "手机端首页或关于页面展示的站点介绍".to_string(),

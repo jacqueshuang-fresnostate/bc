@@ -16,6 +16,8 @@ pub struct MobileSiteConfig {
     pub platform_name: String,
     /// 手机端平台 Logo 图片地址。
     pub logo_image_url: Option<String>,
+    /// 用户和机器人未配置头像时使用的默认头像图片地址。
+    pub default_avatar_url: Option<String>,
     /// intro字段。
     pub intro: String,
 }

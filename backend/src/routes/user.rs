@@ -104,6 +104,7 @@ const NOMINATIM_REVERSE_URL: &str = "https://nominatim.openstreetmap.org/reverse
 const NOMINATIM_TIMEOUT_SECONDS: u64 = 8;
 const NOMINATIM_USER_AGENT: &str = "bc-backend/0.1 registration-location";
 const CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY: &str = "chat_hall_speaking_min_recharge_minor";
+const DEFAULT_USER_AVATAR_SETTING_KEY: &str = "mobile_default_avatar_url";
 const ROBOT_GROUP_BUY_PLAN_PREFIX: &str = "G-ROBOT-";
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const ROBOT_GROUP_BUY_SAFE_NAME_FALLBACKS: &[&str] = &[
@@ -460,6 +461,7 @@ fn mobile_site_config_from_settings(settings: &[SystemSetting]) -> MobileSiteCon
         platform_name: optional_config_value(settings, "mobile_platform_name")
             .unwrap_or_else(|| "彩票管理系统".to_string()),
         logo_image_url: optional_config_value(settings, "mobile_logo_image_url"),
+        default_avatar_url: default_avatar_url_from_settings(settings),
         intro: config_value(settings, "mobile_site_intro")
             .unwrap_or_else(|| "欢迎使用彩票管理系统，祝您理性购彩、好运常伴。".to_string()),
     }
@@ -561,6 +563,18 @@ fn version_numeric_parts(version: &str) -> Vec<u32> {
 /// 读取可公开配置值，自动忽略空字符串和“未配置”占位。
 fn optional_config_value(settings: &[SystemSetting], key: &str) -> Option<String> {
     config_value(settings, key).filter(|value| value != "未配置")
+}
+
+/// 读取用户默认头像配置，只公开 http/https 图片链接。
+fn default_avatar_url_from_settings(settings: &[SystemSetting]) -> Option<String> {
+    optional_config_value(settings, DEFAULT_USER_AVATAR_SETTING_KEY)
+        .filter(|value| value.starts_with("https://") || value.starts_with("http://"))
+}
+
+/// 从当前系统设置读取默认头像配置。
+async fn default_avatar_url_from_state(state: &AppState) -> ApiResult<Option<String>> {
+    let settings = state.access.settings().await?;
+    Ok(default_avatar_url_from_settings(&settings))
 }
 
 /// 按配置键读取系统设置值，统一修剪首尾空白。
@@ -1121,7 +1135,12 @@ async fn get_balance(
 ) -> ApiResult<Json<ApiEnvelope<UserBalanceResponse>>> {
     let account: FinancialAccountSummary =
         state.finance.account_or_create(&session.user.id).await?;
-    let user = user_with_account_balance(session.user, Some(&account));
+    let settings = state.access.settings().await?;
+    let default_avatar_url = default_avatar_url_from_settings(&settings);
+    let user = user_with_default_avatar(
+        user_with_account_balance(session.user, Some(&account)),
+        default_avatar_url.as_deref(),
+    );
 
     Ok(Json(ApiEnvelope::success(UserBalanceResponse {
         user,
@@ -1135,7 +1154,12 @@ async fn user_with_financial_balance(
     user: UserSummary,
 ) -> ApiResult<UserSummary> {
     let account = state.finance.account_or_create(&user.id).await?;
-    Ok(user_with_account_balance(user, Some(&account)))
+    let settings = state.access.settings().await?;
+    let default_avatar_url = default_avatar_url_from_settings(&settings);
+    Ok(user_with_default_avatar(
+        user_with_account_balance(user, Some(&account)),
+        default_avatar_url.as_deref(),
+    ))
 }
 
 /// 合并用户基础资料和资金账户，避免资料表余额与财务账户余额不一致。
@@ -1147,6 +1171,29 @@ fn user_with_account_balance(
         user.balance_minor = account.available_balance_minor;
     }
     user
+}
+
+/// 用户头像为空时仅在响应层补充默认头像，不回写用户资料。
+fn user_with_default_avatar(
+    mut user: UserSummary,
+    default_avatar_url: Option<&str>,
+) -> UserSummary {
+    user.avatar_url = avatar_url_with_default(&user.avatar_url, default_avatar_url);
+    user
+}
+
+/// 返回修剪后的头像地址，空值时按配置兜底。
+fn avatar_url_with_default(value: &str, default_avatar_url: Option<&str>) -> String {
+    let value = value.trim();
+    if !value.is_empty() {
+        return value.to_string();
+    }
+
+    default_avatar_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// 返回当前用户自己的资金流水。
@@ -2573,13 +2620,15 @@ async fn get_user_group_buy_plan(
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlan>>> {
     let lotteries = state.lotteries.list().await?;
     let access = state.access.snapshot().await?;
+    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
     let plan = state.group_buys.get(&id).await?;
-    let plan = user_group_buy_plan_from_record(
+    let plan = user_group_buy_plan_from_record_with_default_avatar(
         &plan,
         &lotteries,
         Some(&session.user.id),
         &access.users,
         true,
+        default_avatar_url.as_deref(),
     )?;
 
     Ok(Json(ApiEnvelope::success(plan)))
@@ -2593,18 +2642,20 @@ async fn list_my_group_buy_plans(
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlanPage>>> {
     let lotteries = state.lotteries.list().await?;
     let access = state.access.snapshot().await?;
+    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
     let mut items = state
         .group_buys
         .list_details_for_user(&session.user.id)
         .await?
         .into_iter()
         .map(|plan| {
-            user_group_buy_plan_from_record(
+            user_group_buy_plan_from_record_with_default_avatar(
                 &plan,
                 &lotteries,
                 Some(&session.user.id),
                 &access.users,
                 false,
+                default_avatar_url.as_deref(),
             )
         })
         .collect::<ApiResult<Vec<_>>>()?;
@@ -2704,6 +2755,7 @@ async fn create_user_group_buy_plan(
     let plan_id = next_group_buy_plan_id();
     let participant_id = format!("{plan_id}-P001");
     let access = state.access.snapshot().await?;
+    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
     let request = CreateGroupBuyPlanRequest {
         id: plan_id.clone(),
         lottery_id: lottery.id.clone(),
@@ -2786,12 +2838,13 @@ async fn create_user_group_buy_plan(
     )
     .await;
     let account = state.finance.account_or_create(&session.user.id).await?;
-    let plan = user_group_buy_plan(
+    let plan = user_group_buy_plan_with_default_avatar(
         &plan,
         &[lottery],
         Some(&session.user.id),
         &access.users,
         true,
+        default_avatar_url.as_deref(),
     )?;
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyActionResponse {
@@ -2827,6 +2880,7 @@ async fn join_user_group_buy_plan(
         .ensure_available(&session.user.id, payload.amount_minor)
         .await?;
     let access = state.access.snapshot().await?;
+    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
     let mut updated = state
         .group_buys
         .add_participant(
@@ -2912,12 +2966,13 @@ async fn join_user_group_buy_plan(
     .await;
     let account = state.finance.account_or_create(&session.user.id).await?;
     let lotteries = state.lotteries.list().await?;
-    let plan = user_group_buy_plan(
+    let plan = user_group_buy_plan_with_default_avatar(
         &updated,
         &lotteries,
         Some(&session.user.id),
         &access.users,
         true,
+        default_avatar_url.as_deref(),
     )?;
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyActionResponse {
@@ -2934,6 +2989,7 @@ async fn user_group_buy_plans(
     query: &UserGroupBuyListQuery,
 ) -> ApiResult<Vec<UserGroupBuyPlan>> {
     let access = state.access.snapshot().await?;
+    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
     let lottery_id = query
         .lottery_id
         .as_deref()
@@ -2967,13 +3023,21 @@ async fn user_group_buy_plans(
         .items
         .into_iter()
         .map(|plan| {
-            user_group_buy_plan_from_record(&plan, lotteries, Some(user_id), &access.users, false)
+            user_group_buy_plan_from_record_with_default_avatar(
+                &plan,
+                lotteries,
+                Some(user_id),
+                &access.users,
+                false,
+                default_avatar_url.as_deref(),
+            )
         })
         .collect::<ApiResult<Vec<_>>>()?;
     Ok(items)
 }
 
 /// 把单个合买计划转换为手机端展示详情。
+#[cfg(test)]
 fn user_group_buy_plan(
     plan: &GroupBuyPlan,
     lotteries: &[LotteryKind],
@@ -2981,16 +3045,43 @@ fn user_group_buy_plan(
     users: &[UserSummary],
     include_participants: bool,
 ) -> ApiResult<UserGroupBuyPlan> {
-    user_group_buy_plan_from_record(plan, lotteries, user_id, users, include_participants)
+    user_group_buy_plan_with_default_avatar(
+        plan,
+        lotteries,
+        user_id,
+        users,
+        include_participants,
+        None,
+    )
 }
 
-/// 把单个合买计划转换为手机端展示详情，机器人名称按随机中文名规则输出。
-fn user_group_buy_plan_from_record(
+/// 把单个合买计划转换为手机端展示详情，并在头像为空时使用默认头像。
+fn user_group_buy_plan_with_default_avatar(
     plan: &GroupBuyPlan,
     lotteries: &[LotteryKind],
     user_id: Option<&str>,
     users: &[UserSummary],
     include_participants: bool,
+    default_avatar_url: Option<&str>,
+) -> ApiResult<UserGroupBuyPlan> {
+    user_group_buy_plan_from_record_with_default_avatar(
+        plan,
+        lotteries,
+        user_id,
+        users,
+        include_participants,
+        default_avatar_url,
+    )
+}
+
+/// 把单个合买计划转换为手机端展示详情，并在发起人头像为空时应用默认头像。
+fn user_group_buy_plan_from_record_with_default_avatar(
+    plan: &GroupBuyPlan,
+    lotteries: &[LotteryKind],
+    user_id: Option<&str>,
+    users: &[UserSummary],
+    include_participants: bool,
+    default_avatar_url: Option<&str>,
 ) -> ApiResult<UserGroupBuyPlan> {
     let lottery = lotteries
         .iter()
@@ -3037,7 +3128,7 @@ fn user_group_buy_plan_from_record(
             Vec::new()
         },
         initiator_display: user_group_buy_initiator_display(plan),
-        initiator_avatar_url: user_group_buy_initiator_avatar_url(plan, users),
+        initiator_avatar_url: user_group_buy_initiator_avatar_url(plan, users, default_avatar_url),
         my_participation,
         created_at: plan.created_at.clone(),
         updated_at: plan.updated_at.clone(),
@@ -3156,13 +3247,18 @@ fn fallback_robot_group_buy_snapshot_name(value: &str) -> String {
 }
 
 /// 查询合买发起人的头像地址，机器人计划允许使用已配置的机器人用户头像。
-fn user_group_buy_initiator_avatar_url(plan: &GroupBuyPlan, users: &[UserSummary]) -> String {
-    users
+fn user_group_buy_initiator_avatar_url(
+    plan: &GroupBuyPlan,
+    users: &[UserSummary],
+    default_avatar_url: Option<&str>,
+) -> String {
+    let avatar_url = users
         .iter()
         .find(|user| user.id == plan.initiator_user_id)
         .map(|user| user.avatar_url.trim().to_string())
         .filter(|avatar_url| !avatar_url.is_empty())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    avatar_url_with_default(&avatar_url, default_avatar_url)
 }
 
 /// 对合买大厅发起人名称做隐私脱敏，保留前四个字符并用星号替代剩余内容。
@@ -3490,7 +3586,8 @@ async fn list_chat_hall_messages(
     State(state): State<AppState>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<ChatHallMessage>>>> {
     let messages = state.chat_hall.list().await?;
-    let messages = public_chat_hall_messages(messages);
+    let default_avatar_url = default_avatar_url_from_state(&state).await?;
+    let messages = public_chat_hall_messages(messages, default_avatar_url.as_deref());
 
     Ok(Json(ApiEnvelope::success(messages)))
 }
@@ -3513,7 +3610,8 @@ async fn send_chat_hall_message(
 ) -> ApiResult<Json<ApiEnvelope<ChatHallMessage>>> {
     ensure_chat_hall_speaking_allowed(&state, &session.user.id).await?;
     let message = state.chat_hall.send(&session.user, payload).await?;
-    let message = public_chat_hall_message(message);
+    let default_avatar_url = default_avatar_url_from_state(&state).await?;
+    let message = public_chat_hall_message(message, default_avatar_url.as_deref());
     state
         .realtime
         .publish_public(chat_hall_message_created_event(&message));
@@ -3532,7 +3630,8 @@ async fn send_chat_hall_red_packet(
         .chat_hall
         .send_red_packet(&state.finance, &session.user, payload)
         .await?;
-    let message = public_chat_hall_message(message);
+    let default_avatar_url = default_avatar_url_from_state(&state).await?;
+    let message = public_chat_hall_message(message, default_avatar_url.as_deref());
     state
         .realtime
         .publish_public(chat_hall_message_created_event(&message));
@@ -3560,7 +3659,8 @@ async fn claim_chat_hall_red_packet(
         .chat_hall
         .claim_red_packet(&state.finance, &session.user, &id)
         .await?;
-    let response = public_chat_hall_claim_response(response);
+    let default_avatar_url = default_avatar_url_from_state(&state).await?;
+    let response = public_chat_hall_claim_response(response, default_avatar_url.as_deref());
     state
         .realtime
         .publish_public(chat_hall_message_created_event(&response.message));
@@ -3608,12 +3708,14 @@ async fn share_chat_hall_group_buy_plan(
     }
     let lotteries = state.lotteries.list().await?;
     let access = state.access.snapshot().await?;
-    let plan_summary = user_group_buy_plan_from_record(
+    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
+    let plan_summary = user_group_buy_plan_from_record_with_default_avatar(
         &plan,
         &lotteries,
         Some(&session.user.id),
         &access.users,
         false,
+        default_avatar_url.as_deref(),
     )?;
     let message = state
         .chat_hall
@@ -3635,7 +3737,7 @@ async fn share_chat_hall_group_buy_plan(
             },
         )
         .await?;
-    let message = public_chat_hall_message(message);
+    let message = public_chat_hall_message(message, default_avatar_url.as_deref());
     state
         .realtime
         .publish_public(chat_hall_message_created_event(&message));
@@ -3738,21 +3840,32 @@ fn chat_hall_message_payload_string(message: &ChatHallMessage, key: &str) -> Opt
 }
 
 /// 将聊天大厅历史消息转换成用户端公开数据，避免公开暴露完整用户名。
-fn public_chat_hall_messages(messages: Vec<ChatHallMessage>) -> Vec<ChatHallMessage> {
-    messages.into_iter().map(public_chat_hall_message).collect()
+fn public_chat_hall_messages(
+    messages: Vec<ChatHallMessage>,
+    default_avatar_url: Option<&str>,
+) -> Vec<ChatHallMessage> {
+    messages
+        .into_iter()
+        .map(|message| public_chat_hall_message(message, default_avatar_url))
+        .collect()
 }
 
 /// 将聊天大厅消息中的用户名做公开展示脱敏，保留数据库中的原始用户名不变。
-fn public_chat_hall_message(mut message: ChatHallMessage) -> ChatHallMessage {
+fn public_chat_hall_message(
+    mut message: ChatHallMessage,
+    default_avatar_url: Option<&str>,
+) -> ChatHallMessage {
     message.username = mask_public_chat_hall_username(&message.username);
+    message.avatar_url = avatar_url_with_default(&message.avatar_url, default_avatar_url);
     message
 }
 
 /// 将红包领取响应转换成用户端公开数据，消息和领取人都统一脱敏。
 fn public_chat_hall_claim_response(
     mut response: ClaimChatHallRedPacketResponse,
+    default_avatar_url: Option<&str>,
 ) -> ClaimChatHallRedPacketResponse {
-    response.message = public_chat_hall_message(response.message);
+    response.message = public_chat_hall_message(response.message, default_avatar_url);
     response.claim.username = mask_public_chat_hall_username(&response.claim.username);
     response
 }
@@ -4521,17 +4634,24 @@ mod tests {
             ChatHallMessageType, ChatHallRedPacketClaim, ChatHallRedPacketClaimsResponse,
         };
 
-        let message = public_chat_hall_message(ChatHallMessage {
-            id: "CHM-000000000001".to_string(),
-            user_id: "U10001".to_string(),
-            username: "爱情819281".to_string(),
-            avatar_url: String::new(),
-            content: "大家好".to_string(),
-            message_type: ChatHallMessageType::Text,
-            payload: None,
-            created_at: "2026-06-21 18:00:00".to_string(),
-        });
+        let message = public_chat_hall_message(
+            ChatHallMessage {
+                id: "CHM-000000000001".to_string(),
+                user_id: "U10001".to_string(),
+                username: "爱情819281".to_string(),
+                avatar_url: String::new(),
+                content: "大家好".to_string(),
+                message_type: ChatHallMessageType::Text,
+                payload: None,
+                created_at: "2026-06-21 18:00:00".to_string(),
+            },
+            Some("https://cdn.example.com/default-avatar.png"),
+        );
         assert_eq!(message.username, "爱情81****");
+        assert_eq!(
+            message.avatar_url,
+            "https://cdn.example.com/default-avatar.png"
+        );
 
         let claims = public_chat_hall_red_packet_claims_response(ChatHallRedPacketClaimsResponse {
             red_packet_id: "CHRP-000000000001".to_string(),
@@ -4600,6 +4720,11 @@ mod tests {
                 description: "手机端站点 Logo 图片链接".to_string(),
             },
             SystemSetting {
+                key: "mobile_default_avatar_url".to_string(),
+                value: "未配置".to_string(),
+                description: "默认头像图片链接".to_string(),
+            },
+            SystemSetting {
                 key: "mobile_site_intro".to_string(),
                 value: "欢迎语".to_string(),
                 description: "手机端站点介绍".to_string(),
@@ -4610,17 +4735,25 @@ mod tests {
 
         assert_eq!(config.platform_name, "测试平台");
         assert_eq!(config.logo_image_url, None);
+        assert_eq!(config.default_avatar_url, None);
         assert_eq!(config.intro, "欢迎语");
     }
 
     #[test]
-    /// 验证手机端公开配置能返回真实 Logo 图片链接。
-    fn mobile_site_config_returns_logo_url() {
-        let settings = vec![SystemSetting {
-            key: "mobile_logo_image_url".to_string(),
-            value: "https://example.com/logo.png".to_string(),
-            description: "手机端站点 Logo 图片链接".to_string(),
-        }];
+    /// 验证手机端公开配置能返回真实 Logo 和默认头像图片链接。
+    fn mobile_site_config_returns_image_urls() {
+        let settings = vec![
+            SystemSetting {
+                key: "mobile_logo_image_url".to_string(),
+                value: "https://example.com/logo.png".to_string(),
+                description: "手机端站点 Logo 图片链接".to_string(),
+            },
+            SystemSetting {
+                key: "mobile_default_avatar_url".to_string(),
+                value: "https://example.com/default-avatar.png".to_string(),
+                description: "默认头像图片链接".to_string(),
+            },
+        ];
 
         let config = mobile_site_config_from_settings(&settings);
 
@@ -4628,6 +4761,10 @@ mod tests {
         assert_eq!(
             config.logo_image_url,
             Some("https://example.com/logo.png".to_string())
+        );
+        assert_eq!(
+            config.default_avatar_url,
+            Some("https://example.com/default-avatar.png".to_string())
         );
         assert!(!config.intro.is_empty());
     }
@@ -4843,6 +4980,53 @@ mod tests {
         assert_eq!(
             robot_view.initiator_avatar_url,
             "https://cdn.example.com/avatar.png"
+        );
+    }
+
+    #[test]
+    /// 验证普通用户和机器人合买发起人没有头像时会使用后台默认头像。
+    fn user_group_buy_plan_uses_default_initiator_avatar() {
+        let lotteries = vec![test_group_buy_lottery()];
+        let user = test_invitation_user("U90001", "regular_user", UserKind::Regular, None);
+        let plan = test_group_buy_plan(
+            "G-USER-DEFAULT-AVATAR-001",
+            "20260605200000",
+            "regular_user",
+            "用户发起合买",
+        );
+        let robot_plan = test_group_buy_plan(
+            "G-ROBOT-R-BUY-001-SSC60-20260605200000",
+            "20260605200000",
+            "agent_alpha",
+            "合买机器人 20260605200000",
+        );
+
+        let view = user_group_buy_plan_with_default_avatar(
+            &plan,
+            &lotteries,
+            None,
+            &[user.clone()],
+            false,
+            Some("https://cdn.example.com/default-avatar.png"),
+        )
+        .expect("normal plan can map");
+        let robot_view = user_group_buy_plan_with_default_avatar(
+            &robot_plan,
+            &lotteries,
+            None,
+            &[user],
+            false,
+            Some("https://cdn.example.com/default-avatar.png"),
+        )
+        .expect("robot plan can map");
+
+        assert_eq!(
+            view.initiator_avatar_url,
+            "https://cdn.example.com/default-avatar.png"
+        );
+        assert_eq!(
+            robot_view.initiator_avatar_url,
+            "https://cdn.example.com/default-avatar.png"
         );
     }
 

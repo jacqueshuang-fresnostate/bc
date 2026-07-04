@@ -163,6 +163,7 @@ export type MobileUserProfile = UserSummary & {
 export type MobileSiteConfig = {
   platformName: string
   logoImageUrl?: string | null
+  defaultAvatarUrl?: string | null
   intro: string
 }
 

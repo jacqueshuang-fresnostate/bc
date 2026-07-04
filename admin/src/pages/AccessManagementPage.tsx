@@ -141,6 +141,7 @@ const ACCESS_SECTIONS: Array<{ key: AccessSection; label: string }> = [
 
 const MOBILE_PLATFORM_NAME_SETTING_KEY = 'mobile_platform_name';
 const MOBILE_LOGO_SETTING_KEY = 'mobile_logo_image_url';
+const MOBILE_DEFAULT_AVATAR_SETTING_KEY = 'mobile_default_avatar_url';
 const MOBILE_INTRO_SETTING_KEY = 'mobile_site_intro';
 const MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY = 'mobile_home_featured_enabled';
 const MOBILE_HOME_FEATURED_TITLE_SETTING_KEY = 'mobile_home_featured_title';
@@ -199,6 +200,7 @@ const UNCONFIGURED_SETTING_VALUE = '未配置';
 const MOBILE_CUSTOM_SETTING_KEYS = new Set([
   MOBILE_PLATFORM_NAME_SETTING_KEY,
   MOBILE_LOGO_SETTING_KEY,
+  MOBILE_DEFAULT_AVATAR_SETTING_KEY,
   MOBILE_INTRO_SETTING_KEY,
   MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY,
   MOBILE_HOME_FEATURED_TITLE_SETTING_KEY,
@@ -2676,6 +2678,11 @@ function MobileSettingsPanel({
     MOBILE_PLATFORM_NAME_SETTING_KEY,
   );
   const logoValue = draftSettingValue(settings, drafts, MOBILE_LOGO_SETTING_KEY);
+  const defaultAvatarValue = draftSettingValue(
+    settings,
+    drafts,
+    MOBILE_DEFAULT_AVATAR_SETTING_KEY,
+  );
   const introValue = draftSettingValue(settings, drafts, MOBILE_INTRO_SETTING_KEY);
   const featuredEnabledValue =
     draftSettingValue(settings, drafts, MOBILE_HOME_FEATURED_ENABLED_SETTING_KEY) || 'false';
@@ -2692,29 +2699,55 @@ function MobileSettingsPanel({
   const selectedFeaturedLotteryCodes = settingListValue(featuredLotteryCodesValue);
   const logoImageUrl =
     logoValue && logoValue !== UNCONFIGURED_SETTING_VALUE ? logoValue : '';
+  const defaultAvatarImageUrl =
+    defaultAvatarValue && defaultAvatarValue !== UNCONFIGURED_SETTING_VALUE
+      ? defaultAvatarValue
+      : '';
 
   return (
     <div className="rounded border border-slate-200 bg-slate-50 p-3">
       <PanelTitle icon={<Smartphone size={18} />} title="手机端展示配置" />
       <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <ImageUploadAvatar
-          clearLabel="清空 Logo"
-          description="建议上传清晰的方形或横向透明底图片，上传后点击右侧保存。"
-          disabled={saving}
-          errorTitle="手机端 Logo 上传失败"
-          failureMessage="上传失败"
-          imageUrl={logoImageUrl}
-          missingConfigLabels={imageBedMissingConfigs}
-          requireImageUrl
-          showResultPanel={false}
-          successMessage="Logo 上传成功，记得保存配置"
-          title="手机端 Logo 图片"
-          uploadFieldName={imageBedUploadField || 'file'}
-          uploadingText="正在上传手机端 Logo..."
-          warningTitle="图床配置不完整"
-          onClear={() => onDraftChange(MOBILE_LOGO_SETTING_KEY, UNCONFIGURED_SETTING_VALUE)}
-          onUploaded={(url) => onDraftChange(MOBILE_LOGO_SETTING_KEY, url)}
-        />
+        <div className="space-y-3">
+          <ImageUploadAvatar
+            clearLabel="清空 Logo"
+            description="建议上传清晰的方形或横向透明底图片，上传后点击右侧保存。"
+            disabled={saving}
+            errorTitle="手机端 Logo 上传失败"
+            failureMessage="上传失败"
+            imageUrl={logoImageUrl}
+            missingConfigLabels={imageBedMissingConfigs}
+            requireImageUrl
+            showResultPanel={false}
+            successMessage="Logo 上传成功，记得保存配置"
+            title="手机端 Logo 图片"
+            uploadFieldName={imageBedUploadField || 'file'}
+            uploadingText="正在上传手机端 Logo..."
+            warningTitle="图床配置不完整"
+            onClear={() => onDraftChange(MOBILE_LOGO_SETTING_KEY, UNCONFIGURED_SETTING_VALUE)}
+            onUploaded={(url) => onDraftChange(MOBILE_LOGO_SETTING_KEY, url)}
+          />
+          <ImageUploadAvatar
+            clearLabel="清空默认头像"
+            description="用户和机器人没有头像时使用，上传后点击右侧保存。"
+            disabled={saving}
+            errorTitle="默认头像上传失败"
+            failureMessage="上传失败"
+            imageUrl={defaultAvatarImageUrl}
+            missingConfigLabels={imageBedMissingConfigs}
+            requireImageUrl
+            showResultPanel={false}
+            successMessage="默认头像上传成功，记得保存配置"
+            title="默认头像图片"
+            uploadFieldName={imageBedUploadField || 'file'}
+            uploadingText="正在上传默认头像..."
+            warningTitle="图床配置不完整"
+            onClear={() =>
+              onDraftChange(MOBILE_DEFAULT_AVATAR_SETTING_KEY, UNCONFIGURED_SETTING_VALUE)
+            }
+            onUploaded={(url) => onDraftChange(MOBILE_DEFAULT_AVATAR_SETTING_KEY, url)}
+          />
+        </div>
 
         <div className="grid content-start gap-3">
           <div className="rounded border border-slate-200 bg-white p-3">
@@ -2761,6 +2794,31 @@ function MobileSettingsPanel({
                 onClick={() => onSaveSetting(MOBILE_LOGO_SETTING_KEY)}
               >
                 保存 Logo
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded border border-slate-200 bg-white p-3">
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-ink">
+              <ImageIcon size={16} />
+              默认头像链接
+            </div>
+            <Input
+              className="form-input"
+              placeholder="上传或粘贴默认头像图片链接"
+              value={defaultAvatarValue}
+              onChange={(value) =>
+                onDraftChange(MOBILE_DEFAULT_AVATAR_SETTING_KEY, value)
+              }
+            />
+            <div className="mt-2 flex justify-end">
+              <Button
+                disabled={saving}
+                icon={<Save size={16} />}
+                size="small"
+                onClick={() => onSaveSetting(MOBILE_DEFAULT_AVATAR_SETTING_KEY)}
+              >
+                保存头像
               </Button>
             </div>
           </div>
