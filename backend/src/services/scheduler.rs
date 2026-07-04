@@ -54,11 +54,13 @@ use crate::{
     },
 };
 
-const DEFAULT_SCHEDULER_INTERVAL_SECONDS: u64 = 60;
-const DEFAULT_FUTURE_ISSUE_COUNT: u32 = 1;
+const DEFAULT_SCHEDULER_INTERVAL_SECONDS: u64 = 2;
+const DEFAULT_FUTURE_ISSUE_COUNT: u32 = 3;
 const DEFAULT_LOCAL_ISSUE_GENERATION_CONCURRENCY: u32 = 4;
 const DEFAULT_API_ISSUE_GENERATION_CONCURRENCY: u32 = 8;
 const DISABLED_SCHEDULER_POLL_SECONDS: u64 = 1;
+const DRAW_DUE_POLL_SECONDS: u64 = 1;
+const DRAW_SCHEDULER_BACKGROUND_PHASE_TIMEOUT_SECONDS: u64 = 120;
 const MAX_SCHEDULER_HISTORY: usize = 20;
 const MAX_FUTURE_ISSUE_COUNT: u32 = 50;
 const MAX_ISSUE_GENERATION_CONCURRENCY: u32 = 32;
@@ -214,7 +216,7 @@ struct DrawSchedulerStore {
     runs: VecDeque<DrawSchedulerRunRecord>,
 }
 
-/// 调度器默认配置，初始关闭并保留最小未来期号缓冲。
+/// 调度器默认配置，初始关闭并保留短周期补期和多期未来缓冲。
 impl Default for DrawSchedulerConfig {
     /// 返回默认配置。
     fn default() -> Self {
@@ -793,220 +795,263 @@ pub fn spawn_draw_scheduler(
             redis.clone(),
         );
     }
+    let due_poll_loop = run_due_draw_poll_loop(
+        access.clone(),
+        draws.clone(),
+        lotteries.clone(),
+        orders.clone(),
+        finance.clone(),
+        group_buys.clone(),
+        robots.clone(),
+        realtime.clone(),
+        redis.clone(),
+        config.clone(),
+        scheduler.clone(),
+        due_phase_lock,
+    );
     tokio::spawn(async move {
-        let mut next_run_at = tokio::time::Instant::now();
-        loop {
-            let wait_duration = next_run_at.saturating_duration_since(tokio::time::Instant::now());
-            if !wait_duration.is_zero() {
-                tokio::time::sleep(wait_duration).await;
-            }
-
-            let started_at = current_scheduler_timestamp();
-            let now = started_at.clone();
-            let current_config = match scheduler.config() {
-                Ok(current_config) => current_config,
-                Err(error) => {
-                    tracing::error!(error = %error.log_message(), "开奖调度器配置读取失败");
-                    config.clone()
+        let opening_loop = async move {
+            let mut next_run_at = tokio::time::Instant::now();
+            loop {
+                let wait_duration =
+                    next_run_at.saturating_duration_since(tokio::time::Instant::now());
+                if !wait_duration.is_zero() {
+                    tokio::time::sleep(wait_duration).await;
                 }
-            };
 
-            if !current_config.enabled {
-                // tracing::debug!("开奖调度器因配置禁用跳过本轮执行");
-                tokio::time::sleep(Duration::from_secs(DISABLED_SCHEDULER_POLL_SECONDS)).await;
-                next_run_at = tokio::time::Instant::now();
-                continue;
-            }
-
-            let interval = Duration::from_secs(current_config.interval_seconds.max(1));
-            next_run_at += interval;
-            let run_started = Instant::now();
-
-            match run_draw_scheduler_fast_opening_once_with_realtime(
-                &draws,
-                &lotteries,
-                &current_config,
-                now.clone(),
-                Some(&realtime),
-            )
-            .await
-            {
-                Ok(opening) => {
-                    let run = opening.run;
-                    let pending_api_generations = opening.pending_api_generations;
-                    let pending_api_generation_count = pending_api_generations.len();
-                    publish_scheduler_completion_events(&realtime, &finance, &run).await;
-                    let run_elapsed_ms = run_started.elapsed().as_millis();
-                    let finished_at = current_scheduler_timestamp();
-                    if let Err(error) = scheduler
-                        .record_success(
-                            DrawSchedulerRunTrigger::Automatic,
-                            started_at,
-                            finished_at,
-                            &run,
-                        )
-                        .await
-                    {
-                        tracing::error!(error = %error.log_message(), "开奖调度器历史记录写入失败");
+                let started_at = current_scheduler_timestamp();
+                let now = started_at.clone();
+                let current_config = match scheduler.config() {
+                    Ok(current_config) => current_config,
+                    Err(error) => {
+                        tracing::error!(error = %error.log_message(), "开奖调度器配置读取失败");
+                        config.clone()
                     }
+                };
 
-                    if pending_api_generation_count > 0 {
-                        let api_lock = api_generation_lock.clone();
-                        let draws = draws.clone();
-                        let realtime = realtime.clone();
-                        let current_config = current_config.clone();
-                        let api_now = now.clone();
-                        tokio::spawn(async move {
-                            let Ok(_guard) = api_lock.try_lock() else {
-                                tracing::warn!(
-                                    now = %api_now,
-                                    pending_lottery_count = pending_api_generations.len(),
-                                    "上一轮 API 彩种补期仍在执行，本轮跳过 API 补期以避免阻塞开奖"
-                                );
-                                return;
-                            };
-                            let api_started = Instant::now();
-                            match tokio::time::timeout(
-                                Duration::from_secs(120),
-                                run_draw_scheduler_api_generation_once_with_realtime(
-                                    &draws,
-                                    &current_config,
-                                    api_now.clone(),
-                                    Some(&realtime),
-                                    pending_api_generations,
-                                ),
+                if !current_config.enabled {
+                    // tracing::debug!("开奖调度器因配置禁用跳过本轮执行");
+                    tokio::time::sleep(Duration::from_secs(DISABLED_SCHEDULER_POLL_SECONDS)).await;
+                    next_run_at = tokio::time::Instant::now();
+                    continue;
+                }
+
+                let interval = Duration::from_secs(current_config.interval_seconds.max(1));
+                next_run_at += interval;
+                let run_started = Instant::now();
+
+                match run_draw_scheduler_fast_opening_once_with_realtime(
+                    &draws,
+                    &lotteries,
+                    &current_config,
+                    now.clone(),
+                    Some(&realtime),
+                )
+                .await
+                {
+                    Ok(opening) => {
+                        let run = opening.run;
+                        let pending_api_generations = opening.pending_api_generations;
+                        let pending_api_generation_count = pending_api_generations.len();
+                        publish_scheduler_completion_events(&realtime, &finance, &run).await;
+                        let run_elapsed_ms = run_started.elapsed().as_millis();
+                        let finished_at = current_scheduler_timestamp();
+                        if let Err(error) = scheduler
+                            .record_success(
+                                DrawSchedulerRunTrigger::Automatic,
+                                started_at,
+                                finished_at,
+                                &run,
                             )
                             .await
-                            {
-                                Ok(Ok((generated_issues, skipped_lotteries))) => {
-                                    tracing::info!(
+                        {
+                            tracing::error!(error = %error.log_message(), "开奖调度器历史记录写入失败");
+                        }
+
+                        if pending_api_generation_count > 0 {
+                            let api_lock = api_generation_lock.clone();
+                            let draws = draws.clone();
+                            let realtime = realtime.clone();
+                            let current_config = current_config.clone();
+                            let api_now = now.clone();
+                            tokio::spawn(async move {
+                                let Ok(_guard) = api_lock.try_lock() else {
+                                    tracing::warn!(
+                                        now = %api_now,
+                                        pending_lottery_count = pending_api_generations.len(),
+                                        "上一轮 API 彩种补期仍在执行，本轮跳过 API 补期以避免阻塞开奖"
+                                    );
+                                    return;
+                                };
+                                let api_started = Instant::now();
+                                match tokio::time::timeout(
+                                    Duration::from_secs(
+                                        DRAW_SCHEDULER_BACKGROUND_PHASE_TIMEOUT_SECONDS,
+                                    ),
+                                    run_draw_scheduler_api_generation_once_with_realtime(
+                                        &draws,
+                                        &current_config,
+                                        api_now.clone(),
+                                        Some(&realtime),
+                                        pending_api_generations,
+                                    ),
+                                )
+                                .await
+                                {
+                                    Ok(Ok((generated_issues, skipped_lotteries))) => {
+                                        tracing::info!(
+                                            now = %api_now,
+                                            "API补期耗时毫秒" = api_started.elapsed().as_millis(),
+                                            "API新增期号" = generated_issues.len(),
+                                            "API跳过彩种" = skipped_lotteries.len(),
+                                            "API 彩种补期后台任务完成"
+                                        );
+                                    }
+                                    Ok(Err(error)) => tracing::error!(
                                         now = %api_now,
                                         "API补期耗时毫秒" = api_started.elapsed().as_millis(),
-                                        "API新增期号" = generated_issues.len(),
-                                        "API跳过彩种" = skipped_lotteries.len(),
-                                        "API 彩种补期后台任务完成"
-                                    );
+                                        error = %error.log_message(),
+                                        "API 彩种补期后台任务失败"
+                                    ),
+                                    Err(_) => tracing::error!(
+                                        now = %api_now,
+                                        "API补期耗时毫秒" = api_started.elapsed().as_millis(),
+                                        "API 彩种补期后台任务超时（120秒）"
+                                    ),
                                 }
-                                Ok(Err(error)) => tracing::error!(
-                                    now = %api_now,
-                                    "API补期耗时毫秒" = api_started.elapsed().as_millis(),
-                                    error = %error.log_message(),
-                                    "API 彩种补期后台任务失败"
-                                ),
-                                Err(_) => tracing::error!(
-                                    now = %api_now,
-                                    "API补期耗时毫秒" = api_started.elapsed().as_millis(),
-                                    "API 彩种补期后台任务超时（120秒）"
-                                ),
-                            }
-                        });
-                    }
-
-                    tracing::debug!(
-                        "当前时间" = %run.now,
-                        "本轮耗时毫秒" = run_elapsed_ms,
-                        "封盘期数" = run.automation_run.closed_issues.len(),
-                        "非API新增期号" = run.generated_issues.len(),
-                        "待后台API补期彩种" = pending_api_generation_count,
-                        "开奖调度器快阶段完成，已排队到期开奖"
-                    );
-
-                    // 到期开奖阶段：在独立 spawn 中执行，但忙时不堆积旧时间任务。
-                    // 下一次成功获取锁时会用最新时间重扫全部到期期号，避免开奖越排越慢。
-                    let due_lock = due_phase_lock.clone();
-                    let draws = draws.clone();
-                    let lotteries = lotteries.clone();
-                    let orders = orders.clone();
-                    let finance = finance.clone();
-                    let group_buys = group_buys.clone();
-                    let robots = robots.clone();
-                    let access = access.clone();
-                    let realtime = realtime.clone();
-                    let redis = redis.clone();
-                    let current_config = current_config.clone();
-                    let due_now = now.clone();
-                    tokio::spawn(async move {
-                        let Ok(_guard) = due_lock.try_lock() else {
-                            tracing::warn!(
-                                now = %due_now,
-                                "上一轮到期开奖仍在执行，本轮不再排队旧时间任务"
-                            );
-                            return;
-                        };
-                        let due_now = current_scheduler_timestamp();
-                        let due_started = Instant::now();
-                        // 设置 120 秒超时，防止兜底补满或开奖结算卡死导致锁永久泄漏
-                        let due_result = tokio::time::timeout(
-                            Duration::from_secs(120),
-                            run_draw_scheduler_due_once_with_realtime_and_settlement_queue(
-                                &draws,
-                                &lotteries,
-                                &orders,
-                                &finance,
-                                &group_buys,
-                                &robots,
-                                &access,
-                                &current_config,
-                                due_now.clone(),
-                                Some(&realtime),
-                                Some(&redis),
-                            ),
-                        )
-                        .await;
-                        match due_result {
-                            Ok(Ok(_due_run)) => {}
-                            Ok(Err(error)) => tracing::error!(
-                                now = %due_now,
-                                "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
-                                error = %error.log_message(),
-                                "开奖调度器到期开奖后台任务失败"
-                            ),
-                            Err(_) => {
-                                tracing::error!(
-                                    now = %due_now,
-                                    "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
-                                    "开奖调度器到期开奖阶段超时（120秒），强制释放锁"
-                                );
-                            }
+                            });
                         }
-                    });
-                }
-                Err(error) => {
-                    let run_elapsed_ms = run_started.elapsed().as_millis();
-                    let finished_at = current_scheduler_timestamp();
-                    if let Err(record_error) = scheduler
-                        .record_failure(
-                            DrawSchedulerRunTrigger::Automatic,
-                            started_at,
-                            finished_at,
-                            now.clone(),
-                            error.to_string(),
-                        )
-                        .await
-                    {
-                        tracing::error!(
-                            error = %record_error.log_message(),
-                            "开奖调度器历史记录写入失败"
+
+                        tracing::debug!(
+                            "当前时间" = %run.now,
+                            "本轮耗时毫秒" = run_elapsed_ms,
+                            "封盘期数" = run.automation_run.closed_issues.len(),
+                            "非API新增期号" = run.generated_issues.len(),
+                            "待后台API补期彩种" = pending_api_generation_count,
+                            "开奖调度器快阶段完成，到期开奖由独立秒级检查处理"
                         );
                     }
+                    Err(error) => {
+                        let run_elapsed_ms = run_started.elapsed().as_millis();
+                        let finished_at = current_scheduler_timestamp();
+                        if let Err(record_error) = scheduler
+                            .record_failure(
+                                DrawSchedulerRunTrigger::Automatic,
+                                started_at,
+                                finished_at,
+                                now.clone(),
+                                error.to_string(),
+                            )
+                            .await
+                        {
+                            tracing::error!(
+                                error = %record_error.log_message(),
+                                "开奖调度器历史记录写入失败"
+                            );
+                        }
+                        tracing::error!(
+                            %now,
+                            "本轮耗时毫秒" = run_elapsed_ms,
+                            error = %error.log_message(),
+                            "开奖调度器本轮执行失败"
+                        );
+                    }
+                }
+
+                if next_run_at <= tokio::time::Instant::now() {
+                    tracing::warn!(
+                        interval_seconds = current_config.interval_seconds,
+                        "开奖调度器本轮耗时超过调度周期，下一轮将立即追赶执行"
+                    );
+                    next_run_at = tokio::time::Instant::now();
+                }
+            }
+        };
+        tokio::select! {
+            _ = opening_loop => {},
+            _ = due_poll_loop => {},
+        }
+    })
+}
+
+/// 秒级检查到期开奖，避免已封盘期号继续等待主调度周期。
+async fn run_due_draw_poll_loop(
+    access: AccessRepository,
+    draws: DrawRepository,
+    lotteries: LotteryRepository,
+    orders: OrderRepository,
+    finance: FinanceRepository,
+    group_buys: GroupBuyRepository,
+    robots: RobotRepository,
+    realtime: RealtimeHub,
+    redis: RedisRuntime,
+    fallback_config: DrawSchedulerConfig,
+    scheduler: DrawSchedulerRepository,
+    due_phase_lock: Arc<AsyncMutex<()>>,
+) {
+    loop {
+        let current_config = match scheduler.config() {
+            Ok(current_config) => current_config,
+            Err(error) => {
+                tracing::error!(error = %error.log_message(), "开奖调度器到期检查配置读取失败");
+                fallback_config.clone()
+            }
+        };
+
+        if !current_config.enabled {
+            tokio::time::sleep(Duration::from_secs(DISABLED_SCHEDULER_POLL_SECONDS)).await;
+            continue;
+        }
+
+        {
+            let due_check_at = current_scheduler_timestamp();
+            let Ok(_guard) = due_phase_lock.try_lock() else {
+                tracing::debug!(
+                    now = %due_check_at,
+                    "上一轮到期开奖仍在执行，本轮秒级检查跳过"
+                );
+                tokio::time::sleep(Duration::from_secs(DRAW_DUE_POLL_SECONDS)).await;
+                continue;
+            };
+            let due_now = current_scheduler_timestamp();
+            let due_started = Instant::now();
+            let due_result = tokio::time::timeout(
+                Duration::from_secs(DRAW_SCHEDULER_BACKGROUND_PHASE_TIMEOUT_SECONDS),
+                run_draw_scheduler_due_once_with_realtime_and_settlement_queue(
+                    &draws,
+                    &lotteries,
+                    &orders,
+                    &finance,
+                    &group_buys,
+                    &robots,
+                    &access,
+                    &current_config,
+                    due_now.clone(),
+                    Some(&realtime),
+                    Some(&redis),
+                ),
+            )
+            .await;
+            match due_result {
+                Ok(Ok(_due_run)) => {}
+                Ok(Err(error)) => tracing::error!(
+                    now = %due_now,
+                    "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
+                    error = %error.log_message(),
+                    "开奖调度器秒级到期开奖失败"
+                ),
+                Err(_) => {
                     tracing::error!(
-                        %now,
-                        "本轮耗时毫秒" = run_elapsed_ms,
-                        error = %error.log_message(),
-                        "开奖调度器本轮执行失败"
+                        now = %due_now,
+                        "到期开奖耗时毫秒" = due_started.elapsed().as_millis(),
+                        "开奖调度器秒级到期开奖超时（120秒），本轮已释放锁"
                     );
                 }
             }
-
-            if next_run_at <= tokio::time::Instant::now() {
-                tracing::warn!(
-                    interval_seconds = current_config.interval_seconds,
-                    "开奖调度器本轮耗时超过调度周期，下一轮将立即追赶执行"
-                );
-                next_run_at = tokio::time::Instant::now();
-            }
         }
-    })
+
+        tokio::time::sleep(Duration::from_secs(DRAW_DUE_POLL_SECONDS)).await;
+    }
 }
 
 /// 启动 Redis 开奖结算队列消费者，避免主调度线程等待派奖慢链路。
@@ -1522,17 +1567,33 @@ async fn run_draw_scheduler_due_once_with_realtime_and_settlement_queue(
         publish_robot_realtime_events(realtime, finance, &run.robot_run).await;
     }
 
-    tracing::warn!(
-        "当前时间 " = %run.now,
-        "封盘流单退款耗时毫秒" = refund_phase_ms,
-        "开奖结算耗时毫秒" = draw_phase_ms,
-        "流单前兜底耗时毫秒" = guard_phase_ms,
-        "开奖期数" = run.automation_run.drawn_issues.len(),
-        "结算批次" = run.automation_run.settlement_runs.len(),
-        "入账笔数" = run.automation_run.ledger_entries.len(),
-        "兜底满单" = run.robot_run.filled_plans.len(),
-        "开奖调度器到期开奖阶段完成"
-    );
+    let has_due_activity = !run.automation_run.closed_issues.is_empty()
+        || !run.automation_run.drawn_issues.is_empty()
+        || !run.automation_run.settlement_runs.is_empty()
+        || !run.automation_run.ledger_entries.is_empty()
+        || !run.robot_run.filled_plans.is_empty();
+    if has_due_activity {
+        tracing::info!(
+            "当前时间" = %run.now,
+            "封盘流单退款耗时毫秒" = refund_phase_ms,
+            "开奖结算耗时毫秒" = draw_phase_ms,
+            "流单前兜底耗时毫秒" = guard_phase_ms,
+            "封盘期数" = run.automation_run.closed_issues.len(),
+            "开奖期数" = run.automation_run.drawn_issues.len(),
+            "结算批次" = run.automation_run.settlement_runs.len(),
+            "入账笔数" = run.automation_run.ledger_entries.len(),
+            "兜底满单" = run.robot_run.filled_plans.len(),
+            "开奖调度器到期开奖阶段完成"
+        );
+    } else {
+        tracing::debug!(
+            "当前时间" = %run.now,
+            "封盘流单退款耗时毫秒" = refund_phase_ms,
+            "开奖结算耗时毫秒" = draw_phase_ms,
+            "流单前兜底耗时毫秒" = guard_phase_ms,
+            "开奖调度器到期开奖阶段无待处理期号"
+        );
+    }
 
     Ok(run)
 }
@@ -3315,8 +3376,9 @@ mod tests {
         let config = DrawSchedulerConfig::default();
 
         assert!(!config.enabled);
-        assert_eq!(config.interval_seconds, 60);
-        assert_eq!(config.future_issue_count, 1);
+        assert_eq!(config.interval_seconds, 2);
+        assert_eq!(config.future_issue_count, 3);
+        assert_eq!(super::DRAW_DUE_POLL_SECONDS, 1);
         assert_eq!(
             config.sale_close_lead_seconds,
             DEFAULT_SALE_CLOSE_LEAD_SECONDS

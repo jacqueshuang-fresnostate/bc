@@ -2362,7 +2362,7 @@ function SchedulerStatusSummary({
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2">
-        <ResultMetric label="执行周期" value={`${status.config.intervalSeconds} 秒`} />
+        <ResultMetric label="补期周期" value={`${status.config.intervalSeconds} 秒`} />
         <ResultMetric label="未来期号" value={`${status.config.futureIssueCount} 期`} />
         <ResultMetric
           label="封盘提前"
@@ -2436,7 +2436,7 @@ function SchedulerConfigForm({
             {form.enabled ? '已启用' : '已关闭'}
           </label>
         </Field>
-        <Field label="执行周期（秒）">
+        <Field label="补期周期（秒）">
           <Input
             className="form-input"
             min="1"
@@ -2706,8 +2706,8 @@ function emptySchedulerConfigForm(): SchedulerConfigFormState {
   return {
     apiIssueGenerationConcurrency: '8',
     enabled: false,
-    futureIssueCount: '1',
-    intervalSeconds: '60',
+    futureIssueCount: '3',
+    intervalSeconds: '2',
     localIssueGenerationConcurrency: '4',
     saleCloseLeadSeconds: '1',
   };
