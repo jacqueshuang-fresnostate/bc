@@ -80,6 +80,7 @@ interface AccessManagementPageProps {
 
 interface UserFormState {
   agentId: string;
+  avatarUrl: string;
   balanceMinor: string;
   contactQq: string;
   email: string;
@@ -399,6 +400,7 @@ export function AccessManagementPage({
     saveRole,
     saveSetting,
     saveUser,
+    saveUserAvatar,
     saveUserWithdrawalTurnover,
     saving,
     settings,
@@ -431,6 +433,17 @@ export function AccessManagementPage({
   const [roleForm, setRoleForm] = useState<RoleFormState>(() => emptyRoleForm());
   const [settingDrafts, setSettingDrafts] = useState<Record<string, string>>({});
   const [userForm, setUserForm] = useState<UserFormState>(() => emptyUserForm());
+  const imageBedUploadUrl = readSettingValue(settings, 'image_bed_upload_url');
+  const imageBedUploadToken = readSettingValue(settings, 'image_bed_authorization_token');
+  const imageBedUploadField =
+    (settingDrafts['image_bed_upload_field'] ?? '').trim() ||
+    readSettingValue(settings, 'image_bed_upload_field') ||
+    'file';
+  const imageBedMissingConfigs = [
+    imageBedUploadUrl.trim() ? null : '上传地址',
+    imageBedUploadToken.trim() ? null : 'Token',
+    imageBedUploadField.trim() ? null : '上传字段名',
+  ].filter(Boolean) as string[];
 
   useEffect(() => {
     setSection(sectionForModule(activeModuleKey));
@@ -494,7 +507,13 @@ export function AccessManagementPage({
   const isSettingsPage = section === 'settings';
 
   const submitUser = async () => {
+    const isEditing = Boolean(editingUserId);
+    const submittedAvatarUrl = normalizedAvatarFormValue(userForm.avatarUrl);
     let saved = await saveUser(userPayload(userForm), editingUserId ?? undefined);
+    if (isEditing && submittedAvatarUrl !== (saved.avatarUrl ?? '').trim()) {
+      saved = await saveUserAvatar(saved.id, { avatarUrl: submittedAvatarUrl });
+      Toast.success(submittedAvatarUrl ? '用户头像已保存' : '用户头像已清空');
+    }
     const password = userForm.password.trim();
     if (password) {
       saved = await resetUserLoginPassword(saved.id, { password });
@@ -656,6 +675,8 @@ export function AccessManagementPage({
         <UserSection
           editingId={editingUserId}
           form={userForm}
+          imageBedMissingConfigs={imageBedMissingConfigs}
+          imageBedUploadField={imageBedUploadField}
           agentOptions={agentOptions}
           agentFilter={userAgentFilter}
           loading={loading}
@@ -821,6 +842,8 @@ function UserSection({
   agentOptions,
   editingId,
   form,
+  imageBedMissingConfigs,
+  imageBedUploadField,
   includeRobotData,
   loading,
   onClose,
@@ -867,6 +890,8 @@ function UserSection({
   agentOptions: AdminUserSummary[];
   editingId: string | null;
   form: UserFormState;
+  imageBedMissingConfigs: string[];
+  imageBedUploadField: string;
   includeRobotData: boolean;
   loading: boolean;
   onClose: () => void;
@@ -1205,6 +1230,38 @@ function UserSection({
               }
             />
           </Field>
+          <div className="block text-sm font-medium text-slate-600">
+            <span className="mb-1 block">用户头像</span>
+            <ImageUploadAvatar
+              clearLabel="清空头像"
+              description="可上传图片或在下方粘贴 http/https 图片链接，保存后同步到用户资料。"
+              disabled={saving}
+              errorTitle="用户头像上传失败"
+              failureMessage="上传失败"
+              imageUrl={form.avatarUrl}
+              missingConfigLabels={imageBedMissingConfigs}
+              requireImageUrl
+              showResultPanel={false}
+              successMessage="头像上传成功，记得保存用户"
+              title="用户头像图片"
+              uploadFieldName={imageBedUploadField || 'file'}
+              uploadingText="正在上传用户头像..."
+              warningTitle="图床配置不完整"
+              onClear={() => setFormValue(onSetForm, 'avatarUrl', '')}
+              onUploaded={(url) => setFormValue(onSetForm, 'avatarUrl', url)}
+            />
+            <Input
+              className="form-input mt-2"
+              placeholder="https://example.com/avatar.png"
+              value={form.avatarUrl}
+              onChange={(value) =>
+                setFormValue(onSetForm, 'avatarUrl', value)
+              }
+            />
+            <span className="mt-1 block text-xs font-normal text-slate-400">
+              留空表示不单独配置头像，手机端会继续使用默认头像兜底。
+            </span>
+          </div>
           <Field label="联系方式 QQ">
             <Input
               className="form-input"
@@ -3791,6 +3848,7 @@ function emptyRegistrationLocation(): UserRegistrationLocation {
 function emptyUserForm(): UserFormState {
   return {
     agentId: '',
+    avatarUrl: '',
     balanceMinor: '0',
     contactQq: '',
     email: '',
@@ -3815,6 +3873,7 @@ function emptyWithdrawalTurnoverForm(): WithdrawalTurnoverFormState {
 function userFormFromSummary(user: UserSummary): UserFormState {
   return {
     agentId: user.agentId ?? '',
+    avatarUrl: user.avatarUrl ?? '',
     balanceMinor: `${user.balanceMinor}`,
     contactQq: user.contactQq ?? '',
     email: user.email ?? '',
@@ -3904,6 +3963,7 @@ function withdrawalTurnoverPreview(form: WithdrawalTurnoverFormState) {
 function userPayload(form: UserFormState): UserSummary {
   return {
     agentId: optionalText(form.agentId),
+    avatarUrl: normalizedAvatarFormValue(form.avatarUrl),
     balanceMinor: numberField(form.balanceMinor),
     contactQq: form.contactQq.trim(),
     email: optionalText(form.email),
@@ -3914,6 +3974,10 @@ function userPayload(form: UserFormState): UserSummary {
     status: form.status,
     username: form.username.trim(),
   };
+}
+
+function normalizedAvatarFormValue(value: string) {
+  return value.trim();
 }
 
 function registrationLocationLabel(location?: UserRegistrationLocation) {

@@ -199,6 +199,15 @@ const ROUTE_DOCS: &[RouteDoc] = &[
         RequestBodyKind::Json,
     ),
     doc(
+        "patch",
+        "/admin/users/{id}/avatar",
+        "用户管理",
+        "编辑用户头像",
+        "后台单独修改指定用户头像链接；空字符串表示清空头像，非空值必须是 http 或 https 链接。",
+        AuthMode::Admin,
+        RequestBodyKind::Json,
+    ),
+    doc(
         "get",
         "/admin/admins",
         "管理员管理",
@@ -2212,6 +2221,7 @@ mod tests {
         assert!(document["paths"]["/user/register-options"]["get"].is_object());
         assert!(document["paths"]["/admin/users/{id}/withdrawal-turnover"]["get"].is_object());
         assert!(document["paths"]["/admin/users/{id}/withdrawal-turnover"]["patch"].is_object());
+        assert!(document["paths"]["/admin/users/{id}/avatar"]["patch"].is_object());
         assert!(document["paths"]["/user/invitations/summary"]["get"].is_object());
         assert!(document["paths"]["/user/agent/application"]["get"].is_object());
         assert!(document["paths"]["/user/agent/application"]["post"].is_object());

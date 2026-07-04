@@ -69,8 +69,8 @@ use crate::{
         },
         user::{
             AdminPasswordResetRequest, AdminSaveRequest, AdminStatusRequest, AdminSummary,
-            RegistrationConfig, UserKind, UserPasswordResetRequest, UserStatus, UserStatusRequest,
-            UserSummary,
+            RegistrationConfig, UserAvatarRequest, UserKind, UserPasswordResetRequest, UserStatus,
+            UserStatusRequest, UserSummary,
         },
         withdrawal::{WithdrawalOrderStatus, WithdrawalOrderSummary},
     },
@@ -194,6 +194,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/users/{id}/withdrawal-turnover",
             get(get_user_withdrawal_turnover).patch(update_user_withdrawal_turnover),
         )
+        .route("/users/{id}/avatar", patch(update_user_avatar))
         .route("/users/{id}/password", patch(reset_user_password))
         .route("/users/{id}/status", patch(set_user_status))
         .route("/admins", get(list_admins).post(create_admin))
@@ -627,6 +628,12 @@ fn required_permission_for_request(method: &Method, path: &str) -> Option<&'stat
     if path.starts_with("users/") && path.ends_with("/withdrawal-turnover") {
         return match method.clone() {
             Method::GET => Some("user.read"),
+            Method::PATCH => Some("user.write"),
+            _ => None,
+        };
+    }
+    if path.starts_with("users/") && path.ends_with("/avatar") {
+        return match method.clone() {
             Method::PATCH => Some("user.write"),
             _ => None,
         };
@@ -3140,6 +3147,32 @@ async fn update_user(
     Json(payload): Json<UserSummary>,
 ) -> ApiResult<Json<ApiEnvelope<AdminUserSummary>>> {
     let user = state.access.update_user(&id, payload).await?;
+    let user = user_with_financial_balance_from_summary(&state, user).await?;
+    let user = admin_user_summary(&state, user).await?;
+
+    Ok(Json(ApiEnvelope::success(user)))
+}
+
+/// 后台单独修改用户头像，复用用户端头像校验并同步聊天大厅头像快照。
+async fn update_user_avatar(
+    State(state): State<AppState>,
+    Extension(session): Extension<AdminAuthSession>,
+    Path(id): Path<String>,
+    Json(payload): Json<UserAvatarRequest>,
+) -> ApiResult<Json<ApiEnvelope<AdminUserSummary>>> {
+    let user = state.access.update_user_avatar(&id, payload).await?;
+    state
+        .chat_hall
+        .update_user_avatar(&user.id, &user.avatar_url)
+        .await?;
+    tracing::info!(
+        admin_id = %session.admin.id,
+        admin_username = %session.admin.username,
+        user_id = %user.id,
+        username = %user.username,
+        has_avatar = !user.avatar_url.trim().is_empty(),
+        "后台已修改用户头像"
+    );
     let user = user_with_financial_balance_from_summary(&state, user).await?;
     let user = admin_user_summary(&state, user).await?;
 
@@ -5705,6 +5738,10 @@ mod tests {
         );
         assert_eq!(
             required_permission_for_request(&Method::PATCH, "/users/U10001/withdrawal-turnover"),
+            Some("user.write")
+        );
+        assert_eq!(
+            required_permission_for_request(&Method::PATCH, "/users/U10001/avatar"),
             Some("user.write")
         );
         assert_eq!(

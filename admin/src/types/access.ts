@@ -35,6 +35,10 @@ export interface UserPasswordResetRequest {
   password: string;
 }
 
+export interface UserAvatarRequest {
+  avatarUrl: string;
+}
+
 export interface UpdateSystemSettingRequest {
   value: string;
 }

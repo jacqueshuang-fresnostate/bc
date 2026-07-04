@@ -23,6 +23,7 @@ import {
   updateRole,
   updateSystemSetting,
   updateUser,
+  updateUserAvatar,
   updateUserWithdrawalTurnover,
 } from '../api/client';
 import type {
@@ -36,6 +37,7 @@ import type {
   SystemSetting,
   UserListQuery,
   UserPage,
+  UserAvatarRequest,
   UserPasswordResetRequest,
   UserStatus,
   UserSummary,
@@ -179,6 +181,25 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
       setError(null);
       try {
         const saved = await resetUserPassword(id, payload);
+        setUserPage((current) => replacePageUser(current, saved));
+        refresh();
+        return saved;
+      } catch (requestError) {
+        setError(errorMessage(requestError));
+        throw requestError;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refresh],
+  );
+
+  const saveUserAvatar = useCallback(
+    async (id: string, payload: UserAvatarRequest) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const saved = await updateUserAvatar(id, payload);
         setUserPage((current) => replacePageUser(current, saved));
         refresh();
         return saved;
@@ -390,6 +411,7 @@ export function useAccessManagement({ userQuery }: UseAccessManagementOptions) {
     saveRole,
     saveSetting,
     saveUser,
+    saveUserAvatar,
     saveUserWithdrawalTurnover,
     saving,
     settings,

@@ -18,6 +18,7 @@ import type {
   StatusUpdateRequest,
   SystemSetting,
   UpdateSystemSettingRequest,
+  UserAvatarRequest,
   UserPasswordResetRequest,
   UserListQuery,
   UserPage,
@@ -577,6 +578,13 @@ export function setUserStatus(id: string, payload: StatusUpdateRequest) {
 
 export function resetUserPassword(id: string, payload: UserPasswordResetRequest) {
   return requestJson<AdminUserSummary>(`/api/admin/users/${encodeURIComponent(id)}/password`, {
+    body: payload,
+    method: 'PATCH',
+  });
+}
+
+export function updateUserAvatar(id: string, payload: UserAvatarRequest) {
+  return requestJson<AdminUserSummary>(`/api/admin/users/${encodeURIComponent(id)}/avatar`, {
     body: payload,
     method: 'PATCH',
   });
