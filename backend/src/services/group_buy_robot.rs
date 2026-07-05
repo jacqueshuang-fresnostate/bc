@@ -464,7 +464,10 @@ pub async fn force_fill_group_buy_plans_before_refund(
         .filter(|issue| issue.sale_closed_at.as_str() <= now.as_str())
         .map(|issue| ((issue.lottery_id.clone(), issue.issue.clone()), issue))
         .collect::<BTreeMap<_, _>>();
-    let group_buy_plans = group_buys.list_details().await?;
+    let issue_keys = candidate_issues.keys().cloned().collect::<BTreeSet<_>>();
+    let group_buy_plans = group_buys
+        .list_guard_details_for_issue_keys(&issue_keys)
+        .await?;
     let candidate_plans = group_buy_plans
         .iter()
         .filter(|plan| {
@@ -903,28 +906,23 @@ async fn fill_existing_group_buy_plans(
     finance_lock: &RobotFinanceMutationLock,
     now_at: NaiveDateTime,
 ) -> ApiResult<()> {
-    let candidate_plans = group_buys
-        .list_details()
-        .await?
-        .into_iter()
+    let group_buy_plans = group_buys
+        .list_fillable_details_for_issue(&lottery.id, &issue.issue)
+        .await?;
+    let candidate_plans = group_buy_plans
+        .iter()
         .filter(|plan| {
-            plan.lottery_id == lottery.id
-                && plan.issue == issue.issue
-                && matches!(
-                    plan.status,
-                    GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open
-                )
-                && plan.filled_amount_minor < plan.total_amount_minor
+            matches!(
+                plan.status,
+                GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open
+            ) && plan.filled_amount_minor < plan.total_amount_minor
         })
+        .cloned()
         .collect::<Vec<_>>();
-    let filled_without_order_plans = group_buys
-        .list_details()
-        .await?
+    let filled_without_order_plans = group_buy_plans
         .into_iter()
         .filter(|plan| {
-            plan.lottery_id == lottery.id
-                && plan.issue == issue.issue
-                && plan.status == GroupBuyPlanStatus::Filled
+            plan.status == GroupBuyPlanStatus::Filled
                 && plan.order_id.is_none()
                 && plan.filled_amount_minor >= plan.total_amount_minor
         })

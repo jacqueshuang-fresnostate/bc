@@ -133,16 +133,63 @@ impl GroupBuyRepository {
         Ok(ListPage::from_all(plans, page))
     }
 
-    /// 返回完整计划列表，供用户端大厅按参与记录计算我的合买。
-    pub async fn list_details(&self) -> ApiResult<Vec<GroupBuyPlan>> {
+    /// 返回指定活跃期号里需要机器人兜底处理的合买计划，避免调度扫描全量历史合买。
+    pub async fn list_guard_details_for_issue_keys(
+        &self,
+        issue_keys: &BTreeSet<(String, String)>,
+    ) -> ApiResult<Vec<GroupBuyPlan>> {
+        if issue_keys.is_empty() {
+            return Ok(Vec::new());
+        }
         if let Some(persistence) = &self.persistence {
-            return query_group_buy_details(persistence).await;
+            return query_guard_group_buy_details_for_issue_keys(persistence, issue_keys).await;
         }
 
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))
-            .map(|store| store.list_details())
+            .map(|store| {
+                store
+                    .list_details()
+                    .into_iter()
+                    .filter(|plan| {
+                        issue_keys.contains(&(plan.lottery_id.clone(), plan.issue.clone()))
+                            && group_buy_plan_needs_runtime_guard(plan)
+                    })
+                    .collect()
+            })
+    }
+
+    /// 返回指定期号下补单机器人需要处理的合买计划，数据库模式只加载该期相关参与记录。
+    pub async fn list_fillable_details_for_issue(
+        &self,
+        lottery_id: &str,
+        issue: &str,
+    ) -> ApiResult<Vec<GroupBuyPlan>> {
+        let lottery_id = lottery_id.trim();
+        let issue = issue.trim();
+        if lottery_id.is_empty() || issue.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_fillable_group_buy_details_for_issue(persistence, lottery_id, issue)
+                .await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .list_details()
+                    .into_iter()
+                    .filter(|plan| {
+                        plan.lottery_id == lottery_id
+                            && plan.issue == issue
+                            && group_buy_plan_needs_runtime_guard(plan)
+                    })
+                    .collect()
+            })
     }
 
     /// 返回指定用户参与过的合买计划详情，避免用户端“我的合买/我的注单”扫描全部计划。
@@ -314,6 +361,14 @@ impl GroupBuyRepository {
 
     /// 按业务标识读取单条记录，未命中时返回未找到错误。
     pub async fn get(&self, id: &str) -> ApiResult<GroupBuyPlan> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err(ApiError::BadRequest("合买计划编号不能为空".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_group_buy_plan_by_id(persistence, id).await;
+        }
+
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
@@ -339,8 +394,27 @@ impl GroupBuyRepository {
         lotteries: &[LotteryKind],
         users: &[UserSummary],
     ) -> ApiResult<GroupBuyPlan> {
+        if self.persistence.is_some() {
+            return self.create_in_database(request, lotteries, users).await;
+        }
         self.mutate_and_persist(|store| store.create(request, lotteries, users))
             .await
+    }
+
+    /// PostgreSQL 模式下发起合买只构造新计划局部快照，避免克隆全量合买历史。
+    async fn create_in_database(
+        &self,
+        request: CreateGroupBuyPlanRequest,
+        lotteries: &[LotteryKind],
+        users: &[UserSummary],
+    ) -> ApiResult<GroupBuyPlan> {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let previous = GroupBuyStore::from_plans(Vec::new());
+        let mut snapshot = previous.clone();
+        let result = snapshot.create(request, lotteries, users)?;
+        self.persist_incremental(&previous, &snapshot).await?;
+        self.apply_persisted_plans(vec![result.clone()])?;
+        Ok(result)
     }
 
     /// 封盘时取消未满单的合买计划，返回需要退款的计划。
@@ -390,8 +464,28 @@ impl GroupBuyRepository {
         request: AddGroupBuyParticipantRequest,
         users: &[UserSummary],
     ) -> ApiResult<GroupBuyPlan> {
+        if self.persistence.is_some() {
+            return self.add_participant_in_database(id, request, users).await;
+        }
         self.mutate_and_persist(|store| store.add_participant(id, request, users))
             .await
+    }
+
+    /// PostgreSQL 模式下追加认购只加载当前计划局部快照，避免每次补单克隆全量历史。
+    async fn add_participant_in_database(
+        &self,
+        id: &str,
+        request: AddGroupBuyParticipantRequest,
+        users: &[UserSummary],
+    ) -> ApiResult<GroupBuyPlan> {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let previous_plan = self.get(id).await?;
+        let previous = GroupBuyStore::from_plans(vec![previous_plan]);
+        let mut snapshot = previous.clone();
+        let result = snapshot.add_participant(id, request, users)?;
+        self.persist_incremental(&previous, &snapshot).await?;
+        self.apply_persisted_plans(vec![result.clone()])?;
+        Ok(result)
     }
 
     /// 移除刚创建但尚未成功扣款的合买计划，用于业务回滚。
@@ -487,6 +581,18 @@ impl GroupBuyRepository {
             .inner
             .write()
             .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))? = store;
+        Ok(())
+    }
+
+    /// 把数据库事务已经更新的合买计划合并回运行时缓存，不替换其它未触达的计划。
+    pub(crate) fn apply_persisted_plans(&self, plans: Vec<GroupBuyPlan>) -> ApiResult<()> {
+        if plans.is_empty() {
+            return Ok(());
+        }
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
+            .apply_plans(plans);
         Ok(())
     }
 }
@@ -653,6 +759,17 @@ fn group_buy_plan_related_to_user(plan: &GroupBuyPlan, user_id: &str) -> bool {
             .any(|participant| participant.user_id == user_id)
 }
 
+/// 判断合买计划是否仍需要机器人运行时补满或补建订单。
+fn group_buy_plan_needs_runtime_guard(plan: &GroupBuyPlan) -> bool {
+    (matches!(
+        plan.status,
+        GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open
+    ) && plan.filled_amount_minor < plan.total_amount_minor)
+        || (plan.status == GroupBuyPlanStatus::Filled
+            && plan.order_id.is_none()
+            && plan.filled_amount_minor >= plan.total_amount_minor)
+}
+
 /// 数据库模式下分页读取合买摘要，避免后台合买列表先拉全量再裁剪。
 async fn query_group_buy_summary_page(
     database: &BusinessDatabase,
@@ -718,46 +835,51 @@ async fn query_group_buy_summary_page(
     Ok(ListPage::new(items, resolved))
 }
 
-/// 数据库模式下读取指定用户发起或参与过的合买计划，并只加载这些计划的参与人。
-/// 数据库模式下读取全部合买计划详情及参与人，供调度器强制满单扫描使用。
-async fn query_group_buy_details(database: &BusinessDatabase) -> ApiResult<Vec<GroupBuyPlan>> {
+/// 数据库模式下读取指定活跃期号里需要兜底补满或补建订单的合买计划。
+async fn query_guard_group_buy_details_for_issue_keys(
+    database: &BusinessDatabase,
+    issue_keys: &BTreeSet<(String, String)>,
+) -> ApiResult<Vec<GroupBuyPlan>> {
+    let lottery_ids = issue_keys
+        .iter()
+        .map(|(lottery_id, _)| lottery_id.clone())
+        .collect::<Vec<_>>();
+    let issues = issue_keys
+        .iter()
+        .map(|(_, issue)| issue.clone())
+        .collect::<Vec<_>>();
     let rows = sqlx::query(
-        "SELECT id, lottery_id, lottery_name, initiator_user_id, initiator_username,
-                order_id, issue, rule_code, title, numbers,
-                total_amount_minor, filled_amount_minor, min_share_amount_minor,
-                participant_min_amount_minor, share_count, status, note, created_at, updated_at
-         FROM group_buy_plans
-         ORDER BY issue DESC, created_at DESC, id DESC",
+        "WITH target_issues AS (
+             SELECT * FROM unnest($1::text[], $2::text[]) AS t(lottery_id, issue)
+         )
+         SELECT p.id, p.lottery_id, p.lottery_name, p.initiator_user_id, p.initiator_username,
+                p.order_id, p.issue, p.rule_code, p.title, p.numbers,
+                p.total_amount_minor, p.filled_amount_minor, p.min_share_amount_minor,
+                p.participant_min_amount_minor, p.share_count, p.status, p.note, p.created_at, p.updated_at
+         FROM group_buy_plans p
+         INNER JOIN target_issues t ON t.lottery_id = p.lottery_id AND t.issue = p.issue
+         WHERE (
+                 p.status IN ('draft', 'open')
+                 AND p.filled_amount_minor < p.total_amount_minor
+               )
+            OR (
+                 p.status = 'filled'
+                 AND p.order_id IS NULL
+                 AND p.filled_amount_minor >= p.total_amount_minor
+               )
+         ORDER BY p.issue DESC, p.created_at DESC, p.id DESC",
     )
+    .bind(&lottery_ids)
+    .bind(&issues)
     .fetch_all(database.pool())
     .await
-    .map_err(|_| ApiError::Internal("合买计划全量数据读取失败".to_string()))?;
+    .map_err(|_| ApiError::Internal("合买兜底计划数据读取失败".to_string()))?;
     let mut plans = rows
         .into_iter()
         .map(group_buy_plan_from_row)
         .map(|result| result.map(|plan| (plan.id.clone(), plan)))
         .collect::<ApiResult<BTreeMap<_, _>>>()?;
-    if plans.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let plan_ids = plans.keys().cloned().collect::<Vec<_>>();
-    let participant_rows = sqlx::query(
-        "SELECT id, plan_id, user_id, username, amount_minor, share_count, note, created_at
-         FROM group_buy_participants
-         WHERE plan_id = ANY($1)
-         ORDER BY plan_id ASC, id ASC",
-    )
-    .bind(&plan_ids)
-    .fetch_all(database.pool())
-    .await
-    .map_err(|_| ApiError::Internal("合买参与人全量数据读取失败".to_string()))?;
-    for row in participant_rows {
-        let participant = group_buy_participant_from_row(row)?;
-        if let Some(plan) = plans.get_mut(&participant.0) {
-            plan.participants.push(participant.1);
-        }
-    }
+    attach_participants_to_plans(database, &mut plans, "合买兜底参与人数据读取失败").await?;
 
     Ok(sorted_group_buy_plans(plans.values())
         .into_iter()
@@ -765,6 +887,52 @@ async fn query_group_buy_details(database: &BusinessDatabase) -> ApiResult<Vec<G
         .collect())
 }
 
+/// 数据库模式下读取指定期号里补单机器人需要处理的合买计划。
+async fn query_fillable_group_buy_details_for_issue(
+    database: &BusinessDatabase,
+    lottery_id: &str,
+    issue: &str,
+) -> ApiResult<Vec<GroupBuyPlan>> {
+    let rows = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, initiator_user_id, initiator_username,
+                order_id, issue, rule_code, title, numbers,
+                total_amount_minor, filled_amount_minor, min_share_amount_minor,
+                participant_min_amount_minor, share_count, status, note, created_at, updated_at
+         FROM group_buy_plans
+         WHERE lottery_id = $1
+           AND issue = $2
+           AND (
+                 (
+                   status IN ('draft', 'open')
+                   AND filled_amount_minor < total_amount_minor
+                 )
+              OR (
+                   status = 'filled'
+                   AND order_id IS NULL
+                   AND filled_amount_minor >= total_amount_minor
+                 )
+           )
+         ORDER BY created_at DESC, id DESC",
+    )
+    .bind(lottery_id)
+    .bind(issue)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("本期合买补单计划读取失败".to_string()))?;
+    let mut plans = rows
+        .into_iter()
+        .map(group_buy_plan_from_row)
+        .map(|result| result.map(|plan| (plan.id.clone(), plan)))
+        .collect::<ApiResult<BTreeMap<_, _>>>()?;
+    attach_participants_to_plans(database, &mut plans, "本期合买补单参与人数据读取失败").await?;
+
+    Ok(sorted_group_buy_plans(plans.values())
+        .into_iter()
+        .cloned()
+        .collect())
+}
+
+/// 数据库模式下读取指定用户发起或参与过的合买计划，并只加载这些计划的参与人。
 async fn query_group_buy_details_for_user(
     database: &BusinessDatabase,
     user_id: &str,
@@ -980,6 +1148,35 @@ async fn query_group_buy_plans_for_order_ids(
         .into_iter()
         .cloned()
         .collect())
+}
+
+/// 数据库模式下按计划 ID 读取合买详情，并加载参与记录。
+async fn query_group_buy_plan_by_id(
+    database: &BusinessDatabase,
+    id: &str,
+) -> ApiResult<GroupBuyPlan> {
+    let rows = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, initiator_user_id, initiator_username,
+                order_id, issue, rule_code, title, numbers,
+                total_amount_minor, filled_amount_minor, min_share_amount_minor,
+                participant_min_amount_minor, share_count, status, note, created_at, updated_at
+         FROM group_buy_plans
+         WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("合买计划详情读取失败".to_string()))?;
+    let mut plans = rows
+        .into_iter()
+        .map(group_buy_plan_from_row)
+        .map(|result| result.map(|plan| (plan.id.clone(), plan)))
+        .collect::<ApiResult<BTreeMap<_, _>>>()?;
+    attach_participants_to_plans(database, &mut plans, "合买计划参与人读取失败").await?;
+
+    plans
+        .remove(id)
+        .ok_or_else(|| ApiError::NotFound(format!("group buy plan `{id}` not found")))
 }
 
 /// 批量为已加载的合买计划补充参与人，避免多个分页查询重复写装配逻辑。
@@ -1476,6 +1673,23 @@ impl GroupBuyStore {
             .collect();
 
         Self { plans }
+    }
+
+    /// 用指定计划集合构造局部快照，供数据库事务按差异只更新当前触达的计划。
+    pub(crate) fn from_plans(plans: Vec<GroupBuyPlan>) -> Self {
+        Self {
+            plans: plans
+                .into_iter()
+                .map(|plan| (plan.id.clone(), plan))
+                .collect(),
+        }
+    }
+
+    /// 把已经持久化的计划合并进当前运行时缓存。
+    pub(crate) fn apply_plans(&mut self, plans: Vec<GroupBuyPlan>) {
+        for plan in plans {
+            self.plans.insert(plan.id.clone(), plan);
+        }
     }
 
     /// 按当前仓储快照返回全部合买计划列表。
@@ -2271,9 +2485,10 @@ mod tests {
             .into_iter()
             .collect::<Vec<_>>();
         let details = repository
+            .inner
+            .read()
+            .expect("group buy store lock can read")
             .list_details()
-            .await
-            .expect("detail list can load")
             .into_iter()
             .collect::<Vec<_>>();
         let summary_issues = summaries

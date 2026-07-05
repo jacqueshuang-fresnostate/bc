@@ -27,7 +27,9 @@ use crate::{
             ensure_withdrawal_turnover_event_in_transaction,
             save_finance_store_incremental_in_transaction, FinanceRepository, LedgerEntryIdRemap,
         },
-        group_buy::{save_group_buy_store_incremental_in_transaction, GroupBuyRepository},
+        group_buy::{
+            save_group_buy_store_incremental_in_transaction, GroupBuyRepository, GroupBuyStore,
+        },
         pagination::{ListPage, PageRequest},
         play_rules::{
             evaluate_play_rule, expanded_bets_for_rule, number_type_for_rule, play_position_label,
@@ -329,6 +331,14 @@ impl OrderRepository {
         plan_id: &str,
     ) -> ApiResult<(OrderDetail, GroupBuyPlan)> {
         let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
+        if self.persistence.is_some() && group_buys.persistence.is_some() {
+            return self
+                .create_group_buy_order_and_attach_in_database(
+                    group_buys, lottery, payload, plan_id,
+                )
+                .await;
+        }
+
         let previous_order_store = self
             .inner
             .read()
@@ -356,6 +366,51 @@ impl OrderRepository {
         .await?;
         self.replace_store(order_store)?;
         group_buys.replace_store(group_buy_store)?;
+
+        Ok((order, attached_plan))
+    }
+
+    /// PostgreSQL 模式下满单合买成单只使用当前计划局部快照，避免克隆全量合买和订单缓存。
+    async fn create_group_buy_order_and_attach_in_database(
+        &self,
+        group_buys: &GroupBuyRepository,
+        lottery: &LotteryKind,
+        payload: CreateOrderRequest,
+        plan_id: &str,
+    ) -> ApiResult<(OrderDetail, GroupBuyPlan)> {
+        let database = self
+            .persistence
+            .as_ref()
+            .ok_or_else(|| ApiError::Internal("订单持久化配置缺失".to_string()))?;
+        let runtime_sequences = query_order_runtime_sequences(database).await?;
+        let previous_order_store = OrderStore::from_parts(
+            Vec::new(),
+            Vec::new(),
+            runtime_sequences.next_sequence,
+            runtime_sequences.next_settlement_sequence,
+        );
+        let mut order_store = previous_order_store.clone();
+        let existing_plan = group_buys.get(plan_id).await?;
+        let previous_group_buy_store = GroupBuyStore::from_plans(vec![existing_plan]);
+        let mut group_buy_store = previous_group_buy_store.clone();
+
+        let order = order_store.create_with_source(lottery, payload, OrderSource::GroupBuy)?;
+        let attached_plan = group_buy_store.attach_order(plan_id, &order.id)?;
+
+        persist_order_group_buy_stores(
+            self,
+            group_buys,
+            &previous_order_store,
+            &order_store,
+            &previous_group_buy_store,
+            &group_buy_store,
+        )
+        .await?;
+        self.apply_persisted_created_orders(
+            std::slice::from_ref(&order),
+            order_store.next_sequence,
+        )?;
+        group_buys.apply_persisted_plans(vec![attached_plan.clone()])?;
 
         Ok((order, attached_plan))
     }
@@ -943,26 +998,33 @@ impl OrderRepository {
     ) -> ApiResult<(SettlementRun, Vec<LedgerEntry>)> {
         let database = self.persistence.as_ref().unwrap();
 
-        let previous_order_store = self
-            .inner
-            .read()
-            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
-            .clone();
-        let mut order_store = previous_order_store.clone();
-        let previous_group_buy_store = group_buys
-            .inner
-            .read()
-            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
-            .clone();
-        let mut group_buy_store = previous_group_buy_store.clone();
+        if query_settlement_exists_for_draw_issue(database, &draw_issue.id).await? {
+            return Err(ApiError::Conflict(format!(
+                "draw issue `{}` is already settled",
+                draw_issue.id
+            )));
+        }
 
+        let pending_orders = self
+            .list_pending_for_issue(&draw_issue.lottery_id, &draw_issue.issue)
+            .await?;
+        let runtime_sequences = query_order_runtime_sequences(database).await?;
+        let previous_order_store = OrderStore::from_parts(
+            pending_orders,
+            Vec::new(),
+            runtime_sequences.next_sequence,
+            runtime_sequences.next_settlement_sequence,
+        );
+        let mut order_store = previous_order_store.clone();
         let settlement = order_store.settle_draw_issue(draw_issue)?;
         let order_ids = settlement
             .orders
             .iter()
             .map(|order| order.order_id.clone())
             .collect::<Vec<_>>();
-        let group_buy_plans = group_buy_store.plans_for_order_ids(&order_ids);
+        let group_buy_plans = group_buys.plans_for_order_ids(&order_ids).await?;
+        let previous_group_buy_store = GroupBuyStore::from_plans(group_buy_plans.clone());
+        let mut group_buy_store = previous_group_buy_store.clone();
         let missing_group_buy_order_ids = settlement
             .orders
             .iter()
@@ -983,7 +1045,7 @@ impl OrderRepository {
                 "合买订单缺少对应合买计划，已跳过该合买订单的派奖"
             );
         }
-        group_buy_store.mark_settled_by_order_ids(&order_ids);
+        let settled_group_buy_plans = group_buy_store.mark_settled_by_order_ids(&order_ids);
 
         let mut tx = database.pool().begin().await.map_err(|error| {
             tracing::error!(%error, "结算派奖数据库事务开启失败");
@@ -1015,9 +1077,15 @@ impl OrderRepository {
             ApiError::Internal("结算派奖数据库事务提交失败".to_string())
         })?;
 
-        // 订单、合买走整快照替换；资金走增量合并，避免全量 clone。
-        self.replace_store(order_store)?;
-        group_buys.replace_store(group_buy_store)?;
+        // 订单、合买和资金都走增量合并，避免全量缓存 clone 或替换。
+        let settled_orders = order_store.orders.values().cloned().collect::<Vec<_>>();
+        self.apply_persisted_settlement(
+            settled_orders,
+            settlement.clone(),
+            order_store.next_sequence,
+            order_store.next_settlement_sequence,
+        )?;
+        group_buys.apply_persisted_plans(settled_group_buy_plans)?;
         finance.apply_persisted_order_debits(
             payout.previous_accounts,
             payout.new_accounts,
@@ -1069,6 +1137,21 @@ impl OrderRepository {
             store.orders.insert(order.id.clone(), order.clone());
         }
         store.next_sequence = store.next_sequence.max(next_sequence);
+        Ok(())
+    }
+
+    /// 数据库结算提交成功后，只把本期受影响订单和结算批次合并进运行时缓存。
+    fn apply_persisted_settlement(
+        &self,
+        orders: Vec<OrderDetail>,
+        settlement: SettlementRun,
+        next_sequence: u64,
+        next_settlement_sequence: u64,
+    ) -> ApiResult<()> {
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
+            .apply_settlement(orders, settlement, next_sequence, next_settlement_sequence);
         Ok(())
     }
 }
@@ -1205,6 +1288,58 @@ async fn load_order_store(database: &BusinessDatabase) -> ApiResult<OrderStore> 
             .max(max_sequence(settlement_runs.keys(), 'S')),
         orders,
         settlement_runs,
+    })
+}
+
+#[derive(Clone, Copy)]
+/// 订单运行时序号快照，供数据库模式局部结算避免加载全量订单。
+struct OrderRuntimeSequences {
+    next_sequence: u64,
+    next_settlement_sequence: u64,
+}
+
+/// 数据库模式下读取订单和结算运行序号，并用全表最大 ID 兜底兼容旧库。
+async fn query_order_runtime_sequences(
+    database: &BusinessDatabase,
+) -> ApiResult<OrderRuntimeSequences> {
+    let pool = database.pool();
+    let runtime_next_sequence =
+        sqlx::query_scalar::<_, i64>("SELECT value FROM order_runtime WHERE key = 'next_sequence'")
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| ApiError::Internal("订单运行数据读取失败".to_string()))?
+            .unwrap_or_default();
+    let runtime_next_settlement_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT value FROM order_runtime WHERE key = 'next_settlement_sequence'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::Internal("订单运行数据读取失败".to_string()))?
+    .unwrap_or_default();
+    let max_order_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(substring(id FROM 2)::BIGINT), 0)
+         FROM orders
+         WHERE id ~ '^O[0-9]+$'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|_| ApiError::Internal("订单最大序号读取失败".to_string()))?;
+    let max_settlement_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(substring(id FROM 2)::BIGINT), 0)
+         FROM order_settlement_runs
+         WHERE id ~ '^S[0-9]+$'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|_| ApiError::Internal("结算最大序号读取失败".to_string()))?;
+
+    Ok(OrderRuntimeSequences {
+        next_sequence: u64::try_from(runtime_next_sequence.max(max_order_sequence))
+            .unwrap_or_default(),
+        next_settlement_sequence: u64::try_from(
+            runtime_next_settlement_sequence.max(max_settlement_sequence),
+        )
+        .unwrap_or_default(),
     })
 }
 
@@ -1605,6 +1740,23 @@ async fn query_settled_draw_issue_ids(database: &BusinessDatabase) -> ApiResult<
                 .map_err(|_| ApiError::Internal("已结算开奖期号解析失败".to_string()))
         })
         .collect()
+}
+
+/// 数据库模式下判断指定开奖期是否已经生成结算批次，供异步队列重复消费保持幂等冲突。
+async fn query_settlement_exists_for_draw_issue(
+    database: &BusinessDatabase,
+    draw_issue_id: &str,
+) -> ApiResult<bool> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+             SELECT 1 FROM order_settlement_runs WHERE draw_issue_id = $1
+         )",
+    )
+    .bind(draw_issue_id)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("结算批次幂等状态读取失败".to_string()))?;
+    Ok(exists)
 }
 
 /// 保存顺序仓储到持久化存储。
@@ -2356,6 +2508,44 @@ fn normalized_user_ids(user_ids: &[String]) -> BTreeSet<String> {
 }
 
 impl OrderStore {
+    /// 用指定订单和结算批次构造局部快照，供数据库模式只处理当前期号相关数据。
+    fn from_parts(
+        orders: Vec<OrderDetail>,
+        settlement_runs: Vec<SettlementRun>,
+        next_sequence: u64,
+        next_settlement_sequence: u64,
+    ) -> Self {
+        Self {
+            next_sequence,
+            next_settlement_sequence,
+            orders: orders
+                .into_iter()
+                .map(|order| (order.id.clone(), order))
+                .collect(),
+            settlement_runs: settlement_runs
+                .into_iter()
+                .map(|run| (run.id.clone(), run))
+                .collect(),
+        }
+    }
+
+    /// 把已经持久化的订单和结算批次合并进当前运行时缓存。
+    fn apply_settlement(
+        &mut self,
+        orders: Vec<OrderDetail>,
+        settlement: SettlementRun,
+        next_sequence: u64,
+        next_settlement_sequence: u64,
+    ) {
+        for order in orders {
+            self.orders.insert(order.id.clone(), order);
+        }
+        self.settlement_runs
+            .insert(settlement.id.clone(), settlement);
+        self.next_sequence = self.next_sequence.max(next_sequence);
+        self.next_settlement_sequence = self.next_settlement_sequence.max(next_settlement_sequence);
+    }
+
     /// 按当前仓储快照返回全部订单列表。
     fn list(&self) -> Vec<OrderDetail> {
         self.orders.values().rev().cloned().collect()
@@ -3727,6 +3917,76 @@ mod tests {
         assert!(losing.matched_bets.is_empty());
         assert_eq!(losing.payout_minor, 0);
         assert!(losing.settled_at.is_some());
+    }
+
+    #[test]
+    /// 验证数据库局部结算结果合并到缓存时不会丢弃其它历史或待开奖订单。
+    fn store_apply_settlement_keeps_unrelated_orders() {
+        let lottery = lottery_with_categories(vec![crate::domain::lottery::PlayCategory::Direct]);
+        let mut cache_store = OrderStore::default();
+        let unrelated_order = cache_store
+            .create(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10002".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026157".to_string(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: PlaySelection {
+                        positions: vec![vec![1], vec![2], vec![3]],
+                        ..PlaySelection::default()
+                    },
+                    unit_amount_minor: 200,
+                },
+            )
+            .expect("unrelated order can be created");
+        let mut partial_store = OrderStore::from_parts(
+            vec![super::build_order_detail_with_id(
+                &lottery,
+                CreateOrderRequest {
+                    user_id: "U10001".to_string(),
+                    lottery_id: "fc3d".to_string(),
+                    issue: "2026156".to_string(),
+                    rule_code: PlayRuleCode::ThreeDirect,
+                    selection: PlaySelection {
+                        positions: vec![vec![2], vec![4], vec![7]],
+                        ..PlaySelection::default()
+                    },
+                    unit_amount_minor: 200,
+                },
+                OrderSource::Direct,
+                "O000000009999".to_string(),
+                "2026-06-05 20:12:00".to_string(),
+            )
+            .expect("partial order can be built")],
+            Vec::new(),
+            9_999,
+            10,
+        );
+        let settlement = partial_store
+            .settle_draw_issue(&draw_issue(DrawIssueStatus::Drawn, Some("2,4,7")))
+            .expect("partial store can settle");
+        let settled_orders = partial_store.orders.values().cloned().collect::<Vec<_>>();
+
+        cache_store.apply_settlement(
+            settled_orders,
+            settlement.clone(),
+            partial_store.next_sequence,
+            partial_store.next_settlement_sequence,
+        );
+
+        assert!(cache_store.get(&unrelated_order.id).is_ok());
+        assert_eq!(
+            cache_store
+                .get("O000000009999")
+                .expect("settled order exists")
+                .status,
+            OrderStatus::Won
+        );
+        assert!(cache_store
+            .settlement_runs()
+            .iter()
+            .any(|run| run.id == settlement.id));
     }
 
     #[test]
