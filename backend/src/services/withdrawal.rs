@@ -188,6 +188,12 @@ impl WithdrawalRepository {
 
     /// 一键清除提现历史；存在待审核申请时拒绝清理，避免冻结余额失去对应申请。
     pub async fn clear_records(&self) -> ApiResult<usize> {
+        if let Some(persistence) = &self.persistence {
+            let deleted_count = clear_finished_withdrawal_records_in_database(persistence).await?;
+            self.replace_store(load_withdrawal_store(persistence).await?)?;
+            return Ok(deleted_count);
+        }
+
         let (deleted_count, snapshot) = {
             let mut store = self
                 .inner
@@ -249,6 +255,7 @@ impl WithdrawalRepository {
         id: &str,
         finance: &FinanceRepository,
     ) -> ApiResult<WithdrawalOrderSummary> {
+        self.ensure_order_cached_for_database(id).await?;
         let previous_withdrawal_store = self
             .inner
             .read()
@@ -264,7 +271,9 @@ impl WithdrawalRepository {
         let _finance_mutation_guard = finance.mutation_lock.lock().await;
 
         let order = withdrawal_store.reviewable_order(id, WithdrawalOrderStatus::Approved)?;
-        finance_store.approve_withdrawal(&order.user_id, order.amount_minor, &order.id)?;
+        if order.status == WithdrawalOrderStatus::Pending {
+            finance_store.approve_withdrawal(&order.user_id, order.amount_minor, &order.id)?;
+        }
         let result = withdrawal_store.mark_reviewed(id, WithdrawalOrderStatus::Approved)?;
 
         persist_withdrawal_finance_stores(
@@ -287,6 +296,7 @@ impl WithdrawalRepository {
         id: &str,
         finance: &FinanceRepository,
     ) -> ApiResult<WithdrawalOrderSummary> {
+        self.ensure_order_cached_for_database(id).await?;
         let previous_withdrawal_store = self
             .inner
             .read()
@@ -302,7 +312,9 @@ impl WithdrawalRepository {
         let _finance_mutation_guard = finance.mutation_lock.lock().await;
 
         let order = withdrawal_store.reviewable_order(id, WithdrawalOrderStatus::Rejected)?;
-        finance_store.reject_withdrawal(&order.user_id, order.amount_minor, &order.id)?;
+        if order.status == WithdrawalOrderStatus::Pending {
+            finance_store.reject_withdrawal(&order.user_id, order.amount_minor, &order.id)?;
+        }
         let result = withdrawal_store.mark_reviewed(id, WithdrawalOrderStatus::Rejected)?;
 
         persist_withdrawal_finance_stores(
@@ -350,6 +362,21 @@ impl WithdrawalRepository {
                 .await
                 .map_err(|_| ApiError::Internal("提现事务提交失败".to_string()))?;
         }
+        Ok(())
+    }
+
+    /// 数据库模式下审核前按 ID 补入目标提现单，避免历史重复审核依赖启动热缓存。
+    async fn ensure_order_cached_for_database(&self, id: &str) -> ApiResult<()> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(());
+        };
+        let id = required_trimmed(id, "withdrawal order id")?;
+        let order = query_withdrawal_order_by_id(persistence, &id).await?;
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?
+            .orders
+            .insert(order.id.clone(), order);
         Ok(())
     }
 }
@@ -535,16 +562,19 @@ impl WithdrawalStore {
     }
 }
 
-/// 从数据库加载提现申请运行时快照，空库时按模块规则初始化。
+/// 从数据库加载待审核提现热缓存；历史记录通过分页 SQL 读取，避免启动常驻全部提现申请。
 async fn load_withdrawal_store(database: &BusinessDatabase) -> ApiResult<WithdrawalStore> {
     let pool = database.pool();
     let mut orders = BTreeMap::new();
+    let pending_status = enum_to_string(&WithdrawalOrderStatus::Pending)?;
     for row in sqlx::query(
         "SELECT id, user_id, username, method_id, method_type, account_holder,
                 account_number, bank_name, amount_minor, status, created_at, reviewed_at
          FROM withdrawal_orders
+         WHERE status = $1
          ORDER BY id ASC",
     )
+    .bind(&pending_status)
     .fetch_all(pool)
     .await
     .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?
@@ -560,10 +590,18 @@ async fn load_withdrawal_store(database: &BusinessDatabase) -> ApiResult<Withdra
     .await
     .map_err(|_| ApiError::Internal("提现运行数据读取失败".to_string()))?
     .unwrap_or_default();
+    let max_order_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(substring(id FROM 2)::BIGINT), 0)
+         FROM withdrawal_orders
+         WHERE id ~ '^W[0-9]+$'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|_| ApiError::Internal("提现最大序号读取失败".to_string()))?;
 
     Ok(WithdrawalStore {
         orders,
-        next_sequence: u64::try_from(next_sequence).unwrap_or_default(),
+        next_sequence: u64::try_from(next_sequence.max(max_order_sequence)).unwrap_or_default(),
     })
 }
 
@@ -609,6 +647,26 @@ fn withdrawal_order_from_row(row: PgRow) -> ApiResult<WithdrawalOrderSummary> {
             .try_get("reviewed_at")
             .map_err(|_| ApiError::Internal("提现申请数据读取失败".to_string()))?,
     })
+}
+
+/// 数据库模式下按提现订单 ID 读取单条申请，供审核幂等和历史详情不依赖启动缓存。
+async fn query_withdrawal_order_by_id(
+    database: &BusinessDatabase,
+    id: &str,
+) -> ApiResult<WithdrawalOrderSummary> {
+    let row = sqlx::query(
+        "SELECT id, user_id, username, method_id, method_type, account_holder,
+                account_number, bank_name, amount_minor, status, created_at, reviewed_at
+         FROM withdrawal_orders
+         WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("提现申请详情读取失败".to_string()))?;
+    row.map(withdrawal_order_from_row)
+        .transpose()?
+        .ok_or_else(|| ApiError::NotFound(format!("withdrawal order `{id}` not found")))
 }
 
 /// 数据库模式下分页读取提现申请，支持后台审核列表和用户端本人列表。
@@ -670,6 +728,32 @@ async fn query_withdrawal_orders_by_status(
     .map_err(|_| ApiError::Internal("提现申请状态数据读取失败".to_string()))?;
 
     rows.into_iter().map(withdrawal_order_from_row).collect()
+}
+
+/// 数据库模式下一键清除已结束提现历史，存在待审核申请时拒绝清理。
+async fn clear_finished_withdrawal_records_in_database(
+    database: &BusinessDatabase,
+) -> ApiResult<usize> {
+    let pending_status = enum_to_string(&WithdrawalOrderStatus::Pending)?;
+    let pending_count =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM withdrawal_orders WHERE status = $1")
+            .bind(&pending_status)
+            .fetch_one(database.pool())
+            .await
+            .map_err(|_| ApiError::Internal("待审核提现数量读取失败".to_string()))?;
+    if pending_count > 0 {
+        return Err(ApiError::BadRequest(format!(
+            "存在 {pending_count} 笔待审核提现申请，请先审核或驳回后再清除记录"
+        )));
+    }
+
+    let result = sqlx::query("DELETE FROM withdrawal_orders WHERE status <> $1")
+        .bind(&pending_status)
+        .execute(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("提现申请历史清理失败".to_string()))?;
+    usize::try_from(result.rows_affected())
+        .map_err(|_| ApiError::Internal("提现申请清理数量无效".to_string()))
 }
 
 /// 在外层事务中保存提现申请运行时快照，供跨仓储事务复用。

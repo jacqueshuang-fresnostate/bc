@@ -131,6 +131,10 @@ impl RechargeRepository {
     /// 按充值订单 ID 返回订单快照，供确认入账前计算同事务返利方案。
     pub async fn get_order(&self, order_id: &str) -> ApiResult<RechargeOrderSummary> {
         let order_id = required_trimmed(order_id, "充值订单 ID")?;
+        if let Some(persistence) = &self.persistence {
+            return query_recharge_order_by_id(persistence, &order_id).await;
+        }
+
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?
@@ -221,15 +225,19 @@ impl RechargeRepository {
 
     /// 一键清除充值订单历史；仅删除记录，不回滚已入账余额和资金流水。
     pub async fn clear_records(&self) -> ApiResult<usize> {
-        let (deleted_count, snapshot) = {
+        if let Some(persistence) = &self.persistence {
+            let deleted_count = clear_recharge_records_in_database(persistence).await?;
+            self.replace_store(load_recharge_store(persistence).await?)?;
+            return Ok(deleted_count);
+        }
+
+        let deleted_count = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?;
-            let deleted_count = store.clear_records();
-            (deleted_count, store.clone())
+            store.clear_records()
         };
-        self.persist(&snapshot).await?;
         Ok(deleted_count)
     }
 
@@ -292,15 +300,16 @@ impl RechargeRepository {
         request: CreateRechargeOrderRequest,
         settings: &RechargeSettings,
     ) -> ApiResult<CreateRechargeOrderResponse> {
-        let (result, snapshot) = {
+        let (result, previous, snapshot) = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?;
+            let previous = store.clone();
             let result = store.create_order(user, request, settings)?;
-            (result, store.clone())
+            (result, previous, store.clone())
         };
-        self.persist(&snapshot).await?;
+        self.persist_incremental(&previous, &snapshot).await?;
         Ok(result)
     }
 
@@ -310,15 +319,16 @@ impl RechargeRepository {
         order_id: &str,
         conversation_id: &str,
     ) -> ApiResult<RechargeOrderSummary> {
-        let (result, snapshot) = {
+        let (result, previous, snapshot) = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?;
+            let previous = store.clone();
             let result = store.attach_support_conversation(order_id, conversation_id)?;
-            (result, store.clone())
+            (result, previous, store.clone())
         };
-        self.persist(&snapshot).await?;
+        self.persist_incremental(&previous, &snapshot).await?;
         Ok(result)
     }
 
@@ -363,6 +373,7 @@ impl RechargeRepository {
             .ok_or_else(|| ApiError::BadRequest("彩虹易支付通知缺少金额".to_string()))?;
         let paid_amount_minor = money_to_minor(money_text)?;
 
+        self.ensure_order_cached_for_database(order_id).await?;
         let previous_recharge_store = self
             .inner
             .read()
@@ -429,6 +440,7 @@ impl RechargeRepository {
         finance: &FinanceRepository,
         rebate_credit: Option<&RechargeRebateCredit>,
     ) -> ApiResult<RechargeConfirmResult> {
+        self.ensure_order_cached_for_database(order_id).await?;
         let previous_recharge_store = self
             .inner
             .read()
@@ -471,11 +483,37 @@ impl RechargeRepository {
             rebate_entry,
         })
     }
-    /// 把当前仓储快照同步保存到持久化存储。
-    async fn persist(&self, store: &RechargeStore) -> ApiResult<()> {
+    /// 把充值热缓存差异增量保存到持久化存储，避免创建订单时重写全量历史充值。
+    async fn persist_incremental(
+        &self,
+        previous: &RechargeStore,
+        store: &RechargeStore,
+    ) -> ApiResult<()> {
         if let Some(persistence) = &self.persistence {
-            save_recharge_store(persistence, store).await?;
+            let mut tx = persistence
+                .pool()
+                .begin()
+                .await
+                .map_err(|_| ApiError::Internal("充值事务开启失败".to_string()))?;
+            save_recharge_store_incremental_in_transaction(&mut *tx, previous, store).await?;
+            tx.commit()
+                .await
+                .map_err(|_| ApiError::Internal("充值事务提交失败".to_string()))?;
         }
+        Ok(())
+    }
+
+    /// 数据库模式下确认充值前按 ID 补入目标订单，避免已支付历史订单不在启动热缓存时无法幂等处理。
+    async fn ensure_order_cached_for_database(&self, order_id: &str) -> ApiResult<()> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(());
+        };
+        let order = query_recharge_order_by_id(persistence, order_id).await?;
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("recharge store lock poisoned".to_string()))?
+            .orders
+            .insert(order.id.clone(), order);
         Ok(())
     }
 
@@ -1003,7 +1041,7 @@ pub fn support_ticket_for_recharge(order: &RechargeOrderSummary) -> Option<Recha
     })
 }
 
-/// 从数据库加载充值订单运行时快照，空库时按模块规则初始化。
+/// 从数据库加载待处理充值热缓存；已支付和已取消历史通过 SQL 分页或单条查询读取。
 async fn load_recharge_store(database: &BusinessDatabase) -> ApiResult<RechargeStore> {
     let pool = database.pool();
     let mut orders = BTreeMap::new();
@@ -1011,6 +1049,7 @@ async fn load_recharge_store(database: &BusinessDatabase) -> ApiResult<RechargeS
         "SELECT id, user_id, username, channel, amount_minor, status, pay_type,
                 provider_trade_no, payment_url, support_conversation_id, remark, created_at, paid_at
          FROM recharge_orders
+         WHERE status IN ('pending', 'waitingCustomerService')
          ORDER BY id ASC",
     )
     .fetch_all(pool)
@@ -1028,10 +1067,18 @@ async fn load_recharge_store(database: &BusinessDatabase) -> ApiResult<RechargeS
     .await
     .map_err(|_| ApiError::Internal("充值运行数据读取失败".to_string()))?
     .unwrap_or_default();
+    let max_order_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(substring(id FROM 2)::BIGINT), 0)
+         FROM recharge_orders
+         WHERE id ~ '^R[0-9]+$'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|_| ApiError::Internal("充值最大序号读取失败".to_string()))?;
 
     Ok(RechargeStore {
         orders,
-        next_sequence: u64::try_from(next_sequence).unwrap_or_default(),
+        next_sequence: u64::try_from(next_sequence.max(max_order_sequence)).unwrap_or_default(),
     })
 }
 
@@ -1080,6 +1127,36 @@ fn recharge_order_from_row(row: PgRow) -> ApiResult<RechargeOrderSummary> {
             .try_get("paid_at")
             .map_err(|_| ApiError::Internal("充值订单数据读取失败".to_string()))?,
     })
+}
+
+/// 数据库模式下按充值订单 ID 读取单条订单，避免历史充值必须常驻内存。
+async fn query_recharge_order_by_id(
+    database: &BusinessDatabase,
+    order_id: &str,
+) -> ApiResult<RechargeOrderSummary> {
+    let row = sqlx::query(
+        "SELECT id, user_id, username, channel, amount_minor, status, pay_type,
+                provider_trade_no, payment_url, support_conversation_id, remark, created_at, paid_at
+         FROM recharge_orders
+         WHERE id = $1",
+    )
+    .bind(order_id)
+    .fetch_optional(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("充值订单详情读取失败".to_string()))?;
+    row.map(recharge_order_from_row)
+        .transpose()?
+        .ok_or_else(|| ApiError::NotFound(format!("充值订单 `{order_id}` 不存在")))
+}
+
+/// 数据库模式下一键清除充值订单记录，不回滚已入账资金和流水。
+async fn clear_recharge_records_in_database(database: &BusinessDatabase) -> ApiResult<usize> {
+    let result = sqlx::query("DELETE FROM recharge_orders")
+        .execute(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("充值订单数据清理失败".to_string()))?;
+    usize::try_from(result.rows_affected())
+        .map_err(|_| ApiError::Internal("充值订单清理数量无效".to_string()))
 }
 
 /// 数据库模式下分页读取充值订单，支持后台列表和用户端本人列表。
@@ -1171,69 +1248,6 @@ async fn query_recharge_orders_by_status(
     .map_err(|_| ApiError::Internal("充值订单状态数据读取失败".to_string()))?;
 
     rows.into_iter().map(recharge_order_from_row).collect()
-}
-
-/// 把充值订单运行时快照保存到数据库。
-async fn save_recharge_store(database: &BusinessDatabase, store: &RechargeStore) -> ApiResult<()> {
-    let mut tx = database
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::Internal("充值事务开启失败".to_string()))?;
-
-    save_recharge_store_in_transaction(&mut *tx, store).await?;
-
-    tx.commit()
-        .await
-        .map_err(|_| ApiError::Internal("充值事务提交失败".to_string()))
-}
-
-/// 在外层事务中保存充值订单运行时快照，供跨仓储事务复用。
-pub(crate) async fn save_recharge_store_in_transaction(
-    connection: &mut PgConnection,
-    store: &RechargeStore,
-) -> ApiResult<()> {
-    for table in ["recharge_orders", "recharge_runtime"] {
-        sqlx::query(&format!("DELETE FROM {table}"))
-            .execute(&mut *connection)
-            .await
-            .map_err(|_| ApiError::Internal("充值数据清理失败".to_string()))?;
-    }
-
-    for order in store.orders.values() {
-        sqlx::query(
-            "INSERT INTO recharge_orders
-             (id, user_id, username, channel, amount_minor, status, pay_type,
-              provider_trade_no, payment_url, support_conversation_id, remark, created_at, paid_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
-        )
-        .bind(&order.id)
-        .bind(&order.user_id)
-        .bind(&order.username)
-        .bind(enum_to_string(&order.channel)?)
-        .bind(order.amount_minor)
-        .bind(enum_to_string(&order.status)?)
-        .bind(&order.pay_type)
-        .bind(&order.provider_trade_no)
-        .bind(&order.payment_url)
-        .bind(&order.support_conversation_id)
-        .bind(&order.remark)
-        .bind(&order.created_at)
-        .bind(&order.paid_at)
-        .execute(&mut *connection)
-        .await
-        .map_err(|_| ApiError::Internal("充值订单数据保存失败".to_string()))?;
-    }
-
-    let next_sequence = i64::try_from(store.next_sequence)
-        .map_err(|_| ApiError::Internal("充值序号过大".to_string()))?;
-    sqlx::query("INSERT INTO recharge_runtime (key, value) VALUES ('next_sequence', $1)")
-        .bind(next_sequence)
-        .execute(&mut *connection)
-        .await
-        .map_err(|_| ApiError::Internal("充值运行数据保存失败".to_string()))?;
-
-    Ok(())
 }
 
 /// 在外层事务中按前后快照差异保存充值订单，避免确认入账时重写全部充值历史。

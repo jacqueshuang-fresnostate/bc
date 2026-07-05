@@ -289,6 +289,16 @@ impl DrawRepository {
 
     /// 按业务标识读取单条记录，未命中时返回未找到错误。
     pub async fn get(&self, id: &str) -> ApiResult<DrawIssue> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "draw issue id is required".to_string(),
+            ));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_draw_issue_by_id(persistence, id).await;
+        }
+
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
@@ -301,6 +311,17 @@ impl DrawRepository {
         lottery_id: &str,
         issue: &str,
     ) -> ApiResult<DrawIssue> {
+        let lottery_id = lottery_id.trim();
+        let issue = issue.trim();
+        if lottery_id.is_empty() || issue.is_empty() {
+            return Err(ApiError::BadRequest(
+                "lottery id and issue are required".to_string(),
+            ));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_draw_issue_by_lottery_issue(persistence, lottery_id, issue).await;
+        }
+
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))?
@@ -805,22 +826,11 @@ struct DrawStore {
     issues: BTreeMap<String, DrawIssue>,
 }
 
-/// 从数据库加载开奖期号与开奖控制运行时快照，空库时按模块规则初始化。
+/// 从数据库加载开奖热缓存与开奖控制；历史期号通过分页/单条 SQL 查询，避免启动常驻全部期号。
 async fn load_draw_store(database: &BusinessDatabase) -> ApiResult<(DrawStore, DrawControlStore)> {
     let mut issues = BTreeMap::new();
-    for row in sqlx::query(
-        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
-                sale_closed_at, status, draw_number, drawn_at, created_at
-         FROM draw_issues
-         ORDER BY id ASC",
-    )
-    .fetch_all(database.pool())
-    .await
-    .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?
-    {
-        let issue = draw_issue_from_row(row)?;
-        let id = issue.id.clone();
-        issues.insert(id, issue);
+    for issue in query_scheduler_active_draw_issues(database).await? {
+        issues.insert(issue.id.clone(), issue);
     }
 
     let mut controls = BTreeMap::new();
@@ -862,9 +872,18 @@ async fn load_draw_store(database: &BusinessDatabase) -> ApiResult<(DrawStore, D
         );
     }
 
+    let max_issue_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(substring(id FROM 2)::BIGINT), 0)
+         FROM draw_issues
+         WHERE id ~ '^D[0-9]+$'",
+    )
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖期号最大序号读取失败".to_string()))?;
+
     Ok((
         DrawStore {
-            next_sequence: max_sequence(issues.keys(), 'D'),
+            next_sequence: u64::try_from(max_issue_sequence).unwrap_or_default(),
             issues,
         },
         DrawControlStore { controls },
@@ -913,6 +932,47 @@ fn draw_issue_from_row(row: PgRow) -> ApiResult<DrawIssue> {
         created_at: row
             .try_get("created_at")
             .map_err(|_| ApiError::Internal("开奖期号数据读取失败".to_string()))?,
+    })
+}
+
+/// 数据库模式下按期号 ID 读取单条开奖期，供详情、手动开奖和队列重试不依赖启动缓存。
+async fn query_draw_issue_by_id(database: &BusinessDatabase, id: &str) -> ApiResult<DrawIssue> {
+    let row = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖期号详情读取失败".to_string()))?;
+    row.map(draw_issue_from_row)
+        .transpose()?
+        .ok_or_else(|| ApiError::NotFound(format!("draw issue `{id}` not found")))
+}
+
+/// 数据库模式下按彩种和期号读取单条开奖期，供下注、合买和用户端详情使用。
+async fn query_draw_issue_by_lottery_issue(
+    database: &BusinessDatabase,
+    lottery_id: &str,
+    issue: &str,
+) -> ApiResult<DrawIssue> {
+    let row = sqlx::query(
+        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
+                sale_closed_at, status, draw_number, drawn_at, created_at
+         FROM draw_issues
+         WHERE lottery_id = $1 AND issue = $2",
+    )
+    .bind(lottery_id)
+    .bind(issue)
+    .fetch_optional(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖期号详情读取失败".to_string()))?;
+    row.map(draw_issue_from_row).transpose()?.ok_or_else(|| {
+        ApiError::NotFound(format!(
+            "draw issue `{issue}` not found for lottery `{lottery_id}`"
+        ))
     })
 }
 
@@ -1336,14 +1396,6 @@ async fn save_draw_controls(
     tx.commit()
         .await
         .map_err(|_| ApiError::Internal("开奖控制事务提交失败".to_string()))
-}
-
-/// 计算并返回序列号最大值。
-fn max_sequence<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u64 {
-    ids.filter_map(|id| id.strip_prefix(prefix))
-        .filter_map(|value| value.parse::<u64>().ok())
-        .max()
-        .unwrap_or_default()
 }
 
 /// 开奖期号与开奖控制运行时数据快照，用于内存模式和数据库持久化前的业务校验。

@@ -66,10 +66,42 @@ impl FinanceRepository {
 
     /// 返回财务总览指标。
     pub async fn overview(&self) -> ApiResult<FinanceOverview> {
+        if let Some(persistence) = &self.persistence {
+            return query_finance_overview(persistence, &[]).await;
+        }
+
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
             .overview()
+    }
+
+    /// 按排除用户集合返回财务总览，后台默认隐藏机器人资金时避免全量读取流水后再过滤。
+    pub async fn overview_excluding_user_ids(
+        &self,
+        excluded_user_ids: &[&str],
+    ) -> ApiResult<FinanceOverview> {
+        let excluded_user_ids = normalized_filter_values(excluded_user_ids);
+        if let Some(persistence) = &self.persistence {
+            let excluded_user_ids = excluded_user_ids.iter().cloned().collect::<Vec<_>>();
+            return query_finance_overview(persistence, &excluded_user_ids).await;
+        }
+
+        let store = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?;
+        let accounts = store
+            .accounts()
+            .into_iter()
+            .filter(|account| !excluded_user_ids.contains(&account.user_id))
+            .collect::<Vec<_>>();
+        let ledger_entries = store
+            .ledger_entries()
+            .into_iter()
+            .filter(|entry| !excluded_user_ids.contains(&entry.user_id))
+            .collect::<Vec<_>>();
+        finance_overview_from_items(&accounts, &ledger_entries)
     }
 
     /// 返回全部财务账户列表。
@@ -106,6 +138,7 @@ impl FinanceRepository {
     }
 
     /// 返回财务流水列表。
+    #[cfg(test)]
     pub async fn ledger_entries(&self) -> ApiResult<Vec<LedgerEntry>> {
         self.inner
             .read()
@@ -1272,7 +1305,7 @@ impl LedgerEntryIdRemap {
     }
 }
 
-/// 从数据库加载资金账户和资金流水运行时快照，空库时按模块规则初始化。
+/// 从数据库加载资金账户热缓存和运行序号；历史流水只按分页或聚合 SQL 读取，避免启动常驻全部审计流水。
 async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceStore> {
     let pool = database.pool();
     let mut accounts = BTreeMap::new();
@@ -1302,19 +1335,6 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
         );
     }
 
-    let mut ledger_entries = Vec::new();
-    for row in sqlx::query(
-        "SELECT id, user_id, kind, amount_minor, balance_after_minor, reference_id, description, created_at
-         FROM ledger_entries
-         ORDER BY id ASC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| ApiError::Internal("资金流水数据读取失败".to_string()))?
-    {
-        ledger_entries.push(ledger_entry_from_row(row)?);
-    }
-
     let runtime_next_sequence = sqlx::query_scalar::<_, i64>(
         "SELECT value FROM finance_runtime WHERE key = 'next_sequence'",
     )
@@ -1322,6 +1342,14 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
     .await
     .map_err(|_| ApiError::Internal("资金运行数据读取失败".to_string()))?
     .unwrap_or_default();
+    let max_ledger_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(substring(id FROM 2)::BIGINT), 0)
+         FROM ledger_entries
+         WHERE id ~ '^L[0-9]+$'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|_| ApiError::Internal("资金流水最大序号读取失败".to_string()))?;
 
     let mut reconciled_missing_accounts = false;
     for row in sqlx::query("SELECT id FROM users ORDER BY id ASC")
@@ -1347,20 +1375,20 @@ async fn load_finance_store(database: &BusinessDatabase) -> ApiResult<FinanceSto
         reconciled_missing_accounts = true;
     }
 
-    if accounts.is_empty() && ledger_entries.is_empty() {
+    if accounts.is_empty() && max_ledger_sequence == 0 {
         let seeded = FinanceStore::seeded();
         save_finance_store(database, &seeded).await?;
         return Ok(seeded);
     }
 
     let runtime_next_sequence = u64::try_from(runtime_next_sequence).unwrap_or_default();
-    let next_sequence =
-        runtime_next_sequence.max(next_sequence_from_ledger_entries(&ledger_entries));
+    let max_ledger_sequence = u64::try_from(max_ledger_sequence).unwrap_or_default();
+    let next_sequence = runtime_next_sequence.max(max_ledger_sequence);
     let reconciled_next_sequence = next_sequence != runtime_next_sequence;
 
     let store = FinanceStore {
         accounts,
-        ledger_entries,
+        ledger_entries: Vec::new(),
         next_sequence,
         withdrawal_turnover_overrides: BTreeMap::new(),
     };
@@ -1620,6 +1648,99 @@ async fn query_ledger_entry_kind_page(
         .collect::<ApiResult<Vec<_>>>()?;
 
     Ok(ListPage::new(items, resolved))
+}
+
+/// 数据库模式下直接聚合财务总览，避免启动或后台概览读取全量资金流水。
+async fn query_finance_overview(
+    database: &BusinessDatabase,
+    excluded_user_ids: &[String],
+) -> ApiResult<FinanceOverview> {
+    let total_balance_minor = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(available_balance_minor + frozen_balance_minor), 0)::BIGINT
+         FROM financial_accounts
+         WHERE NOT (user_id = ANY($1::text[]))",
+    )
+    .bind(excluded_user_ids)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("财务账户总览读取失败".to_string()))?;
+    let pending_withdraw_minor = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(frozen_balance_minor), 0)::BIGINT
+         FROM financial_accounts
+         WHERE NOT (user_id = ANY($1::text[]))",
+    )
+    .bind(excluded_user_ids)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("财务冻结总览读取失败".to_string()))?;
+
+    let today = Local::now().format(LEDGER_DATE_FORMAT).to_string();
+    let rows = sqlx::query(
+        "SELECT kind,
+                COALESCE(SUM(CASE WHEN kind = 'rechargeCredit' AND amount_minor > 0 THEN amount_minor ELSE 0 END), 0)::BIGINT AS total_recharge_minor,
+                COALESCE(SUM(CASE WHEN kind = 'withdrawalPayout' AND amount_minor < 0 THEN -amount_minor ELSE 0 END), 0)::BIGINT AS total_withdraw_minor,
+                COALESCE(SUM(CASE WHEN kind = 'rechargeCredit' AND amount_minor > 0 AND created_at LIKE ($2 || '%') THEN amount_minor ELSE 0 END), 0)::BIGINT AS today_recharge_minor,
+                COALESCE(SUM(CASE WHEN kind = 'withdrawalPayout' AND amount_minor < 0 AND created_at LIKE ($2 || '%') THEN -amount_minor ELSE 0 END), 0)::BIGINT AS today_withdraw_minor,
+                COALESCE(SUM(CASE WHEN kind = 'payoutCredit' AND amount_minor > 0 AND created_at LIKE ($2 || '%') THEN amount_minor ELSE 0 END), 0)::BIGINT AS today_payout_minor
+         FROM ledger_entries
+         WHERE NOT (user_id = ANY($1::text[]))
+           AND kind IN ('rechargeCredit', 'withdrawalPayout', 'payoutCredit')
+         GROUP BY kind",
+    )
+    .bind(excluded_user_ids)
+    .bind(&today)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("财务流水总览读取失败".to_string()))?;
+
+    let mut totals = FinanceLedgerTotals::default();
+    for row in rows {
+        totals.total_recharge_minor = totals
+            .total_recharge_minor
+            .checked_add(
+                row.try_get("total_recharge_minor")
+                    .map_err(|_| ApiError::Internal("财务流水总览解析失败".to_string()))?,
+            )
+            .ok_or_else(|| ApiError::Internal("财务充值金额汇总溢出".to_string()))?;
+        totals.total_withdraw_minor = totals
+            .total_withdraw_minor
+            .checked_add(
+                row.try_get("total_withdraw_minor")
+                    .map_err(|_| ApiError::Internal("财务流水总览解析失败".to_string()))?,
+            )
+            .ok_or_else(|| ApiError::Internal("财务提现金额汇总溢出".to_string()))?;
+        totals.today_recharge_minor = totals
+            .today_recharge_minor
+            .checked_add(
+                row.try_get("today_recharge_minor")
+                    .map_err(|_| ApiError::Internal("财务流水总览解析失败".to_string()))?,
+            )
+            .ok_or_else(|| ApiError::Internal("财务今日充值金额汇总溢出".to_string()))?;
+        totals.today_withdraw_minor = totals
+            .today_withdraw_minor
+            .checked_add(
+                row.try_get("today_withdraw_minor")
+                    .map_err(|_| ApiError::Internal("财务流水总览解析失败".to_string()))?,
+            )
+            .ok_or_else(|| ApiError::Internal("财务今日提现金额汇总溢出".to_string()))?;
+        totals.today_payout_minor = totals
+            .today_payout_minor
+            .checked_add(
+                row.try_get("today_payout_minor")
+                    .map_err(|_| ApiError::Internal("财务流水总览解析失败".to_string()))?,
+            )
+            .ok_or_else(|| ApiError::Internal("财务派奖金额汇总溢出".to_string()))?;
+    }
+
+    Ok(FinanceOverview {
+        total_balance_minor,
+        pending_withdraw_minor,
+        today_payout_minor: totals.today_payout_minor,
+        today_recharge_minor: totals.today_recharge_minor,
+        today_withdraw_minor: totals.today_withdraw_minor,
+        total_recharge_minor: totals.total_recharge_minor,
+        total_withdraw_minor: totals.total_withdraw_minor,
+    })
 }
 
 /// 数据库模式下汇总指定用户真实充值本金，供聊天大厅发言门槛等资格判断使用。
@@ -3393,6 +3514,7 @@ fn recharge_bonus_reference_id(recharge_order_id: &str) -> String {
 }
 
 /// 从已有资金流水编号恢复最大序号，避免运行时序号落后导致新流水主键重复。
+#[cfg(test)]
 fn next_sequence_from_ledger_entries(entries: &[LedgerEntry]) -> u64 {
     entries
         .iter()
@@ -3482,6 +3604,35 @@ fn finance_ledger_totals(ledger_entries: &[LedgerEntry]) -> ApiResult<FinanceLed
     }
 
     Ok(totals)
+}
+
+/// 从已过滤的账户和流水生成财务总览，供内存模式下机器人数据开关复用。
+fn finance_overview_from_items(
+    accounts: &[FinancialAccountSummary],
+    ledger_entries: &[LedgerEntry],
+) -> ApiResult<FinanceOverview> {
+    let mut total_balance_minor = 0_i64;
+    let mut pending_withdraw_minor = 0_i64;
+    for account in accounts {
+        total_balance_minor = total_balance_minor
+            .checked_add(account.available_balance_minor)
+            .and_then(|amount| amount.checked_add(account.frozen_balance_minor))
+            .ok_or_else(|| ApiError::Internal("财务总览金额汇总溢出".to_string()))?;
+        pending_withdraw_minor = pending_withdraw_minor
+            .checked_add(account.frozen_balance_minor)
+            .ok_or_else(|| ApiError::Internal("财务冻结金额汇总溢出".to_string()))?;
+    }
+
+    let ledger_totals = finance_ledger_totals(ledger_entries)?;
+    Ok(FinanceOverview {
+        total_balance_minor,
+        pending_withdraw_minor,
+        today_payout_minor: ledger_totals.today_payout_minor,
+        today_recharge_minor: ledger_totals.today_recharge_minor,
+        today_withdraw_minor: ledger_totals.today_withdraw_minor,
+        total_recharge_minor: ledger_totals.total_recharge_minor,
+        total_withdraw_minor: ledger_totals.total_withdraw_minor,
+    })
 }
 
 /// 正向资金入账金额，异常负数按 0 忽略，避免污染充值或派奖汇总。

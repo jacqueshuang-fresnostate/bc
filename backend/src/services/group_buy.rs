@@ -352,6 +352,15 @@ impl GroupBuyRepository {
 
     /// 一键清除已结束合买计划历史；未结算计划会自动保留，避免资金和结算失去追溯。
     pub async fn clear_records(&self) -> ApiResult<usize> {
+        if let Some(persistence) = &self.persistence {
+            let deleted_count = clear_finished_group_buy_records_in_database(persistence).await?;
+            if deleted_count > 0 {
+                let hot_store = load_group_buy_store(persistence).await?;
+                self.replace_store(hot_store)?;
+            }
+            return Ok(deleted_count);
+        }
+
         self.mutate_and_persist_if(|store| {
             let deleted_count = store.clear_records()?;
             Ok((deleted_count, deleted_count > 0))
@@ -603,10 +612,15 @@ pub(crate) struct GroupBuyStore {
     plans: BTreeMap<String, GroupBuyPlan>,
 }
 
-/// 从数据库加载合买计划和参与记录运行时快照，空库时按模块规则初始化。
+/// 从数据库加载合买热缓存；已取消和已结算历史通过分页/单条 SQL 查询，不常驻内存。
 async fn load_group_buy_store(database: &BusinessDatabase) -> ApiResult<GroupBuyStore> {
     let pool = database.pool();
     let mut plans = BTreeMap::new();
+    let hot_statuses = vec![
+        enum_to_string(&GroupBuyPlanStatus::Draft)?,
+        enum_to_string(&GroupBuyPlanStatus::Open)?,
+        enum_to_string(&GroupBuyPlanStatus::Filled)?,
+    ];
 
     for row in sqlx::query(
         "SELECT id, lottery_id, lottery_name, initiator_user_id, initiator_username,
@@ -614,8 +628,10 @@ async fn load_group_buy_store(database: &BusinessDatabase) -> ApiResult<GroupBuy
                 total_amount_minor, filled_amount_minor, min_share_amount_minor,
                 participant_min_amount_minor, share_count, status, note, created_at, updated_at
          FROM group_buy_plans
+         WHERE status = ANY($1::text[])
          ORDER BY id ASC",
     )
+    .bind(&hot_statuses)
     .fetch_all(pool)
     .await
     .map_err(|_| ApiError::Internal("合买计划数据读取失败".to_string()))?
@@ -624,22 +640,31 @@ async fn load_group_buy_store(database: &BusinessDatabase) -> ApiResult<GroupBuy
         plans.insert(plan.id.clone(), plan);
     }
 
-    for row in sqlx::query(
-        "SELECT id, plan_id, user_id, username, amount_minor, share_count, note, created_at
-         FROM group_buy_participants
-         ORDER BY plan_id ASC, id ASC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?
-    {
-        let (plan_id, participant) = group_buy_participant_from_row(row)?;
-        if let Some(plan) = plans.get_mut(&plan_id) {
-            plan.participants.push(participant);
+    let plan_ids = plans.keys().cloned().collect::<Vec<_>>();
+    if !plan_ids.is_empty() {
+        for row in sqlx::query(
+            "SELECT id, plan_id, user_id, username, amount_minor, share_count, note, created_at
+             FROM group_buy_participants
+             WHERE plan_id = ANY($1::text[])
+             ORDER BY plan_id ASC, id ASC",
+        )
+        .bind(&plan_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| ApiError::Internal("合买参与人数据读取失败".to_string()))?
+        {
+            let (plan_id, participant) = group_buy_participant_from_row(row)?;
+            if let Some(plan) = plans.get_mut(&plan_id) {
+                plan.participants.push(participant);
+            }
         }
     }
 
-    if plans.is_empty() {
+    let total_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM group_buy_plans")
+        .fetch_one(pool)
+        .await
+        .map_err(|_| ApiError::Internal("合买计划数量读取失败".to_string()))?;
+    if total_count == 0 {
         let seeded = GroupBuyStore::seeded();
         save_group_buy_store(database, &seeded).await?;
         return Ok(seeded);
@@ -1206,6 +1231,51 @@ async fn attach_participants_to_plans(
         }
     }
     Ok(())
+}
+
+/// 数据库模式下一键清除已取消和已结算合买历史，保留仍可能影响资金和开奖的计划。
+async fn clear_finished_group_buy_records_in_database(
+    database: &BusinessDatabase,
+) -> ApiResult<usize> {
+    let finished_statuses = vec![
+        enum_to_string(&GroupBuyPlanStatus::Cancelled)?,
+        enum_to_string(&GroupBuyPlanStatus::Settled)?,
+    ];
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("合买历史清理事务开启失败".to_string()))?;
+    let plan_ids = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM group_buy_plans WHERE status = ANY($1::text[])",
+    )
+    .bind(&finished_statuses)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|_| ApiError::Internal("合买历史清理范围读取失败".to_string()))?;
+    if plan_ids.is_empty() {
+        tx.commit()
+            .await
+            .map_err(|_| ApiError::Internal("合买历史清理事务提交失败".to_string()))?;
+        return Ok(0);
+    }
+
+    sqlx::query("DELETE FROM group_buy_participants WHERE plan_id = ANY($1::text[])")
+        .bind(&plan_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("合买参与历史清理失败".to_string()))?;
+    let result = sqlx::query("DELETE FROM group_buy_plans WHERE id = ANY($1::text[])")
+        .bind(&plan_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("合买计划历史清理失败".to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("合买历史清理事务提交失败".to_string()))?;
+
+    usize::try_from(result.rows_affected())
+        .map_err(|_| ApiError::Internal("合买历史清理数量无效".to_string()))
 }
 
 /// 数据库模式下读取控奖页面所需的当前期合买计划，并批量加载参与记录。

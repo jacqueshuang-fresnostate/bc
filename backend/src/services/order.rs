@@ -46,6 +46,7 @@ const ODDS_SCALE_BASIS_POINTS: i64 = 10_000;
 const MONEY_MINOR_UNITS_PER_YUAN: i64 = 100;
 const PAYOUT_MINOR_DIVISOR: i64 = ODDS_SCALE_BASIS_POINTS / MONEY_MINOR_UNITS_PER_YUAN;
 const DEFAULT_BET_UNIT_AMOUNT_MINOR: i64 = 200;
+const STARTUP_PENDING_ORDER_STATUS: &str = "pendingDraw";
 
 /// 校验期号与订单关联关系是否允许下单。
 pub fn validate_draw_issue_accepts_order(
@@ -277,6 +278,14 @@ impl OrderRepository {
 
     /// 按业务标识读取单条记录，未命中时返回未找到错误。
     pub async fn get(&self, id: &str) -> ApiResult<OrderDetail> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err(ApiError::BadRequest("order id is required".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_order_detail(persistence, id).await;
+        }
+
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
@@ -783,6 +792,16 @@ impl OrderRepository {
         }
 
         let _group_buy_mutation_guard = group_buys.mutation_lock.lock().await;
+        if let Some(persistence) = &self.persistence {
+            let cleanup =
+                remove_robot_group_buy_records_in_database(persistence, &robot_user_ids).await?;
+            if cleanup.deleted_plan_count > 0 || cleanup.deleted_order_count > 0 {
+                self.replace_store(load_order_store(persistence).await?)?;
+                group_buys.reload_from_database().await?;
+            }
+            return Ok(cleanup);
+        }
+
         let previous_order_store = self
             .inner
             .read()
@@ -833,6 +852,18 @@ impl OrderRepository {
 
     /// 一键清除投注订单和计奖派奖历史；存在待开奖订单时拒绝清理，避免扣款订单失去结算机会。
     pub async fn clear_bet_records(&self) -> ApiResult<usize> {
+        if let Some(persistence) = &self.persistence {
+            let deleted_count = clear_bet_records_in_database(persistence).await?;
+            let runtime_sequences = query_order_runtime_sequences(persistence).await?;
+            self.replace_store(OrderStore::from_parts(
+                Vec::new(),
+                Vec::new(),
+                runtime_sequences.next_sequence,
+                runtime_sequences.next_settlement_sequence,
+            ))?;
+            return Ok(deleted_count);
+        }
+
         let (deleted_count, snapshot) = {
             let mut store = self
                 .inner
@@ -847,6 +878,13 @@ impl OrderRepository {
 
     /// 返回最近订单汇总列表。
     pub async fn recent_summaries(&self, limit: usize) -> ApiResult<Vec<OrderSummary>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_recent_order_summaries(persistence, limit).await;
+        }
+
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))
@@ -890,6 +928,16 @@ impl OrderRepository {
 
     /// 根据 ID 查询结算明细。
     pub async fn get_settlement(&self, id: &str) -> ApiResult<SettlementRun> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "settlement id is required".to_string(),
+            ));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_settlement_run_by_id(persistence, id).await;
+        }
+
         self.inner
             .read()
             .map_err(|_| ApiError::Internal("order store lock poisoned".to_string()))?
@@ -1168,127 +1216,17 @@ pub(crate) struct OrderStore {
     /// 全量计奖派奖批次映射，键为结算 ID。
     settlement_runs: BTreeMap<String, SettlementRun>,
 }
-/// 从持久化存储加载顺序仓储。
+/// 从持久化存储加载订单热缓存；历史订单、结算批次和明细改由 SQL 分页/单条查询读取。
 async fn load_order_store(database: &BusinessDatabase) -> ApiResult<OrderStore> {
-    let pool = database.pool();
-    let mut orders = BTreeMap::new();
-    for row in sqlx::query(
-        "SELECT id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
-                stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
-                draw_number, matched_bets, payout_minor, status, settled_at, created_at
-         FROM orders
-         ORDER BY id ASC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| ApiError::Internal("订单数据读取失败".to_string()))?
-    {
-        let order = order_detail_from_row(row)?;
-        orders.insert(order.id.clone(), order);
-    }
+    let pending_orders = query_orders_by_status(database, STARTUP_PENDING_ORDER_STATUS).await?;
+    let runtime_sequences = query_order_runtime_sequences(database).await?;
 
-    let mut settlement_orders = BTreeMap::<String, Vec<OrderSettlement>>::new();
-    for row in sqlx::query(
-        "SELECT settlement_id, order_id, user_id, rule_code, stake_count, amount_minor, is_winning,
-                matched_bets, odds_basis_points, payout_minor, status
-         FROM order_settlements
-         ORDER BY settlement_id ASC, order_id ASC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?
-    {
-        let settlement_id: String = row
-            .try_get("settlement_id")
-            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?;
-        settlement_orders
-            .entry(settlement_id)
-            .or_default()
-            .push(order_settlement_from_row(row)?);
-    }
-
-    let mut settlement_runs = BTreeMap::new();
-    for row in sqlx::query(
-        "SELECT id, draw_issue_id, lottery_id, lottery_name, issue, draw_number,
-                settled_order_count, winning_order_count, total_stake_amount_minor,
-                total_payout_minor, created_at
-         FROM order_settlement_runs
-         ORDER BY id ASC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?
-    {
-        let id: String = row
-            .try_get("id")
-            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?;
-        let settled_order_count: i32 = row
-            .try_get("settled_order_count")
-            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?;
-        let winning_order_count: i32 = row
-            .try_get("winning_order_count")
-            .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?;
-        settlement_runs.insert(
-            id.clone(),
-            SettlementRun {
-                id: id.clone(),
-                draw_issue_id: row
-                    .try_get("draw_issue_id")
-                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
-                lottery_id: row
-                    .try_get("lottery_id")
-                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
-                lottery_name: row
-                    .try_get("lottery_name")
-                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
-                issue: row
-                    .try_get("issue")
-                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
-                draw_number: row
-                    .try_get("draw_number")
-                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
-                settled_order_count: u32::try_from(settled_order_count)
-                    .map_err(|_| ApiError::Internal("结算订单数量无效".to_string()))?,
-                winning_order_count: u32::try_from(winning_order_count)
-                    .map_err(|_| ApiError::Internal("中奖订单数量无效".to_string()))?,
-                total_stake_amount_minor: row
-                    .try_get("total_stake_amount_minor")
-                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
-                total_payout_minor: row
-                    .try_get("total_payout_minor")
-                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
-                created_at: row
-                    .try_get("created_at")
-                    .map_err(|_| ApiError::Internal("结算批次数据读取失败".to_string()))?,
-                orders: settlement_orders.remove(&id).unwrap_or_default(),
-            },
-        );
-    }
-
-    let next_sequence =
-        sqlx::query_scalar::<_, i64>("SELECT value FROM order_runtime WHERE key = 'next_sequence'")
-            .fetch_optional(pool)
-            .await
-            .map_err(|_| ApiError::Internal("订单运行数据读取失败".to_string()))?
-            .unwrap_or_default();
-    let next_settlement_sequence = sqlx::query_scalar::<_, i64>(
-        "SELECT value FROM order_runtime WHERE key = 'next_settlement_sequence'",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|_| ApiError::Internal("订单运行数据读取失败".to_string()))?
-    .unwrap_or_default();
-
-    Ok(OrderStore {
-        next_sequence: u64::try_from(next_sequence)
-            .unwrap_or_default()
-            .max(max_sequence(orders.keys(), 'O')),
-        next_settlement_sequence: u64::try_from(next_settlement_sequence)
-            .unwrap_or_default()
-            .max(max_sequence(settlement_runs.keys(), 'S')),
-        orders,
-        settlement_runs,
-    })
+    Ok(OrderStore::from_parts(
+        pending_orders,
+        Vec::new(),
+        runtime_sequences.next_sequence,
+        runtime_sequences.next_settlement_sequence,
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -1521,6 +1459,131 @@ fn settlement_run_from_row(row: PgRow, orders: Vec<OrderSettlement>) -> ApiResul
     })
 }
 
+/// 数据库模式下按订单 ID 读取单条订单详情，供后台详情和历史关联单据不依赖启动缓存。
+async fn query_order_detail(database: &BusinessDatabase, id: &str) -> ApiResult<OrderDetail> {
+    let row = sqlx::query(
+        "SELECT id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+                stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
+                draw_number, matched_bets, payout_minor, status, settled_at, created_at
+         FROM orders
+         WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("订单详情数据读取失败".to_string()))?;
+    row.map(order_detail_from_row)
+        .transpose()?
+        .ok_or_else(|| ApiError::NotFound(format!("order `{id}` not found")))
+}
+
+/// 数据库模式下按订单状态读取运行时热订单，启动时只加载待开奖订单进入缓存。
+async fn query_orders_by_status(
+    database: &BusinessDatabase,
+    status: &str,
+) -> ApiResult<Vec<OrderDetail>> {
+    let rows = sqlx::query(
+        "SELECT id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+                stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
+                draw_number, matched_bets, payout_minor, status, settled_at, created_at
+         FROM orders
+         WHERE status = $1
+         ORDER BY id ASC",
+    )
+    .bind(status)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("订单状态数据读取失败".to_string()))?;
+
+    rows.into_iter().map(order_detail_from_row).collect()
+}
+
+/// 数据库模式下读取最近订单摘要，供后台首页不依赖全量订单缓存。
+async fn query_recent_order_summaries(
+    database: &BusinessDatabase,
+    limit: usize,
+) -> ApiResult<Vec<OrderSummary>> {
+    let limit =
+        i64::try_from(limit).map_err(|_| ApiError::BadRequest("最近订单数量过大".to_string()))?;
+    let rows = sqlx::query(
+        "SELECT id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
+                stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
+                draw_number, matched_bets, payout_minor, status, settled_at, created_at
+         FROM orders
+         ORDER BY created_at DESC, id DESC
+         LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("最近订单数据读取失败".to_string()))?;
+
+    rows.into_iter()
+        .map(|row| order_detail_from_row(row).map(|order| order.summary()))
+        .collect()
+}
+
+/// 数据库模式下按 ID 读取结算批次和明细，避免启动缓存常驻全部结算历史。
+async fn query_settlement_run_by_id(
+    database: &BusinessDatabase,
+    id: &str,
+) -> ApiResult<SettlementRun> {
+    let row = sqlx::query(
+        "SELECT id, draw_issue_id, lottery_id, lottery_name, issue, draw_number,
+                settled_order_count, winning_order_count, total_stake_amount_minor,
+                total_payout_minor, created_at
+         FROM order_settlement_runs
+         WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("结算批次详情读取失败".to_string()))?;
+    let Some(row) = row else {
+        return Err(ApiError::NotFound(format!("settlement `{id}` not found")));
+    };
+
+    let orders = query_order_settlements_for_run_ids(database, &[id.to_string()])
+        .await?
+        .remove(id)
+        .unwrap_or_default();
+    settlement_run_from_row(row, orders)
+}
+
+/// 批量读取结算批次明细，供分页和单条详情复用。
+async fn query_order_settlements_for_run_ids(
+    database: &BusinessDatabase,
+    run_ids: &[String],
+) -> ApiResult<BTreeMap<String, Vec<OrderSettlement>>> {
+    let mut settlement_orders = BTreeMap::<String, Vec<OrderSettlement>>::new();
+    if run_ids.is_empty() {
+        return Ok(settlement_orders);
+    }
+
+    for row in sqlx::query(
+        "SELECT settlement_id, order_id, user_id, rule_code, stake_count, amount_minor,
+                is_winning, matched_bets, odds_basis_points, payout_minor, status
+         FROM order_settlements
+         WHERE settlement_id = ANY($1::text[])
+         ORDER BY settlement_id ASC, order_id ASC",
+    )
+    .bind(run_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("结算订单明细读取失败".to_string()))?
+    {
+        let settlement_id: String = row
+            .try_get("settlement_id")
+            .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?;
+        settlement_orders
+            .entry(settlement_id)
+            .or_default()
+            .push(order_settlement_from_row(row)?);
+    }
+
+    Ok(settlement_orders)
+}
+
 /// 数据库模式下分页读取订单，避免后台订单列表先查全量再裁剪。
 async fn query_order_page(
     database: &BusinessDatabase,
@@ -1691,29 +1754,7 @@ async fn query_settlement_run_page(
         })
         .collect::<ApiResult<Vec<String>>>()?;
 
-    let mut settlement_orders = BTreeMap::<String, Vec<OrderSettlement>>::new();
-    if !run_ids.is_empty() {
-        for row in sqlx::query(
-            "SELECT settlement_id, order_id, user_id, rule_code, stake_count, amount_minor,
-                    is_winning, matched_bets, odds_basis_points, payout_minor, status
-             FROM order_settlements
-             WHERE settlement_id = ANY($1::text[])
-             ORDER BY settlement_id ASC, order_id ASC",
-        )
-        .bind(&run_ids)
-        .fetch_all(database.pool())
-        .await
-        .map_err(|_| ApiError::Internal("结算订单分页明细读取失败".to_string()))?
-        {
-            let settlement_id: String = row
-                .try_get("settlement_id")
-                .map_err(|_| ApiError::Internal("结算订单数据读取失败".to_string()))?;
-            settlement_orders
-                .entry(settlement_id)
-                .or_default()
-                .push(order_settlement_from_row(row)?);
-        }
-    }
+    let mut settlement_orders = query_order_settlements_for_run_ids(database, &run_ids).await?;
 
     let items = rows
         .into_iter()
@@ -1757,6 +1798,219 @@ async fn query_settlement_exists_for_draw_issue(
     .await
     .map_err(|_| ApiError::Internal("结算批次幂等状态读取失败".to_string()))?;
     Ok(exists)
+}
+
+/// 数据库模式下一键清除投注和结算历史，清理前直接检查数据库待开奖订单。
+async fn clear_bet_records_in_database(database: &BusinessDatabase) -> ApiResult<usize> {
+    let pending_count =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM orders WHERE status = $1")
+            .bind(STARTUP_PENDING_ORDER_STATUS)
+            .fetch_one(database.pool())
+            .await
+            .map_err(|_| ApiError::Internal("待开奖订单数量读取失败".to_string()))?;
+    if pending_count > 0 {
+        return Err(ApiError::BadRequest(format!(
+            "存在 {pending_count} 笔待开奖投注订单，请先开奖结算或取消后再清除记录"
+        )));
+    }
+
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("订单清理事务开启失败".to_string()))?;
+    sqlx::query("DELETE FROM order_settlements")
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("结算订单明细清理失败".to_string()))?;
+    sqlx::query("DELETE FROM order_settlement_runs")
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("结算批次清理失败".to_string()))?;
+    let deleted_orders = sqlx::query("DELETE FROM orders")
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("订单数据清理失败".to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("订单清理事务提交失败".to_string()))?;
+
+    usize::try_from(deleted_orders.rows_affected())
+        .map_err(|_| ApiError::Internal("订单清理数量无效".to_string()))
+}
+
+/// 数据库模式下清理纯机器人合买历史，直接按数据库事实判断参与人和关联订单归属。
+async fn remove_robot_group_buy_records_in_database(
+    database: &BusinessDatabase,
+    robot_user_ids: &BTreeSet<String>,
+) -> ApiResult<RobotGroupBuyRecordCleanup> {
+    let robot_user_ids = robot_user_ids.iter().cloned().collect::<Vec<_>>();
+    let plan_rows = sqlx::query(
+        "SELECT p.id, p.order_id
+         FROM group_buy_plans p
+         WHERE p.initiator_user_id = ANY($1::text[])
+           AND NOT EXISTS (
+                SELECT 1
+                FROM group_buy_participants gp
+                WHERE gp.plan_id = p.id
+                  AND NOT (gp.user_id = ANY($1::text[]))
+           )",
+    )
+    .bind(&robot_user_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("机器人合买清理范围读取失败".to_string()))?;
+
+    let mut plan_ids = Vec::new();
+    let mut order_ids = Vec::new();
+    for row in plan_rows {
+        let plan_id: String = row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("机器人合买清理范围解析失败".to_string()))?;
+        plan_ids.push(plan_id);
+        if let Some(order_id) = row
+            .try_get::<Option<String>, _>("order_id")
+            .map_err(|_| ApiError::Internal("机器人合买清理范围解析失败".to_string()))?
+            .filter(|order_id| !order_id.trim().is_empty())
+        {
+            order_ids.push(order_id);
+        }
+    }
+    if plan_ids.is_empty() {
+        return Ok(RobotGroupBuyRecordCleanup::default());
+    }
+
+    if !order_ids.is_empty() {
+        let group_buy_source = enum_to_string(&OrderSource::GroupBuy)?;
+        let invalid_order_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*)
+             FROM orders
+             WHERE id = ANY($1::text[])
+               AND (NOT (user_id = ANY($2::text[])) OR order_source <> $3)",
+        )
+        .bind(&order_ids)
+        .bind(&robot_user_ids)
+        .bind(&group_buy_source)
+        .fetch_one(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("机器人合买关联订单校验失败".to_string()))?;
+        if invalid_order_count > 0 {
+            return Err(ApiError::BadRequest(
+                "存在非机器人合买订单，不能通过机器人清理入口删除".to_string(),
+            ));
+        }
+
+        let invalid_settlement_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*)
+             FROM order_settlements
+             WHERE order_id = ANY($1::text[])
+               AND NOT (user_id = ANY($2::text[]))",
+        )
+        .bind(&order_ids)
+        .bind(&robot_user_ids)
+        .fetch_one(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("机器人合买结算明细校验失败".to_string()))?;
+        if invalid_settlement_count > 0 {
+            return Err(ApiError::BadRequest(
+                "存在非机器人结算明细，不能通过机器人清理入口删除".to_string(),
+            ));
+        }
+    }
+
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("机器人合买清理事务开启失败".to_string()))?;
+
+    let mut deleted_order_count = 0_u64;
+    if !order_ids.is_empty() {
+        let affected_run_ids = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT settlement_id
+             FROM order_settlements
+             WHERE order_id = ANY($1::text[])",
+        )
+        .bind(&order_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("机器人合买结算批次读取失败".to_string()))?;
+
+        sqlx::query("DELETE FROM order_settlements WHERE order_id = ANY($1::text[])")
+            .bind(&order_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("机器人合买结算明细清理失败".to_string()))?;
+
+        if !affected_run_ids.is_empty() {
+            sqlx::query(
+                "UPDATE order_settlement_runs r
+                 SET settled_order_count = s.settled_order_count,
+                     winning_order_count = s.winning_order_count,
+                     total_stake_amount_minor = s.total_stake_amount_minor,
+                     total_payout_minor = s.total_payout_minor
+                 FROM (
+                    SELECT settlement_id,
+                           COUNT(*)::INTEGER AS settled_order_count,
+                           COALESCE(SUM(CASE WHEN is_winning THEN 1 ELSE 0 END), 0)::INTEGER AS winning_order_count,
+                           COALESCE(SUM(amount_minor), 0)::BIGINT AS total_stake_amount_minor,
+                           COALESCE(SUM(payout_minor), 0)::BIGINT AS total_payout_minor
+                    FROM order_settlements
+                    WHERE settlement_id = ANY($1::text[])
+                    GROUP BY settlement_id
+                 ) s
+                 WHERE r.id = s.settlement_id",
+            )
+            .bind(&affected_run_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("机器人合买结算批次重算失败".to_string()))?;
+
+            sqlx::query(
+                "DELETE FROM order_settlement_runs r
+                 WHERE r.id = ANY($1::text[])
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM order_settlements s
+                       WHERE s.settlement_id = r.id
+                   )",
+            )
+            .bind(&affected_run_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("机器人合买空结算批次清理失败".to_string()))?;
+        }
+
+        deleted_order_count = sqlx::query("DELETE FROM orders WHERE id = ANY($1::text[])")
+            .bind(&order_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| ApiError::Internal("机器人合买订单清理失败".to_string()))?
+            .rows_affected();
+    }
+
+    sqlx::query("DELETE FROM group_buy_participants WHERE plan_id = ANY($1::text[])")
+        .bind(&plan_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("机器人合买参与记录清理失败".to_string()))?;
+    let deleted_plan_count = sqlx::query("DELETE FROM group_buy_plans WHERE id = ANY($1::text[])")
+        .bind(&plan_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("机器人合买计划清理失败".to_string()))?
+        .rows_affected();
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("机器人合买清理事务提交失败".to_string()))?;
+
+    Ok(RobotGroupBuyRecordCleanup {
+        deleted_plan_count: usize::try_from(deleted_plan_count)
+            .map_err(|_| ApiError::Internal("机器人合买清理数量无效".to_string()))?,
+        deleted_order_count: usize::try_from(deleted_order_count)
+            .map_err(|_| ApiError::Internal("机器人合买订单清理数量无效".to_string()))?,
+    })
 }
 
 /// 保存顺序仓储到持久化存储。
@@ -2487,14 +2741,6 @@ fn order_debit_ledger_entry(
         description: format!("投注扣款：{} {}", order.lottery_name, order.issue),
         created_at: current_timestamp_label(),
     })
-}
-
-/// 计算并返回序列号最大值。
-fn max_sequence<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u64 {
-    ids.filter_map(|id| id.strip_prefix(prefix))
-        .filter_map(|value| value.parse::<u64>().ok())
-        .max()
-        .unwrap_or_default()
 }
 
 /// 归一化用户 ID 集合，去重并移除空值。
