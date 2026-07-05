@@ -89,7 +89,7 @@ struct GroupBuyRobotJob {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RobotFillPolicy {
-    GuaranteedUserPlan,
+    GuaranteedPlan,
     Rhythm {
         max_percent: u32,
         stage_count: u32,
@@ -437,8 +437,8 @@ async fn run_group_buy_robot_job(
     Ok(run)
 }
 
-/// 封盘流单退款前强制补满用户合买，避免调度错过分阶段窗口导致用户计划被动流单。
-pub async fn force_fill_user_group_buy_plans_before_refund(
+/// 封盘流单退款前强制补满未满合买，避免调度错过分阶段窗口导致计划被动流单。
+pub async fn force_fill_group_buy_plans_before_refund(
     robots: &RobotRepository,
     draws: &DrawRepository,
     lotteries: &LotteryRepository,
@@ -468,7 +468,7 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
     let candidate_plans = group_buy_plans
         .iter()
         .filter(|plan| {
-            user_group_buy_plan_needs_guard_fill(plan)
+            group_buy_plan_needs_guard_fill(plan)
                 && candidate_issues.contains_key(&(plan.lottery_id.clone(), plan.issue.clone()))
         })
         .cloned()
@@ -476,7 +476,7 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
     let filled_without_order_plans = group_buy_plans
         .into_iter()
         .filter(|plan| {
-            user_group_buy_plan_needs_guard_order(plan)
+            group_buy_plan_needs_guard_order(plan)
                 && candidate_issues.contains_key(&(plan.lottery_id.clone(), plan.issue.clone()))
         })
         .collect::<Vec<_>>();
@@ -544,7 +544,7 @@ pub async fn force_fill_user_group_buy_plans_before_refund(
             &access.users,
             &finance_lock,
             now_at,
-            RobotFillPolicy::GuaranteedUserPlan,
+            RobotFillPolicy::GuaranteedPlan,
             Some(now.as_str()),
         )
         .await
@@ -2272,7 +2272,7 @@ fn robot_fill_decision(
 
     let sale_closed_at = parse_robot_timestamp(&issue.sale_closed_at, "封盘时间")?;
     let seconds_until_sale_close = (sale_closed_at - now_at).num_seconds();
-    if seconds_until_sale_close <= 0 && policy == RobotFillPolicy::GuaranteedUserPlan {
+    if seconds_until_sale_close <= 0 && policy == RobotFillPolicy::GuaranteedPlan {
         return Ok(RobotFillDecision::Add(RobotFillAmount {
             amount_minor: remaining_amount_minor,
             note: "补单机器人封盘兜底补满合买".to_string(),
@@ -2320,7 +2320,7 @@ fn robot_fill_decision(
 
     if seconds_until_sale_close <= 0 {
         return match policy {
-            RobotFillPolicy::GuaranteedUserPlan => unreachable!("封盘兜底策略已提前处理"),
+            RobotFillPolicy::GuaranteedPlan => unreachable!("封盘兜底策略已提前处理"),
             RobotFillPolicy::Rhythm { .. } => Ok(RobotFillDecision::Skip(
                 "已到封盘时间且未到开奖前最终补满窗口，阶段性补单暂不追加认购".to_string(),
             )),
@@ -2445,22 +2445,17 @@ fn fill_robot_policy(robot: &RobotConfigSummary) -> RobotFillPolicy {
     }
 }
 
-/// 判断用户合买计划是否需要在流单退款前由机器人强制补满。
-fn user_group_buy_plan_needs_guard_fill(plan: &GroupBuyPlan) -> bool {
-    !plan.id.starts_with("G-ROBOT-")
-        && !is_group_buy_robot_user_id(&plan.initiator_user_id)
-        && matches!(
-            plan.status,
-            GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open
-        )
-        && plan.filled_amount_minor < plan.total_amount_minor
+/// 判断合买计划是否需要在流单退款前由机器人强制补满。
+fn group_buy_plan_needs_guard_fill(plan: &GroupBuyPlan) -> bool {
+    matches!(
+        plan.status,
+        GroupBuyPlanStatus::Draft | GroupBuyPlanStatus::Open
+    ) && plan.filled_amount_minor < plan.total_amount_minor
 }
 
-/// 判断用户合买计划是否已经满额但缺少真实投注订单，需要在开奖前补建订单。
-fn user_group_buy_plan_needs_guard_order(plan: &GroupBuyPlan) -> bool {
-    !plan.id.starts_with("G-ROBOT-")
-        && !is_group_buy_robot_user_id(&plan.initiator_user_id)
-        && plan.status == GroupBuyPlanStatus::Filled
+/// 判断合买计划是否已经满额但缺少真实投注订单，需要在开奖前补建订单。
+fn group_buy_plan_needs_guard_order(plan: &GroupBuyPlan) -> bool {
+    plan.status == GroupBuyPlanStatus::Filled
         && plan.order_id.is_none()
         && plan.filled_amount_minor >= plan.total_amount_minor
 }
@@ -3902,7 +3897,7 @@ mod tests {
             .any(|order| Some(&order.id) == filled_user_plan.order_id.as_ref()));
         assert_robot_plan_progress(&group_buys, "G-USER-OPEN", 5_000, 5_000, 5, true).await;
     }
-    /// 验证机器人兜底补满封盘用户合买合买之前退款。
+    /// 验证机器人在封盘流单退款前兜底补满用户合买。
     #[tokio::test]
     async fn robot_guard_fills_closed_user_group_buy_before_refund() {
         let access = AccessRepository::memory_seeded();
@@ -3960,7 +3955,7 @@ mod tests {
             .expect("user initiator can be debited");
         let robots = RobotRepository::memory_seeded();
 
-        let run = force_fill_user_group_buy_plans_before_refund(
+        let run = force_fill_group_buy_plans_before_refund(
             &robots,
             &draws,
             &lotteries,
@@ -3982,6 +3977,92 @@ mod tests {
         assert_eq!(run.created_orders[0].order_source, OrderSource::GroupBuy);
         assert_eq!(filled_plan.order_id, Some(run.created_orders[0].id.clone()));
         assert_robot_plan_progress(&group_buys, "G-USER-GUARD", 5_000, 5_000, 2, true).await;
+    }
+    /// 验证机器人发起的合买封盘后也会被兜底补满，避免机器人单未成单流单取消。
+    #[tokio::test]
+    async fn robot_guard_fills_closed_robot_group_buy_before_refund() {
+        let access = AccessRepository::memory_seeded();
+        let draws = DrawRepository::memory();
+        let lotteries = LotteryRepository::memory_seeded();
+        lotteries
+            .set_sale_enabled("ssc60", true)
+            .await
+            .expect("lottery sale can be enabled");
+        let mut lottery = lotteries.get("ssc60").await.expect("lottery exists");
+        lottery.group_buy.enabled = true;
+        lotteries
+            .update("ssc60", lottery.clone())
+            .await
+            .expect("lottery can enable group buy");
+        let issue = draws
+            .create(
+                &lottery,
+                CreateDrawIssueRequest {
+                    lottery_id: lottery.id.clone(),
+                    issue: "20260605201200".to_string(),
+                    scheduled_at: "2026-06-05 20:12:00".to_string(),
+                    sale_closed_at: "2026-06-05 20:11:30".to_string(),
+                },
+            )
+            .await
+            .expect("issue can be created");
+        draws.close(&issue.id).await.expect("issue can be closed");
+        let orders = OrderRepository::memory();
+        let finance = FinanceRepository::memory_seeded();
+        let group_buys = GroupBuyRepository::memory_seeded();
+        let users = access.snapshot().await.expect("access can load").users;
+        let robot_plan = group_buys
+            .create(
+                CreateGroupBuyPlanRequest {
+                    id: "G-ROBOT-GUARD".to_string(),
+                    lottery_id: "ssc60".to_string(),
+                    issue: "20260605201200".to_string(),
+                    rule_code: "fiveFrontDirect".to_string(),
+                    title: "机器人封盘后兜底合买".to_string(),
+                    numbers: "1|2|3".to_string(),
+                    initiator_user_id: ROBOT_GROUP_BUY_USER_ID.to_string(),
+                    total_amount_minor: 5_000,
+                    initiator_amount_minor: 1_000,
+                    note: "测试机器人封盘后兜底".to_string(),
+                },
+                std::slice::from_ref(&lottery),
+                &users,
+            )
+            .await
+            .expect("robot plan can be created");
+        finance
+            .debit_group_buy(
+                ROBOT_GROUP_BUY_USER_ID,
+                1_000,
+                "G-ROBOT-GUARD-P001",
+                &robot_plan.id,
+            )
+            .await
+            .expect("robot initiator can be debited");
+        let robots = RobotRepository::memory_seeded();
+
+        let run = force_fill_group_buy_plans_before_refund(
+            &robots,
+            &draws,
+            &lotteries,
+            &orders,
+            &finance,
+            &group_buys,
+            &access,
+            "2026-06-05 20:11:45".to_string(),
+        )
+        .await
+        .expect("guard can fill closed robot issue before draw");
+
+        let filled_plan = run
+            .filled_plans
+            .iter()
+            .find(|plan| plan.id == "G-ROBOT-GUARD")
+            .expect("guard should fill robot plan");
+        assert_eq!(run.created_orders.len(), 1);
+        assert_eq!(run.created_orders[0].order_source, OrderSource::GroupBuy);
+        assert_eq!(filled_plan.order_id, Some(run.created_orders[0].id.clone()));
+        assert_robot_plan_progress(&group_buys, "G-ROBOT-GUARD", 5_000, 5_000, 2, true).await;
     }
     /// 验证补单机器人按开奖前策略补满合买机器人发起的计划。
     #[tokio::test]

@@ -89,7 +89,7 @@ use crate::{
         group_buy::GroupBuyFormationFilter,
         group_buy_flow::{build_group_buy_order_request, create_order_for_filled_group_buy},
         group_buy_robot::{
-            force_fill_user_group_buy_plans_before_refund, is_group_buy_robot_user_id,
+            force_fill_group_buy_plans_before_refund, is_group_buy_robot_user_id,
             run_group_buy_robots, ROBOT_GROUP_BUY_USER_IDS,
         },
         image_bed::{upload_configured_image_bed_file, ImageBedUploadOptions},
@@ -1260,7 +1260,7 @@ async fn run_draw_automation_request(
     State(state): State<AppState>,
     Json(payload): Json<DrawAutomationRunRequest>,
 ) -> ApiResult<Json<ApiEnvelope<DrawAutomationRun>>> {
-    let robot_run = force_fill_user_group_buy_plans_before_refund(
+    let robot_run = force_fill_group_buy_plans_before_refund(
         &state.robots,
         &state.draws,
         &state.lotteries,

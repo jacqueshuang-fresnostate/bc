@@ -41,7 +41,7 @@ use crate::{
         draw_settlement_queue,
         finance::FinanceRepository,
         group_buy::GroupBuyRepository,
-        group_buy_robot::force_fill_user_group_buy_plans_before_refund,
+        group_buy_robot::force_fill_group_buy_plans_before_refund,
         lottery::LotteryRepository,
         order::OrderRepository,
         realtime::{
@@ -1484,7 +1484,7 @@ async fn run_draw_scheduler_due_once_with_realtime_and_settlement_queue(
     }
 
     let guard_phase_started = Instant::now();
-    let robot_run = force_fill_user_group_buy_plans_before_refund(
+    let robot_run = force_fill_group_buy_plans_before_refund(
         robots,
         draws,
         lotteries,
