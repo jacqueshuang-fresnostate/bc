@@ -472,8 +472,17 @@ pub async fn recharge_rebate_credit_for_order(
         return Ok(None);
     }
 
-    let users = access.users().await?;
-    let invite_records = invites.list().await?;
+    let invitee = access.get_user(&order.user_id).await?;
+    let invite_records = invites.list_for_invitee(&order.user_id).await?;
+    let mut related_user_ids = invite_records
+        .iter()
+        .map(|record| record.inviter_user_id.clone())
+        .collect::<Vec<_>>();
+    if let Some(agent_id) = invitee.agent_id.as_ref() {
+        related_user_ids.push(agent_id.clone());
+    }
+    related_user_ids.push(invitee.id.clone());
+    let users = access.users_for_ids(&related_user_ids).await?;
     let Some(recipient) =
         recharge_rebate_recipient(&order.user_id, &users, &invite_records, &policy)
     else {

@@ -247,8 +247,9 @@ impl OrderRepository {
     /// 分页返回用户可见订单候选：本人独立订单加本人参与合买对应的真实订单。
     pub async fn list_user_visible_page(
         &self,
+        group_buys: &GroupBuyRepository,
         user_id: &str,
-        group_buy_order_ids: &[String],
+        include_group_buy: bool,
         page: PageRequest,
     ) -> ApiResult<ListPage<OrderDetail>> {
         let user_id = user_id.trim();
@@ -256,11 +257,20 @@ impl OrderRepository {
             return Err(ApiError::BadRequest("user id is required".to_string()));
         }
         if let Some(persistence) = &self.persistence {
-            return query_user_visible_order_page(persistence, user_id, group_buy_order_ids, page)
+            return query_user_visible_order_page(persistence, user_id, include_group_buy, page)
                 .await;
         }
 
-        let group_buy_order_ids = group_buy_order_ids.iter().collect::<BTreeSet<_>>();
+        let group_buy_order_ids = if include_group_buy {
+            group_buys
+                .list_details_for_user(user_id)
+                .await?
+                .into_iter()
+                .filter_map(|plan| plan.order_id)
+                .collect::<BTreeSet<_>>()
+        } else {
+            BTreeSet::new()
+        };
         let orders = self
             .inner
             .read()
@@ -1645,22 +1655,39 @@ async fn query_order_page(
 async fn query_user_visible_order_page(
     database: &BusinessDatabase,
     user_id: &str,
-    group_buy_order_ids: &[String],
+    include_group_buy: bool,
     page: PageRequest,
 ) -> ApiResult<ListPage<OrderDetail>> {
-    let group_buy_order_ids = group_buy_order_ids.to_vec();
     let direct_order_source = enum_to_string(&OrderSource::Direct)?;
     let group_buy_order_source = enum_to_string(&OrderSource::GroupBuy)?;
     let total_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*)
-         FROM orders
-         WHERE (order_source = $2 AND user_id = $1)
-            OR (order_source = $3 AND id = ANY($4))",
+         FROM orders o
+         WHERE (o.order_source = $2 AND o.user_id = $1)
+            OR (
+                $4::bool
+                AND o.order_source = $3
+                AND EXISTS (
+                    SELECT 1
+                    FROM group_buy_plans p
+                    WHERE p.order_id = o.id
+                      AND (
+                          p.initiator_user_id = $1
+                          OR EXISTS (
+                              SELECT 1
+                              FROM group_buy_participants gp
+                              WHERE gp.plan_id = p.id
+                                AND gp.user_id = $1
+                                AND gp.amount_minor > 0
+                          )
+                      )
+                )
+            )",
     )
     .bind(user_id)
     .bind(&direct_order_source)
     .bind(&group_buy_order_source)
-    .bind(&group_buy_order_ids)
+    .bind(include_group_buy)
     .fetch_one(database.pool())
     .await
     .map_err(|_| ApiError::Internal("用户注单分页总数读取失败".to_string()))?;
@@ -1671,16 +1698,34 @@ async fn query_user_visible_order_page(
         "SELECT id, order_source, user_id, lottery_id, lottery_name, issue, rule_code, number_type, selection,
                 stake_count, unit_amount_minor, amount_minor, odds_basis_points, expanded_bets,
                 draw_number, matched_bets, payout_minor, status, settled_at, created_at
-         FROM orders
-         WHERE (order_source = $2 AND user_id = $1)
-            OR (order_source = $3 AND id = ANY($4))
-         ORDER BY created_at DESC, id DESC
+         FROM orders o
+         WHERE (o.order_source = $2 AND o.user_id = $1)
+            OR (
+                $4::bool
+                AND o.order_source = $3
+                AND EXISTS (
+                    SELECT 1
+                    FROM group_buy_plans p
+                    WHERE p.order_id = o.id
+                      AND (
+                          p.initiator_user_id = $1
+                          OR EXISTS (
+                              SELECT 1
+                              FROM group_buy_participants gp
+                              WHERE gp.plan_id = p.id
+                                AND gp.user_id = $1
+                                AND gp.amount_minor > 0
+                          )
+                      )
+                )
+            )
+         ORDER BY o.created_at DESC, o.id DESC
          LIMIT $5 OFFSET $6",
     )
     .bind(user_id)
     .bind(&direct_order_source)
     .bind(&group_buy_order_source)
-    .bind(&group_buy_order_ids)
+    .bind(include_group_buy)
     .bind(resolved.limit_i64()?)
     .bind(resolved.offset_i64()?)
     .fetch_all(database.pool())

@@ -186,6 +186,48 @@ impl WithdrawalRepository {
             .collect())
     }
 
+    /// 按用户集合汇总已通过提现金额，避免代理中心读取全部已通过提现明细。
+    pub async fn approved_totals_for_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> ApiResult<BTreeMap<String, i64>> {
+        let user_ids = user_ids
+            .iter()
+            .map(|user_id| user_id.trim())
+            .filter(|user_id| !user_id.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        if user_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_approved_withdrawal_totals_for_user_ids(persistence, &user_ids).await;
+        }
+
+        let user_ids = user_ids
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut totals = BTreeMap::new();
+        for order in self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("withdrawal store lock poisoned".to_string()))?
+            .orders
+            .values()
+            .filter(|order| {
+                order.status == WithdrawalOrderStatus::Approved
+                    && order.amount_minor > 0
+                    && user_ids.contains(&order.user_id)
+            })
+        {
+            let total = totals.entry(order.user_id.clone()).or_insert(0_i64);
+            *total = total
+                .checked_add(order.amount_minor)
+                .ok_or_else(|| ApiError::Internal("直属用户提现汇总金额溢出".to_string()))?;
+        }
+        Ok(totals)
+    }
+
     /// 一键清除提现历史；存在待审核申请时拒绝清理，避免冻结余额失去对应申请。
     pub async fn clear_records(&self) -> ApiResult<usize> {
         if let Some(persistence) = &self.persistence {
@@ -728,6 +770,38 @@ async fn query_withdrawal_orders_by_status(
     .map_err(|_| ApiError::Internal("提现申请状态数据读取失败".to_string()))?;
 
     rows.into_iter().map(withdrawal_order_from_row).collect()
+}
+
+/// 数据库模式下按用户集合聚合已通过提现金额。
+async fn query_approved_withdrawal_totals_for_user_ids(
+    database: &BusinessDatabase,
+    user_ids: &[String],
+) -> ApiResult<BTreeMap<String, i64>> {
+    let rows = sqlx::query(
+        "SELECT user_id, COALESCE(SUM(amount_minor), 0)::BIGINT AS total_minor
+         FROM withdrawal_orders
+         WHERE status = $1
+           AND amount_minor > 0
+           AND user_id = ANY($2::text[])
+         GROUP BY user_id",
+    )
+    .bind(enum_to_string(&WithdrawalOrderStatus::Approved)?)
+    .bind(user_ids)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("直属用户提现汇总数据读取失败".to_string()))?;
+
+    rows.into_iter()
+        .map(|row| {
+            let user_id = row
+                .try_get("user_id")
+                .map_err(|_| ApiError::Internal("直属用户提现汇总数据读取失败".to_string()))?;
+            let total_minor = row
+                .try_get("total_minor")
+                .map_err(|_| ApiError::Internal("直属用户提现汇总数据读取失败".to_string()))?;
+            Ok((user_id, total_minor))
+        })
+        .collect()
 }
 
 /// 数据库模式下一键清除已结束提现历史，存在待审核申请时拒绝清理。

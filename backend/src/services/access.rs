@@ -199,6 +199,29 @@ impl AccessRepository {
             })
     }
 
+    /// 读取指定代理的直属下级，避免手机端代理中心克隆全部用户快照后再过滤。
+    pub async fn direct_users_for_agent(&self, agent_id: &str) -> ApiResult<Vec<UserSummary>> {
+        let agent_id = agent_id.trim();
+        if agent_id.is_empty() {
+            return Err(ApiError::BadRequest("代理用户 ID 不能为空".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_direct_users_for_agent(persistence, agent_id).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .users
+                    .values()
+                    .filter(|user| user.agent_id.as_deref() == Some(agent_id))
+                    .cloned()
+                    .collect()
+            })
+    }
+
     /// 分页返回用户列表；数据库模式下将状态、用户名搜索、排序、余额联查和分页下推到 SQL。
     pub async fn user_page(
         &self,
@@ -310,15 +333,45 @@ impl AccessRepository {
 
     /// 注册用户：按当前注册策略校验输入、创建用户并保存独立密码哈希。
     pub async fn register_user(&self, payload: UserRegisterRequest) -> ApiResult<UserSummary> {
-        let (result, snapshot) = {
-            let mut store = self
+        let password = validate_user_password(&payload.password)?;
+        {
+            let store = self
                 .inner
-                .write()
+                .read()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            let result = store.register_user(payload)?;
-            (result, store.clone())
+            let mut candidate = store.clone();
+            candidate.register_user_with_password_hash(payload.clone(), String::new())?;
+        }
+        let password_hash = spawn_blocking(move || hash_user_password(&password))
+            .await
+            .map_err(|error| ApiError::Internal(format!("用户密码哈希任务失败：{error}")))??;
+
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, next_user_id_counter) = {
+            let candidate = self
+                .inner
+                .read()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let mut candidate = candidate.clone();
+            let result =
+                candidate.register_user_with_password_hash(payload, password_hash.clone())?;
+            (result, candidate.user_id_counter)
         };
-        self.persist(&snapshot).await?;
+
+        if let Some(persistence) = &self.persistence {
+            insert_registered_user(persistence, &result, &password_hash, next_user_id_counter)
+                .await?;
+        }
+
+        let mut store = self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+        store
+            .user_password_hashes
+            .insert(result.id.clone(), password_hash);
+        store.users.insert(result.id.clone(), result.clone());
+        store.user_id_counter = store.user_id_counter.max(next_user_id_counter);
         Ok(result)
     }
 
@@ -395,15 +448,23 @@ impl AccessRepository {
         user_id: &str,
         payload: UserBindEmailRequest,
     ) -> ApiResult<UserSummary> {
-        let (result, snapshot) = {
-            let mut store = self
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let result = {
+            let store = self
                 .inner
-                .write()
+                .read()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            let result = store.bind_email(user_id, payload)?;
-            (result, store.clone())
+            let mut candidate = store.clone();
+            candidate.bind_email(user_id, payload)?
         };
-        self.persist(&snapshot).await?;
+        if let Some(persistence) = &self.persistence {
+            update_user_profile(persistence, &result).await?;
+        }
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .users
+            .insert(result.id.clone(), result.clone());
         Ok(result)
     }
 
@@ -413,15 +474,23 @@ impl AccessRepository {
         user_id: &str,
         payload: UserAvatarRequest,
     ) -> ApiResult<UserSummary> {
-        let (result, snapshot) = {
-            let mut store = self
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let result = {
+            let store = self
                 .inner
-                .write()
+                .read()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            let result = store.update_user_avatar(user_id, payload)?;
-            (result, store.clone())
+            let mut candidate = store.clone();
+            candidate.update_user_avatar(user_id, payload)?
         };
-        self.persist(&snapshot).await?;
+        if let Some(persistence) = &self.persistence {
+            update_user_profile(persistence, &result).await?;
+        }
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .users
+            .insert(result.id.clone(), result.clone());
         Ok(result)
     }
 
@@ -431,16 +500,57 @@ impl AccessRepository {
         user_id: &str,
         payload: UserChangePasswordRequest,
     ) -> ApiResult<UserSummary> {
-        let (result, snapshot) = {
-            let mut store = self
+        let old_password = validate_user_password(&payload.old_password)?;
+        let new_password = validate_user_password(&payload.new_password)?;
+        let (user, current_password_hash) = {
+            let store = self
                 .inner
-                .write()
+                .read()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            let result = store.change_password(user_id, payload)?;
-            (result, store.clone())
+            let user = store.get_user(user_id)?;
+            let password_hash = store
+                .user_password_hashes
+                .get(user_id)
+                .ok_or_else(|| ApiError::Internal("用户密码未配置".to_string()))?
+                .clone();
+            (user, password_hash)
         };
-        self.persist(&snapshot).await?;
-        Ok(result)
+        let password_hash_for_verify = current_password_hash.clone();
+        let password_matches =
+            spawn_blocking(move || verify_user_password(&old_password, &password_hash_for_verify))
+                .await
+                .map_err(|error| ApiError::Internal(format!("用户密码校验任务失败：{error}")))??;
+        if !password_matches {
+            return Err(ApiError::Unauthorized("旧密码不正确".to_string()));
+        }
+        let new_password_hash = spawn_blocking(move || hash_user_password(&new_password))
+            .await
+            .map_err(|error| ApiError::Internal(format!("用户密码哈希任务失败：{error}")))??;
+
+        let _mutation_guard = self.mutation_lock.lock().await;
+        {
+            let store = self
+                .inner
+                .read()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let latest_password_hash = store
+                .user_password_hashes
+                .get(user_id)
+                .ok_or_else(|| ApiError::Internal("用户密码未配置".to_string()))?;
+            if latest_password_hash != &current_password_hash {
+                return Err(ApiError::Conflict("密码已发生变化，请重新提交".to_string()));
+            }
+            store.get_user(user_id)?;
+        }
+        if let Some(persistence) = &self.persistence {
+            update_user_password_hash(persistence, user_id, &new_password_hash).await?;
+        }
+        self.inner
+            .write()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .user_password_hashes
+            .insert(user_id.to_string(), new_password_hash);
+        Ok(user)
     }
 
     /// 发起忘记密码流程：返回重置码和过期时间。
@@ -448,15 +558,35 @@ impl AccessRepository {
         &self,
         payload: UserForgotPasswordRequest,
     ) -> ApiResult<UserForgotPasswordResponse> {
-        let (result, snapshot) = {
-            let mut store = self
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, record) = {
+            let store = self
                 .inner
-                .write()
+                .read()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            let result = store.request_forgot_password(payload)?;
-            (result, store.clone())
+            let mut candidate = store.clone();
+            let result = candidate.request_forgot_password(payload)?;
+            let record = candidate
+                .user_password_reset_tokens
+                .get(&result.reset_token)
+                .cloned()
+                .ok_or_else(|| ApiError::Internal("用户重置码生成失败".to_string()))?;
+            (result, record)
         };
-        self.persist(&snapshot).await?;
+        if let Some(persistence) = &self.persistence {
+            insert_user_password_reset_token(persistence, &result.reset_token, &record).await?;
+        }
+        let now = current_unix_timestamp();
+        let mut store = self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+        store.user_password_reset_tokens.retain(|_, current| {
+            current.user_id != record.user_id || current.expires_at_unix >= now
+        });
+        store
+            .user_password_reset_tokens
+            .insert(result.reset_token.clone(), record);
         Ok(result)
     }
 
@@ -465,17 +595,56 @@ impl AccessRepository {
         &self,
         payload: UserResetPasswordRequest,
     ) -> ApiResult<UserResetPasswordResponse> {
-        let (result, snapshot) = {
-            let mut store = self
+        let token = required_trimmed(payload.reset_token, "reset token")?;
+        let new_password = validate_user_password(&payload.new_password)?;
+        let record = {
+            let store = self
                 .inner
-                .write()
+                .read()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            let result = store.reset_password(payload)?;
-            let snapshot = store.clone();
-            (result, snapshot)
+            let record = store
+                .user_password_reset_tokens
+                .get(&token)
+                .cloned()
+                .ok_or_else(|| ApiError::Unauthorized("重置码无效".to_string()))?;
+            if record.expires_at_unix < current_unix_timestamp() {
+                return Err(ApiError::Unauthorized("重置码已过期".to_string()));
+            }
+            store.get_user(&record.user_id)?;
+            record
         };
-        self.persist(&snapshot).await?;
-        Ok(result)
+        let password_hash = spawn_blocking(move || hash_user_password(&new_password))
+            .await
+            .map_err(|error| ApiError::Internal(format!("用户密码哈希任务失败：{error}")))??;
+
+        let _mutation_guard = self.mutation_lock.lock().await;
+        {
+            let store = self
+                .inner
+                .read()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+            let latest = store
+                .user_password_reset_tokens
+                .get(&token)
+                .ok_or_else(|| ApiError::Unauthorized("重置码无效".to_string()))?;
+            if latest.user_id != record.user_id || latest.expires_at_unix < current_unix_timestamp()
+            {
+                return Err(ApiError::Unauthorized("重置码无效或已过期".to_string()));
+            }
+        }
+        if let Some(persistence) = &self.persistence {
+            reset_user_password_with_token(persistence, &token, &record.user_id, &password_hash)
+                .await?;
+        }
+        let mut store = self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+        store.user_password_reset_tokens.remove(&token);
+        store
+            .user_password_hashes
+            .insert(record.user_id, password_hash);
+        Ok(UserResetPasswordResponse { reset: true })
     }
 
     /// 后台重置普通用户登录密码，适用于用户忘记密码或账号异常后的人工维护。
@@ -510,15 +679,18 @@ impl AccessRepository {
         user_id: &str,
         payload: WithdrawalMethodRequest,
     ) -> ApiResult<WithdrawalMethod> {
-        let (result, snapshot) = {
-            let mut store = self
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, methods) = {
+            let store = self
                 .inner
-                .write()
+                .read()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            let result = store.create_withdrawal_method(user_id, payload)?;
-            (result, store.clone())
+            let mut candidate = store.clone();
+            let result = candidate.create_withdrawal_method(user_id, payload)?;
+            let methods = candidate.list_withdrawal_methods(user_id)?;
+            (result, methods)
         };
-        self.persist(&snapshot).await?;
+        self.save_user_withdrawal_methods(user_id, &methods).await?;
         Ok(result)
     }
 
@@ -529,30 +701,59 @@ impl AccessRepository {
         method_id: &str,
         payload: WithdrawalMethodRequest,
     ) -> ApiResult<WithdrawalMethod> {
-        let (result, snapshot) = {
-            let mut store = self
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let (result, methods) = {
+            let store = self
                 .inner
-                .write()
+                .read()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            let result = store.update_withdrawal_method(user_id, method_id, payload)?;
-            (result, store.clone())
+            let mut candidate = store.clone();
+            let result = candidate.update_withdrawal_method(user_id, method_id, payload)?;
+            let methods = candidate.list_withdrawal_methods(user_id)?;
+            (result, methods)
         };
-        self.persist(&snapshot).await?;
+        self.save_user_withdrawal_methods(user_id, &methods).await?;
         Ok(result)
     }
 
     /// 删除提现方式：不影响其他提现方式的默认配置。
     pub async fn delete_withdrawal_method(&self, user_id: &str, method_id: &str) -> ApiResult<()> {
-        let (result, snapshot) = {
-            let mut store = self
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let methods = {
+            let store = self
                 .inner
-                .write()
+                .read()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            store.delete_withdrawal_method(user_id, method_id)?;
-            ((), store.clone())
+            let mut candidate = store.clone();
+            candidate.delete_withdrawal_method(user_id, method_id)?;
+            candidate.list_withdrawal_methods(user_id)?
         };
-        self.persist(&snapshot).await?;
-        Ok(result)
+        self.save_user_withdrawal_methods(user_id, &methods).await
+    }
+
+    /// 增量保存并刷新单个用户的提现方式集合。
+    async fn save_user_withdrawal_methods(
+        &self,
+        user_id: &str,
+        methods: &[WithdrawalMethod],
+    ) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            replace_user_withdrawal_methods(persistence, user_id, methods).await?;
+        }
+        let mut store = self
+            .inner
+            .write()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
+        store
+            .user_withdrawal_methods
+            .retain(|_, method| method.user_id != user_id);
+        store.user_withdrawal_methods.extend(
+            methods
+                .iter()
+                .cloned()
+                .map(|method| (method.id.clone(), method)),
+        );
+        Ok(())
     }
 
     /// 返回全部管理员列表。
@@ -1437,6 +1638,36 @@ async fn query_users_for_ids(
         .collect::<ApiResult<Vec<_>>>()
 }
 
+/// 数据库模式下按代理 ID 读取直属下级用户摘要。
+async fn query_direct_users_for_agent(
+    database: &BusinessDatabase,
+    agent_id: &str,
+) -> ApiResult<Vec<UserSummary>> {
+    let rows = sqlx::query(
+        "SELECT u.id, u.username, u.email, u.avatar_url, u.contact_qq, u.kind, u.status,
+                COALESCE(account.available_balance_minor, u.balance_minor) AS balance_minor,
+                u.agent_id, u.invite_code,
+                COALESCE(u.registered_ip, '') AS registered_ip,
+                COALESCE(u.register_country, '') AS register_country,
+                COALESCE(u.register_region, '') AS register_region,
+                COALESCE(u.register_city, '') AS register_city,
+                COALESCE(u.register_geo_source, 'unknown') AS register_geo_source,
+                to_char(u.created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at
+         FROM users u
+         LEFT JOIN financial_accounts account ON account.user_id = u.id
+         WHERE u.agent_id = $1
+         ORDER BY u.created_at DESC, u.id DESC",
+    )
+    .bind(agent_id)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("代理直属用户数据读取失败".to_string()))?;
+
+    rows.into_iter()
+        .map(user_summary_from_row)
+        .collect::<ApiResult<Vec<_>>>()
+}
+
 /// 归一化用户 ID 集合，去重并移除空值。
 fn normalized_user_ids(user_ids: &[String]) -> BTreeSet<String> {
     user_ids
@@ -1681,6 +1912,249 @@ async fn delete_admin_session(database: &BusinessDatabase, token_hash: &str) -> 
         .execute(database.pool())
         .await
         .map_err(|_| ApiError::Internal("管理员登录会话删除失败".to_string()))?;
+    Ok(())
+}
+
+/// 增量保存新注册用户、密码哈希和用户 ID 计数器，避免注册时重写整个访问控制快照。
+async fn insert_registered_user(
+    database: &BusinessDatabase,
+    user: &UserSummary,
+    password_hash: &str,
+    user_id_counter: u64,
+) -> ApiResult<()> {
+    let user_id_counter = i64::try_from(user_id_counter)
+        .map_err(|_| ApiError::Internal("用户 ID 计数器超出数据库范围".to_string()))?;
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("用户注册事务开启失败".to_string()))?;
+
+    sqlx::query(
+        "INSERT INTO users (
+            id, username, email, avatar_url, contact_qq, kind, status, balance_minor,
+            agent_id, invite_code, registered_ip, register_country, register_region,
+            register_city, register_geo_source, created_at
+         )
+         VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, $12, $13, $14, $15, $16::timestamptz
+         )",
+    )
+    .bind(&user.id)
+    .bind(&user.username)
+    .bind(&user.email)
+    .bind(&user.avatar_url)
+    .bind(&user.contact_qq)
+    .bind(enum_to_string(&user.kind)?)
+    .bind(enum_to_string(&user.status)?)
+    .bind(user.balance_minor)
+    .bind(&user.agent_id)
+    .bind(&user.invite_code)
+    .bind(&user.registration_location.registered_ip)
+    .bind(&user.registration_location.country)
+    .bind(&user.registration_location.region)
+    .bind(&user.registration_location.city)
+    .bind(&user.registration_location.source)
+    .bind(&user.created_at)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| {
+        if error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref()
+            == Some("23505")
+        {
+            ApiError::Conflict("用户名、邮箱或邀请码已存在".to_string())
+        } else {
+            ApiError::Internal("用户注册资料保存失败".to_string())
+        }
+    })?;
+
+    sqlx::query("INSERT INTO user_password_hashes (user_id, password_hash) VALUES ($1, $2)")
+        .bind(&user.id)
+        .bind(password_hash)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("用户注册密码保存失败".to_string()))?;
+    sqlx::query(
+        "INSERT INTO access_runtime (key, value)
+         VALUES ('user_id_counter', $1)
+         ON CONFLICT (key) DO UPDATE
+         SET value = GREATEST(access_runtime.value, EXCLUDED.value), updated_at = now()",
+    )
+    .bind(user_id_counter)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| ApiError::Internal("用户 ID 计数器保存失败".to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("用户注册事务提交失败".to_string()))?;
+    Ok(())
+}
+
+/// 增量更新单个用户密码哈希，避免修改密码时重写用户、会话和系统设置表。
+async fn update_user_password_hash(
+    database: &BusinessDatabase,
+    user_id: &str,
+    password_hash: &str,
+) -> ApiResult<()> {
+    let result = sqlx::query(
+        "UPDATE user_password_hashes
+         SET password_hash = $2, updated_at = now()
+         WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .bind(password_hash)
+    .execute(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户密码保存失败".to_string()))?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("user `{user_id}` not found")));
+    }
+    Ok(())
+}
+
+/// 增量更新单个用户的邮箱和头像字段。
+async fn update_user_profile(database: &BusinessDatabase, user: &UserSummary) -> ApiResult<()> {
+    let result = sqlx::query(
+        "UPDATE users
+         SET email = $2, avatar_url = $3, updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(&user.id)
+    .bind(&user.email)
+    .bind(&user.avatar_url)
+    .execute(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户资料保存失败".to_string()))?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("user `{}` not found", user.id)));
+    }
+    Ok(())
+}
+
+/// 仅替换指定用户的提现方式，避免用户维护收款账号时重写整个访问控制数据集。
+async fn replace_user_withdrawal_methods(
+    database: &BusinessDatabase,
+    user_id: &str,
+    methods: &[WithdrawalMethod],
+) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("提现方式事务开启失败".to_string()))?;
+    sqlx::query("DELETE FROM user_withdrawal_methods WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("用户提现方式清理失败".to_string()))?;
+    for method in methods {
+        sqlx::query(
+            "INSERT INTO user_withdrawal_methods (
+                id, user_id, method_type, account_holder, account_number,
+                bank_name, is_default, created_at, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(&method.id)
+        .bind(&method.user_id)
+        .bind(enum_to_string(&method.method_type)?)
+        .bind(&method.account_holder)
+        .bind(&method.account_number)
+        .bind(&method.bank_name)
+        .bind(method.is_default)
+        .bind(&method.created_at)
+        .bind(&method.updated_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("用户提现方式保存失败".to_string()))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("提现方式事务提交失败".to_string()))?;
+    Ok(())
+}
+
+/// 增量保存用户密码重置码，并清理该用户已经过期的旧记录。
+async fn insert_user_password_reset_token(
+    database: &BusinessDatabase,
+    token: &str,
+    record: &PasswordResetTokenRecord,
+) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("密码重置码事务开启失败".to_string()))?;
+    sqlx::query(
+        "DELETE FROM user_password_reset_tokens
+         WHERE user_id = $1 AND expires_at_unix < $2",
+    )
+    .bind(&record.user_id)
+    .bind(current_unix_timestamp())
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| ApiError::Internal("过期密码重置码清理失败".to_string()))?;
+    sqlx::query(
+        "INSERT INTO user_password_reset_tokens (token, user_id, expires_at_unix)
+         VALUES ($1, $2, $3)",
+    )
+    .bind(token)
+    .bind(&record.user_id)
+    .bind(record.expires_at_unix)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| ApiError::Internal("用户密码重置码保存失败".to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("密码重置码事务提交失败".to_string()))?;
+    Ok(())
+}
+
+/// 使用重置码原子更新密码并消费重置码。
+async fn reset_user_password_with_token(
+    database: &BusinessDatabase,
+    token: &str,
+    user_id: &str,
+    password_hash: &str,
+) -> ApiResult<()> {
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("密码重置事务开启失败".to_string()))?;
+    let consumed = sqlx::query(
+        "DELETE FROM user_password_reset_tokens
+         WHERE token = $1 AND user_id = $2 AND expires_at_unix >= $3",
+    )
+    .bind(token)
+    .bind(user_id)
+    .bind(current_unix_timestamp())
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| ApiError::Internal("用户密码重置码消费失败".to_string()))?;
+    if consumed.rows_affected() == 0 {
+        return Err(ApiError::Unauthorized("重置码无效或已过期".to_string()));
+    }
+    let updated = sqlx::query(
+        "UPDATE user_password_hashes
+         SET password_hash = $2, updated_at = now()
+         WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .bind(password_hash)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| ApiError::Internal("用户密码保存失败".to_string()))?;
+    if updated.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("user `{user_id}` not found")));
+    }
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("密码重置事务提交失败".to_string()))?;
     Ok(())
 }
 
@@ -2030,9 +2504,13 @@ impl AccessStore {
         Ok(removed)
     }
 
-    /// 处理用户注册：校验注册策略、邀请码和唯一性，并创建用户和密码记录。
-    fn register_user(&mut self, payload: UserRegisterRequest) -> ApiResult<UserSummary> {
-        let password = validate_user_password(&payload.password)?;
+    /// 使用预先计算的密码哈希创建用户，供异步仓储把 Argon2 放到阻塞线程池执行。
+    fn register_user_with_password_hash(
+        &mut self,
+        payload: UserRegisterRequest,
+        password_hash: String,
+    ) -> ApiResult<UserSummary> {
+        validate_user_password(&payload.password)?;
         let username_provided = payload.username.is_some();
         let email_provided = payload.email.is_some();
         let username = payload
@@ -2135,7 +2613,7 @@ impl AccessStore {
         };
 
         self.user_password_hashes
-            .insert(user.id.clone(), hash_user_password(&password)?);
+            .insert(user.id.clone(), password_hash);
         self.create_user(user.clone())?;
 
         Ok(user)
@@ -2270,34 +2748,6 @@ impl AccessStore {
         Ok(user.clone())
     }
 
-    /// 修改用户密码并刷新密码哈希。
-    fn change_password(
-        &mut self,
-        user_id: &str,
-        payload: UserChangePasswordRequest,
-    ) -> ApiResult<UserSummary> {
-        let old_password = validate_user_password(&payload.old_password)?;
-        let new_password = validate_user_password(&payload.new_password)?;
-
-        let user = self
-            .users
-            .get(user_id)
-            .ok_or_else(|| ApiError::NotFound(format!("user `{user_id}` not found")))?;
-
-        let password_hash = self
-            .user_password_hashes
-            .get(user_id)
-            .ok_or_else(|| ApiError::Internal("用户密码未配置".to_string()))?;
-        if !verify_user_password(&old_password, password_hash)? {
-            return Err(ApiError::Unauthorized("旧密码不正确".to_string()));
-        }
-
-        self.user_password_hashes
-            .insert(user_id.to_string(), hash_user_password(&new_password)?);
-
-        Ok(user.clone())
-    }
-
     /// 生成忘记密码重置令牌。
     fn request_forgot_password(
         &mut self,
@@ -2341,33 +2791,6 @@ impl AccessStore {
             reset_token: token,
             expires_at: format_unix_timestamp(expires_at_unix),
         })
-    }
-
-    /// 使用重置码更新密码并清理 token。
-    fn reset_password(
-        &mut self,
-        payload: UserResetPasswordRequest,
-    ) -> ApiResult<UserResetPasswordResponse> {
-        let new_password = validate_user_password(&payload.new_password)?;
-        let now = current_unix_timestamp();
-        let token = required_trimmed(payload.reset_token, "reset token")?;
-
-        let record = self
-            .user_password_reset_tokens
-            .remove(&token)
-            .ok_or_else(|| ApiError::Unauthorized("重置码无效".to_string()))?;
-        if record.expires_at_unix < now {
-            return Err(ApiError::Unauthorized("重置码已过期".to_string()));
-        }
-
-        let user = self
-            .users
-            .get(&record.user_id)
-            .ok_or_else(|| ApiError::NotFound(format!("user `{}` not found", record.user_id)))?;
-        self.user_password_hashes
-            .insert(user.id.clone(), hash_user_password(&new_password)?);
-
-        Ok(UserResetPasswordResponse { reset: true })
     }
 
     /// 后台人工重置指定用户密码，写入新的用户密码哈希但不修改用户基础资料。

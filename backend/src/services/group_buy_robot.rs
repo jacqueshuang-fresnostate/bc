@@ -80,6 +80,15 @@ const ROBOT_DISPLAY_NAME_FALLBACKS: [&str; 8] = [
 type RobotFinanceMutationLock = Arc<AsyncMutex<()>>;
 type RobotIssueMutationLock = Arc<AsyncMutex<()>>;
 
+/// 只读取机器人业务实际使用的固定账号，避免常驻调度克隆全部用户快照。
+async fn load_group_buy_robot_users(access: &AccessRepository) -> ApiResult<Vec<UserSummary>> {
+    let user_ids = ROBOT_GROUP_BUY_USER_IDS
+        .iter()
+        .map(|user_id| (*user_id).to_string())
+        .collect::<Vec<_>>();
+    access.users_for_ids(&user_ids).await
+}
+
 #[derive(Clone)]
 struct GroupBuyRobotJob {
     robot: RobotConfigSummary,
@@ -221,8 +230,7 @@ pub async fn run_group_buy_robots(
 ) -> ApiResult<GroupBuyRobotRun> {
     let now = required_now(now)?;
     let now_at = parse_robot_timestamp(&now, "机器人执行时间")?;
-    let access = access.snapshot().await?;
-    let users = Arc::new(access.users);
+    let users = Arc::new(load_group_buy_robot_users(access).await?);
     let robot_user = robot_user(users.as_ref().as_slice())?.clone();
     let lotteries_by_id = lotteries
         .list()
@@ -492,7 +500,7 @@ pub async fn force_fill_group_buy_plans_before_refund(
         .collect::<BTreeMap<_, _>>();
     let robots = robots.list().await?;
 
-    let access = access.snapshot().await?;
+    let access_users = load_group_buy_robot_users(access).await?;
     let finance_lock = Arc::new(AsyncMutex::new(()));
     for mut plan in candidate_plans {
         let Some(issue) = candidate_issues.get(&(plan.lottery_id.clone(), plan.issue.clone()))
@@ -548,7 +556,7 @@ pub async fn force_fill_group_buy_plans_before_refund(
             orders,
             finance,
             group_buys,
-            &access.users,
+            &access_users,
             &finance_lock,
             now_at,
             RobotFillPolicy::GuaranteedPlan,

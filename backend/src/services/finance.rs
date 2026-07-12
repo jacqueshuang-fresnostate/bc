@@ -224,6 +224,27 @@ impl FinanceRepository {
             .recharge_credit_totals_for_user_ids(&user_ids)
     }
 
+    /// 汇总指定用户已入账的正向充值返利，避免代理中心加载该用户全部资金流水。
+    pub async fn recharge_rebate_credit_total_minor(&self, user_id: &str) -> ApiResult<i64> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_positive_ledger_total_for_user_kind(
+                persistence,
+                user_id,
+                &LedgerEntryKind::RechargeRebateCredit,
+            )
+            .await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("finance store lock poisoned".to_string()))?
+            .positive_ledger_total_for_user_kind(user_id, &LedgerEntryKind::RechargeRebateCredit)
+    }
+
     /// 一键清除资金流水历史；只清除审计列表，不回滚账户余额也不重置流水序号。
     pub async fn clear_ledger_entries(&self) -> ApiResult<usize> {
         let _mutation_guard = self.mutation_lock.lock().await;
@@ -335,6 +356,7 @@ impl FinanceRepository {
     }
 
     /// 返回指定用户的财务流水列表。
+    #[cfg(test)]
     pub async fn user_ledger_entries(&self, user_id: &str) -> ApiResult<Vec<LedgerEntry>> {
         let user_id = user_id.trim();
         if user_id.is_empty() {
@@ -1998,6 +2020,24 @@ async fn query_recharge_credit_totals_for_user_ids(
     Ok(totals)
 }
 
+/// 数据库模式下按用户和流水类型直接汇总正向入账金额。
+async fn query_positive_ledger_total_for_user_kind(
+    database: &BusinessDatabase,
+    user_id: &str,
+    kind: &LedgerEntryKind,
+) -> ApiResult<i64> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(amount_minor), 0)::BIGINT
+         FROM ledger_entries
+         WHERE user_id = $1 AND kind = $2 AND amount_minor > 0",
+    )
+    .bind(user_id)
+    .bind(enum_to_string(kind)?)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户资金流水汇总读取失败".to_string()))
+}
+
 /// 把流水类型转换为数据库枚举字符串。
 fn ledger_entry_kind_names(kinds: &[LedgerEntryKind]) -> ApiResult<Vec<String>> {
     kinds.iter().map(enum_to_string).collect()
@@ -2515,6 +2555,7 @@ impl FinanceStore {
     }
 
     /// 按用户筛选资金流水。
+    #[cfg(test)]
     fn ledger_entries_for_user(&self, user_id: &str) -> Vec<LedgerEntry> {
         self.ledger_entries
             .iter()
@@ -2681,6 +2722,24 @@ impl FinanceStore {
                 .ok_or_else(|| ApiError::Internal("直属用户累计充值金额溢出".to_string()))?;
         }
         Ok(totals)
+    }
+
+    /// 内存模式下汇总单个用户指定类型的正向流水。
+    fn positive_ledger_total_for_user_kind(
+        &self,
+        user_id: &str,
+        kind: &LedgerEntryKind,
+    ) -> ApiResult<i64> {
+        self.ledger_entries
+            .iter()
+            .filter(|entry| {
+                entry.user_id == user_id && &entry.kind == kind && entry.amount_minor > 0
+            })
+            .try_fold(0_i64, |total, entry| {
+                total
+                    .checked_add(entry.amount_minor)
+                    .ok_or_else(|| ApiError::Internal("用户资金流水汇总金额溢出".to_string()))
+            })
     }
 
     /// 校验用户可用余额是否足够扣款。
@@ -4480,6 +4539,27 @@ mod tests {
             Some("recharge-rebate:R000000000001")
         );
         assert_eq!(account.available_balance_minor, 520_350);
+    }
+
+    #[test]
+    /// 代理中心返利汇总只累计指定用户的正向充值返利流水。
+    fn store_sums_positive_recharge_rebate_for_user() {
+        let mut store = FinanceStore::seeded();
+        store
+            .credit_recharge_rebate("U90001", "U10001", 350, "R000000000001")
+            .expect("first recharge rebate can be credited");
+        store
+            .credit_recharge_rebate("U90001", "U10002", 250, "R000000000002")
+            .expect("second recharge rebate can be credited");
+        store
+            .withdraw_agent_rebate("U90001", 200, "代理返利提现处理")
+            .expect("negative withdrawal must not reduce credited total");
+
+        let total = store
+            .positive_ledger_total_for_user_kind("U90001", &LedgerEntryKind::RechargeRebateCredit)
+            .expect("recharge rebate total can be calculated");
+
+        assert_eq!(total, 600);
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::{
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{postgres::PgRow, Row};
 
 use crate::{
     domain::{
@@ -54,6 +54,52 @@ impl InviteRepository {
             .read()
             .map_err(|_| ApiError::Internal("invite store lock poisoned".to_string()))
             .map(|store| store.list())
+    }
+
+    /// 按邀请人读取直属邀请关系，避免代理中心加载全部历史邀请记录。
+    pub async fn list_for_inviter(&self, inviter_user_id: &str) -> ApiResult<Vec<InviteRecord>> {
+        let inviter_user_id = inviter_user_id.trim();
+        if inviter_user_id.is_empty() {
+            return Err(ApiError::BadRequest("邀请人用户 ID 不能为空".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_invite_records_for_inviter(persistence, inviter_user_id).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("invite store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .records
+                    .values()
+                    .filter(|record| record.inviter_user_id == inviter_user_id)
+                    .cloned()
+                    .collect()
+            })
+    }
+
+    /// 按被邀请人读取邀请关系，供充值返利只查询当前订单关联关系。
+    pub async fn list_for_invitee(&self, invitee_user_id: &str) -> ApiResult<Vec<InviteRecord>> {
+        let invitee_user_id = invitee_user_id.trim();
+        if invitee_user_id.is_empty() {
+            return Err(ApiError::BadRequest("被邀请人用户 ID 不能为空".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_invite_records_for_invitee(persistence, invitee_user_id).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("invite store lock poisoned".to_string()))
+            .map(|store| {
+                store
+                    .records
+                    .values()
+                    .filter(|record| record.invitee_user_id == invitee_user_id)
+                    .cloned()
+                    .collect()
+            })
     }
 
     /// 按关系 ID 获取单条邀请关系记录。
@@ -145,46 +191,8 @@ async fn load_invite_store(database: &BusinessDatabase) -> ApiResult<InviteStore
     .await
     .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?
     {
-        let id: String = row
-            .try_get("id")
-            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?;
-        records.insert(
-            id.clone(),
-            InviteRecord {
-                id,
-                inviter_user_id: row
-                    .try_get("inviter_user_id")
-                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
-                inviter_username: row
-                    .try_get("inviter_username")
-                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
-                invitee_user_id: row
-                    .try_get("invitee_user_id")
-                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
-                invitee_username: row
-                    .try_get("invitee_username")
-                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
-                invite_code: row
-                    .try_get("invite_code")
-                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
-                status: enum_from_string(
-                    row.try_get("status")
-                        .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
-                )?,
-                rebate_enabled: row
-                    .try_get("rebate_enabled")
-                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
-                note: row
-                    .try_get("note")
-                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
-                created_at: row
-                    .try_get("created_at")
-                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
-                updated_at: row
-                    .try_get("updated_at")
-                    .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
-            },
-        );
+        let record = invite_record_from_row(row)?;
+        records.insert(record.id.clone(), record);
     }
 
     if records.is_empty() {
@@ -194,6 +202,90 @@ async fn load_invite_store(database: &BusinessDatabase) -> ApiResult<InviteStore
     }
 
     Ok(InviteStore { records })
+}
+
+/// 数据库模式下按邀请人读取直属邀请关系。
+async fn query_invite_records_for_inviter(
+    database: &BusinessDatabase,
+    inviter_user_id: &str,
+) -> ApiResult<Vec<InviteRecord>> {
+    let rows = sqlx::query(
+        "SELECT id, inviter_user_id, inviter_username, invitee_user_id, invitee_username,
+                invite_code, status, rebate_enabled, note, created_at, updated_at
+         FROM invite_records
+         WHERE inviter_user_id = $1
+         ORDER BY created_at DESC, id DESC",
+    )
+    .bind(inviter_user_id)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("直属邀请关系数据读取失败".to_string()))?;
+
+    rows.into_iter()
+        .map(invite_record_from_row)
+        .collect::<ApiResult<Vec<_>>>()
+}
+
+/// 数据库模式下按被邀请人读取邀请关系。
+async fn query_invite_records_for_invitee(
+    database: &BusinessDatabase,
+    invitee_user_id: &str,
+) -> ApiResult<Vec<InviteRecord>> {
+    let rows = sqlx::query(
+        "SELECT id, inviter_user_id, inviter_username, invitee_user_id, invitee_username,
+                invite_code, status, rebate_enabled, note, created_at, updated_at
+         FROM invite_records
+         WHERE invitee_user_id = $1
+         ORDER BY created_at DESC, id DESC",
+    )
+    .bind(invitee_user_id)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户邀请关系数据读取失败".to_string()))?;
+
+    rows.into_iter()
+        .map(invite_record_from_row)
+        .collect::<ApiResult<Vec<_>>>()
+}
+
+/// 从数据库行恢复邀请关系，供启动加载和按邀请人查询复用。
+fn invite_record_from_row(row: PgRow) -> ApiResult<InviteRecord> {
+    Ok(InviteRecord {
+        id: row
+            .try_get("id")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+        inviter_user_id: row
+            .try_get("inviter_user_id")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+        inviter_username: row
+            .try_get("inviter_username")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+        invitee_user_id: row
+            .try_get("invitee_user_id")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+        invitee_username: row
+            .try_get("invitee_username")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+        invite_code: row
+            .try_get("invite_code")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+        status: enum_from_string(
+            row.try_get("status")
+                .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+        )?,
+        rebate_enabled: row
+            .try_get("rebate_enabled")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+        note: row
+            .try_get("note")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+        updated_at: row
+            .try_get("updated_at")
+            .map_err(|_| ApiError::Internal("邀请关系数据读取失败".to_string()))?,
+    })
 }
 
 /// 把邀请关系运行时快照保存到数据库。

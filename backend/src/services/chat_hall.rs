@@ -95,7 +95,7 @@ impl ChatHallRepository {
         let _mutation_guard = self.mutation_lock.lock().await;
         let mut snapshot = self.current_store_snapshot()?;
         let message = snapshot.send(user, request)?;
-        self.persist(&snapshot).await?;
+        self.persist_new_message(&snapshot, &message).await?;
         self.replace_store(snapshot)?;
 
         Ok(message)
@@ -203,7 +203,7 @@ impl ChatHallRepository {
         let _mutation_guard = self.mutation_lock.lock().await;
         let mut snapshot = self.current_store_snapshot()?;
         let message = snapshot.share_group_buy_plan(user, payload)?;
-        self.persist(&snapshot).await?;
+        self.persist_new_message(&snapshot, &message).await?;
         self.replace_store(snapshot)?;
 
         Ok(message)
@@ -216,7 +216,9 @@ impl ChatHallRepository {
         if !snapshot.update_user_avatar(user_id, avatar_url) {
             return Ok(());
         }
-        self.persist(&snapshot).await?;
+        if let Some(persistence) = &self.persistence {
+            update_chat_hall_user_avatar(persistence, user_id, avatar_url).await?;
+        }
         self.replace_store(snapshot)
     }
 
@@ -239,6 +241,18 @@ impl ChatHallRepository {
             save_chat_hall_store(persistence, store).await?;
         }
 
+        Ok(())
+    }
+
+    /// PostgreSQL 模式下只插入新增消息并清理超出保留窗口的旧记录。
+    async fn persist_new_message(
+        &self,
+        store: &ChatHallStore,
+        message: &ChatHallMessage,
+    ) -> ApiResult<()> {
+        if let Some(persistence) = &self.persistence {
+            save_chat_hall_message_incremental(persistence, store, message).await?;
+        }
         Ok(())
     }
 
@@ -841,6 +855,88 @@ async fn save_chat_hall_store(database: &BusinessDatabase, store: &ChatHallStore
     tx.commit()
         .await
         .map_err(|_| ApiError::Internal("聊天大厅事务提交失败".to_string()))
+}
+
+/// 增量保存单条大厅消息，并按内存保留窗口删除过期消息和红包展示记录。
+async fn save_chat_hall_message_incremental(
+    database: &BusinessDatabase,
+    store: &ChatHallStore,
+    message: &ChatHallMessage,
+) -> ApiResult<()> {
+    let retained_message_ids = store
+        .messages
+        .iter()
+        .map(|message| message.id.clone())
+        .collect::<Vec<_>>();
+    let active_red_packet_ids = store.red_packets.keys().cloned().collect::<Vec<_>>();
+    let mut tx = database
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::Internal("聊天大厅增量事务开启失败".to_string()))?;
+
+    sqlx::query(
+        "INSERT INTO chat_hall_messages
+         (id, user_id, username, avatar_url, content, message_type, payload, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+             user_id = EXCLUDED.user_id,
+             username = EXCLUDED.username,
+             avatar_url = EXCLUDED.avatar_url,
+             content = EXCLUDED.content,
+             message_type = EXCLUDED.message_type,
+             payload = EXCLUDED.payload,
+             created_at = EXCLUDED.created_at",
+    )
+    .bind(&message.id)
+    .bind(&message.user_id)
+    .bind(&message.username)
+    .bind(&message.avatar_url)
+    .bind(&message.content)
+    .bind(enum_to_string(&message.message_type)?)
+    .bind(&message.payload)
+    .bind(&message.created_at)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| ApiError::Internal("聊天大厅新增消息保存失败".to_string()))?;
+
+    sqlx::query("DELETE FROM chat_hall_messages WHERE NOT (id = ANY($1::text[]))")
+        .bind(&retained_message_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("聊天大厅过期消息清理失败".to_string()))?;
+    sqlx::query(
+        "DELETE FROM chat_hall_red_packet_claims
+         WHERE NOT (red_packet_id = ANY($1::text[]))",
+    )
+    .bind(&active_red_packet_ids)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| ApiError::Internal("聊天大厅过期红包领取记录清理失败".to_string()))?;
+    sqlx::query("DELETE FROM chat_hall_red_packets WHERE NOT (id = ANY($1::text[]))")
+        .bind(&active_red_packet_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| ApiError::Internal("聊天大厅过期红包清理失败".to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|_| ApiError::Internal("聊天大厅增量事务提交失败".to_string()))
+}
+
+/// 增量刷新指定用户在大厅历史消息中的头像快照。
+async fn update_chat_hall_user_avatar(
+    database: &BusinessDatabase,
+    user_id: &str,
+    avatar_url: &str,
+) -> ApiResult<()> {
+    sqlx::query("UPDATE chat_hall_messages SET avatar_url = $2 WHERE user_id = $1")
+        .bind(user_id.trim())
+        .bind(avatar_url.trim())
+        .execute(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("聊天大厅用户头像增量更新失败".to_string()))?;
+    Ok(())
 }
 
 /// 在外层事务中保存手机端公共聊天大厅运行时快照，供跨仓储事务复用。

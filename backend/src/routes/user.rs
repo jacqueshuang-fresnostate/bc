@@ -14,6 +14,7 @@ use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::{
@@ -101,7 +102,8 @@ use crate::{
 const MAX_USER_BET_BATCH_SIZE: usize = 50;
 const REALTIME_HEARTBEAT_SECONDS: u64 = 30;
 const NOMINATIM_REVERSE_URL: &str = "https://nominatim.openstreetmap.org/reverse";
-const NOMINATIM_TIMEOUT_SECONDS: u64 = 8;
+const NOMINATIM_TIMEOUT_SECONDS: u64 = 2;
+static NOMINATIM_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 const NOMINATIM_USER_AGENT: &str = "bc-backend/0.1 registration-location";
 const CHAT_HALL_SPEAKING_MIN_RECHARGE_SETTING_KEY: &str = "chat_hall_speaking_min_recharge_minor";
 const DEFAULT_USER_AVATAR_SETTING_KEY: &str = "mobile_default_avatar_url";
@@ -571,10 +573,22 @@ fn default_avatar_url_from_settings(settings: &[SystemSetting]) -> Option<String
         .filter(|value| value.starts_with("https://") || value.starts_with("http://"))
 }
 
+/// 规范化单个默认头像配置值，只公开有效 http/https 链接。
+fn default_avatar_url_from_value(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "未配置")
+        .filter(|value| value.starts_with("https://") || value.starts_with("http://"))
+}
+
 /// 从当前系统设置读取默认头像配置。
 async fn default_avatar_url_from_state(state: &AppState) -> ApiResult<Option<String>> {
-    let settings = state.access.settings().await?;
-    Ok(default_avatar_url_from_settings(&settings))
+    Ok(default_avatar_url_from_value(
+        state
+            .access
+            .setting_value_optional(DEFAULT_USER_AVATAR_SETTING_KEY)
+            .await?,
+    ))
 }
 
 /// 按配置键读取系统设置值，统一修剪首尾空白。
@@ -715,10 +729,13 @@ fn valid_registration_position(position: &UserRegistrationPosition) -> bool {
 async fn reverse_registration_position(
     position: &UserRegistrationPosition,
 ) -> Result<Option<UserRegistrationLocation>, reqwest::Error> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(NOMINATIM_TIMEOUT_SECONDS))
-        .user_agent(NOMINATIM_USER_AGENT)
-        .build()?;
+    let client = NOMINATIM_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(NOMINATIM_TIMEOUT_SECONDS))
+            .user_agent(NOMINATIM_USER_AGENT)
+            .build()
+            .unwrap_or_default()
+    });
     let latitude = position.latitude.to_string();
     let longitude = position.longitude.to_string();
     let response = client
@@ -1135,8 +1152,7 @@ async fn get_balance(
 ) -> ApiResult<Json<ApiEnvelope<UserBalanceResponse>>> {
     let account: FinancialAccountSummary =
         state.finance.account_or_create(&session.user.id).await?;
-    let settings = state.access.settings().await?;
-    let default_avatar_url = default_avatar_url_from_settings(&settings);
+    let default_avatar_url = default_avatar_url_from_state(&state).await?;
     let user = user_with_default_avatar(
         user_with_account_balance(session.user, Some(&account)),
         default_avatar_url.as_deref(),
@@ -1154,8 +1170,7 @@ async fn user_with_financial_balance(
     user: UserSummary,
 ) -> ApiResult<UserSummary> {
     let account = state.finance.account_or_create(&user.id).await?;
-    let settings = state.access.settings().await?;
-    let default_avatar_url = default_avatar_url_from_settings(&settings);
+    let default_avatar_url = default_avatar_url_from_state(state).await?;
     Ok(user_with_default_avatar(
         user_with_account_balance(user, Some(&account)),
         default_avatar_url.as_deref(),
@@ -1221,11 +1236,24 @@ async fn get_user_invitation_summary(
     let policy = state.rebates.get().await?;
     let can_invite = user_can_invite(&session.user, &policy);
     let direct_users = if matches!(session.user.kind, UserKind::Agent) {
-        let access = state.access.snapshot().await?;
-        let invite_records = state.invites.list().await?;
+        let invite_records = state.invites.list_for_inviter(&session.user.id).await?;
+        let mut candidate_users = state
+            .access
+            .direct_users_for_agent(&session.user.id)
+            .await?;
+        let existing_user_ids = candidate_users
+            .iter()
+            .map(|user| user.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let invitee_user_ids = invite_records
+            .iter()
+            .map(|record| record.invitee_user_id.clone())
+            .filter(|user_id| !existing_user_ids.contains(user_id.as_str()))
+            .collect::<Vec<_>>();
+        candidate_users.extend(state.access.users_for_ids(&invitee_user_ids).await?);
         let candidates = collect_direct_invitation_candidates(
             &session.user.id,
-            &access.users,
+            &candidate_users,
             &invite_records,
             can_invite,
         );
@@ -1233,10 +1261,12 @@ async fn get_user_invitation_summary(
             .iter()
             .map(|candidate| candidate.user.id.clone())
             .collect::<Vec<_>>();
-        let balance_by_user_id = direct_user_available_balances(&state, &direct_user_ids).await?;
-        let recharge_totals = direct_user_recharge_totals(&state, &direct_user_ids).await?;
-        let withdrawal_totals = direct_user_withdrawal_totals(&state).await?;
-        let mut bet_profiles = direct_user_bet_profiles(&state, &direct_user_ids).await?;
+        let (balance_by_user_id, recharge_totals, withdrawal_totals, mut bet_profiles) = tokio::try_join!(
+            direct_user_available_balances(&state, &direct_user_ids),
+            direct_user_recharge_totals(&state, &direct_user_ids),
+            direct_user_withdrawal_totals(&state, &direct_user_ids),
+            direct_user_bet_profiles(&state, &direct_user_ids),
+        )?;
         let mut direct_users = Vec::with_capacity(candidates.len());
         for candidate in candidates {
             let available_balance_minor = balance_by_user_id
@@ -1842,12 +1872,18 @@ fn digit_attribute_label(attribute: &DigitAttribute) -> &'static str {
 }
 
 /// 汇总全部已通过提现订单，供邀请中心展示直属下级提现金额。
-async fn direct_user_withdrawal_totals(state: &AppState) -> ApiResult<BTreeMap<String, i64>> {
-    let orders = state.withdrawals.approved_orders().await?;
-    sum_approved_withdrawal_minor_by_user(&orders)
+async fn direct_user_withdrawal_totals(
+    state: &AppState,
+    direct_user_ids: &[String],
+) -> ApiResult<BTreeMap<String, i64>> {
+    state
+        .withdrawals
+        .approved_totals_for_user_ids(direct_user_ids)
+        .await
 }
 
 /// 按用户汇总已通过提现金额，忽略异常的非正数金额并保护溢出。
+#[cfg(test)]
 fn sum_approved_withdrawal_minor_by_user(
     orders: &[WithdrawalOrderSummary],
 ) -> ApiResult<BTreeMap<String, i64>> {
@@ -1879,11 +1915,14 @@ fn sum_recharge_credits_minor(entries: &[LedgerEntry]) -> ApiResult<i64> {
 
 /// 统计当前代理已真实入账的充值返利流水。
 async fn user_recharge_rebate_minor(state: &AppState, user_id: &str) -> ApiResult<i64> {
-    let entries = state.finance.user_ledger_entries(user_id).await?;
-    sum_recharge_rebate_credits_minor(&entries)
+    state
+        .finance
+        .recharge_rebate_credit_total_minor(user_id)
+        .await
 }
 
 /// 汇总正向充值返利流水，作为邀请中心“已结算返利”来源。
+#[cfg(test)]
 fn sum_recharge_rebate_credits_minor(entries: &[LedgerEntry]) -> ApiResult<i64> {
     entries
         .iter()
@@ -1980,14 +2019,6 @@ async fn list_user_bet_orders(
     Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<Vec<UserBetOrderDetailResponse>>>> {
     let include_group_buy = !matches!(query.view, Some(UserBetOrderView::Orders));
-    let group_buy_order_ids = if include_group_buy {
-        state
-            .group_buys
-            .order_ids_for_user(&session.user.id)
-            .await?
-    } else {
-        Vec::new()
-    };
     let order_page_request = if matches!(query.view, Some(UserBetOrderView::GroupBuy)) {
         PageRequest::default()
     } else {
@@ -1995,7 +2026,12 @@ async fn list_user_bet_orders(
     };
     let orders = state
         .orders
-        .list_user_visible_page(&session.user.id, &group_buy_order_ids, order_page_request)
+        .list_user_visible_page(
+            &state.group_buys,
+            &session.user.id,
+            include_group_buy,
+            order_page_request,
+        )
         .await?
         .items;
     let order_ids = orders
@@ -2619,14 +2655,14 @@ async fn get_user_group_buy_plan(
     Path(id): Path<String>,
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlan>>> {
     let lotteries = state.lotteries.list().await?;
-    let access = state.access.snapshot().await?;
-    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
     let plan = state.group_buys.get(&id).await?;
+    let (users, default_avatar_url) =
+        group_buy_display_context(&state, std::slice::from_ref(&plan)).await?;
     let plan = user_group_buy_plan_from_record_with_default_avatar(
         &plan,
         &lotteries,
         Some(&session.user.id),
-        &access.users,
+        &users,
         true,
         default_avatar_url.as_deref(),
     )?;
@@ -2641,26 +2677,29 @@ async fn list_my_group_buy_plans(
     Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Json<ApiEnvelope<UserGroupBuyPlanPage>>> {
     let lotteries = state.lotteries.list().await?;
-    let access = state.access.snapshot().await?;
-    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
-    let mut items = state
+    let plans = state
         .group_buys
-        .list_details_for_user(&session.user.id)
+        .list_details_for_user_page(
+            &session.user.id,
+            PageRequest::new(query.page, query.page_size),
+        )
         .await?
+        .items;
+    let (users, default_avatar_url) = group_buy_display_context(&state, &plans).await?;
+    let mut items = plans
         .into_iter()
         .map(|plan| {
             user_group_buy_plan_from_record_with_default_avatar(
                 &plan,
                 &lotteries,
                 Some(&session.user.id),
-                &access.users,
+                &users,
                 false,
                 default_avatar_url.as_deref(),
             )
         })
         .collect::<ApiResult<Vec<_>>>()?;
     sort_group_buy_plans_by_time_desc(&mut items);
-    let items = query.paginate(items);
 
     Ok(Json(ApiEnvelope::success(UserGroupBuyPlanPage { items })))
 }
@@ -2754,8 +2793,8 @@ async fn create_user_group_buy_plan(
 
     let plan_id = next_group_buy_plan_id();
     let participant_id = format!("{plan_id}-P001");
-    let access = state.access.snapshot().await?;
-    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
+    let plan_users = vec![session.user.clone()];
+    let default_avatar_url = default_avatar_url_from_state(&state).await?;
     let request = CreateGroupBuyPlanRequest {
         id: plan_id.clone(),
         lottery_id: lottery.id.clone(),
@@ -2770,7 +2809,7 @@ async fn create_user_group_buy_plan(
     };
     let mut plan = state
         .group_buys
-        .create(request, std::slice::from_ref(&lottery), &access.users)
+        .create(request, std::slice::from_ref(&lottery), &plan_users)
         .await?;
     let mut created_order = match create_order_for_filled_group_buy(
         &state.draws,
@@ -2842,7 +2881,7 @@ async fn create_user_group_buy_plan(
         &plan,
         &[lottery],
         Some(&session.user.id),
-        &access.users,
+        &plan_users,
         true,
         default_avatar_url.as_deref(),
     )?;
@@ -2879,8 +2918,7 @@ async fn join_user_group_buy_plan(
         .finance
         .ensure_available(&session.user.id, payload.amount_minor)
         .await?;
-    let access = state.access.snapshot().await?;
-    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
+    let participant_user = session.user.clone();
     let mut updated = state
         .group_buys
         .add_participant(
@@ -2891,7 +2929,7 @@ async fn join_user_group_buy_plan(
                 amount_minor: payload.amount_minor,
                 note: "用户参与合买".to_string(),
             },
-            &access.users,
+            std::slice::from_ref(&participant_user),
         )
         .await?;
     let mut created_order = match create_order_for_filled_group_buy(
@@ -2965,12 +3003,13 @@ async fn join_user_group_buy_plan(
     )
     .await;
     let account = state.finance.account_or_create(&session.user.id).await?;
-    let lotteries = state.lotteries.list().await?;
+    let (users, default_avatar_url) =
+        group_buy_display_context(&state, std::slice::from_ref(&updated)).await?;
     let plan = user_group_buy_plan_with_default_avatar(
         &updated,
-        &lotteries,
+        std::slice::from_ref(&lottery),
         Some(&session.user.id),
-        &access.users,
+        &users,
         true,
         default_avatar_url.as_deref(),
     )?;
@@ -2988,8 +3027,6 @@ async fn user_group_buy_plans(
     lotteries: &[LotteryKind],
     query: &UserGroupBuyListQuery,
 ) -> ApiResult<Vec<UserGroupBuyPlan>> {
-    let access = state.access.snapshot().await?;
-    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
     let lottery_id = query
         .lottery_id
         .as_deref()
@@ -3012,7 +3049,7 @@ async fn user_group_buy_plans(
         Vec::new()
     };
 
-    let items = state
+    let plans = state
         .group_buys
         .list_active_details_page(
             &lottery_ids,
@@ -3020,20 +3057,42 @@ async fn user_group_buy_plans(
             PageRequest::new(query.page, query.page_size),
         )
         .await?
-        .items
+        .items;
+    let (users, default_avatar_url) = group_buy_display_context(state, &plans).await?;
+    let items = plans
         .into_iter()
         .map(|plan| {
             user_group_buy_plan_from_record_with_default_avatar(
                 &plan,
                 lotteries,
                 Some(user_id),
-                &access.users,
+                &users,
                 false,
                 default_avatar_url.as_deref(),
             )
         })
         .collect::<ApiResult<Vec<_>>>()?;
     Ok(items)
+}
+
+/// 按当前计划集合读取展示所需用户和默认头像，避免合买接口克隆全部用户快照。
+async fn group_buy_display_context(
+    state: &AppState,
+    plans: &[GroupBuyPlan],
+) -> ApiResult<(Vec<UserSummary>, Option<String>)> {
+    let mut user_ids = BTreeSet::new();
+    for plan in plans {
+        user_ids.insert(plan.initiator_user_id.clone());
+        user_ids.extend(
+            plan.participants
+                .iter()
+                .map(|participant| participant.user_id.clone()),
+        );
+    }
+    let user_ids = user_ids.into_iter().collect::<Vec<_>>();
+    let users = state.access.users_for_ids(&user_ids).await?;
+    let default_avatar_url = default_avatar_url_from_state(state).await?;
+    Ok((users, default_avatar_url))
 }
 
 /// 把单个合买计划转换为手机端展示详情。
@@ -3486,7 +3545,6 @@ async fn create_recharge_order(
         .await?;
 
     if let Some(ticket) = support_ticket_for_recharge(&response.order) {
-        let users = state.access.users().await?;
         let conversation = state
             .support
             .create(
@@ -3497,7 +3555,7 @@ async fn create_recharge_order(
                     priority: crate::domain::support::SupportPriority::Normal,
                     content: ticket.content,
                 },
-                &users,
+                std::slice::from_ref(&session.user),
             )
             .await?;
         let order = state
@@ -3707,13 +3765,13 @@ async fn share_chat_hall_group_buy_plan(
         return Err(ApiError::BadRequest("只能分享自己的合买计划".to_string()));
     }
     let lotteries = state.lotteries.list().await?;
-    let access = state.access.snapshot().await?;
-    let default_avatar_url = default_avatar_url_from_settings(&access.settings);
+    let (users, default_avatar_url) =
+        group_buy_display_context(&state, std::slice::from_ref(&plan)).await?;
     let plan_summary = user_group_buy_plan_from_record_with_default_avatar(
         &plan,
         &lotteries,
         Some(&session.user.id),
-        &access.users,
+        &users,
         false,
         default_avatar_url.as_deref(),
     )?;

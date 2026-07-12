@@ -208,6 +208,29 @@ impl GroupBuyRepository {
             .map(|store| store.list_details_for_user(user_id))
     }
 
+    /// 分页返回指定用户发起或参与过的合买计划，避免“我的合买”加载全部历史后再裁剪。
+    pub async fn list_details_for_user_page(
+        &self,
+        user_id: &str,
+        page: PageRequest,
+    ) -> ApiResult<ListPage<GroupBuyPlan>> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(ApiError::BadRequest("user id is required".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_group_buy_details_for_user_page(persistence, user_id, page).await;
+        }
+
+        let plans = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
+            .list_details_for_user(user_id);
+        let plans = sorted_group_buy_details_by_created_at(plans);
+        Ok(ListPage::from_all(plans, page))
+    }
+
     /// 批量读取指定参与人集合的有效合买计划，供代理投注画像避免扫描全量合买。
     pub async fn list_active_details_for_participant_user_ids(
         &self,
@@ -253,26 +276,6 @@ impl GroupBuyRepository {
             .collect::<Vec<_>>();
         let plans = sorted_group_buy_details_by_created_at(plans);
         Ok(ListPage::from_all(plans, page))
-    }
-
-    /// 返回指定用户参与过并已经成单的合买订单 ID，供注单列表只读取相关真实订单。
-    pub async fn order_ids_for_user(&self, user_id: &str) -> ApiResult<Vec<String>> {
-        let user_id = user_id.trim();
-        if user_id.is_empty() {
-            return Err(ApiError::BadRequest("user id is required".to_string()));
-        }
-        if let Some(persistence) = &self.persistence {
-            return query_group_buy_order_ids_for_user(persistence, user_id).await;
-        }
-
-        Ok(self
-            .inner
-            .read()
-            .map_err(|_| ApiError::Internal("group buy store lock poisoned".to_string()))?
-            .list_details_for_user(user_id)
-            .into_iter()
-            .filter_map(|plan| plan.order_id)
-            .collect())
     }
 
     /// 返回指定彩种和期号下仍在流转中的合买计划详情，供控奖页面查看发起人自购记录。
@@ -971,7 +974,9 @@ async fn query_group_buy_details_for_user(
          WHERE p.initiator_user_id = $1
             OR EXISTS (
                 SELECT 1 FROM group_buy_participants gp
-                WHERE gp.plan_id = p.id AND gp.user_id = $1
+                WHERE gp.plan_id = p.id
+                  AND gp.user_id = $1
+                  AND gp.amount_minor > 0
             )
          ORDER BY p.issue DESC, p.created_at DESC, p.id DESC",
     )
@@ -1010,6 +1015,61 @@ async fn query_group_buy_details_for_user(
         .into_iter()
         .cloned()
         .collect())
+}
+
+/// 数据库模式下分页读取指定用户发起或参与过的合买计划。
+async fn query_group_buy_details_for_user_page(
+    database: &BusinessDatabase,
+    user_id: &str,
+    page: PageRequest,
+) -> ApiResult<ListPage<GroupBuyPlan>> {
+    let total_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM group_buy_plans p
+         WHERE p.initiator_user_id = $1
+            OR EXISTS (
+                SELECT 1 FROM group_buy_participants gp
+                WHERE gp.plan_id = p.id
+                  AND gp.user_id = $1
+                  AND gp.amount_minor > 0
+            )",
+    )
+    .bind(user_id)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户合买计划分页总数读取失败".to_string()))?;
+    let total_count = usize::try_from(total_count)
+        .map_err(|_| ApiError::Internal("用户合买计划分页总数无效".to_string()))?;
+    let resolved = page.resolve(total_count);
+    let rows = sqlx::query(
+        "SELECT p.id, p.lottery_id, p.lottery_name, p.initiator_user_id, p.initiator_username,
+                p.order_id, p.issue, p.rule_code, p.title, p.numbers,
+                p.total_amount_minor, p.filled_amount_minor, p.min_share_amount_minor,
+                p.participant_min_amount_minor, p.share_count, p.status, p.note, p.created_at, p.updated_at
+         FROM group_buy_plans p
+         WHERE p.initiator_user_id = $1
+            OR EXISTS (
+                SELECT 1 FROM group_buy_participants gp
+                WHERE gp.plan_id = p.id AND gp.user_id = $1
+            )
+         ORDER BY p.created_at DESC, p.id DESC
+         LIMIT $2 OFFSET $3",
+    )
+    .bind(user_id)
+    .bind(resolved.limit_i64()?)
+    .bind(resolved.offset_i64()?)
+    .fetch_all(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户合买计划分页数据读取失败".to_string()))?;
+    let mut plans = rows
+        .into_iter()
+        .map(group_buy_plan_from_row)
+        .map(|result| result.map(|plan| (plan.id.clone(), plan)))
+        .collect::<ApiResult<BTreeMap<_, _>>>()?;
+    attach_participants_to_plans(database, &mut plans, "用户合买参与人数据读取失败").await?;
+
+    let items = sorted_group_buy_details_by_created_at(plans.into_values().collect());
+    Ok(ListPage::new(items, resolved))
 }
 
 /// 数据库模式下按参与人集合读取有效合买计划，并批量加载参与记录。
@@ -1108,37 +1168,6 @@ async fn query_unformed_group_buy_details_for_user_page(
         .cloned()
         .collect::<Vec<_>>();
     Ok(ListPage::new(items, resolved))
-}
-
-/// 数据库模式下读取用户发起或参与过且已经形成真实订单的合买订单 ID。
-async fn query_group_buy_order_ids_for_user(
-    database: &BusinessDatabase,
-    user_id: &str,
-) -> ApiResult<Vec<String>> {
-    let rows = sqlx::query(
-        "SELECT DISTINCT p.order_id
-         FROM group_buy_plans p
-         WHERE p.order_id IS NOT NULL
-           AND (
-               p.initiator_user_id = $1
-               OR EXISTS (
-                   SELECT 1 FROM group_buy_participants gp
-                   WHERE gp.plan_id = p.id AND gp.user_id = $1
-               )
-           )
-         ORDER BY p.order_id DESC",
-    )
-    .bind(user_id)
-    .fetch_all(database.pool())
-    .await
-    .map_err(|_| ApiError::Internal("用户合买订单编号读取失败".to_string()))?;
-
-    rows.into_iter()
-        .map(|row| {
-            row.try_get("order_id")
-                .map_err(|_| ApiError::Internal("用户合买订单编号读取失败".to_string()))
-        })
-        .collect()
 }
 
 /// 数据库模式下按真实订单 ID 批量读取合买计划，并加载参与记录。
