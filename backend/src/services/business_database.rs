@@ -14,23 +14,55 @@ use crate::error::{ApiError, ApiResult};
 
 const BUSINESS_TABLES_MIGRATION_VERSION: i64 = 20260603152000;
 const COLUMN_COMMENTS_MIGRATION_VERSION: i64 = 20260603234000;
+const WITHDRAWAL_TURNOVER_REPAIR_MIGRATION_VERSION: i64 = 20260704071000;
+const WITHDRAWAL_TURNOVER_FULL_REPLAY_CHECKSUM: &str =
+    "715752946e48d3ed8b4aba20cc68234575437028cc43c297e0b0cdd85a20f54b23d4b04cb89a6cc24ae34ba8ad730dcc";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HistoricalMigrationValidation {
+    AdminRoles,
+    WithdrawalTurnover,
+}
 
 struct HistoricalMigrationRepair {
     version: i64,
     name: &'static str,
     reason: &'static str,
+    allowed_legacy_checksums: &'static [&'static str],
+    validation: HistoricalMigrationValidation,
 }
 
-const HISTORICAL_MIGRATION_REPAIRS: [HistoricalMigrationRepair; 2] = [
+impl HistoricalMigrationRepair {
+    /// 只允许明确记录的旧 checksum；空白名单保留早期兼容项的既有行为。
+    fn allows_database_checksum(&self, checksum: &[u8]) -> bool {
+        self.allowed_legacy_checksums.is_empty()
+            || self
+                .allowed_legacy_checksums
+                .contains(&checksum_hex(checksum).as_str())
+    }
+}
+
+const HISTORICAL_MIGRATION_REPAIRS: [HistoricalMigrationRepair; 3] = [
     HistoricalMigrationRepair {
         version: BUSINESS_TABLES_MIGRATION_VERSION,
         name: "业务基础表",
         reason: "角色细粒度权限字段曾被写回已发布建表迁移",
+        allowed_legacy_checksums: &[],
+        validation: HistoricalMigrationValidation::AdminRoles,
     },
     HistoricalMigrationRepair {
         version: COLUMN_COMMENTS_MIGRATION_VERSION,
         name: "全量字段注释",
         reason: "早期字段注释迁移曾提前引用后续迁移才创建的字段",
+        allowed_legacy_checksums: &[],
+        validation: HistoricalMigrationValidation::AdminRoles,
+    },
+    HistoricalMigrationRepair {
+        version: WITHDRAWAL_TURNOVER_REPAIR_MIGRATION_VERSION,
+        name: "提现任务投注增量补偿",
+        reason: "该迁移曾发布全量逐笔重放和轻量窗口补偿两个等价修复版本",
+        allowed_legacy_checksums: &[WITHDRAWAL_TURNOVER_FULL_REPLAY_CHECKSUM],
+        validation: HistoricalMigrationValidation::WithdrawalTurnover,
     },
 ];
 
@@ -159,25 +191,52 @@ async fn repair_historical_migration_checksum(
         )
         .into());
     };
-
-    let admin_roles_exists = admin_roles_table_exists(pool).await?;
-    if !admin_roles_exists {
+    if !repair.allows_database_checksum(&database_checksum) {
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            "无法修复 SQLx 迁移记录：admin_roles 表不存在",
+            format!(
+                "拒绝修复未知 SQLx 迁移校验值：版本={}，数据库校验={}",
+                repair.version,
+                short_checksum_hex(&database_checksum)
+            ),
         )
         .into());
     }
 
-    let permissions_exists = admin_roles_permissions_column_exists(pool).await?;
+    let validation_ready = match repair.validation {
+        HistoricalMigrationValidation::AdminRoles => admin_roles_table_exists(pool).await?,
+        HistoricalMigrationValidation::WithdrawalTurnover => {
+            withdrawal_turnover_migration_state_exists(pool).await?
+        }
+    };
+    if !validation_ready {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!(
+                "无法修复 SQLx 迁移记录：版本={} 的业务结构校验未通过",
+                repair.version
+            ),
+        )
+        .into());
+    }
+
+    let validation_detail = match repair.validation {
+        HistoricalMigrationValidation::AdminRoles => format!(
+            "角色权限字段已存在={}",
+            admin_roles_permissions_column_exists(pool).await?
+        ),
+        HistoricalMigrationValidation::WithdrawalTurnover => {
+            "提现任务表、事件表和兼容函数均已存在".to_string()
+        }
+    };
     tracing::warn!(
-        "检测到已知历史迁移校验不一致，准备修复 SQLx 迁移记录：版本={}，迁移名称={}，修复原因={}，数据库校验={}，当前校验={}，角色权限字段已存在={}",
+        "检测到已知历史迁移校验不一致，准备修复 SQLx 迁移记录：版本={}，迁移名称={}，修复原因={}，数据库校验={}，当前校验={}，结构校验={}",
         repair.version,
         repair.name,
         repair.reason,
         short_checksum_hex(&database_checksum),
         short_checksum_hex(current_checksum),
-        permissions_exists
+        validation_detail
     );
 
     let updated = sqlx::query(
@@ -277,6 +336,28 @@ async fn admin_roles_permissions_column_exists(pool: &PgPool) -> Result<bool, sq
     .await
 }
 
+/// 检查提现任务历史迁移的核心结构，避免只凭 checksum 改写未知数据库。
+async fn withdrawal_turnover_migration_state_exists(pool: &PgPool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT to_regclass('user_withdrawal_turnovers') IS NOT NULL
+           AND to_regclass('user_withdrawal_turnover_events') IS NOT NULL
+           AND to_regprocedure('apply_user_withdrawal_turnover_from_ledger()') IS NOT NULL
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// 把 SQLx SHA-384 checksum 转成完整十六进制文本，用于已知历史版本白名单比对。
+fn checksum_hex(checksum: &[u8]) -> String {
+    checksum
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 /// 把较长的 checksum 缩短成中文日志里便于人工比对的十六进制前缀。
 fn short_checksum_hex(checksum: &[u8]) -> String {
     checksum
@@ -285,6 +366,48 @@ fn short_checksum_hex(checksum: &[u8]) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect::<Vec<_>>()
         .join("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        checksum_hex, historical_migration_repair, HistoricalMigrationValidation,
+        WITHDRAWAL_TURNOVER_FULL_REPLAY_CHECKSUM, WITHDRAWAL_TURNOVER_REPAIR_MIGRATION_VERSION,
+    };
+
+    #[test]
+    fn withdrawal_turnover_repair_only_accepts_known_full_replay_checksum() {
+        let repair = historical_migration_repair(WITHDRAWAL_TURNOVER_REPAIR_MIGRATION_VERSION)
+            .expect("withdrawal turnover repair must be registered");
+
+        assert_eq!(
+            repair.validation,
+            HistoricalMigrationValidation::WithdrawalTurnover
+        );
+        assert_eq!(
+            repair.allowed_legacy_checksums,
+            &[WITHDRAWAL_TURNOVER_FULL_REPLAY_CHECKSUM]
+        );
+        assert!(repair
+            .allows_database_checksum(&checksum_bytes(WITHDRAWAL_TURNOVER_FULL_REPLAY_CHECKSUM)));
+        assert!(!repair.allows_database_checksum(&[0_u8; 48]));
+    }
+
+    #[test]
+    fn checksum_hex_keeps_full_byte_sequence() {
+        assert_eq!(checksum_hex(&[0x00, 0x1a, 0xff]), "001aff");
+    }
+
+    fn checksum_bytes(value: &str) -> Vec<u8> {
+        value
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let pair = std::str::from_utf8(pair).expect("checksum hex must be utf-8");
+                u8::from_str_radix(pair, 16).expect("checksum hex must contain valid bytes")
+            })
+            .collect()
+    }
 }
 
 /// 把业务结构序列化为 JSON 值，供 JSONB 字段保存。
