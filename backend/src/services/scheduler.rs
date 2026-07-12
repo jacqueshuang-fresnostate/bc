@@ -66,6 +66,7 @@ const MAX_FUTURE_ISSUE_COUNT: u32 = 50;
 const MAX_ISSUE_GENERATION_CONCURRENCY: u32 = 32;
 const DRAW_SETTLEMENT_QUEUE_BATCH_SIZE: usize = 8;
 const DRAW_SETTLEMENT_QUEUE_POLL_SECONDS: u64 = 1;
+const DRAW_SETTLEMENT_RETRY_PRECHECK_SECONDS: u64 = 10;
 const MAX_LOCAL_ISSUE_GENERATION_BATCH_COUNT: u32 = 50;
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
@@ -989,6 +990,7 @@ async fn run_due_draw_poll_loop(
     scheduler: DrawSchedulerRepository,
     due_phase_lock: Arc<AsyncMutex<()>>,
 ) {
+    let mut next_settlement_retry_check_at = Instant::now();
     loop {
         let current_config = match scheduler.config() {
             Ok(current_config) => current_config,
@@ -1003,8 +1005,30 @@ async fn run_due_draw_poll_loop(
             continue;
         }
 
+        let due_check_at = current_scheduler_timestamp();
+        let monotonic_now = Instant::now();
+        let include_settlement_retry = monotonic_now >= next_settlement_retry_check_at;
+        if include_settlement_retry {
+            next_settlement_retry_check_at =
+                monotonic_now + Duration::from_secs(DRAW_SETTLEMENT_RETRY_PRECHECK_SECONDS);
+        }
+        match draws
+            .has_due_scheduler_work(&due_check_at, include_settlement_retry)
+            .await
         {
-            let due_check_at = current_scheduler_timestamp();
+            Ok(false) => {
+                tokio::time::sleep(Duration::from_secs(DRAW_DUE_POLL_SECONDS)).await;
+                continue;
+            }
+            Ok(true) => {}
+            Err(error) => tracing::warn!(
+                now = %due_check_at,
+                error = %error.log_message(),
+                "开奖调度轻量预检失败，本轮继续执行完整检查"
+            ),
+        }
+
+        {
             let Ok(_guard) = due_phase_lock.try_lock() else {
                 tracing::debug!(
                     now = %due_check_at,

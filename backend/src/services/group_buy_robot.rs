@@ -450,13 +450,7 @@ pub async fn force_fill_group_buy_plans_before_refund(
 ) -> ApiResult<GroupBuyRobotRun> {
     let now = required_now(now)?;
     let now_at = parse_robot_timestamp(&now, "机器人兜底执行时间")?;
-    let lotteries_by_id = lotteries
-        .list()
-        .await?
-        .into_iter()
-        .map(|lottery| (lottery.id.clone(), lottery))
-        .collect::<BTreeMap<_, _>>();
-    let robots = robots.list().await?;
+    let mut run = empty_group_buy_robot_run(now.clone());
     let candidate_issues = draws
         .list_scheduler_active()
         .await?
@@ -464,6 +458,9 @@ pub async fn force_fill_group_buy_plans_before_refund(
         .filter(|issue| issue.sale_closed_at.as_str() <= now.as_str())
         .map(|issue| ((issue.lottery_id.clone(), issue.issue.clone()), issue))
         .collect::<BTreeMap<_, _>>();
+    if candidate_issues.is_empty() {
+        return Ok(run);
+    }
     let issue_keys = candidate_issues.keys().cloned().collect::<BTreeSet<_>>();
     let group_buy_plans = group_buys
         .list_guard_details_for_issue_keys(&issue_keys)
@@ -483,10 +480,17 @@ pub async fn force_fill_group_buy_plans_before_refund(
                 && candidate_issues.contains_key(&(plan.lottery_id.clone(), plan.issue.clone()))
         })
         .collect::<Vec<_>>();
-    let mut run = empty_group_buy_robot_run(now.clone());
     if candidate_plans.is_empty() && filled_without_order_plans.is_empty() {
         return Ok(run);
     }
+
+    let lotteries_by_id = lotteries
+        .list()
+        .await?
+        .into_iter()
+        .map(|lottery| (lottery.id.clone(), lottery))
+        .collect::<BTreeMap<_, _>>();
+    let robots = robots.list().await?;
 
     let access = access.snapshot().await?;
     let finance_lock = Arc::new(AsyncMutex::new(()));

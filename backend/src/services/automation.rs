@@ -1,7 +1,7 @@
 //! 开奖自动化服务，统一编排手动/自动开奖执行链路
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -618,7 +618,11 @@ async fn retry_unsettled_drawn_issue_settlements(
     progress_callback: &Option<DrawIssueSettlementProgressCallback>,
     settlement_queue: Option<&RedisRuntime>,
 ) -> ApiResult<()> {
-    let settled_draw_issue_ids = orders.settled_draw_issue_ids().await?;
+    let settled_draw_issue_ids = if draws.is_database_backed() {
+        BTreeSet::new()
+    } else {
+        orders.settled_draw_issue_ids().await?
+    };
     let unsettled_drawn_issues = draws
         .list_unsettled_drawn_issues(&settled_draw_issue_ids)
         .await?;

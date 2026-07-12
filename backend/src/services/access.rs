@@ -17,6 +17,7 @@ use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgRow, Row};
+use tokio::{sync::Mutex as AsyncMutex, task::spawn_blocking};
 
 use crate::{
     domain::{
@@ -71,6 +72,22 @@ struct PasswordResetTokenRecord {
     pub expires_at_unix: i64,
 }
 
+#[derive(Debug)]
+/// 用户登录密码校验所需的最小快照，避免 Argon2 执行期间持有访问仓储锁。
+struct PreparedUserLogin {
+    user_id: String,
+    password: String,
+    password_hash: String,
+}
+
+#[derive(Debug)]
+/// 管理员登录密码校验所需的最小快照，避免 Argon2 执行期间持有访问仓储锁。
+struct PreparedAdminLogin {
+    admin_id: String,
+    password: String,
+    password_hash: String,
+}
+
 #[derive(Debug, Clone)]
 /// 用户权限模块的完整快照，用于后台仪表盘和跨仓储读取。
 pub struct AccessSnapshot {
@@ -91,6 +108,7 @@ pub struct AccessSnapshot {
 pub struct AccessRepository {
     inner: Arc<RwLock<AccessStore>>,
     persistence: Option<BusinessDatabase>,
+    mutation_lock: Arc<AsyncMutex<()>>,
 }
 
 /// 用户、管理员、角色、会话和系统设置仓储，负责该模块数据读取、业务变更和持久化协调。
@@ -100,6 +118,7 @@ impl AccessRepository {
         Self {
             inner: Arc::new(RwLock::new(AccessStore::seeded())),
             persistence: None,
+            mutation_lock: Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -109,6 +128,7 @@ impl AccessRepository {
         Ok(Self {
             inner: Arc::new(RwLock::new(store)),
             persistence: Some(persistence),
+            mutation_lock: Arc::new(AsyncMutex::new(())),
         })
     }
 
@@ -304,15 +324,42 @@ impl AccessRepository {
 
     /// 用户登录：支持用户名和邮箱两种登录标识，返回用户会话。
     pub async fn login_user(&self, payload: UserLoginRequest) -> ApiResult<UserAuthSession> {
-        let (result, snapshot) = {
+        let prepared = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .prepare_user_login(payload)?;
+        let PreparedUserLogin {
+            user_id,
+            password,
+            password_hash,
+        } = prepared;
+        let verified_password_hash = password_hash.clone();
+        let password_matches =
+            spawn_blocking(move || verify_user_password(&password, &password_hash))
+                .await
+                .map_err(|error| ApiError::Internal(format!("用户密码校验任务失败：{error}")))??;
+        if !password_matches {
+            return Err(ApiError::Unauthorized("用户名/密码错误".to_string()));
+        }
+
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let result = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            let result = store.login_user(payload)?;
-            (result, store.clone())
+            store.create_user_session(&user_id, &verified_password_hash)?
         };
-        self.persist(&snapshot).await?;
+        if let Some(persistence) = &self.persistence {
+            if let Err(error) = insert_user_session(persistence, &result).await {
+                self.inner
+                    .write()
+                    .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+                    .logout_user(&result.token);
+                return Err(error);
+            }
+        }
         Ok(result)
     }
 
@@ -326,15 +373,18 @@ impl AccessRepository {
 
     /// 用户登出：清理 token 后返回登出结果。
     pub async fn logout_user(&self, token: &str) -> ApiResult<UserLogoutResponse> {
-        let snapshot = {
+        let token_hash = session_token_hash(token.trim());
+        let _mutation_guard = self.mutation_lock.lock().await;
+        {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
             store.logout_user(token);
-            store.clone()
-        };
-        self.persist(&snapshot).await?;
+        }
+        if let Some(persistence) = &self.persistence {
+            delete_user_session(persistence, &token_hash).await?;
+        }
 
         Ok(UserLogoutResponse { logged_out: true })
     }
@@ -714,15 +764,46 @@ impl AccessRepository {
 
     /// 执行管理员登录并返回会话。
     pub async fn login(&self, payload: AdminLoginRequest) -> ApiResult<AdminAuthSession> {
-        let (result, snapshot) = {
+        let prepared = self
+            .inner
+            .read()
+            .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+            .prepare_admin_login(payload)?;
+        let PreparedAdminLogin {
+            admin_id,
+            password,
+            password_hash,
+        } = prepared;
+        let verified_password_hash = password_hash.clone();
+        let password_matches =
+            spawn_blocking(move || verify_admin_password(&password, &password_hash))
+                .await
+                .map_err(|error| {
+                    ApiError::Internal(format!("管理员密码校验任务失败：{error}"))
+                })??;
+        if !password_matches {
+            return Err(ApiError::Unauthorized(
+                "invalid admin credentials".to_string(),
+            ));
+        }
+
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let result = {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
-            let result = store.login(payload)?;
-            (result, store.clone())
+            store.create_admin_session(&admin_id, &verified_password_hash)?
         };
-        self.persist(&snapshot).await?;
+        if let Some(persistence) = &self.persistence {
+            if let Err(error) = insert_admin_session(persistence, &result).await {
+                self.inner
+                    .write()
+                    .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+                    .logout(&result.token)?;
+                return Err(error);
+            }
+        }
         Ok(result)
     }
 
@@ -736,15 +817,19 @@ impl AccessRepository {
 
     /// 退出登录并清理 Token。
     pub async fn logout(&self, token: &str) -> ApiResult<()> {
-        let snapshot = {
+        let token_hash = session_token_hash(token.trim());
+        let _mutation_guard = self.mutation_lock.lock().await;
+        {
             let mut store = self
                 .inner
                 .write()
                 .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?;
             store.logout(token)?;
-            store.clone()
-        };
-        self.persist(&snapshot).await
+        }
+        if let Some(persistence) = &self.persistence {
+            delete_admin_session(persistence, &token_hash).await?;
+        }
+        Ok(())
     }
 
     /// 从数据库重新加载用户、管理员、角色、会话和系统设置快照，供后台缓存维护使用。
@@ -760,9 +845,15 @@ impl AccessRepository {
         Ok(true)
     }
     /// 把当前仓储快照同步保存到持久化存储。
-    async fn persist(&self, store: &AccessStore) -> ApiResult<()> {
+    async fn persist(&self, _store: &AccessStore) -> ApiResult<()> {
+        let _mutation_guard = self.mutation_lock.lock().await;
         if let Some(persistence) = &self.persistence {
-            save_access_store(persistence, store).await?;
+            let latest = self
+                .inner
+                .read()
+                .map_err(|_| ApiError::Internal("access store lock poisoned".to_string()))?
+                .clone();
+            save_access_store(persistence, &latest).await?;
         }
 
         Ok(())
@@ -1537,6 +1628,62 @@ fn user_status_sort_value(status: &UserStatus) -> u8 {
     }
 }
 
+/// 把单个用户会话增量写入数据库，避免登录时重写用户和系统设置表。
+async fn insert_user_session(
+    database: &BusinessDatabase,
+    session: &UserAuthSession,
+) -> ApiResult<()> {
+    sqlx::query(
+        "INSERT INTO user_sessions (token, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id",
+    )
+    .bind(session_token_hash(&session.token))
+    .bind(&session.user.id)
+    .execute(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("用户登录会话保存失败".to_string()))?;
+    Ok(())
+}
+
+/// 从数据库增量删除单个用户会话，避免登出时重写整个访问控制快照。
+async fn delete_user_session(database: &BusinessDatabase, token_hash: &str) -> ApiResult<()> {
+    sqlx::query("DELETE FROM user_sessions WHERE token = $1")
+        .bind(token_hash)
+        .execute(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("用户登录会话删除失败".to_string()))?;
+    Ok(())
+}
+
+/// 把单个管理员会话增量写入数据库，避免登录时重写用户和系统设置表。
+async fn insert_admin_session(
+    database: &BusinessDatabase,
+    session: &AdminAuthSession,
+) -> ApiResult<()> {
+    sqlx::query(
+        "INSERT INTO admin_sessions (token, admin_id)
+         VALUES ($1, $2)
+         ON CONFLICT (token) DO UPDATE SET admin_id = EXCLUDED.admin_id",
+    )
+    .bind(session_token_hash(&session.token))
+    .bind(&session.admin.id)
+    .execute(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("管理员登录会话保存失败".to_string()))?;
+    Ok(())
+}
+
+/// 从数据库增量删除单个管理员会话，避免登出时重写整个访问控制快照。
+async fn delete_admin_session(database: &BusinessDatabase, token_hash: &str) -> ApiResult<()> {
+    sqlx::query("DELETE FROM admin_sessions WHERE token = $1")
+        .bind(token_hash)
+        .execute(database.pool())
+        .await
+        .map_err(|_| ApiError::Internal("管理员登录会话删除失败".to_string()))?;
+    Ok(())
+}
+
 /// 把用户、管理员、角色、会话和系统设置运行时快照保存到数据库。
 async fn save_access_store(database: &BusinessDatabase, store: &AccessStore) -> ApiResult<()> {
     let mut tx = database
@@ -1994,8 +2141,8 @@ impl AccessStore {
         Ok(user)
     }
 
-    /// 处理用户登录：支持用户名/邮箱两种标识，并签发用户会话。
-    fn login_user(&mut self, payload: UserLoginRequest) -> ApiResult<UserAuthSession> {
+    /// 读取用户登录所需的最小密码快照，实际 Argon2 校验由阻塞线程池执行。
+    fn prepare_user_login(&self, payload: UserLoginRequest) -> ApiResult<PreparedUserLogin> {
         let login_key = required_trimmed(payload.login_key, "login key")?;
         let password = validate_user_password(&payload.password)?;
         let user = self
@@ -2016,14 +2163,39 @@ impl AccessStore {
         let password_hash = self
             .user_password_hashes
             .get(&user.id)
+            .ok_or_else(|| ApiError::Internal("用户密码未配置".to_string()))?
+            .clone();
+
+        Ok(PreparedUserLogin {
+            user_id: user.id,
+            password,
+            password_hash,
+        })
+    }
+
+    /// 在密码校验通过后签发用户会话，并复核账号状态和密码版本没有变化。
+    fn create_user_session(
+        &mut self,
+        user_id: &str,
+        verified_password_hash: &str,
+    ) -> ApiResult<UserAuthSession> {
+        let user = self.get_user(user_id)?;
+        if user.status != UserStatus::Active {
+            return Err(ApiError::Forbidden(
+                inactive_user_status_message(&user.status).to_string(),
+            ));
+        }
+        let current_password_hash = self
+            .user_password_hashes
+            .get(user_id)
             .ok_or_else(|| ApiError::Internal("用户密码未配置".to_string()))?;
-        if !verify_user_password(&password, password_hash)? {
+        if current_password_hash != verified_password_hash {
             return Err(ApiError::Unauthorized("用户名/密码错误".to_string()));
         }
 
         let token = self.next_user_session_token()?;
         self.user_sessions
-            .insert(session_token_hash(&token), user.id.clone());
+            .insert(session_token_hash(&token), user_id.to_string());
         self.session_from_user_token(&token)
     }
 
@@ -2568,8 +2740,8 @@ impl AccessStore {
         Ok(self.registration.clone())
     }
 
-    /// 校验管理员账号密码并生成后台登录会话。
-    fn login(&mut self, payload: AdminLoginRequest) -> ApiResult<AdminAuthSession> {
+    /// 读取管理员登录所需的最小密码快照，实际 Argon2 校验由阻塞线程池执行。
+    fn prepare_admin_login(&self, payload: AdminLoginRequest) -> ApiResult<PreparedAdminLogin> {
         let username = required_trimmed(payload.username, "admin username")?;
         let password = required_trimmed(payload.password, "admin password")?;
         let admin = self
@@ -2579,23 +2751,50 @@ impl AccessStore {
             .cloned()
             .ok_or_else(|| ApiError::Unauthorized("invalid admin credentials".to_string()))?;
 
-        let password_hash = self.admin_password_hashes.get(&admin.id).ok_or_else(|| {
-            ApiError::Internal(format!("admin `{}` password hash missing", admin.id))
-        })?;
-        if !verify_admin_password(&password, password_hash)? {
-            return Err(ApiError::Unauthorized(
-                "invalid admin credentials".to_string(),
-            ));
-        }
+        let password_hash = self
+            .admin_password_hashes
+            .get(&admin.id)
+            .ok_or_else(|| {
+                ApiError::Internal(format!("admin `{}` password hash missing", admin.id))
+            })?
+            .clone();
         if admin.status != UserStatus::Active {
             return Err(ApiError::Forbidden(
                 "admin account is not active".to_string(),
             ));
         }
 
+        Ok(PreparedAdminLogin {
+            admin_id: admin.id,
+            password,
+            password_hash,
+        })
+    }
+
+    /// 在密码校验通过后签发管理员会话，并复核账号状态和密码版本没有变化。
+    fn create_admin_session(
+        &mut self,
+        admin_id: &str,
+        verified_password_hash: &str,
+    ) -> ApiResult<AdminAuthSession> {
+        let admin = self.get_admin(admin_id)?;
+        if admin.status != UserStatus::Active {
+            return Err(ApiError::Forbidden(
+                "admin account is not active".to_string(),
+            ));
+        }
+        let current_password_hash = self.admin_password_hashes.get(admin_id).ok_or_else(|| {
+            ApiError::Internal(format!("admin `{admin_id}` password hash missing"))
+        })?;
+        if current_password_hash != verified_password_hash {
+            return Err(ApiError::Unauthorized(
+                "invalid admin credentials".to_string(),
+            ));
+        }
+
         let token = self.next_session_token()?;
         self.sessions
-            .insert(session_token_hash(&token), admin.id.clone());
+            .insert(session_token_hash(&token), admin_id.to_string());
         self.session_from_token(&token)
     }
 

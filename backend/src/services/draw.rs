@@ -84,6 +84,11 @@ impl DrawRepository {
         self
     }
 
+    /// 判断开奖仓储是否使用 PostgreSQL，供调度器选择数据库直查或内存兼容路径。
+    pub fn is_database_backed(&self) -> bool {
+        self.persistence.is_some()
+    }
+
     #[allow(dead_code)]
     /// 按当前仓储快照返回全部期号列表；保留给测试和少量兼容路径使用，生产列表优先调用分页/专用查询。
     pub async fn list(&self) -> ApiResult<Vec<DrawIssue>> {
@@ -246,6 +251,35 @@ impl DrawRepository {
                         )
                     })
                     .collect()
+            })
+    }
+
+    /// 判断秒级调度是否存在到期开奖、合买兜底退款或未结算重试工作。
+    pub async fn has_due_scheduler_work(
+        &self,
+        now: &str,
+        include_settlement_retry: bool,
+    ) -> ApiResult<bool> {
+        let now = now.trim();
+        if now.is_empty() {
+            return Err(ApiError::BadRequest("调度检查时间不能为空".to_string()));
+        }
+        if let Some(persistence) = &self.persistence {
+            return query_has_due_scheduler_work(persistence, now, include_settlement_retry).await;
+        }
+
+        self.inner
+            .read()
+            .map_err(|_| ApiError::Internal("draw store lock poisoned".to_string()))
+            .map(|store| {
+                store.issues.values().any(|issue| match issue.status {
+                    DrawIssueStatus::Open => {
+                        issue.sale_closed_at.as_str() <= now || issue.scheduled_at.as_str() <= now
+                    }
+                    DrawIssueStatus::Closed => true,
+                    DrawIssueStatus::Drawn => include_settlement_retry,
+                    DrawIssueStatus::Cancelled => false,
+                })
             })
     }
 
@@ -1040,14 +1074,77 @@ async fn query_scheduler_active_draw_issues(
     rows.into_iter().map(draw_issue_from_row).collect()
 }
 
+/// 数据库模式下用单条 EXISTS 查询判断秒级调度是否需要进入完整业务流程。
+async fn query_has_due_scheduler_work(
+    database: &BusinessDatabase,
+    now: &str,
+    include_settlement_retry: bool,
+) -> ApiResult<bool> {
+    let immediate_work = sqlx::query_scalar::<_, bool>(
+        "SELECT
+             EXISTS (
+                 SELECT 1
+                 FROM draw_issues d
+                 WHERE d.status IN ('open', 'closed')
+                   AND d.scheduled_at <= $1
+             )
+             OR EXISTS (
+                 SELECT 1
+                 FROM group_buy_plans p
+                 INNER JOIN draw_issues d
+                    ON d.lottery_id = p.lottery_id
+                   AND d.issue = p.issue
+                 WHERE d.status IN ('open', 'closed', 'drawn')
+                   AND d.sale_closed_at <= $1
+                   AND (
+                        (p.status IN ('draft', 'open') AND p.filled_amount_minor < p.total_amount_minor)
+                        OR (p.status = 'filled' AND p.order_id IS NULL)
+                   )
+             )",
+    )
+    .bind(now)
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖调度即时任务检查失败".to_string()))?;
+    if immediate_work || !include_settlement_retry {
+        return Ok(immediate_work);
+    }
+
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM draw_issues d
+             WHERE d.status = 'drawn'
+               AND d.draw_number IS NOT NULL
+               AND btrim(d.draw_number) <> ''
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM order_settlement_runs r
+                   WHERE r.draw_issue_id = d.id
+               )
+         )",
+    )
+    .fetch_one(database.pool())
+    .await
+    .map_err(|_| ApiError::Internal("开奖调度未结算任务检查失败".to_string()))
+}
+
 /// 数据库模式下读取封盘和已开奖的期号，用于合买流单退款扫描。
 async fn query_refundable_draw_issues(database: &BusinessDatabase) -> ApiResult<Vec<DrawIssue>> {
     let rows = sqlx::query(
         "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
                 sale_closed_at, status, draw_number, drawn_at, created_at
-         FROM draw_issues
-         WHERE status IN ('closed', 'drawn')
-         ORDER BY id DESC
+         FROM draw_issues d
+         WHERE d.status IN ('closed', 'drawn')
+           AND EXISTS (
+               SELECT 1
+               FROM group_buy_plans p
+               WHERE p.lottery_id = d.lottery_id
+                 AND p.issue = d.issue
+                 AND p.status IN ('draft', 'open')
+                 AND p.filled_amount_minor < p.total_amount_minor
+           )
+         ORDER BY d.id DESC
          LIMIT 100",
     )
     .fetch_all(database.pool())
@@ -1060,21 +1157,23 @@ async fn query_refundable_draw_issues(database: &BusinessDatabase) -> ApiResult<
 /// 数据库模式下读取已开奖但尚未生成结算批次的期号，供调度器重试派奖。
 async fn query_unsettled_drawn_issues(
     database: &BusinessDatabase,
-    settled_draw_issue_ids: &BTreeSet<String>,
+    _settled_draw_issue_ids: &BTreeSet<String>,
 ) -> ApiResult<Vec<DrawIssue>> {
-    let settled_draw_issue_ids = settled_draw_issue_ids.iter().cloned().collect::<Vec<_>>();
     let rows = sqlx::query(
-        "SELECT id, lottery_id, lottery_name, issue, number_type, draw_mode, scheduled_at,
-                sale_closed_at, status, draw_number, drawn_at, created_at
-         FROM draw_issues
-         WHERE status = 'drawn'
-           AND draw_number IS NOT NULL
-           AND btrim(draw_number) <> ''
-           AND NOT (id = ANY($1::text[]))
-         ORDER BY scheduled_at ASC, id ASC
+        "SELECT d.id, d.lottery_id, d.lottery_name, d.issue, d.number_type, d.draw_mode, d.scheduled_at,
+                d.sale_closed_at, d.status, d.draw_number, d.drawn_at, d.created_at
+         FROM draw_issues d
+         WHERE d.status = 'drawn'
+           AND d.draw_number IS NOT NULL
+           AND btrim(d.draw_number) <> ''
+           AND NOT EXISTS (
+               SELECT 1
+               FROM order_settlement_runs r
+               WHERE r.draw_issue_id = d.id
+           )
+         ORDER BY d.scheduled_at ASC, d.id ASC
          LIMIT 200",
     )
-    .bind(&settled_draw_issue_ids)
     .fetch_all(database.pool())
     .await
     .map_err(|_| ApiError::Internal("未结算已开奖期号读取失败".to_string()))?;
@@ -2272,6 +2371,50 @@ mod tests {
             }
         }
     }"#;
+
+    #[tokio::test]
+    /// 验证秒级调度轻量预检只在期号到达封盘或开奖时间后返回待处理。
+    async fn repository_due_scheduler_work_skips_future_issue() {
+        let repository = DrawRepository::memory();
+        let lottery = lottery(DrawMode::Manual, LotteryNumberType::ThreeDigit);
+        repository
+            .create(&lottery, create_request("20260602-due-check"))
+            .await
+            .expect("issue can be created");
+
+        assert!(!repository
+            .has_due_scheduler_work("2026-06-02 20:00:00", false)
+            .await
+            .expect("future issue can be checked"));
+        assert!(repository
+            .has_due_scheduler_work("2026-06-02 20:59:45", false)
+            .await
+            .expect("closed issue can be checked"));
+    }
+
+    #[tokio::test]
+    /// 验证已开奖未结算重试只在低频重试轮次进入完整调度检查。
+    async fn repository_due_scheduler_work_respects_settlement_retry_window() {
+        let repository = DrawRepository::memory();
+        let lottery = lottery(DrawMode::Platform, LotteryNumberType::ThreeDigit);
+        let issue = repository
+            .create(&lottery, create_request("20260602-retry-check"))
+            .await
+            .expect("issue can be created");
+        repository
+            .draw(&issue.id, DrawIssueResultRequest::default())
+            .await
+            .expect("issue can be drawn");
+
+        assert!(!repository
+            .has_due_scheduler_work("2026-06-02 22:00:00", false)
+            .await
+            .expect("normal poll can skip settlement retry"));
+        assert!(repository
+            .has_due_scheduler_work("2026-06-02 22:00:00", true)
+            .await
+            .expect("retry poll can detect drawn issue"));
+    }
 
     #[test]
     /// 验证期号可以创建并按流程封盘。
